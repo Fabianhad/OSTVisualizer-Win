@@ -130,7 +130,9 @@ def set_annotation_styles_by_tool(
 ) -> dict[str, AnnotationStyle]:
     next_styles = {key: _default_style_for_tool(key) for key in _STYLE_KEYS}
     for annotation_type, raw_style in styles.items():
-        key = _normalize_annotation_type(annotation_type)
+        key = str(annotation_type or "").strip().lower()
+        if key not in PLACEABLE_ANNOTATION_TYPES:
+            continue
         if isinstance(raw_style, AnnotationStyle):
             next_styles[key] = raw_style
         else:

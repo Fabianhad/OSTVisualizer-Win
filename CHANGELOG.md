@@ -77,6 +77,7 @@
 - Fixed repeated final application-close events rerunning already completed workspace and service cleanup, and one teardown failure no longer skips the remaining application cleanup stages.
 - Fixed update-dialog failures leaving later application notifications permanently suppressed.
 - Fixed explicit detached annotation and named-view window restore requests being overwritten by stale saved fullscreen state.
+- Fixed workspace restoration failing when saved annotation styles contain keys for tools that are no longer available.
 - Fixed long-session MDB task exhaustion by explicitly releasing query cursors and reusing the committed write connection for post-save refreshes and bid exports.
 - Fixed concurrent MDB creation sharing one temporary launcher, and cleanup failures no longer skip later connection teardown or hide the original schema error.
 - Fixed overlay sizing for original On-Screen Takeoff databases by using each page's validated `ScaleFactor2 / ScaleFactor1` coordinate ratio for loading, movement, scale changes, and new writes, while rejecting non-finite page, canvas, and point geometry.

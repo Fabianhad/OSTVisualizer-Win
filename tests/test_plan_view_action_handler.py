@@ -13,6 +13,7 @@ from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
 )
+from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -35,6 +36,7 @@ from ost_visualizer.presentation.services.selection_commands import (
 from ost_visualizer.presentation.utils.annotation_defaults import (
     build_placed_annotation_spec,
     set_annotation_style_for_tool,
+    set_annotation_styles_by_tool,
 )
 
 
@@ -952,6 +954,20 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertTrue(dimension_spec.properties["FontBold"])
         self.assertTrue(dimension_spec.properties["FontItalic"])
         self.assertTrue(dimension_spec.properties["FontUnderline"])
+
+    def test_annotation_style_restore_ignores_retired_tool_keys(self):
+        try:
+            styles = set_annotation_styles_by_tool(
+                {
+                    "rect": AnnotationStyle(color="#123456", line_width=6.0),
+                    "retired-tool": AnnotationStyle(color="#abcdef"),
+                }
+            )
+
+            self.assertEqual(styles["rect"].color, "#123456")
+            self.assertNotIn("retired-tool", styles)
+        finally:
+            set_annotation_styles_by_tool({})
 
     def _overlay_handler(self, data, deferred, *, allowed=True):
         return PlanViewActionHandler(
