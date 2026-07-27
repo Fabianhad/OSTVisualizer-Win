@@ -30,6 +30,12 @@ from .schema_validator import SqlSchemaValidator
 from .schema_lock import SQL_SCHEMA_LOCK_RESOURCE, acquire_schema_transaction_lock
 
 
+def _add_exception_note(error: BaseException, note: str) -> None:
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+
+
 class SqlDatabaseCreator:
     def __init__(
         self,
@@ -208,9 +214,10 @@ class SqlDatabaseCreator:
                     if initialization_error is None:
                         raise cleanup_errors[0]
                     for cleanup_error in cleanup_errors:
-                        initialization_error.add_note(
+                        _add_exception_note(
+                            initialization_error,
                             "SQL database initialization cleanup also failed: "
-                            f"{cleanup_error.details.user_message}"
+                            f"{cleanup_error.details.user_message}",
                         )
         final_location = replace(location, database_guid=inventory.database_guid)
         return SqlDatabaseCreationResult(final_location, SQL_SCHEMA_V1.version)
@@ -291,15 +298,17 @@ class SqlDatabaseCreator:
                                 )
                             )
         except pyodbc.Error as exc:
-            raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
+            verification_error = SqlInfrastructureError(classify_pyodbc_error(exc))
         if verification_error is not None:
-            try:
-                self._disable_snapshot_isolation(location, password)
-            except SqlInfrastructureError as cleanup_error:
-                verification_error.add_note(
-                    "Snapshot-isolation cleanup also failed: "
-                    f"{cleanup_error.details.user_message}"
-                )
+            if enabled_by_this_call:
+                try:
+                    self._disable_snapshot_isolation(location, password)
+                except SqlInfrastructureError as cleanup_error:
+                    _add_exception_note(
+                        verification_error,
+                        "Snapshot-isolation cleanup also failed: "
+                        f"{cleanup_error.details.user_message}",
+                    )
             raise verification_error
         return enabled_by_this_call
 

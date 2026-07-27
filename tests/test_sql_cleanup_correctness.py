@@ -35,7 +35,10 @@ from ost_visualizer.infrastructure.sql.connection_manager import (
     SqlConnectionManager,
     SqlConnectionRequest,
 )
-from ost_visualizer.infrastructure.sql.database_creator import SqlDatabaseCreator
+from ost_visualizer.infrastructure.sql.database_creator import (
+    SqlDatabaseCreator,
+    _add_exception_note,
+)
 from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -2419,6 +2422,38 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             ):
                 creator._ensure_snapshot_isolation(location, "")
         disable_snapshot.assert_called_once_with(location, "")
+
+    def test_snapshot_verification_driver_failure_restores_owned_setting(self):
+        class _SnapshotVerificationCursor(_CreationCursor):
+            def __init__(self):
+                super().__init__()
+                self._snapshot_reads = 0
+
+            def fetchone(self):
+                if "snapshot_isolation_state" in self._last_sql:
+                    self._snapshot_reads += 1
+                    if self._snapshot_reads == 1:
+                        return (0,)
+                    raise pyodbc.Error("08S01", "verification connection failed")
+                return super().fetchone()
+
+        manager = _CreationManager()
+        manager.lease.cursor_value = _SnapshotVerificationCursor()
+        creator = SqlDatabaseCreator(manager)
+        location = SqlServerDatabaseLocation(
+            server="localhost", database="OSTV_TEST_AUDIT"
+        )
+        with patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot:
+            with self.assertRaises(SqlInfrastructureError):
+                creator._ensure_snapshot_isolation(location, "")
+        disable_snapshot.assert_called_once_with(location, "")
+
+    def test_exception_note_helper_is_safe_without_python_311_api(self):
+        legacy_exception = SimpleNamespace()
+        _add_exception_note(legacy_exception, "cleanup failed")
+        modern_exception = RuntimeError("initialization failed")
+        _add_exception_note(modern_exception, "cleanup failed")
+        self.assertIn("cleanup failed", getattr(modern_exception, "__notes__", ()))
 
     def test_snapshot_cleanup_failure_preserves_verification_error(self):
         class _SnapshotVerificationCursor(_CreationCursor):
