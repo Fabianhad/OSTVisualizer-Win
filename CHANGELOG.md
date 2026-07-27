@@ -82,7 +82,7 @@
 - Fixed plan input edge cases so panning can begin at the viewport origin, horizontal-only wheel input no longer zooms out, exact zoom changes survive in-progress page renders, named-view focus synchronizes and persists the resulting zoom, keyboard moves persist once across auto-repeat and focus changes, area holes stay aligned with translated parents, canceled resize/rotation previews do not write changes, and interrupted pan, zoom-band, PDF-text, and drag interactions clean up reliably.
 - Fixed named-view placement in the main plan view discarding the draft when inline naming began, and duplicate-name validation no longer opens the same warning twice.
 - Fixed grouped plan-item rotation failures so later writes stop after an earlier failed stage and committed position changes remain accurately projected and undoable; mixed takeoff-and-annotation delete undo also preserves takeoff metadata captured before the database reload.
-- Fixed repeated final application-close events rerunning already completed workspace and service cleanup, and one teardown failure no longer skips the remaining application cleanup stages.
+- Fixed repeated final application-close events rerunning already completed workspace and service cleanup, and one teardown failure no longer skips the remaining stages or retains released application references.
 - Fixed update-dialog failures leaving later application notifications permanently suppressed.
 - Fixed explicit detached annotation and named-view window restore requests being overwritten by stale saved fullscreen state.
 - Fixed workspace restoration failing when saved annotation styles contain keys for tools that are no longer available.

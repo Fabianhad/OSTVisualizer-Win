@@ -460,6 +460,28 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertIsNone(lifecycle._viz_orchestrator)
         self.assertIsNone(lifecycle.event_bus)
 
+    def test_lifecycle_shutdown_releases_references_when_controller_cleanup_fails(self):
+        participant = FakeShutdownParticipant()
+        app_controller = SimpleNamespace(
+            cleanup=lambda: (_ for _ in ()).throw(RuntimeError("cleanup failed"))
+        )
+        lifecycle = LifecycleOrchestrator(
+            container=FakeContainer([participant]),
+            visualization_orchestrator=object(),
+            event_bus=object(),
+            logger=logging.getLogger("test"),
+        )
+        lifecycle.set_app_controller(app_controller)
+
+        lifecycle.shutdown()
+        lifecycle.shutdown()
+
+        self.assertEqual(participant.shutdown_calls, 1)
+        self.assertIsNone(lifecycle._app_controller)
+        self.assertIsNone(lifecycle._container)
+        self.assertIsNone(lifecycle._viz_orchestrator)
+        self.assertIsNone(lifecycle.event_bus)
+
     def test_visualization_service_cleanup_releases_monitor_and_project_references(
         self,
     ):

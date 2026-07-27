@@ -34,18 +34,22 @@ class LifecycleOrchestrator:
         self._shutdown_performed = True
         try:
             participants = self._container.get_by_interface(IShutdownAware)
-            for participant in participants:
-                try:
-                    participant.shutdown()
-                except Exception as exc:
-                    self.logger.exception(
-                        "Error shutting down %s: %s", participant, exc
-                    )
-            if self._app_controller:
-                self._app_controller.cleanup()
-                self._app_controller = None
-            self._container = None
-            self._viz_orchestrator = None
-            self.event_bus = None
         except Exception as exc:
-            self.logger.exception("Error during shutdown: %s", exc)
+            participants = []
+            self.logger.exception("Error discovering shutdown participants: %s", exc)
+        for participant in participants:
+            try:
+                participant.shutdown()
+            except Exception as exc:
+                self.logger.exception("Error shutting down %s: %s", participant, exc)
+        if self._app_controller:
+            try:
+                self._app_controller.cleanup()
+            except Exception as exc:
+                self.logger.exception(
+                    "Error cleaning up application controller: %s", exc
+                )
+        self._app_controller = None
+        self._container = None
+        self._viz_orchestrator = None
+        self.event_bus = None
