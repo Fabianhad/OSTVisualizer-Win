@@ -205,6 +205,14 @@ class ProviderInterfaceContractTests(unittest.TestCase):
             implementation_hints = get_type_hints(getattr(MdbWriter, name))
             self.assertEqual(interface_hints, implementation_hints, name)
 
+    def test_database_writer_router_accepts_every_protocol_call_shape(self):
+        for name in _public_methods(IMdbWriter):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    _call_shape(getattr(IMdbWriter, name)),
+                    _call_shape(getattr(DatabaseProjectWriter, name)),
+                )
+
     def test_repository_provider_public_methods_match_interface(self):
         self.assertEqual(
             _public_methods(IRepositoryProvider),

@@ -17,6 +17,7 @@ from ...application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     ResourceRef,
 )
+from ...domain.dtos.raw_bid_data_dto import RawBidData
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..mdb.connection_manager import MdbConnectionManager
 from ..mdb.mdb_writer import MdbWriter
@@ -227,31 +228,31 @@ class DatabaseProjectWriter(SqlProjectWriter):
             selected_value,
         )
 
-    def create_project(self, locator: str, name: str):
-        with self._backend_scope(locator) as backend:
+    def create_project(self, db_path: str, name: str) -> Optional[str]:
+        with self._backend_scope(db_path) as backend:
             if backend == DatabaseBackend.SQL_SERVER:
-                return SqlProjectWriter.create_project(self, locator, name)
-            return MdbWriter.create_project(self, locator, name)
+                return SqlProjectWriter.create_project(self, db_path, name)
+            return MdbWriter.create_project(self, db_path, name)
 
     def import_ost_data(
         self,
-        locator: str,
-        raw_data,
-        transform_fn,
-        target_project_uid=None,
-    ):
-        with self._backend_scope(locator) as backend:
+        db_path: str,
+        raw_data: RawBidData,
+        transform_fn: Callable,
+        target_project_uid: Optional[str] = None,
+    ) -> bool:
+        with self._backend_scope(db_path) as backend:
             if backend == DatabaseBackend.SQL_SERVER:
                 return SqlProjectWriter.import_ost_data(
                     self,
-                    locator,
+                    db_path,
                     raw_data,
                     transform_fn,
                     target_project_uid,
                 )
             return MdbWriter.import_ost_data(
                 self,
-                locator,
+                db_path,
                 raw_data,
                 transform_fn,
                 target_project_uid,
@@ -259,28 +260,28 @@ class DatabaseProjectWriter(SqlProjectWriter):
 
     def save_page_view_state(
         self,
-        locator: str,
+        db_path: str,
         page_uid: str,
         zoom_fac: float,
         current_x: float,
         current_y: float,
     ) -> bool:
         if (
-            resolve_database_backend(self._descriptor_registry, locator)
+            resolve_database_backend(self._descriptor_registry, db_path)
             == DatabaseBackend.SQL_SERVER
         ):
             return True
         return MdbWriter.save_page_view_state(
-            self, locator, page_uid, zoom_fac, current_x, current_y
+            self, db_path, page_uid, zoom_fac, current_x, current_y
         )
 
-    def save_bid_selected_page(self, locator: str, bid_uid: str, page_uid: str) -> bool:
+    def save_bid_selected_page(self, db_path: str, bid_uid: str, page_uid: str) -> bool:
         if (
-            resolve_database_backend(self._descriptor_registry, locator)
+            resolve_database_backend(self._descriptor_registry, db_path)
             == DatabaseBackend.SQL_SERVER
         ):
             return True
-        return MdbWriter.save_bid_selected_page(self, locator, bid_uid, page_uid)
+        return MdbWriter.save_bid_selected_page(self, db_path, bid_uid, page_uid)
 
 
 class _AccessMutationRecorder:
