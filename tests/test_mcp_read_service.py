@@ -336,6 +336,44 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(len(bids), 1)
         self.assertEqual(bids[0].uid, "bid-1")
 
+    def test_database_project_bid_and_hierarchy_lists_are_bounded(self):
+        entry = self.repo.hierarchy.loaded_files[0]
+        entry.bid_projects["project-2"] = HierarchyProjectInfo(
+            name="Project Two",
+            bids=[HierarchyBidInfo(uid="bid-2", name="Bid Two")],
+        )
+        entry.orphan_bids.append(HierarchyBidInfo(uid="bid-orphan", name="Orphan"))
+        first_database = self.service.get_database("db-1")
+        self.service.set_databases(
+            [
+                first_database,
+                McpDatabaseRef(
+                    database_id="db-2",
+                    file_path=r"C:\jobs\private\second.mdb",
+                    display_name="Second",
+                ),
+            ]
+        )
+
+        databases = self.service.list_databases(limit=1)
+        projects = self.service.list_projects("db-1", limit=1)
+        bids = self.service.list_bids("db-1", limit=1)
+        hierarchy = self.service.get_hierarchy("db-1", limit=2)
+
+        self.assertEqual(len(databases), 1)
+        self.assertTrue(databases.meta.truncated)
+        self.assertEqual(len(projects), 1)
+        self.assertEqual(projects.meta.total_count, 2)
+        self.assertTrue(projects.meta.truncated)
+        self.assertEqual(len(bids), 1)
+        self.assertEqual(bids.meta.total_count, 3)
+        self.assertTrue(bids.meta.truncated)
+        self.assertEqual(hierarchy.status, "truncated")
+        self.assertEqual(hierarchy.meta.returned_count, 2)
+        self.assertEqual(hierarchy.meta.total_count, 3)
+        self.assertEqual(len(hierarchy.projects), 2)
+        self.assertEqual(hierarchy.orphan_bids, [])
+
     def test_compare_bids_delegates_loaded_bid_data_by_ref_no(self):
         project = self.repo.hierarchy.loaded_files[0].bid_projects["project-1"]
         project.bids.append(
@@ -638,6 +676,22 @@ class McpReadServiceTests(unittest.TestCase):
         summary = self.service.get_selected_takeoffs_summary("db-1", "bid-1", [])
         self.assertEqual(summary.status, "no_selection")
 
+    def test_selected_takeoffs_summary_deduplicates_and_bounds_all_ids(self):
+        summary = self.service.get_selected_takeoffs_summary(
+            "db-1",
+            "bid-1",
+            ["takeoff-1", "takeoff-1", "missing-1", "missing-2"],
+            limit=2,
+        )
+        self.assertEqual(summary.status, "truncated")
+        self.assertEqual(summary.selected_takeoff_count, 1)
+        self.assertEqual([takeoff.uid for takeoff in summary.takeoffs], ["takeoff-1"])
+        self.assertEqual(summary.missing_takeoff_uids, ["missing-1"])
+        self.assertEqual(summary.quantities[0].quantity1, 1.0)
+        self.assertEqual(summary.meta.returned_count, 2)
+        self.assertEqual(summary.meta.total_count, 3)
+        self.assertTrue(summary.meta.has_more)
+
     def test_selected_pages_summary_preserves_multi_page_selection_order(self):
         summary = self.service.get_selected_pages_summary(
             "db-1",
@@ -652,6 +706,21 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(summary.selected_page_uids, ["page-2", "page-1"])
         self.assertEqual(summary.missing_page_uids, ["missing"])
         self.assertEqual([page.uid for page in summary.pages], ["page-2", "page-1"])
+
+    def test_selected_pages_summary_deduplicates_and_bounds_all_ids(self):
+        summary = self.service.get_selected_pages_summary(
+            "db-1",
+            "bid-1",
+            ["page-2", "page-2", "missing-1", "page-1"],
+            limit=2,
+        )
+        self.assertEqual(summary.status, "truncated")
+        self.assertEqual(summary.selected_page_uids, ["page-2"])
+        self.assertEqual(summary.missing_page_uids, ["missing-1"])
+        self.assertEqual([page.uid for page in summary.pages], ["page-2"])
+        self.assertEqual(summary.meta.returned_count, 2)
+        self.assertEqual(summary.meta.total_count, 3)
+        self.assertTrue(summary.meta.has_more)
 
     def test_consistency_checks_find_unused_pages_and_conditions(self):
         pages = self.service.find_pages_without_takeoffs("db-1", "bid-1")

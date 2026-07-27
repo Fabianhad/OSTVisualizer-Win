@@ -24,6 +24,7 @@ from ost_visualizer.application.dtos.mcp_context_dtos import (
     McpPdfVectorSegmentDto,
     McpPdfVectorsSummaryDto,
     McpResultMetaDto,
+    McpSelectedPagesSummaryDto,
     McpSelectedTakeoffsSummaryDto,
     McpSummaryDto,
     McpSummaryGroupingDto,
@@ -128,12 +129,31 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "message",
                 "database_id",
                 "bid_uid",
+                "meta",
                 "selected_takeoff_count",
                 "missing_takeoff_uids",
                 "takeoffs",
                 "quantities",
                 "pages",
                 "condition_uids",
+            },
+        )
+
+    def test_selected_pages_summary_shape_is_stable(self):
+        payload = ok(McpSelectedPagesSummaryDto(status="ok"))
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "message",
+                "database_id",
+                "bid_uid",
+                "meta",
+                "active_view",
+                "active_page_uid",
+                "selected_page_uids",
+                "missing_page_uids",
+                "pages",
             },
         )
 

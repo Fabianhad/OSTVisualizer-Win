@@ -13,6 +13,7 @@ from ..application.dtos.mcp_context_dtos import (
     McpAreaSummaryDto,
     McpBidQuantitySummaryDto,
     McpDuplicateConditionSummaryDto,
+    McpHierarchyDto,
     McpPageMarkupsSummaryDto,
     McpPdfTextSearchSummaryDto,
     McpPdfTextSummaryDto,
@@ -106,18 +107,15 @@ def build_mcp_server(
         return run_safely(read)
 
     @mcp.tool()
-    def list_databases() -> dict:
+    def list_databases(limit: int = 500) -> dict:
         """List checked OST databases as safe IDs and basenames, never full paths."""
         registry.reload()
         read_service.set_databases(registry.databases)
-        databases = read_service.list_databases()
+        databases = read_service.list_databases(limit=limit)
         return ok(
             databases,
-            status=MCP_STATUS_OK if databases else "no_checked_database",
-            meta=McpResultMetaDto(
-                returned_count=len(databases),
-                total_count=len(databases),
-            ),
+            status=databases.status if databases else "no_checked_database",
+            meta=databases.meta,
         )
 
     @mcp.tool()
@@ -156,14 +154,23 @@ def build_mcp_server(
         return ok(payload, status="saved_context")
 
     @mcp.tool()
-    def list_projects(database_id: str) -> dict:
+    def list_projects(database_id: str, limit: int = 500) -> dict:
         """List projects in a checked database by database_id."""
-        return run_read(read_service.list_projects, database_id)
+        return run_limited_read(read_service.list_projects, limit, database_id)
 
     @mcp.tool()
-    def list_bids(database_id: str, project_uid: Optional[str] = None) -> dict:
+    def list_bids(
+        database_id: str,
+        project_uid: Optional[str] = None,
+        limit: int = 500,
+    ) -> dict:
         """List bids in a checked database, optionally scoped to one project."""
-        return run_read(read_service.list_bids, database_id, project_uid)
+        return run_limited_read(
+            read_service.list_bids,
+            limit,
+            database_id,
+            project_uid,
+        )
 
     @mcp.tool()
     def get_bid_summary(database_id: str, bid_uid: str) -> dict:
@@ -415,16 +422,16 @@ def build_mcp_server(
                     bid_uid=str(bid_uid),
                 )
             )
-        return run_read(
+        return run_limited_read(
             read_service.get_selected_takeoffs_summary,
+            limit,
             str(database_id),
             str(bid_uid),
             selected_takeoff_uids,
-            limit,
         )
 
     @mcp.tool()
-    def get_selected_pages_summary() -> dict:
+    def get_selected_pages_summary(limit: int = 500) -> dict:
         """Summarize pages currently selected in the live desktop app."""
         registry.reload()
         read_service.set_databases(registry.databases)
@@ -466,8 +473,9 @@ def build_mcp_server(
                     active_page_uid=active_page_uid,
                 )
             )
-        return run_read(
+        return run_limited_read(
             read_service.get_selected_pages_summary,
+            limit,
             str(database_id),
             str(bid_uid),
             selected_page_uids,
@@ -826,7 +834,7 @@ def build_mcp_server(
     @mcp.resource("ost://database/{database_id}/hierarchy")
     def hierarchy_resource(database_id: str) -> dict:
         """Project and bid hierarchy for one checked database."""
-        return run_read(read_service.get_hierarchy, database_id)
+        return run_limited_read(read_service.get_hierarchy, 500, database_id)
 
     @mcp.resource("ost://database/{database_id}/bid/{bid_uid}/pages")
     def pages_resource(database_id: str, bid_uid: str) -> dict:
@@ -971,11 +979,14 @@ def _has_summary_meta(result) -> bool:
         (
             McpBidQuantitySummaryDto,
             McpAreaSummaryDto,
+            McpHierarchyDto,
             McpPageMarkupsSummaryDto,
             McpPdfTextSearchSummaryDto,
             McpPdfTextSummaryDto,
             McpPdfVectorsSummaryDto,
             McpScopeGapSummaryDto,
+            McpSelectedPagesSummaryDto,
+            McpSelectedTakeoffsSummaryDto,
             McpDuplicateConditionSummaryDto,
             McpZeroQuantitySummaryDto,
             McpUnplacedTakeoffSummaryDto,

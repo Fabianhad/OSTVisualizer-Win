@@ -644,6 +644,7 @@ class McpSelectedTakeoffsSummaryDto:
     message: str = ""
     database_id: Optional[str] = None
     bid_uid: Optional[str] = None
+    meta: McpResultMetaDto = field(default_factory=McpResultMetaDto)
     selected_takeoff_count: int = 0
     missing_takeoff_uids: List[str] = field(default_factory=list)
     takeoffs: List[McpTakeoffDto] = field(default_factory=list)
@@ -658,6 +659,7 @@ class McpSelectedPagesSummaryDto:
     message: str = ""
     database_id: Optional[str] = None
     bid_uid: Optional[str] = None
+    meta: McpResultMetaDto = field(default_factory=McpResultMetaDto)
     active_view: str = ""
     active_page_uid: Optional[str] = None
     selected_page_uids: List[str] = field(default_factory=list)
@@ -668,5 +670,7 @@ class McpSelectedPagesSummaryDto:
 @dataclass
 class McpHierarchyDto:
     database: McpDatabaseDto
+    status: str = MCP_STATUS_OK
+    meta: McpResultMetaDto = field(default_factory=McpResultMetaDto)
     projects: List[McpProjectDto] = field(default_factory=list)
     orphan_bids: List[McpBidDto] = field(default_factory=list)

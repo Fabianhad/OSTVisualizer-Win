@@ -166,8 +166,8 @@ class McpReadService:
             db.database_id: db for db in databases
         }
 
-    def list_databases(self) -> List[McpDatabaseDto]:
-        return [
+    def list_databases(self, limit: int = 500) -> List[McpDatabaseDto]:
+        databases = [
             McpDatabaseDto(
                 database_id=db.database_id,
                 display_name=db.display_name,
@@ -180,6 +180,7 @@ class McpReadService:
                 key=lambda item: (item.display_name.lower(), item.file_path.lower()),
             )
         ]
+        return self._limited_list(databases, limit)
 
     def set_databases(self, databases: Iterable[McpDatabaseRef]) -> None:
         self._databases = {db.database_id: db for db in databases}
@@ -190,12 +191,20 @@ class McpReadService:
             raise McpReadError(f"Unknown database_id: {database_id}")
         return db
 
-    def get_hierarchy(self, database_id: str) -> McpHierarchyDto:
+    def get_hierarchy(self, database_id: str, limit: int = 500) -> McpHierarchyDto:
         db = self.get_database(database_id)
         result = self._load_file(db)
         entry = self._find_file_entry(result.hierarchy, db.file_path)
         if entry is None:
             raise McpReadError("Database hierarchy is unavailable")
+        projects = [
+            self._project_dto(uid, project)
+            for uid, project in entry.bid_projects.items()
+        ]
+        orphan_bids = [self._bid_dto(bid, None, None) for bid in entry.orphan_bids]
+        combined = [*projects, *orphan_bids]
+        limited, meta = self._limited(combined, limit)
+        project_count = min(len(projects), len(limited))
         return McpHierarchyDto(
             database=McpDatabaseDto(
                 database_id=db.database_id,
@@ -203,18 +212,25 @@ class McpReadService:
                 basename=self._safe_basename(db.file_path),
                 path_status="checked",
             ),
-            projects=[
-                self._project_dto(uid, project)
-                for uid, project in entry.bid_projects.items()
-            ],
-            orphan_bids=[self._bid_dto(bid, None, None) for bid in entry.orphan_bids],
+            status=_summary_status_for_meta(meta),
+            meta=meta,
+            projects=projects[:project_count],
+            orphan_bids=orphan_bids[: max(0, len(limited) - project_count)],
         )
 
-    def list_projects(self, database_id: str) -> List[McpProjectDto]:
-        return self.get_hierarchy(database_id).projects
+    def list_projects(self, database_id: str, limit: int = 500) -> List[McpProjectDto]:
+        entry = self._get_file_entry(database_id)
+        projects = [
+            self._project_dto(uid, project)
+            for uid, project in entry.bid_projects.items()
+        ]
+        return self._limited_list(projects, limit)
 
     def list_bids(
-        self, database_id: str, project_uid: Optional[str] = None
+        self,
+        database_id: str,
+        project_uid: Optional[str] = None,
+        limit: int = 500,
     ) -> List[McpBidDto]:
         entry = self._get_file_entry(database_id)
         bids: List[McpBidDto] = []
@@ -222,13 +238,16 @@ class McpReadService:
             project = entry.bid_projects.get(project_uid)
             if project is None:
                 raise McpReadError(f"Unknown project_uid: {project_uid}")
-            return [
+            bids = [
                 self._bid_dto(bid, project_uid, project.name) for bid in project.bids
             ]
-        for uid, project in entry.bid_projects.items():
-            bids.extend(self._bid_dto(bid, uid, project.name) for bid in project.bids)
-        bids.extend(self._bid_dto(bid, None, None) for bid in entry.orphan_bids)
-        return bids
+        else:
+            for uid, project in entry.bid_projects.items():
+                bids.extend(
+                    self._bid_dto(bid, uid, project.name) for bid in project.bids
+                )
+            bids.extend(self._bid_dto(bid, None, None) for bid in entry.orphan_bids)
+        return self._limited_list(bids, limit)
 
     def get_bid_summary(self, database_id: str, bid_uid: str) -> McpBidDto:
         entry = self._get_file_entry(database_id)
@@ -732,32 +751,48 @@ class McpReadService:
         selected_takeoff_uids: List[str],
         limit: int = 500,
     ) -> McpSelectedTakeoffsSummaryDto:
-        wanted = [str(uid) for uid in selected_takeoff_uids if uid]
+        wanted = self._unique_uids(selected_takeoff_uids)
+        limited_wanted, meta = self._limited(wanted, limit)
         if not wanted:
             return McpSelectedTakeoffsSummaryDto(
                 status="no_selection",
                 message="No takeoffs are selected in the live OST Visualizer context.",
                 database_id=database_id,
                 bid_uid=bid_uid,
+                meta=meta,
             )
         bid_data = self._load_bid(database_id, bid_uid)
         by_uid = {takeoff.uid: takeoff for takeoff in bid_data.bid_takeoffs}
-        clean_limit = self._clean_limit(limit)
-        selected = [by_uid[uid] for uid in wanted if uid in by_uid][:clean_limit]
-        missing = [uid for uid in wanted if uid not in by_uid]
+        selected = [by_uid[uid] for uid in limited_wanted if uid in by_uid]
+        missing = [uid for uid in limited_wanted if uid not in by_uid]
+        if meta.truncated:
+            status = MCP_STATUS_TRUNCATED
+            message = (
+                f"The live selection contains {meta.total_count} unique takeoff IDs; "
+                f"only the first {meta.returned_count} were summarized."
+            )
+        else:
+            status = MCP_STATUS_OK
+            message = ""
         if not selected:
             return McpSelectedTakeoffsSummaryDto(
-                status="stale_selection",
-                message="The live selected takeoff IDs were not found in the loaded bid.",
+                status=status if meta.truncated else "stale_selection",
+                message=(
+                    message
+                    or "The live selected takeoff IDs were not found in the loaded bid."
+                ),
                 database_id=database_id,
                 bid_uid=bid_uid,
+                meta=meta,
                 missing_takeoff_uids=missing,
             )
         quantities = compute_page_quantities(bid_data.bid_conditions, selected)
         return McpSelectedTakeoffsSummaryDto(
-            status=MCP_STATUS_OK,
+            status=status,
+            message=message,
             database_id=database_id,
             bid_uid=bid_uid,
+            meta=meta,
             selected_takeoff_count=len(selected),
             missing_takeoff_uids=missing,
             takeoffs=[
@@ -777,34 +812,52 @@ class McpReadService:
         selected_page_uids: List[str],
         active_view: str = "",
         active_page_uid: Optional[str] = None,
+        limit: int = 500,
     ) -> McpSelectedPagesSummaryDto:
-        wanted = [str(uid) for uid in selected_page_uids if uid]
+        wanted = self._unique_uids(selected_page_uids)
+        limited_wanted, meta = self._limited(wanted, limit)
         if not wanted:
             return McpSelectedPagesSummaryDto(
                 status="no_selection",
                 message="No pages are selected for the live OST Visualizer context.",
                 database_id=database_id,
                 bid_uid=bid_uid,
+                meta=meta,
                 active_view=active_view,
                 active_page_uid=active_page_uid,
             )
         bid_data = self._load_bid(database_id, bid_uid)
-        pages = [bid_data.pages[uid] for uid in wanted if uid in bid_data.pages]
-        missing = [uid for uid in wanted if uid not in bid_data.pages]
+        pages = [bid_data.pages[uid] for uid in limited_wanted if uid in bid_data.pages]
+        missing = [uid for uid in limited_wanted if uid not in bid_data.pages]
+        if meta.truncated:
+            status = MCP_STATUS_TRUNCATED
+            message = (
+                f"The live selection contains {meta.total_count} unique page IDs; "
+                f"only the first {meta.returned_count} were summarized."
+            )
+        else:
+            status = MCP_STATUS_OK
+            message = ""
         if not pages:
             return McpSelectedPagesSummaryDto(
-                status="stale_selection",
-                message="The live selected page IDs were not found in the loaded bid.",
+                status=status if meta.truncated else "stale_selection",
+                message=(
+                    message
+                    or "The live selected page IDs were not found in the loaded bid."
+                ),
                 database_id=database_id,
                 bid_uid=bid_uid,
+                meta=meta,
                 active_view=active_view,
                 active_page_uid=active_page_uid,
                 missing_page_uids=missing,
             )
         return McpSelectedPagesSummaryDto(
-            status=MCP_STATUS_OK,
+            status=status,
+            message=message,
             database_id=database_id,
             bid_uid=bid_uid,
+            meta=meta,
             active_view=active_view,
             active_page_uid=active_page_uid,
             selected_page_uids=[page.uid for page in pages],
@@ -2083,6 +2136,10 @@ class McpReadService:
                 takeoffs, bid_data.pages, bid_data.bid_conditions
             )
         ]
+
+    @staticmethod
+    def _unique_uids(uids: Iterable[str]) -> List[str]:
+        return list(dict.fromkeys(str(uid) for uid in uids if uid))
 
     @staticmethod
     def _clean_limit(limit: int, default: int = 500, max_limit: int = 5000) -> int:

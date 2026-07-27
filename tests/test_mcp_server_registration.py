@@ -83,6 +83,27 @@ class McpServerRegistrationTests(unittest.TestCase):
             MCP_BID_COMPARISON_DEFAULT_LIMIT,
         )
 
+    def test_collection_tool_schemas_expose_default_limits(self):
+        from ost_visualizer.mcp_server.registry import DatabaseRegistry
+        from ost_visualizer.mcp_server.server import build_mcp_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = DatabaseRegistry(app_data_dir=Path(tmp))
+            server = build_mcp_server(registry)
+            tools = {tool["name"]: tool for tool in server.list_tools()}
+
+        for name in (
+            "list_databases",
+            "list_projects",
+            "list_bids",
+            "get_selected_takeoffs_summary",
+            "get_selected_pages_summary",
+        ):
+            self.assertEqual(
+                tools[name]["inputSchema"]["properties"]["limit"]["default"],
+                500,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
