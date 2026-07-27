@@ -7,6 +7,8 @@ from collections import namedtuple
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+
 import pyodbc
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.mdb import database_creator
@@ -1103,6 +1105,35 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             root = ET.parse(output_path).getroot()
         layers = root.findall("./Bid/BidLayers/BidLayer")
         self.assertEqual([layer.get("UID") for layer in layers], ["12", "11", "10"])
+
+    def test_ost_export_write_failure_preserves_existing_destination(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Bid"},
+            bid_tables={"BidConditions": [], "BidPages": []},
+        )
+
+        def fail_after_partial_write(file_obj, _root):
+            file_obj.write("<partial>")
+            raise OSError("disk full")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "existing.ost"
+            output_path.write_text("existing export", encoding="utf-8")
+            with patch(
+                "ost_visualizer.infrastructure.mdb.exporters.ost_exporter._write_element",
+                side_effect=fail_after_partial_write,
+            ):
+                result = OstExporter(SimpleNamespace()).export(
+                    raw_data,
+                    str(output_path),
+                )
+
+            self.assertFalse(result.success)
+            self.assertEqual(
+                output_path.read_text(encoding="utf-8"),
+                "existing export",
+            )
+            self.assertEqual(list(Path(temp_dir).iterdir()), [output_path])
 
     def test_ost_export_uses_native_area_page_setting_and_text_order(self):
         text_row = {

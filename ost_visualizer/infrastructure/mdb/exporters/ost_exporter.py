@@ -1,4 +1,6 @@
 import logging
+import os
+import tempfile
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 from xml.etree.ElementTree import Element, SubElement
@@ -454,35 +456,6 @@ _ZERO_DEFAULT_FIELDS = {
     "OCRUID",
     "OCRState",
 }
-_STRING_FIELDS = {
-    "SourceBidUID",
-    "QuickBidDB",
-    "PriceUsingDatabase",
-    "PriceUsingWorksheet",
-    "STSServerName",
-    "STSClientName",
-    "ImageFolder",
-    "ImagePath",
-    "OverlayImagePath",
-    "SheetNo",
-    "Notes",
-    "Name",
-    "Description",
-    "JobID",
-    "JobName",
-    "ExcelCell1",
-    "ExcelCell2",
-    "ExcelCell3",
-    "FontName",
-    "NameFontName",
-    "GUID",
-    "STSGUID",
-    "OverlayRect",
-    "OverlayResized",
-    "Position",
-    "BFperLF",
-    "ALState",
-}
 _OMIT_IF_EMPTY_FIELDS = {
     "BFperLF",
     "ALState",
@@ -673,8 +646,27 @@ class OstExporter:
             self._build_global_sections(root, bid_tables, global_tables, bid_row)
             if on_progress:
                 on_progress(1, 1, "Writing OST")
-            with open(output_path, "w", encoding="utf-8", newline="") as f:
-                _write_element(f, root)
+            output_path = os.path.abspath(output_path)
+            output_dir = os.path.dirname(output_path)
+            fd, temp_path = tempfile.mkstemp(
+                prefix=f".{os.path.basename(output_path)}.",
+                suffix=".tmp",
+                dir=output_dir,
+                text=True,
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    _write_element(f, root)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, output_path)
+                temp_path = ""
+            finally:
+                if temp_path:
+                    try:
+                        os.remove(temp_path)
+                    except FileNotFoundError:
+                        pass
             return ExportResultDto(success=True, format_name="OST")
         except Exception as exc:
             logger.exception("Failed to export OST file to %s", output_path)
