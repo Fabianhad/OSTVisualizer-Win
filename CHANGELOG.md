@@ -22,6 +22,9 @@
 
 ### Fixed
 
+- Fixed native PDF rendering accepting invalid scales or frame coordinates that
+  could overflow bitmap sizing, and explicit PDFium shutdown can now be followed
+  by a clean reinitialization.
 - Fixed realtime transaction monitoring leaking its opened commit-event handle
   when status-event initialization failed.
 - Fixed progress dialogs intermittently destroying a worker thread before its

@@ -6,14 +6,17 @@
 #include <fpdf_text.h>
 #include <algorithm>
 #include <cmath>
-#include <mutex>
 #include <atomic>
 #include <cstring>
+#include <limits>
+#include <mutex>
+#include <new>
+#include <stdexcept>
 namespace ost_pdf
 {
 #define DOC() (static_cast<FPDF_DOCUMENT>(doc_))
-    static std::once_flag g_init_flag;
-    static std::atomic<bool> g_initialized{false};
+    static std::mutex g_init_mutex;
+    static bool g_initialized = false;
     void RenderCancelToken::cancel()
     {
         cancelled_.store(true);
@@ -28,16 +31,20 @@ namespace ost_pdf
     }
     void initialize_pdfium()
     {
-        std::call_once(g_init_flag, []()
-                       {
-        FPDF_InitLibrary();
-        g_initialized = true; });
+        std::lock_guard<std::mutex> lock(g_init_mutex);
+        if (!g_initialized)
+        {
+            FPDF_InitLibrary();
+            g_initialized = true;
+        }
     }
     void shutdown_pdfium()
     {
-        if (g_initialized.exchange(false))
+        std::lock_guard<std::mutex> lock(g_init_mutex);
+        if (g_initialized)
         {
             FPDF_DestroyLibrary();
+            g_initialized = false;
         }
     }
     namespace
@@ -74,6 +81,70 @@ namespace ost_pdf
                    codepoint == '\n' ||
                    codepoint == '\r' ||
                    codepoint == ' ';
+        }
+        bool checked_pixel_dimension(double scaled_value, bool round_up, int &result)
+        {
+            if (!std::isfinite(scaled_value) || scaled_value <= 0.0)
+            {
+                return false;
+            }
+            double rounded = round_up
+                                 ? std::ceil(scaled_value)
+                                 : std::floor(scaled_value + 0.5);
+            rounded = std::max(1.0, rounded);
+            if (rounded > static_cast<double>(std::numeric_limits<int>::max()))
+            {
+                return false;
+            }
+            result = static_cast<int>(rounded);
+            return true;
+        }
+        bool checked_pixel_offset(double scaled_value, int &result)
+        {
+            if (!std::isfinite(scaled_value) || scaled_value < 0.0)
+            {
+                return false;
+            }
+            double rounded = std::floor(scaled_value + 0.5);
+            if (rounded > static_cast<double>(std::numeric_limits<int>::max()))
+            {
+                return false;
+            }
+            result = static_cast<int>(rounded);
+            return true;
+        }
+        bool allocate_bitmap_pixels(
+            int width,
+            int height,
+            int &stride,
+            std::vector<uint8_t> &pixels)
+        {
+            if (width < 1 ||
+                height < 1 ||
+                width > std::numeric_limits<int>::max() / 4)
+            {
+                return false;
+            }
+            stride = width * 4;
+            const size_t row_bytes = static_cast<size_t>(stride);
+            const size_t rows = static_cast<size_t>(height);
+            if (rows > std::numeric_limits<size_t>::max() / row_bytes)
+            {
+                return false;
+            }
+            try
+            {
+                pixels.resize(row_bytes * rows);
+            }
+            catch (const std::bad_alloc &)
+            {
+                return false;
+            }
+            catch (const std::length_error &)
+            {
+                return false;
+            }
+            return true;
         }
         struct PDFiumCleanup
         {
@@ -528,6 +599,10 @@ namespace ost_pdf
         {
             return std::nullopt;
         }
+        if (!std::isfinite(scale) || scale <= 0.0f)
+        {
+            return std::nullopt;
+        }
         if (cancel_token && cancel_token->is_cancelled())
         {
             return std::nullopt;
@@ -540,18 +615,26 @@ namespace ost_pdf
         }
         double pdf_width = FPDF_GetPageWidth(page);
         double pdf_height = FPDF_GetPageHeight(page);
-        int render_width = static_cast<int>(pdf_width * scale + 0.5);
-        int render_height = static_cast<int>(pdf_height * scale + 0.5);
+        int render_width = 0;
+        int render_height = 0;
+        if (!checked_pixel_dimension(pdf_width * scale, false, render_width) ||
+            !checked_pixel_dimension(pdf_height * scale, false, render_height))
+        {
+            FPDF_ClosePage(page);
+            return std::nullopt;
+        }
         if (rotation == 1 || rotation == 3)
         {
             std::swap(render_width, render_height);
         }
-        if (render_width < 1)
-            render_width = 1;
-        if (render_height < 1)
-            render_height = 1;
-        int stride = render_width * 4;
-        std::vector<uint8_t> pixels(static_cast<size_t>(stride) * render_height);
+        int stride = 0;
+        std::vector<uint8_t> pixels;
+        if (!allocate_bitmap_pixels(
+                render_width, render_height, stride, pixels))
+        {
+            FPDF_ClosePage(page);
+            return std::nullopt;
+        }
         FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(
             render_width, render_height,
             FPDFBitmap_BGRA,
@@ -638,7 +721,20 @@ namespace ost_pdf
         {
             return std::nullopt;
         }
-        if (scale <= 0.0f || frame_w_pts <= 0.0 || frame_h_pts <= 0.0)
+        if (!std::isfinite(scale) ||
+            !std::isfinite(frame_x_pts) ||
+            !std::isfinite(frame_y_pts) ||
+            !std::isfinite(frame_w_pts) ||
+            !std::isfinite(frame_h_pts) ||
+            scale <= 0.0f ||
+            frame_w_pts <= 0.0 ||
+            frame_h_pts <= 0.0)
+        {
+            return std::nullopt;
+        }
+        const double frame_right = frame_x_pts + frame_w_pts;
+        const double frame_bottom = frame_y_pts + frame_h_pts;
+        if (!std::isfinite(frame_right) || !std::isfinite(frame_bottom))
         {
             return std::nullopt;
         }
@@ -654,7 +750,10 @@ namespace ost_pdf
         }
         double page_w = FPDF_GetPageWidth(page);
         double page_h = FPDF_GetPageHeight(page);
-        if (page_w <= 0.0 || page_h <= 0.0)
+        if (!std::isfinite(page_w) ||
+            !std::isfinite(page_h) ||
+            page_w <= 0.0 ||
+            page_h <= 0.0)
         {
             FPDF_ClosePage(page);
             return std::nullopt;
@@ -663,8 +762,8 @@ namespace ost_pdf
         double canvas_h = (rotation == 1 || rotation == 3) ? page_w : page_h;
         double left = std::max(0.0, frame_x_pts);
         double top = std::max(0.0, frame_y_pts);
-        double right = std::min(canvas_w, frame_x_pts + frame_w_pts);
-        double bottom = std::min(canvas_h, frame_y_pts + frame_h_pts);
+        double right = std::min(canvas_w, frame_right);
+        double bottom = std::min(canvas_h, frame_bottom);
         double clipped_w = right - left;
         double clipped_h = bottom - top;
         if (clipped_w <= 0.0 || clipped_h <= 0.0)
@@ -672,26 +771,34 @@ namespace ost_pdf
             FPDF_ClosePage(page);
             return std::nullopt;
         }
-        int render_width = static_cast<int>(std::ceil(clipped_w * scale));
-        int render_height = static_cast<int>(std::ceil(clipped_h * scale));
-        if (render_width < 1)
-            render_width = 1;
-        if (render_height < 1)
-            render_height = 1;
-        int full_w = static_cast<int>(page_w * scale + 0.5);
-        int full_h = static_cast<int>(page_h * scale + 0.5);
+        int render_width = 0;
+        int render_height = 0;
+        int full_w = 0;
+        int full_h = 0;
+        if (!checked_pixel_dimension(clipped_w * scale, true, render_width) ||
+            !checked_pixel_dimension(clipped_h * scale, true, render_height) ||
+            !checked_pixel_dimension(page_w * scale, false, full_w) ||
+            !checked_pixel_dimension(page_h * scale, false, full_h))
+        {
+            FPDF_ClosePage(page);
+            return std::nullopt;
+        }
         if (rotation == 1 || rotation == 3)
         {
             std::swap(full_w, full_h);
         }
-        if (full_w < 1)
-            full_w = 1;
-        if (full_h < 1)
-            full_h = 1;
-        int offset_x = static_cast<int>(left * scale + 0.5);
-        int offset_y = static_cast<int>(top * scale + 0.5);
-        int stride = render_width * 4;
-        std::vector<uint8_t> pixels(static_cast<size_t>(stride) * render_height);
+        int offset_x = 0;
+        int offset_y = 0;
+        int stride = 0;
+        std::vector<uint8_t> pixels;
+        if (!checked_pixel_offset(left * scale, offset_x) ||
+            !checked_pixel_offset(top * scale, offset_y) ||
+            !allocate_bitmap_pixels(
+                render_width, render_height, stride, pixels))
+        {
+            FPDF_ClosePage(page);
+            return std::nullopt;
+        }
         FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(
             render_width, render_height,
             FPDFBitmap_BGRA,
