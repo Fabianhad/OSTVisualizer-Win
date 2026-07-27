@@ -28,6 +28,7 @@
 - Fixed PDF cache shutdown so one native renderer cleanup failure cannot retain the remaining per-thread renderers.
 - Fixed Cover Sheet multi-file imports assigning default sheet dimensions to raster images instead of using their actual image size, and existing pages can now be moved into folders created in the same save.
 - Fixed existing bid areas failing to move beneath an area created in the same save.
+- Fixed multi-database project trees so a newly created folder opens rename in the correct database, grouped project selections do not duplicate operations, cross-database project selections cannot reach single-database writes, and tree rebuilds safely cancel active rename editors.
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.
 - Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
 - Fixed silent toolbar check-state synchronization so it preserves signal blocks owned by an enclosing UI update.

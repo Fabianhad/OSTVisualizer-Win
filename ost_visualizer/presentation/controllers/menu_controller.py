@@ -907,7 +907,7 @@ class MenuController:
             )
             return
         new_uid = str(create_result.value)
-        self.window.project_view.schedule_rename(new_uid)
+        self.window.project_view.schedule_rename(new_uid, file_path)
 
     def _new_database(self) -> None:
         if not self.ui_access_manager.is_allowed(Feature.CREATE_DATABASE):

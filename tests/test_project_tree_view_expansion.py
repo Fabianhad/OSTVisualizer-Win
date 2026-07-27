@@ -271,6 +271,99 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             ["bid-1", "bid-2"],
         )
 
+    def test_multi_select_projects_rejects_cross_database_write_scope(self):
+        loaded_files = self._loaded_file([], file_path="C:/jobs/one.mdb")
+        loaded_files[0].projects[0].uid = "project-one"
+        loaded_files.extend(self._loaded_file([], file_path="C:/jobs/two.mdb"))
+        loaded_files[1].projects[0].uid = "project-two"
+        self.view.build_complete_structure(loaded_files)
+        project_one, _ = self.view._find_project_item("project-one", "C:/jobs/one.mdb")
+        project_two, _ = self.view._find_project_item("project-two", "C:/jobs/two.mdb")
+        project_one.setSelected(True)
+        project_two.setSelected(True)
+
+        _bid_refs, project_uids = self.view._collect_multi_selection()
+
+        self.assertEqual(project_uids, [])
+
+    def test_grouped_project_multi_selection_deduplicates_project_uid(self):
+        loaded_file = LoadedFile(
+            file_path="C:/jobs/test.mdb",
+            display_name="test.mdb",
+            projects=[
+                Project(
+                    uid="project-shared",
+                    name="Shared",
+                    bids=[
+                        Bid(uid="bid-open", name="Open", status="Open"),
+                        Bid(uid="bid-won", name="Won", status="Won"),
+                    ],
+                )
+            ],
+            orphan_bids=[],
+        )
+        self.view._group_by_job_status = True
+        self.view.build_complete_structure([loaded_file])
+        project_items = []
+
+        def collect(item):
+            data = item.data(0, self.view._ITEM_ROLE)
+            if data and data[:2] == ("project", "project-shared"):
+                project_items.append(item)
+            for index in range(item.childCount()):
+                collect(item.child(index))
+
+        for index in range(self.view.top_tree.topLevelItemCount()):
+            collect(self.view.top_tree.topLevelItem(index))
+        self.assertEqual(len(project_items), 2)
+        for item in project_items:
+            item.setSelected(True)
+
+        _bid_refs, project_uids = self.view._collect_multi_selection()
+
+        self.assertEqual(project_uids, ["project-shared"])
+
+    def test_scheduled_rename_targets_matching_database_for_duplicate_project_uid(self):
+        loaded_files = self._loaded_file([], file_path="C:/jobs/one.mdb")
+        loaded_files[0].projects[0].uid = "project-shared"
+        loaded_files.extend(self._loaded_file([], file_path="C:/jobs/two.mdb"))
+        loaded_files[1].projects[0].uid = "project-shared"
+        self.view.build_complete_structure(loaded_files)
+
+        self.view.schedule_rename("project-shared", "C:/jobs/two.mdb")
+        self.app.processEvents()
+
+        self.assertIsNotNone(self.view._rename_item)
+        self.assertEqual(self.view._rename_item[2], "C:/jobs/two.mdb")
+        self.view.reset()
+
+    def test_reset_cancels_active_rename_before_deleting_tree_item(self):
+        rename_calls = []
+        self.view.on_rename_project = lambda *args: rename_calls.append(args)
+        self.view.build_complete_structure(self._loaded_file([]))
+        item = self._find_item("project-1")
+        self.view._start_project_rename(item, "project-1", "C:/jobs/test.mdb")
+        self.app.processEvents()
+        editor = self.view.top_tree.viewport().focusWidget()
+        self.assertIsInstance(editor, QtWidgets.QLineEdit)
+        editor.setText("Changed")
+
+        self.view.reset()
+        self.view._on_rename_editor_closed()
+
+        self.assertIsNone(self.view._rename_item)
+        self.assertFalse(self.view._rename_editor_connected)
+        self.assertEqual(rename_calls, [])
+
+    def test_tree_rebuild_preserves_outer_signal_block(self):
+        self.view.top_tree.blockSignals(True)
+        try:
+            self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+            self.view._select_item(self._find_item("bid-1"))
+            self.assertTrue(self.view.top_tree.signalsBlocked())
+        finally:
+            self.view.top_tree.blockSignals(False)
+
     def test_right_click_project_selects_target_and_emits_context_menu(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         self.view.top_tree.expandAll()

@@ -273,6 +273,7 @@ class ProjectView(QtWidgets.QWidget):
         self.on_can_renumber_conditions: Optional[Callable[[], bool]] = None
         self.on_project_view_options_changed: Optional[Callable[[], None]] = None
         self._pending_rename_uid: Optional[str] = None
+        self._pending_rename_file_path: Optional[str] = None
         self._rename_item: Optional[Tuple] = None
         self._rename_editor_connected = False
         self._loaded_files: List[LoadedFile] = []
@@ -290,8 +291,11 @@ class ProjectView(QtWidgets.QWidget):
     def set_ui_access_manager(self, access_manager) -> None:
         self.top_tree.set_ui_access_manager(access_manager)
 
-    def schedule_rename(self, project_uid: str) -> None:
+    def schedule_rename(
+        self, project_uid: str, file_path: Optional[str] = None
+    ) -> None:
         self._pending_rename_uid = project_uid
+        self._pending_rename_file_path = file_path
         QtCore.QTimer.singleShot(0, self._start_pending_rename)
 
     def _build_ui(self) -> None:
@@ -593,10 +597,14 @@ class ProjectView(QtWidgets.QWidget):
 
     def _start_pending_rename(self) -> None:
         uid = self._pending_rename_uid
-        item, file_path = self._find_project_item(uid)
+        if not uid:
+            return
+        pending_file_path = self._pending_rename_file_path
+        item, file_path = self._find_project_item(uid, pending_file_path)
         if not item:
             return
         self._pending_rename_uid = None
+        self._pending_rename_file_path = None
         self._start_project_rename(item, uid, file_path)
 
     def _find_project_item(
@@ -680,9 +688,16 @@ class ProjectView(QtWidgets.QWidget):
         if not self._rename_editor_connected:
             return
         self._rename_editor_connected = False
-        self.top_tree.itemDelegate().closeEditor.disconnect(
-            self._on_rename_editor_closed
-        )
+        try:
+            self.top_tree.itemDelegate().closeEditor.disconnect(
+                self._on_rename_editor_closed
+            )
+        except (TypeError, RuntimeError):
+            pass
+
+    def _cancel_active_rename(self) -> None:
+        self._rename_item = None
+        self._disconnect_rename_editor_signal()
 
     def _on_rename_editor_closed(self, _editor=None, _hint=None) -> None:
         if self._rename_item is None:
@@ -747,9 +762,11 @@ class ProjectView(QtWidgets.QWidget):
 
     def _restore_expanded_nodes(self) -> None:
         if not self._has_saved_expanded_nodes and not self.expanded_nodes:
-            self.top_tree.blockSignals(True)
-            self.top_tree.expandAll()
-            self.top_tree.blockSignals(False)
+            signals_were_blocked = self.top_tree.blockSignals(True)
+            try:
+                self.top_tree.expandAll()
+            finally:
+                self.top_tree.blockSignals(signals_were_blocked)
             keys: set[str] = set()
 
             def collect_expanded(item: QtWidgets.QTreeWidgetItem) -> None:
@@ -759,13 +776,15 @@ class ProjectView(QtWidgets.QWidget):
             self._walk_items(collect_expanded)
             self.expanded_nodes = keys
             return
-        self.top_tree.blockSignals(True)
+        signals_were_blocked = self.top_tree.blockSignals(True)
 
         def restore_expanded(item: QtWidgets.QTreeWidgetItem) -> None:
             item.setExpanded(self._get_node_key(item) in self.expanded_nodes)
 
-        self._walk_items(restore_expanded)
-        self.top_tree.blockSignals(False)
+        try:
+            self._walk_items(restore_expanded)
+        finally:
+            self.top_tree.blockSignals(signals_were_blocked)
 
     def save_header_state(self) -> QtCore.QByteArray:
         return self.top_tree.header().saveState()
@@ -877,12 +896,24 @@ class ProjectView(QtWidgets.QWidget):
     ) -> Tuple[List[BidRef], List[str]]:
         bid_refs: List[BidRef] = []
         project_uids: List[str] = []
+        project_uid_keys: set[str] = set()
+        project_file_key: Optional[str] = None
+        projects_span_files = False
         for item in self.top_tree.selectedItems():
             kind, uid, file_path = self._get_item_info(item)
             if kind == "bid" and uid and file_path:
                 bid_refs.append(BidRef(file_path=file_path, bid_uid=uid))
-            elif kind == "project" and uid:
-                project_uids.append(uid)
+            elif kind == "project" and uid and file_path:
+                file_key = normalize_path(file_path)
+                if project_file_key is None:
+                    project_file_key = file_key
+                elif file_key != project_file_key:
+                    projects_span_files = True
+                if uid not in project_uid_keys:
+                    project_uid_keys.add(uid)
+                    project_uids.append(uid)
+        if projects_span_files:
+            project_uids = []
         return bid_refs, project_uids
 
     def _on_top_selection_change(self):
@@ -1022,30 +1053,32 @@ class ProjectView(QtWidgets.QWidget):
 
     def _select_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
         expanded_parent_keys: set[str] = set()
-        self.top_tree.blockSignals(True)
-        parent = item.parent()
-        while parent is not None:
-            parent.setExpanded(True)
-            key = self._get_node_key(parent)
-            if key:
-                expanded_parent_keys.add(key)
-            parent = parent.parent()
-        self.top_tree.setCurrentItem(item)
-        index = self.top_tree.indexFromItem(item)
-        selection_model = self.top_tree.selectionModel()
-        if selection_model and index.isValid():
-            selection_model.select(
-                index,
-                QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
-                | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+        signals_were_blocked = self.top_tree.blockSignals(True)
+        try:
+            parent = item.parent()
+            while parent is not None:
+                parent.setExpanded(True)
+                key = self._get_node_key(parent)
+                if key:
+                    expanded_parent_keys.add(key)
+                parent = parent.parent()
+            self.top_tree.setCurrentItem(item)
+            index = self.top_tree.indexFromItem(item)
+            selection_model = self.top_tree.selectionModel()
+            if selection_model and index.isValid():
+                selection_model.select(
+                    index,
+                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+                    | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+                )
+            else:
+                self.top_tree.clearSelection()
+                item.setSelected(True)
+            self.top_tree.scrollToItem(
+                item, QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible
             )
-        else:
-            self.top_tree.clearSelection()
-            item.setSelected(True)
-        self.top_tree.scrollToItem(
-            item, QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible
-        )
-        self.top_tree.blockSignals(False)
+        finally:
+            self.top_tree.blockSignals(signals_were_blocked)
         if expanded_parent_keys:
             self._has_saved_expanded_nodes = True
             self.expanded_nodes.update(expanded_parent_keys)
@@ -1583,12 +1616,17 @@ class ProjectView(QtWidgets.QWidget):
             self._selected_node_state = self._selection_state_for_item(item)
 
     def _clear_tree_items(self) -> None:
-        self.top_tree.blockSignals(True)
-        self.top_tree.clear()
-        self.top_tree.blockSignals(False)
+        self._cancel_active_rename()
+        signals_were_blocked = self.top_tree.blockSignals(True)
+        try:
+            self.top_tree.clear()
+        finally:
+            self.top_tree.blockSignals(signals_were_blocked)
 
     def reset(self) -> None:
         self._clear_tree_items()
+        self._pending_rename_uid = None
+        self._pending_rename_file_path = None
         self._loaded_files = []
         self.current_bid_ref = None
         self._selected_node_state = None
@@ -1613,6 +1651,10 @@ class ProjectView(QtWidgets.QWidget):
             self.top_tree.itemDoubleClicked.disconnect()
         except (TypeError, RuntimeError):
             pass
+        try:
+            self.top_tree.customContextMenuRequested.disconnect()
+        except (TypeError, RuntimeError):
+            pass
         self._clear_tree_items()
         self.on_bid_selection = None
         self.on_bid_activated = None
@@ -1632,8 +1674,9 @@ class ProjectView(QtWidgets.QWidget):
         self.on_renumber_conditions = None
         self.on_can_renumber_conditions = None
         self.on_project_view_options_changed = None
-        self._disconnect_rename_editor_signal()
-        self._rename_item = None
+        self._pending_rename_uid = None
+        self._pending_rename_file_path = None
+        self._cancel_active_rename()
         self._rename_editor_connected = False
         self._loaded_files = None
         self.current_bid_ref = None

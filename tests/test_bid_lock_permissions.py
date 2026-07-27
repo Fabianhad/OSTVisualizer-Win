@@ -2239,7 +2239,7 @@ class BidLockPermissionTests(unittest.TestCase):
         controller = MenuController.__new__(MenuController)
         controller.window = SimpleNamespace(
             project_view=SimpleNamespace(
-                schedule_rename=lambda uid: renames.append(uid)
+                schedule_rename=lambda uid, file_path: renames.append((uid, file_path))
             )
         )
         controller.ui_access_manager = SimpleNamespace(
@@ -2273,6 +2273,33 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         self.assertEqual(criticals, [])
         self.assertEqual(renames, [])
+
+    def test_new_folder_schedules_rename_with_target_database(self):
+        renames = []
+        controller = MenuController.__new__(MenuController)
+        controller.window = SimpleNamespace(
+            project_view=SimpleNamespace(
+                schedule_rename=lambda uid, file_path: renames.append((uid, file_path))
+            )
+        )
+        controller.ui_access_manager = SimpleNamespace(
+            can_create_project_tree_items=lambda has_file: has_file
+        )
+        controller.ui_state_manager = SimpleNamespace(
+            selected_file_path="db.mdb",
+            selected_project_uid=None,
+        )
+        controller.project_data = SimpleNamespace()
+        controller._deferred_persistence = _FakeDeferredPersistence()
+        controller._project_write_service = SimpleNamespace(
+            create_project_result=lambda _path, _name: WriteReloadResult(
+                "project-new", write_success=True, reload_success=True
+            )
+        )
+
+        MenuController._new_folder(controller)
+
+        self.assertEqual(renames, [("project-new", "db.mdb")])
 
     def test_batch_layer_delete_reports_partial_success_and_reloads_once(self):
         project_data = _ProjectData()
