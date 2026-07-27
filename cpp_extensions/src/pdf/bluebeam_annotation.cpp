@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <random>
+#include <stdexcept>
 namespace ost_pdf_writer
 {
     constexpr double CLOUD_BORDER_EFFECT_INTENSITY = 2.0;
@@ -90,6 +91,10 @@ namespace ost_pdf_writer
     static std::array<double, 4> compute_bbox(
         const std::vector<std::array<double, 2>> &verts)
     {
+        if (verts.empty())
+        {
+            throw std::invalid_argument("Annotation polygon must contain vertices");
+        }
         double min_x = verts[0][0], min_y = verts[0][1];
         double max_x = verts[0][0], max_y = verts[0][1];
         for (const auto &v : verts)
@@ -127,8 +132,16 @@ namespace ost_pdf_writer
     static std::array<double, 4> compute_bbox_strokes(
         const std::vector<std::vector<std::array<double, 2>>> &strokes)
     {
-        double min_x = strokes[0][0][0], min_y = strokes[0][0][1];
-        double max_x = strokes[0][0][0], max_y = strokes[0][0][1];
+        auto first_non_empty = std::find_if(
+            strokes.begin(), strokes.end(),
+            [](const auto &stroke)
+            { return !stroke.empty(); });
+        if (first_non_empty == strokes.end())
+        {
+            throw std::invalid_argument("Annotation strokes must contain points");
+        }
+        double min_x = (*first_non_empty)[0][0], min_y = (*first_non_empty)[0][1];
+        double max_x = (*first_non_empty)[0][0], max_y = (*first_non_empty)[0][1];
         for (const auto &stroke : strokes)
             for (const auto &pt : stroke)
             {

@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed malformed empty polygon and ink data crashing the native PDF annotation
+  writer instead of returning its documented failure result.
 - Fixed takeoff undo/redo accepting incomplete authoritative insert identities,
   which could retain stale IDs or misclassify a failed parent replay as a cycle.
 - Fixed cancelling employee detail edits after navigating records retaining
