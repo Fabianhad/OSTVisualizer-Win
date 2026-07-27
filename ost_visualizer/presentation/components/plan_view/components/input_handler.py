@@ -2914,7 +2914,8 @@ class InputHandlerMixin:
         if not (QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
             self._cancel_active_drag_interaction(restore_preview=True)
         if self._selection_enabled and self._cursor_mode == CURSOR_MODE_SELECT:
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.unsetCursor()
+            self.viewport().unsetCursor()
         self._last_mouse_vp_pos = None
         self.viewport().update()
         super().leaveEvent(event)

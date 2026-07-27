@@ -247,6 +247,33 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service._on_scene_ready([], 42, False)
         self.assertEqual(len(published), 1)
 
+    def test_pending_mesh_identity_is_exposed_only_until_delivery_or_cancellation(self):
+        service = VisualizationService.__new__(VisualizationService)
+        identity = MeshSceneIdentity(
+            BidRef("db.mdb", "bid-42"), ("page-42",), 42
+        )
+        service._mesh_generation_lock = threading.Lock()
+        service._mesh_generation_id = identity.generation
+        service._mesh_generation_identity = identity
+        service._mesh_generation_delivered = False
+        service._mesh_pending_task = None
+        service._mesh_shutdown = threading.Event()
+        service.event_bus = SimpleNamespace(publish=lambda _event, **_payload: None)
+
+        self.assertEqual(service.get_pending_mesh_scene_identity(), identity)
+        service._on_scene_ready([], identity.generation, False)
+        self.assertIsNone(service.get_pending_mesh_scene_identity())
+
+        next_identity = MeshSceneIdentity(
+            BidRef("db.mdb", "bid-43"), ("page-43",), 43
+        )
+        service._mesh_generation_id = next_identity.generation
+        service._mesh_generation_identity = next_identity
+        service._mesh_generation_delivered = False
+        self.assertEqual(service.get_pending_mesh_scene_identity(), next_identity)
+        service.cancel_mesh_view_refresh()
+        self.assertIsNone(service.get_pending_mesh_scene_identity())
+
     def test_rapid_page_and_bid_switches_reject_obsolete_mesh_results(self):
         published = []
         current_bid = [BidRef("db.mdb", "bid-1")]

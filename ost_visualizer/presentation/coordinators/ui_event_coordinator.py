@@ -530,20 +530,29 @@ class UIEventCoordinator:
                 window.set_plan_texture_provider(self._plan_texture_provider)
             self._sync_overlay_display_mode(self.ui_state_manager.active_page_uid)
             self._sync_mesh_window_action(True)
-            if self._last_mesh_scene is None and (
-                not self._mesh_scene_dirty or self._pending_dirty_mesh_refresh
-            ):
-                bid_ref = self.ui_state_manager.get_selected_bid_ref()
-                if bid_ref is not None:
-                    window.prepare_scene_refresh(
-                        bid_ref,
-                        self.project_data.get_selected_page_uids(),
-                    )
             window.show_initial_window()
+            if not self._mesh_scene_dirty and self._replay_mesh_if_current(window):
+                return
+            bid_ref = self.ui_state_manager.get_selected_bid_ref()
+            page_uids = normalize_scene_page_uids(
+                self.project_data.get_selected_page_uids()
+            )
+            pending_identity = (
+                self.visualization_service.get_pending_mesh_scene_identity()
+            )
+            if (
+                bid_ref is not None
+                and pending_identity is not None
+                and pending_identity.bid_ref == bid_ref
+                and pending_identity.page_uids == page_uids
+            ):
+                window.prepare_scene_refresh(bid_ref, page_uids)
+                return
             if self._mesh_scene_dirty:
+                self._pending_dirty_mesh_refresh = False
                 self._flush_dirty_mesh_refresh_if_needed()
-            else:
-                self._replay_mesh_if_current(window)
+                return
+            self._request_or_defer_mesh_refresh(list(page_uids))
             return
         if self._mesh_window is None:
             self._sync_mesh_window_action(False)
@@ -553,10 +562,10 @@ class UIEventCoordinator:
         self._sync_mesh_window_action(False)
         window.close()
 
-    def _replay_mesh_if_current(self, surface) -> None:
+    def _replay_mesh_if_current(self, surface) -> bool:
         publication = self._last_mesh_scene
         if publication is None:
-            return
+            return False
         active_bid_ref = self.ui_state_manager.get_selected_bid_ref()
         active_pages = normalize_scene_page_uids(
             self.project_data.get_selected_page_uids()
@@ -574,9 +583,10 @@ class UIEventCoordinator:
                 active_pages,
             )
             self._clear_mesh_replay_buffer()
-            return
+            return False
         surface.prepare_scene_refresh(active_bid_ref, active_pages)
         surface.apply_mesh_data(*publication.args, **publication.options)
+        return True
 
     def _clear_mesh_replay_buffer(self) -> None:
         self._last_mesh_scene = None

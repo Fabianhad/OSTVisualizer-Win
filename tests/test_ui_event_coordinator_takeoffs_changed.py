@@ -517,17 +517,22 @@ class FakeUnloadViewer:
 
 
 class FakeVisualization:
-    def __init__(self):
+    def __init__(self, pending_mesh_scene_identity=None):
         self.mesh_pages = []
         self.monitoring_stopped = 0
         self.monitoring_started = 0
         self.cancelled_mesh_refreshes = 0
+        self.pending_mesh_scene_identity = pending_mesh_scene_identity
 
     def refresh_mesh_view(self, page_uids):
         self.mesh_pages.append(list(page_uids))
 
+    def get_pending_mesh_scene_identity(self):
+        return self.pending_mesh_scene_identity
+
     def cancel_mesh_view_refresh(self):
         self.cancelled_mesh_refreshes += 1
+        self.pending_mesh_scene_identity = None
 
     def stop_database_monitoring(self):
         self.monitoring_stopped += 1
@@ -2071,6 +2076,114 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
         self.assertEqual(len(coordinator._mesh_window.mesh_calls), 1)
 
+    def test_opening_detached_mesh_window_with_stale_cache_requests_fresh_mesh(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        active_ref = BidRef("test.mdb", "bid-1")
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator.project_data = FakeProjectData()
+        coordinator._icon_provider = None
+        coordinator._color_service = None
+        coordinator._plan_view_handler = None
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator.main_window = FakeMainWindow()
+        configure_mesh_state(
+            coordinator,
+            last_mesh_scene=_MeshScenePublication(
+                ("vertices", "normals", "indices", "colors"),
+                {
+                    "scene_identity": scene_identity(
+                        active_ref, 7, ("other-page",)
+                    ),
+                    "page_floor_elevations": {"other-page": 7.0},
+                },
+            ),
+        )
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        original = ui_event_coordinator.MeshViewWindow
+        ui_event_coordinator.MeshViewWindow = FakeConstructedMeshWindow
+        try:
+            coordinator.set_mesh_window_visible(True)
+        finally:
+            ui_event_coordinator.MeshViewWindow = original
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [["page-1"]])
+        self.assertEqual(
+            coordinator._mesh_window.scene_refreshes,
+            [(active_ref, ("page-1",))],
+        )
+        self.assertEqual(coordinator._mesh_window.mesh_calls, [])
+        self.assertIsNone(coordinator._last_mesh_scene)
+
+    def test_opening_detached_mesh_window_without_cache_requests_fresh_mesh(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        active_ref = BidRef("test.mdb", "bid-1")
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator.project_data = FakeProjectData()
+        coordinator._icon_provider = None
+        coordinator._color_service = None
+        coordinator._plan_view_handler = None
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator.main_window = FakeMainWindow()
+        configure_mesh_state(coordinator)
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        original = ui_event_coordinator.MeshViewWindow
+        ui_event_coordinator.MeshViewWindow = FakeConstructedMeshWindow
+        try:
+            coordinator.set_mesh_window_visible(True)
+        finally:
+            ui_event_coordinator.MeshViewWindow = original
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [["page-1"]])
+        self.assertEqual(
+            coordinator._mesh_window.scene_refreshes,
+            [(active_ref, ("page-1",))],
+        )
+        self.assertEqual(coordinator._mesh_window.mesh_calls, [])
+
+    def test_opening_detached_mesh_window_replaces_mismatched_pending_generation(
+        self,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        active_ref = BidRef("test.mdb", "bid-1")
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator.project_data = FakeProjectData()
+        coordinator._icon_provider = None
+        coordinator._color_service = None
+        coordinator._plan_view_handler = None
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator.main_window = FakeMainWindow()
+        configure_mesh_state(
+            coordinator,
+            visualization=FakeVisualization(
+                pending_mesh_scene_identity=scene_identity(
+                    active_ref, 41, ("other-page",)
+                )
+            ),
+        )
+        coordinator._mesh_scene_dirty = True
+        coordinator._dirty_mesh_page_uids = {"page-1"}
+        coordinator._pending_dirty_mesh_refresh = True
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        original = ui_event_coordinator.MeshViewWindow
+        ui_event_coordinator.MeshViewWindow = FakeConstructedMeshWindow
+        try:
+            coordinator.set_mesh_window_visible(True)
+        finally:
+            ui_event_coordinator.MeshViewWindow = original
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [["page-1"]])
+        self.assertEqual(
+            coordinator._mesh_window.scene_refreshes,
+            [(active_ref, ("page-1",))],
+        )
+        self.assertTrue(coordinator._pending_dirty_mesh_refresh)
+
     def test_detached_mesh_can_reopen_before_old_destroyed_signal_arrives(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = FakeUiState()
@@ -2116,7 +2229,12 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._last_mesh_scene = None
         coordinator.ui_access_manager = FakeMeshAccess()
         coordinator.main_window = FakeMainWindow()
-        configure_mesh_state(coordinator)
+        configure_mesh_state(
+            coordinator,
+            visualization=FakeVisualization(
+                pending_mesh_scene_identity=scene_identity(active_ref, 42)
+            ),
+        )
         coordinator._mesh_scene_dirty = True
         coordinator._dirty_mesh_page_uids = {"page-1"}
         coordinator._pending_dirty_mesh_refresh = True

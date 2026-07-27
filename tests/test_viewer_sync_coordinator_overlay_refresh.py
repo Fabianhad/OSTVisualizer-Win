@@ -4042,6 +4042,28 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view.cleanup()
 
+    def test_select_mode_leave_clears_cursor_from_viewport_owner(self):
+        host = QtWidgets.QWidget()
+        host.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+        view = self._make_plan_view()
+        view.setParent(host)
+        view._selection_enabled = True
+        view._cursor_mode = "select"
+        view.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+        view.viewport().setCursor(QtCore.Qt.CursorShape.IBeamCursor)
+
+        view.leaveEvent(QtCore.QEvent(QtCore.QEvent.Type.Leave))
+
+        self.assertEqual(
+            view.cursor().shape(),
+            QtCore.Qt.CursorShape.CrossCursor,
+        )
+        self.assertEqual(
+            view.viewport().cursor().shape(),
+            QtCore.Qt.CursorShape.CrossCursor,
+        )
+        view.cleanup()
+
     def test_inline_text_annotation_edit_ibeam_cursor_is_limited_to_textbox(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(

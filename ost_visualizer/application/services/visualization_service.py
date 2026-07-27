@@ -75,6 +75,18 @@ class VisualizationService:
                 and generation == self._mesh_generation_id
             )
 
+    def get_pending_mesh_scene_identity(self) -> Optional[MeshSceneIdentity]:
+        with self._mesh_generation_lock:
+            identity = self._mesh_generation_identity
+            if (
+                self._mesh_shutdown.is_set()
+                or self._mesh_generation_delivered
+                or identity is None
+                or identity.generation != self._mesh_generation_id
+            ):
+                return None
+            return identity
+
     def _claim_mesh_result(self, generation: int) -> Optional[MeshSceneIdentity]:
         with self._mesh_generation_lock:
             if (
