@@ -1753,7 +1753,7 @@ class CtrlDragTests(unittest.TestCase):
             ],
         )
 
-    def test_duplicate_named_view_commit_keeps_draft_without_focus_restore(self):
+    def test_duplicate_named_view_validation_ignores_modal_reentry(self):
         position = [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
         view = SimpleNamespace()
         view._finishing_named_view_rename = False
@@ -1797,6 +1797,8 @@ class CtrlDragTests(unittest.TestCase):
 
         def validate(name, exclude_uid=None):
             validator_calls.append((name, exclude_uid))
+            if len(validator_calls) == 1:
+                TakeoffPlanView._finish_named_view_rename(view, True)
             return False
 
         view._editing_named_view_item = item

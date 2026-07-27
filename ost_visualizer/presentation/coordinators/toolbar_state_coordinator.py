@@ -372,12 +372,13 @@ class ToolbarStateCoordinator:
             self._move_overlay_action.setEnabled(can_move_overlay)
         select_allowed = self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
         edit_allowed = self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
+        inline_edit_allowed = self._access.is_allowed(Feature.EDIT_ANNOTATION_TEXT)
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
-            self.plan_view.set_editing_enabled(edit_allowed)
-            self.plan_view.set_text_annotation_inline_edit_enabled(
-                self._access.is_allowed(Feature.EDIT_ANNOTATION_TEXT)
-            )
+            inline_edit_active = self.plan_view.is_text_annotation_inline_edit_active()
+            if not inline_edit_active or not inline_edit_allowed:
+                self.plan_view.set_editing_enabled(edit_allowed)
+            self.plan_view.set_text_annotation_inline_edit_enabled(inline_edit_allowed)
         if self.opengl_viewer:
             self.opengl_viewer.set_pick_enabled(select_allowed)
             self.opengl_viewer.set_editing_enabled(edit_allowed)

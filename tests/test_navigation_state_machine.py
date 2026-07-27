@@ -456,6 +456,9 @@ class NavigationStateMachineTests(unittest.TestCase):
             def set_text_annotation_inline_edit_enabled(self, _enabled):
                 pass
 
+            def is_text_annotation_inline_edit_active(self):
+                return False
+
             def can_move_overlay_image(self):
                 return False
 

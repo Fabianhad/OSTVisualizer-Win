@@ -1637,7 +1637,13 @@ class TakeoffPlanView(
             and pending_text_stripped
             and self._named_view_name_validator is not None
         ):
-            is_valid_name = self._named_view_name_validator(pending_text_stripped, uid)
+            self._finishing_named_view_rename = True
+            try:
+                is_valid_name = self._named_view_name_validator(
+                    pending_text_stripped, uid
+                )
+            finally:
+                self._finishing_named_view_rename = False
             if not is_valid_name:
                 self._refresh_named_view_label_background(uid)
                 return

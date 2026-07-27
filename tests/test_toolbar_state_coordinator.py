@@ -93,6 +93,9 @@ class _PlanView:
         self.cursor_modes = []
         self.selection_enabled = None
         self.editing_enabled = None
+        self.editing_enabled_calls = []
+        self.inline_edit_active = False
+        self.inline_edit_enabled = None
 
     def selected_takeoff_condition_uid(self):
         return None
@@ -108,9 +111,13 @@ class _PlanView:
 
     def set_editing_enabled(self, enabled: bool):
         self.editing_enabled = bool(enabled)
+        self.editing_enabled_calls.append(bool(enabled))
 
-    def set_text_annotation_inline_edit_enabled(self, _enabled: bool):
-        pass
+    def set_text_annotation_inline_edit_enabled(self, enabled: bool):
+        self.inline_edit_enabled = bool(enabled)
+
+    def is_text_annotation_inline_edit_active(self):
+        return self.inline_edit_active
 
     def backout_parent_candidate_uid(self):
         return None
@@ -203,6 +210,26 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         self.assertFalse(undo_action.isEnabled())
         self.assertTrue(plan_view.selection_enabled)
         self.assertFalse(plan_view.editing_enabled)
+
+    def test_active_inline_editor_keeps_canvas_editing_capability(self):
+        _app()
+        access = _SelectiveAccess({Feature.EDIT_ANNOTATION_TEXT})
+        coordinator = ToolbarStateCoordinator(
+            _UiState(active_page_uid="p1"),
+            access,
+            _ProjectData(),
+        )
+        plan_view = _PlanView()
+        plan_view.editing_enabled = True
+        plan_view.inline_edit_active = True
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_plan_view(plan_view)
+
+        coordinator.refresh()
+
+        self.assertEqual(plan_view.editing_enabled_calls, [])
+        self.assertTrue(plan_view.editing_enabled)
+        self.assertTrue(plan_view.inline_edit_enabled)
 
     def test_refresh_exits_place_when_3d_view_is_active(self):
         _app()
