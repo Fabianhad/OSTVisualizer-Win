@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import List, Optional, Set
 from PySide6 import QtCore, QtWidgets
 from ...domain.entities.employee import Employee, PayClass
@@ -232,9 +233,10 @@ class EmployeesDialog(QtWidgets.QDialog):
         self, employees: List[EmployeeRecord], current_index: int
     ) -> None:
         pay_classes = [pc.to_pay_class() for pc in self._pay_classes]
+        editable_employees = [replace(employee) for employee in employees]
         form = EmployeeDetailDialog(
             self.icon_provider,
-            employees,
+            editable_employees,
             current_index,
             parent=self,
             pay_classes=pay_classes,

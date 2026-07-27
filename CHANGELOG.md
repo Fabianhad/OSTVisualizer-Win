@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed cancelling employee detail edits after navigating records retaining
+  unsaved field changes in the parent Employees dialog.
 - Fixed replacement or cleanup of a plan view leaving one placement signal
   connected when the other signal had already been disconnected.
 - Fixed the page-area picker saving or restoring stale bid state when its

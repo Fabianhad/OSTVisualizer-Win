@@ -1106,6 +1106,27 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_employee_detail_cancel_does_not_modify_existing_employee(self):
+        dialog = self._employee_dialog()
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            detail_dialog = self._employee_detail_dialog_stub(
+                QtWidgets.QDialog.DialogCode.Rejected
+            )
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog."
+                "EmployeeDetailDialog",
+                detail_dialog,
+            ):
+                dialog._on_change()
+            self.assertEqual(dialog._employees[0].first_name, "Ava")
+            self.assertEqual(dialog._employees[0].last_name, "Lee")
+            self.assertEqual(dialog.tree.topLevelItem(0).text(1), "Ava Lee")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     @staticmethod
     def _employee_detail_dialog_stub(
         result=QtWidgets.QDialog.DialogCode.Accepted,
