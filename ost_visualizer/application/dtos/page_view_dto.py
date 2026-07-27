@@ -18,7 +18,7 @@ class PageViewDto:
     annotations: List[BidAnnotation] = field(default_factory=list)
     ordered_pages: List[Page] = field(default_factory=list)
     named_view: Optional[NamedView] = None
-    page_area_selections: Optional[Dict[str, Optional[str]]] = None
+    page_area_selections: Dict[str, Optional[str]] = field(default_factory=dict)
     hidden_layer_uids: Set[str] = field(default_factory=set)
     annotation_layer_uid: Optional[str] = None
 
