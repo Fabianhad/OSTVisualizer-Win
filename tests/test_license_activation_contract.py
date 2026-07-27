@@ -1,5 +1,7 @@
 import logging
 import unittest
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from ost_visualizer.application.dtos.license_dto import (
     LicenseOperationResultDto,
     LicenseOperationStatus,
@@ -18,7 +20,8 @@ from ost_visualizer.application.use_cases.license.utils.license_use_case import 
     parse_failure_response,
     parse_signed_success_response,
 )
-from ost_visualizer.domain.entities.license import LicenseStatus
+from ost_visualizer.domain.aggregates.license_aggregate import LicenseAggregate
+from ost_visualizer.domain.entities.license import License, LicenseStatus
 
 
 class FakeModel:
@@ -129,6 +132,33 @@ class FakeApiClient:
 
 
 class LicenseActivationContractTests(unittest.TestCase):
+    def test_offline_grace_rejects_future_validation_timestamp(self):
+        now = datetime.now(timezone.utc)
+        cached = License(
+            license_key="LIC-test-key",
+            expiry_date=now + timedelta(days=30),
+            signature="signed",
+            hwid="hwid-a",
+            last_validated=now + timedelta(days=30),
+            signed_expiry_date=(now + timedelta(days=30)).isoformat(),
+        )
+        repository = SimpleNamespace(
+            load=lambda: cached,
+            save=lambda _license: None,
+            clear=lambda: None,
+        )
+        verifier = SimpleNamespace(
+            verify_license_payload=lambda _payload, _signature: True
+        )
+        aggregate = LicenseAggregate(
+            repository,
+            hwid_provider=lambda: "hwid-a",
+            signature_verifier=verifier,
+            offline_grace_hours=72,
+        )
+
+        self.assertFalse(aggregate.can_use_offline_grace())
+
     def test_failure_parser_maps_explicit_inactive_device_contract(self):
         failure = parse_failure_response(
             {

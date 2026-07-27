@@ -141,9 +141,8 @@ class LicenseAggregate:
         last_validated = self._normalize_datetime(self._license.last_validated)
         if last_validated is None:
             return False
-        return datetime.now(timezone.utc) - last_validated <= timedelta(
-            hours=self.offline_grace_hours
-        )
+        age = datetime.now(timezone.utc) - last_validated
+        return timedelta(0) <= age <= timedelta(hours=self.offline_grace_hours)
 
     def has_valid_cached_signature(self) -> bool:
         if not self.signature_verifier:

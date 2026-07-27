@@ -31,6 +31,7 @@
   queued shutdown reached the UI event loop.
 - Fixed periodic license validation updating internal authorization without
   notifying the UI when a license expired, became invalid, or recovered.
+- Fixed future-dated local validation timestamps extending licensed offline grace beyond its configured duration.
 - Fixed malformed empty or odd-length polygon and ink data crashing plan
   annotation rendering or the native PDF writer instead of degrading safely.
 - Fixed takeoff undo/redo accepting incomplete authoritative insert identities,
