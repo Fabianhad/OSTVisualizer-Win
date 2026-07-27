@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Fixed condition-property saves silently coercing invalid condition numbers or ignoring malformed spacing, and rejecting non-finite elevation, dimension, pitch, and display-size values before they can reach project storage.
 - Fixed broad read-only MCP database, project, bid, hierarchy, and live-selection responses so they enforce result limits, report truncation metadata, and cannot double-count repeated live selection IDs.
 - Fixed plan context menus that retained stale condition actions while paging or crashed on invalid stored annotation widths.
 - Fixed overlay rectangle writes that accepted missing pages or pages with invalid calibration factors.

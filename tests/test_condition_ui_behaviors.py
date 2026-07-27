@@ -926,6 +926,110 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         dialog.close()
 
+    def test_edit_condition_requires_its_read_service_dependency(self):
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        with self.assertRaisesRegex(ValueError, "requires read_service"):
+            EditConditionDialog(
+                None,
+                None,
+                condition,
+                ["c1"],
+                {"c1": condition},
+                {},
+                {},
+                lambda _uid: False,
+                lambda _uid, _dto: True,
+            )
+
+    def test_edit_condition_invalid_spacing_blocks_the_entire_update(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        dialog = self._make_dialog(condition)
+        dialog._name_edit.setText("Updated Condition")
+        dialog._spacing_edit.setText("not-a-dimension")
+        try:
+            with patch(
+                "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+            ) as warning:
+                self.assertIsNone(dialog._validate_and_build_dto())
+            warning.assert_called_once()
+        finally:
+            dialog._dirty = False
+            dialog.close()
+
+    def test_edit_condition_rejects_invalid_condition_numbers(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=7,
+        )
+        for invalid_value in ("", "not-a-number", "1.5", "0", "-1"):
+            with self.subTest(invalid_value=invalid_value):
+                dialog = self._make_dialog(condition)
+                dialog._ref_no_edit.setText(invalid_value)
+                try:
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+                    ) as warning:
+                        self.assertIsNone(dialog._validate_and_build_dto())
+                    warning.assert_called_once()
+                finally:
+                    dialog._dirty = False
+                    dialog.close()
+
+    def test_edit_condition_rejects_non_finite_numeric_values(self):
+        cases = (
+            (
+                "elevation",
+                Condition.TYPE_LINEAR,
+                lambda dialog: dialog._elev_value_edit.setText("nan"),
+            ),
+            (
+                "spacing",
+                Condition.TYPE_LINEAR,
+                lambda dialog: dialog._spacing_edit.setText("nan"),
+            ),
+            (
+                "linear rise",
+                Condition.TYPE_LINEAR,
+                lambda dialog: dialog._rise_edit.setText("inf"),
+            ),
+            (
+                "area run",
+                Condition.TYPE_AREA,
+                lambda dialog: dialog._run_edit.setText("-inf"),
+            ),
+            (
+                "display size",
+                Condition.TYPE_COUNT,
+                lambda dialog: dialog._display_size_edit.setText("nan"),
+            ),
+        )
+        for label, condition_type, set_invalid_value in cases:
+            with self.subTest(label=label):
+                condition = Condition(
+                    uid="c1",
+                    name="Condition 1",
+                    condition_type=condition_type,
+                    ref_no=1,
+                )
+                dialog = self._make_dialog(condition)
+                set_invalid_value(dialog)
+                try:
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+                    ) as warning:
+                        self.assertIsNone(dialog._validate_and_build_dto())
+                    warning.assert_called_once()
+                finally:
+                    dialog._dirty = False
+                    dialog.close()
+
     def test_edit_condition_dimension_inputs_use_consistent_heights(self):
         condition = Condition(
             uid="c1",
@@ -944,6 +1048,42 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(dialog._dim_r0c3_stack.height(), expected_height)
         self.assertEqual(dialog._height_edit.height(), expected_height)
         self.assertEqual(dialog._width_edit.height(), expected_height)
+        dialog.close()
+
+    def test_edit_condition_shape_change_marks_dirty_once(self):
+        class CountingDialog(EditConditionDialog):
+            def __init__(self, *args, **kwargs):
+                self.dirty_call_count = 0
+                super().__init__(*args, **kwargs)
+
+            def _mark_dirty(self, *_args):
+                self.dirty_call_count += 1
+                super()._mark_dirty()
+
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_COUNT,
+            ref_no=1,
+        )
+        dialog = CountingDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: True,
+            read_service=FakeReadService(),
+        )
+        dialog.dirty_call_count = 0
+        dialog._shape_combo.setCurrentIndex(
+            (dialog._shape_combo.currentIndex() + 1) % dialog._shape_combo.count()
+        )
+        self.assertEqual(dialog.dirty_call_count, 1)
+        dialog._dirty = False
         dialog.close()
 
     def test_delete_key_invokes_condition_delete_for_tree_selection(self):

@@ -1,3 +1,4 @@
+from math import isfinite
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.update_condition_dto import UpdateConditionDto
@@ -235,25 +236,20 @@ class EditConditionDialog(QtWidgets.QDialog):
         metric: bool = False,
     ) -> None:
         super().__init__(parent)
-        self._read_service = read_service
+        if read_service is None:
+            raise ValueError("EditConditionDialog requires read_service")
         self._metric = metric
-        self._display_to_inches = (
-            (lambda t: read_service.display_to_inches(t, metric))
-            if read_service
-            else None
+        self._display_to_inches = lambda text: read_service.display_to_inches(
+            text, metric
         )
-        self._inches_to_display = (
-            (lambda v: read_service.inches_to_display(v, metric))
-            if read_service
-            else None
+        self._inches_to_display = lambda value: read_service.inches_to_display(
+            value, metric
         )
-        self._get_qty_options = (
-            read_service.get_quantity_options_for_type if read_service else None
-        )
+        self._get_qty_options = read_service.get_quantity_options_for_type
         self._get_valid_uoms = (
-            (lambda c: read_service.get_valid_uoms_for_calc_type(c, metric))
-            if read_service
-            else None
+            lambda calc_type: read_service.get_valid_uoms_for_calc_type(
+                calc_type, metric
+            )
         )
         self._icon_provider = icon_provider
         self._condition_uids = list(condition_uids)
@@ -620,7 +616,6 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._shape_label.setVisible(show_shape)
         self._shape_combo.setVisible(show_shape)
         self._color_btn.color_changed.connect(self._mark_dirty)
-        self._shape_combo.currentIndexChanged.connect(self._mark_dirty)
         parent.addWidget(group)
 
     def _build_results_group(self, condition_type: int) -> None:
@@ -1326,7 +1321,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         if not text:
             return 0.0
         val = self._display_to_inches(text)
-        if val is None:
+        if val is None or not isfinite(val):
             show_warning(
                 self,
                 "Invalid Value",
@@ -1347,9 +1342,9 @@ class EditConditionDialog(QtWidgets.QDialog):
             return None
         elev_type = 1 if self._elev_bottom_btn.isChecked() else 0
         elev_value = self._elev_value_edit.text().strip()
-        if elev_value and self._display_to_inches:
+        if elev_value:
             parsed = self._display_to_inches(elev_value)
-            if parsed is None:
+            if parsed is None or not isfinite(parsed):
                 show_warning(
                     self,
                     "Invalid Value",
@@ -1379,12 +1374,25 @@ class EditConditionDialog(QtWidgets.QDialog):
             dto.set("thickness", td.get("thickness", 4.0))
             dto.set("spacing", td.get("spacing", 4.0))
             dto.set("backout", td.get("backout", False))
+        ref_no_text = self._ref_no_edit.text().strip()
         try:
-            ref_no = int(self._ref_no_edit.text() or "0")
+            ref_no = int(ref_no_text)
         except ValueError:
-            ref_no = 0
+            show_warning(
+                self,
+                "Invalid Value",
+                "Condition number must be a positive whole number.",
+            )
+            self._ref_no_edit.setFocus()
+            return None
         if ref_no < 1:
-            ref_no = 1
+            show_warning(
+                self,
+                "Invalid Value",
+                "Condition number must be a positive whole number.",
+            )
+            self._ref_no_edit.setFocus()
+            return None
         if ref_no != cond.ref_no:
             dto.set("ref_no", ref_no)
         cdn_uid = self._resolve_condition_type_uid()
@@ -1426,6 +1434,14 @@ class EditConditionDialog(QtWidgets.QDialog):
                     )
                     self._display_size_edit.setFocus()
                     return None
+                if not isfinite(display_size):
+                    show_warning(
+                        self,
+                        "Invalid Value",
+                        f'"{ds_text}" is not a valid number for Display Size.',
+                    )
+                    self._display_size_edit.setFocus()
+                    return None
                 if display_size < 10 or display_size > 500:
                     show_warning(
                         self,
@@ -1453,12 +1469,20 @@ class EditConditionDialog(QtWidgets.QDialog):
                 show_warning(self, "Invalid Value", "Rise must be a number.")
                 self._rise_edit.setFocus()
                 return None
+            if not isfinite(rise):
+                show_warning(self, "Invalid Value", "Rise must be a finite number.")
+                self._rise_edit.setFocus()
+                return None
             if rise != cond.rise:
                 dto.set("rise", rise)
             try:
                 run = float(self._run_edit.text() or "0")
             except ValueError:
                 show_warning(self, "Invalid Value", "Run must be a number.")
+                self._run_edit.setFocus()
+                return None
+            if not isfinite(run):
+                show_warning(self, "Invalid Value", "Run must be a finite number.")
                 self._run_edit.setFocus()
                 return None
             if run != cond.run:
@@ -1475,12 +1499,20 @@ class EditConditionDialog(QtWidgets.QDialog):
                 show_warning(self, "Invalid Value", "Rise must be a number.")
                 self._rise_edit.setFocus()
                 return None
+            if not isfinite(rise):
+                show_warning(self, "Invalid Value", "Rise must be a finite number.")
+                self._rise_edit.setFocus()
+                return None
             if rise != cond.rise:
                 dto.set("rise", rise)
             try:
                 run = abs(float(self._run_edit.text() or "0"))
             except ValueError:
                 show_warning(self, "Invalid Value", "Run must be a number.")
+                self._run_edit.setFocus()
+                return None
+            if not isfinite(run):
+                show_warning(self, "Invalid Value", "Run must be a finite number.")
                 self._run_edit.setFocus()
                 return None
             if run != cond.run:
@@ -1492,7 +1524,9 @@ class EditConditionDialog(QtWidgets.QDialog):
         if pattern is not None and pattern != cond.pattern:
             dto.set("pattern", pattern)
         spacing = self._parse_dimension_field(self._spacing_edit, "Spacing")
-        if spacing is not None and spacing != cond.spacing:
+        if spacing is None:
+            return None
+        if spacing != cond.spacing:
             dto.set("spacing", spacing)
         if ct in _COUNT_LIKE_TYPES:
             shape = self._shape_combo.currentData()
