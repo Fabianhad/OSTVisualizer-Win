@@ -84,10 +84,16 @@ namespace ost_renderer
     }
     void MeshData::set_vertices(const std::vector<float> &flat_verts)
     {
+        if (flat_verts.size() % 3 != 0)
+            throw std::invalid_argument(
+                "Mesh vertex array length must be divisible by 3");
         unpack_vec3(vertices, flat_verts);
     }
     void MeshData::set_normals(const std::vector<float> &flat_norms)
     {
+        if (flat_norms.size() % 3 != 0)
+            throw std::invalid_argument(
+                "Mesh normal array length must be divisible by 3");
         unpack_vec3(normals, flat_norms);
     }
     Camera::Camera()
@@ -296,6 +302,16 @@ namespace ost_renderer
     {
         if (data.vertices.empty() || data.indices.empty())
             return;
+        if (data.indices.size() % 3 != 0)
+            throw std::invalid_argument(
+                "Mesh index array length must be divisible by 3");
+        if (std::any_of(
+                data.indices.begin(),
+                data.indices.end(),
+                [&data](uint32_t index)
+                { return index >= data.vertices.size(); }))
+            throw std::invalid_argument(
+                "Mesh index is outside the vertex array");
         ContextGuard guard(gl_hdc_, gl_hglrc_);
         GLMesh mesh;
         mesh.index_count = data.indices.size();
@@ -875,6 +891,12 @@ void main() {
                 glDeleteProgram(plan_texture_shader);
             if (composite_shader)
                 glDeleteProgram(composite_shader);
+            if (pick_shader_prog)
+                glDeleteProgram(pick_shader_prog);
+            if (flat_color_shader_prog)
+                glDeleteProgram(flat_color_shader_prog);
+            if (selection_post_shader_prog)
+                glDeleteProgram(selection_post_shader_prog);
             if (accum_fbo)
                 glDeleteFramebuffers(1, &accum_fbo);
             if (accum_texture)
@@ -893,6 +915,20 @@ void main() {
                 glDeleteTextures(1, &opaque_ms_color);
             if (opaque_ms_depth)
                 glDeleteRenderbuffers(1, &opaque_ms_depth);
+            if (scene_fbo)
+                glDeleteFramebuffers(1, &scene_fbo);
+            if (scene_texture)
+                glDeleteTextures(1, &scene_texture);
+            if (sel_mask_fbo)
+                glDeleteFramebuffers(1, &sel_mask_fbo);
+            if (sel_mask_texture)
+                glDeleteTextures(1, &sel_mask_texture);
+            if (pick_fbo)
+                glDeleteFramebuffers(1, &pick_fbo);
+            if (pick_color)
+                glDeleteTextures(1, &pick_color);
+            if (pick_depth_rb)
+                glDeleteRenderbuffers(1, &pick_depth_rb);
             if (quad_vao)
                 glDeleteVertexArrays(1, &quad_vao);
             if (quad_vbo)

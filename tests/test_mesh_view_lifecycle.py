@@ -335,6 +335,36 @@ class TestMeshViewLifecycle(unittest.TestCase):
         )
         self.assertEqual(camera.fov, 38.0)
 
+    def test_native_mesh_vectors_reject_incomplete_coordinates(self):
+        mesh = ost_renderer.MeshData()
+        with self.assertRaisesRegex(ValueError, "vertex array length"):
+            mesh.set_vertices([0.0, 1.0])
+        with self.assertRaisesRegex(ValueError, "normal array length"):
+            mesh.set_normals([0.0, 0.0, 1.0, 1.0])
+
+    def test_native_scene_rejects_invalid_indices_before_gl_upload(self):
+        mesh = ost_renderer.MeshData()
+        mesh.set_vertices(
+            [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+            ]
+        )
+        scene = ost_renderer.Scene()
+        mesh.indices = [0, 1]
+        with self.assertRaisesRegex(ValueError, "index array length"):
+            scene.add_mesh(mesh)
+        mesh.indices = [0, 1, 3]
+        with self.assertRaisesRegex(ValueError, "outside the vertex array"):
+            scene.add_mesh(mesh)
+
     def test_mesh_buffer_length_mismatch_raises_clear_error(self):
         with self.assertRaisesRegex(ValueError, "matching lengths"):
             OpenGLViewer._validate_mesh_buffer_lengths(
