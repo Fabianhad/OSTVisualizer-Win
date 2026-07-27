@@ -293,14 +293,12 @@ class LayerOperationsMixin:
             if seq_a is None or seq_b is None:
                 return False
             cursor.execute(
-                "UPDATE [BidLayers] SET [Sequence] = ? "
-                "WHERE [UID] = ? AND [IsTemplate] <> 0",
+                "UPDATE [BidLayers] SET [Sequence] = ? WHERE [UID] = ?",
                 seq_b,
                 int(layer_uid_a),
             )
             cursor.execute(
-                "UPDATE [BidLayers] SET [Sequence] = ? "
-                "WHERE [UID] = ? AND [IsTemplate] <> 0",
+                "UPDATE [BidLayers] SET [Sequence] = ? WHERE [UID] = ?",
                 seq_a,
                 int(layer_uid_b),
             )

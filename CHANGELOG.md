@@ -64,6 +64,7 @@
 - Fixed existing bid areas failing to move beneath an area created in the same save.
 - Fixed multi-database project trees so a newly created folder opens rename in the correct database, grouped project selections do not duplicate operations, cross-database project selections cannot reach single-database writes, and tree rebuilds safely cancel active rename editors.
 - Fixed bid-layer sidebar reloads leaving a stale new-layer editor that blocked later additions, and inline renames now reject blank names and trim surrounding whitespace.
+- Fixed moving ordinary bid layers up or down reporting success without changing their stored sequence.
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.
 - Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
 - Fixed silent toolbar check-state synchronization so it preserves signal blocks owned by an enclosing UI update.
