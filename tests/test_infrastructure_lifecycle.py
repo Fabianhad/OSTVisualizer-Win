@@ -25,6 +25,9 @@ from ost_visualizer.infrastructure.mdb.components.condition_folder_operations im
 from ost_visualizer.infrastructure.mdb.components.condition_operations import (
     ConditionOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.components.constants import (
+    TAKEOFF_REFERENCE_TABLES,
+)
 from ost_visualizer.infrastructure.mdb.components.layer_operations import (
     LayerOperationsMixin,
 )
@@ -1103,6 +1106,52 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             "SELECT ParentUID FROM BidTakeoffs WHERE UID = 2"
         ).fetchone()
         self.assertIsNone(child[0])
+
+    def test_delete_takeoff_removes_annotations_linked_by_either_endpoint(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE BidTakeoffs (
+                UID INTEGER PRIMARY KEY,
+                ParentUID INTEGER
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO BidTakeoffs (UID, ParentUID) VALUES (?, NULL)",
+            ((1,), (2,), (3,)),
+        )
+        for index, table in enumerate(TAKEOFF_REFERENCE_TABLES, start=1):
+            conn.execute(
+                f"""
+                CREATE TABLE [{table}] (
+                    UID INTEGER PRIMARY KEY,
+                    BidTakeoffFromUID INTEGER,
+                    BidTakeoffToUID INTEGER
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO [{table}]
+                    (UID, BidTakeoffFromUID, BidTakeoffToUID)
+                VALUES (?, 1, 2)
+                """,
+                (index,),
+            )
+
+        self.assertTrue(_SqliteMdbOps(conn).delete_takeoffs("bid.mdb", ["2"]))
+
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidTakeoffs ORDER BY UID").fetchall(),
+            [(1,), (3,)],
+        )
+        for table in TAKEOFF_REFERENCE_TABLES:
+            with self.subTest(table=table):
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0],
+                    0,
+                )
 
     def test_takeoff_bulk_uid_normalization_deduplicates_in_order(self):
         ops = _RecordingTakeoffOps()

@@ -338,17 +338,21 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
             self._require_write_columns(schema, "BidTakeoffs", ("UID",))
             cursor = conn.cursor()
             for child in TAKEOFF_REFERENCE_TABLES:
-                if schema.optional_table_missing(child) or not schema.column_exists(
-                    child, "BidTakeoffFromUID"
-                ):
+                if schema.optional_table_missing(child):
                     continue
-                self._execute_uid_in_delete_chunks(
-                    cursor,
-                    child,
+                for reference_column in (
                     "BidTakeoffFromUID",
-                    uids,
-                    chunk_size,
-                )
+                    "BidTakeoffToUID",
+                ):
+                    if not schema.column_exists(child, reference_column):
+                        continue
+                    self._execute_uid_in_delete_chunks(
+                        cursor,
+                        child,
+                        reference_column,
+                        uids,
+                        chunk_size,
+                    )
             if not schema.optional_table_missing(
                 "BidPercents"
             ) and schema.column_exists("BidPercents", "BidTakeoffUID"):
