@@ -42,7 +42,7 @@
 - Fixed condition-type deletion validation failing open when usage data could not be loaded; unavailable validation now blocks deletion, direct MDB saves validate the complete deletion batch before changing any type, and schema failures are reported as failed writes.
 - Fixed plan input edge cases so panning can begin at the viewport origin, horizontal-only wheel input no longer zooms out, exact zoom changes survive in-progress page renders, named-view focus synchronizes and persists the resulting zoom, keyboard moves persist once across auto-repeat and focus changes, area holes stay aligned with translated parents, canceled resize/rotation previews do not write changes, and interrupted pan, zoom-band, PDF-text, and drag interactions clean up reliably.
 - Fixed grouped plan-item rotation failures so later writes stop after an earlier failed stage and committed position changes remain accurately projected and undoable; mixed takeoff-and-annotation delete undo also preserves takeoff metadata captured before the database reload.
-- Fixed repeated final application-close events rerunning already completed workspace and service cleanup.
+- Fixed repeated final application-close events rerunning already completed workspace and service cleanup, and one teardown failure no longer skips the remaining application cleanup stages.
 - Fixed update-dialog failures leaving later application notifications permanently suppressed.
 - Fixed explicit detached annotation and named-view window restore requests being overwritten by stale saved fullscreen state.
 - Fixed long-session MDB task exhaustion by explicitly releasing query cursors and reusing the committed write connection for post-save refreshes and bid exports.

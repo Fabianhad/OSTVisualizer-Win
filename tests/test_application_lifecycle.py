@@ -260,6 +260,84 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertEqual(container._factories, {})
         self.assertEqual(container._singletons, {})
 
+    def test_app_controller_cleanup_continues_after_stage_failures(self):
+        cleanup_calls = []
+
+        class FailingEventBus(FakeEventBus):
+            def unsubscribe(self, event_type, callback):
+                super().unsubscribe(event_type, callback)
+                raise RuntimeError("unsubscribe failed")
+
+        class FailingCleanup:
+            def __init__(self, name, *, fails=False):
+                self.name = name
+                self.fails = fails
+
+            def cleanup(self):
+                cleanup_calls.append(self.name)
+                if self.fails:
+                    raise RuntimeError(f"{self.name} failed")
+
+        class FailingContainer(ServiceContainer):
+            def clear(self):
+                cleanup_calls.append("container")
+                super().clear()
+                raise RuntimeError("container failed")
+
+        def failing_hook():
+            cleanup_calls.append("failing-hook")
+            raise RuntimeError("hook failed")
+
+        event_bus = FailingEventBus()
+        container = FailingContainer()
+        container.register_instance("retained", object())
+        controller = AppController(
+            container=container,
+            event_bus=event_bus,
+            logger=logging.getLogger("test.cleanup.failures"),
+            orchestrators=AppOrchestrators(
+                visualization=FailingCleanup("visualization", fails=True),
+                lifecycle=object(),
+                license=FailingCleanup("license"),
+            ),
+            project_data_service=object(),
+            file_loading_service=object(),
+            load_files_from_config_use_case=object(),
+            working_directory_service=object(),
+            file_state_model=object(),
+            cleanup_hooks=[
+                failing_hook,
+                lambda: cleanup_calls.append("successful-hook"),
+            ],
+        )
+        callback = lambda **_call_options: None
+        controller.subscribe_to_event(AppEvents.LICENSE_EXPIRED, callback)
+
+        with self.assertLogs(controller.logger, level="ERROR") as logs:
+            controller.cleanup()
+
+        self.assertEqual(
+            cleanup_calls,
+            [
+                "visualization",
+                "license",
+                "failing-hook",
+                "successful-hook",
+                "container",
+            ],
+        )
+        self.assertEqual(
+            event_bus.unsubscriptions,
+            [(AppEvents.LICENSE_EXPIRED, callback)],
+        )
+        self.assertGreaterEqual(len(logs.output), 4)
+        self.assertIsNone(controller.container)
+        self.assertIsNone(controller.event_bus)
+        self.assertIsNone(controller.orchestrators)
+        self.assertEqual(controller._subscriptions, [])
+        self.assertEqual(controller._cleanup_hooks, [])
+        self.assertEqual(container._services, {})
+
     def test_summary_csv_export_service_resolves_project_read_service_from_container(
         self,
     ):

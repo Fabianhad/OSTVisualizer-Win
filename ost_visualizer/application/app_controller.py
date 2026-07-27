@@ -181,18 +181,35 @@ class AppController:
         if self._cleaned_up:
             return
         self._cleaned_up = True
-        for event_name, callback in self._subscriptions:
-            self.event_bus.unsubscribe(event_name, callback)
+        subscriptions = tuple(self._subscriptions)
         self._subscriptions.clear()
-        if self.orchestrators is not None:
-            self.orchestrators.visualization.cleanup()
-            self.orchestrators.license.cleanup()
-        for hook in self._cleanup_hooks:
+        for event_name, callback in subscriptions:
+            try:
+                if self.event_bus is not None:
+                    self.event_bus.unsubscribe(event_name, callback)
+            except Exception:
+                self.logger.exception("Event unsubscription failed during cleanup")
+
+        orchestrators = self.orchestrators
+        if orchestrators is not None:
+            for name, cleanup in (
+                ("visualization", orchestrators.visualization.cleanup),
+                ("license", orchestrators.license.cleanup),
+            ):
+                try:
+                    cleanup()
+                except Exception:
+                    self.logger.exception("%s orchestrator cleanup failed", name)
+
+        cleanup_hooks = tuple(self._cleanup_hooks)
+        self._cleanup_hooks.clear()
+        for hook in cleanup_hooks:
             try:
                 hook()
             except Exception:
                 self.logger.exception("Cleanup hook failed")
-        self._cleanup_hooks.clear()
+
+        container = self.container
         self._project_data_service = None
         self._file_loading_service = None
         self._load_files_from_config_use_case = None
@@ -201,9 +218,12 @@ class AppController:
         self._database_descriptor_registry = None
         self.orchestrators = None
         self.event_bus = None
-        if self.container is not None:
-            self.container.clear()
         self.container = None
+        if container is not None:
+            try:
+                container.clear()
+            except Exception:
+                self.logger.exception("Service container cleanup failed")
 
 
 class AppControllerBuilder:
