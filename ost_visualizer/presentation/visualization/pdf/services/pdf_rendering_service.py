@@ -39,8 +39,6 @@ class RenderRequest:
     priority: int
     page_entity: Optional[Page]
     bid_ref: Optional[BidRef]
-    view_scale: Optional[float]
-    show_mode: Optional[int]
     callback: Callable[[RenderResult], None]
     cancelled: threading.Event = field(default_factory=threading.Event)
     native_cancel_token: ost_pdf.RenderCancelToken = field(
@@ -56,32 +54,48 @@ class RenderRequest:
 
 
 class RenderBridge(QObject):
-    result_ready = Signal(object)
+    result_ready = Signal(object, object)
 
-    def __init__(self):
+    def __init__(self, request_finished: Callable[[str], None]):
         super().__init__()
-        self._callbacks: Dict[str, Callable] = {}
+        self._request_finished = request_finished
+        self._closed = threading.Event()
         self.result_ready.connect(self._dispatch_result)
 
-    def request_callback(
-        self, request_id: str, callback: Callable, result: RenderResult
-    ):
-        self._callbacks[request_id] = callback
-        self.result_ready.emit(result)
+    def request_callback(self, request: RenderRequest, result: RenderResult):
+        if self._closed.is_set():
+            self._finish_request(request.request_id)
+            return
+        self.result_ready.emit(request, result)
 
-    def _dispatch_result(self, result: RenderResult):
-        callback = self._callbacks.pop(result.request_id, None)
-        if callback:
+    def _dispatch_result(self, request: RenderRequest, result: RenderResult):
+        try:
+            if self._closed.is_set() or request.cancelled.is_set():
+                return
             try:
-                callback(result)
+                request.callback(result)
             except Exception as exc:
                 logger.exception("Callback error: %s", exc)
+        finally:
+            self._finish_request(request.request_id)
+
+    def _finish_request(self, request_id: str) -> None:
+        callback = self._request_finished
+        if callback is not None:
+            callback(request_id)
+
+    def cleanup(self) -> None:
+        self._closed.set()
+        self._request_finished = None
+        try:
+            self.result_ready.disconnect(self._dispatch_result)
+        except (RuntimeError, TypeError):
+            pass
 
 
 class PDFRenderingService:
     def __init__(self, page_cache: PageCache, num_workers: int = 2):
         self._page_cache = page_cache
-        self._render_bridge = RenderBridge()
         self._composite_renderer = CompositeRenderer(page_cache)
         self._request_queue: queue.PriorityQueue = queue.PriorityQueue()
         self._active_requests: Dict[str, RenderRequest] = {}
@@ -89,10 +103,13 @@ class PDFRenderingService:
         self._shutdown_event = threading.Event()
         self._lock = threading.Lock()
         self._request_counter = 0
+        self._render_bridge = RenderBridge(self._cleanup_request)
         self._start_workers(num_workers)
 
     def _enqueue_request(self, request: RenderRequest) -> str:
         with self._lock:
+            if self._shutdown_event.is_set():
+                raise RuntimeError("PDF rendering service is shut down")
             self._active_requests[request.request_id] = request
             counter = self._request_counter
             self._request_counter += 1
@@ -126,8 +143,6 @@ class PDFRenderingService:
             priority=priority,
             page_entity=None,
             bid_ref=None,
-            view_scale=None,
-            show_mode=None,
             callback=callback,
             apply_invert_effect=apply_invert_effect,
             apply_bitonal_effect=apply_bitonal_effect,
@@ -163,8 +178,6 @@ class PDFRenderingService:
             priority=priority,
             page_entity=None,
             bid_ref=None,
-            view_scale=None,
-            show_mode=None,
             callback=callback,
             frame_x_pts=frame_x_pts,
             frame_y_pts=frame_y_pts,
@@ -196,8 +209,6 @@ class PDFRenderingService:
             priority=priority,
             page_entity=page_snapshot,
             bid_ref=bid_ref,
-            view_scale=None,
-            show_mode=None,
             callback=callback,
         )
         return self._enqueue_request(request)
@@ -215,6 +226,7 @@ class PDFRenderingService:
         apply_invert_effect: bool = True,
         apply_bitonal_effect: bool = True,
     ) -> str:
+        del view_scale  # Retained by the current rendering-service protocol.
         scale = render_scale
         if scale is None:
             scale = 2.0 if is_pdf_suffix(page.overlay_image_path) else 1.0
@@ -231,8 +243,6 @@ class PDFRenderingService:
             priority=priority,
             page_entity=page,
             bid_ref=bid_ref,
-            view_scale=view_scale,
-            show_mode=show_mode,
             callback=callback,
             apply_invert_effect=apply_invert_effect,
             apply_bitonal_effect=apply_bitonal_effect,
@@ -266,8 +276,6 @@ class PDFRenderingService:
             priority=priority,
             page_entity=page_snapshot,
             bid_ref=bid_ref,
-            view_scale=None,
-            show_mode=None,
             callback=callback,
             frame_x_pts=frame_x_pts,
             frame_y_pts=frame_y_pts,
@@ -296,8 +304,6 @@ class PDFRenderingService:
             priority=priority,
             page_entity=None,
             bid_ref=None,
-            view_scale=None,
-            show_mode=None,
             callback=callback,
         )
         return self._enqueue_request(request)
@@ -320,7 +326,7 @@ class PDFRenderingService:
     def _worker_loop(self):
         while not self._shutdown_event.is_set():
             try:
-                priority, counter, request = self._request_queue.get(timeout=0.5)
+                _priority, _counter, request = self._request_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
             if request is None:
@@ -330,11 +336,14 @@ class PDFRenderingService:
                 continue
             with scoped_pdf_render_cancellation_token(request.native_cancel_token):
                 result = self._execute_render(request)
+            result_posted = False
             if not request.cancelled.is_set():
-                self._render_bridge.request_callback(
-                    request.request_id, request.callback, result
-                )
-            self._cleanup_request(request.request_id)
+                bridge = self._render_bridge
+                if bridge is not None:
+                    bridge.request_callback(request, result)
+                    result_posted = True
+            if not result_posted:
+                self._cleanup_request(request.request_id)
 
     def _execute_render(self, request: RenderRequest) -> RenderResult:
         try:
@@ -521,20 +530,32 @@ class PDFRenderingService:
             self._active_requests.pop(request_id, None)
 
     def shutdown(self) -> None:
-        if self._shutdown_event.is_set():
+        if self._page_cache is None:
             return
-        self._shutdown_event.set()
-        with self._lock:
-            for request in self._active_requests.values():
-                request.cancelled.set()
-                request.native_cancel_token.cancel()
-        for _ in range(len(self._worker_threads)):
-            try:
-                self._request_queue.put_nowait((0, 0, None))
-            except queue.Full:
-                break
+        first_shutdown = not self._shutdown_event.is_set()
+        sentinels = []
+        if first_shutdown:
+            self._shutdown_event.set()
+            with self._lock:
+                for request in self._active_requests.values():
+                    request.cancelled.set()
+                    request.native_cancel_token.cancel()
+                for _ in self._worker_threads:
+                    counter = self._request_counter
+                    self._request_counter += 1
+                    sentinels.append((0, counter, None))
+            for sentinel in sentinels:
+                self._request_queue.put_nowait(sentinel)
         for thread in self._worker_threads:
             thread.join(timeout=3.0)
+        live_workers = [thread for thread in self._worker_threads if thread.is_alive()]
+        if live_workers:
+            self._worker_threads = live_workers
+            logger.error(
+                "PDF rendering shutdown retained resources for %d live worker(s)",
+                len(live_workers),
+            )
+            return
         self._worker_threads.clear()
         with self._lock:
             self._active_requests.clear()
@@ -543,7 +564,7 @@ class PDFRenderingService:
                 self._request_queue.get_nowait()
             except queue.Empty:
                 break
-        self._render_bridge._callbacks.clear()
+        self._render_bridge.cleanup()
         self._composite_renderer.clear_cache()
         self._page_cache.clear()
         self._render_bridge = None

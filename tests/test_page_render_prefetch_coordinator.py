@@ -1,6 +1,8 @@
 import unittest
+import threading
 from types import SimpleNamespace
 from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QApplication
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.services.page_load_strategy_service import (
     PageLoadStrategyService,
@@ -397,6 +399,89 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
             self.assertTrue(request.native_cancel_token.is_cancelled())
         finally:
             service.shutdown()
+
+    def test_cancel_after_worker_posts_result_suppresses_gui_callback(self):
+        app = QApplication.instance() or QApplication([])
+        cache = PageCache()
+        cache._get_renderer = lambda: FakeImageRenderer()
+        service = PDFRenderingService(cache, num_workers=1)
+        posted = threading.Event()
+        callbacks = []
+        original_post = service._render_bridge.request_callback
+
+        def post_result(request, result):
+            original_post(request, result)
+            posted.set()
+
+        service._render_bridge.request_callback = post_result
+        try:
+            request_id = service.render_page_async(
+                file_path="page.pdf",
+                page_index=0,
+                scale=1.0,
+                rotation=0,
+                callback=callbacks.append,
+            )
+            self.assertTrue(posted.wait(timeout=1.0))
+            service.cancel_request(request_id)
+            app.processEvents()
+            self.assertEqual(callbacks, [])
+            self.assertNotIn(request_id, service._active_requests)
+        finally:
+            service.shutdown()
+
+    def test_shutdown_uses_unique_priority_queue_sentinel_counters(self):
+        class JoinedWorker:
+            def join(self, timeout=None):
+                del timeout
+
+            def is_alive(self):
+                return False
+
+        service = PDFRenderingService(PageCache(), num_workers=0)
+        service.render_page_async(
+            file_path="page.pdf",
+            page_index=0,
+            scale=1.0,
+            rotation=0,
+            callback=lambda _result: None,
+            priority=0,
+        )
+        service._worker_threads = [JoinedWorker()]
+        service.shutdown()
+        self.assertIsNone(service._page_cache)
+
+    def test_shutdown_retains_dependencies_until_workers_stop(self):
+        class DelayedWorker:
+            alive = True
+
+            def join(self, timeout=None):
+                del timeout
+
+            def is_alive(self):
+                return self.alive
+
+        worker = DelayedWorker()
+        service = PDFRenderingService(PageCache(), num_workers=0)
+        service._worker_threads = [worker]
+        service.shutdown()
+        self.assertIsNotNone(service._page_cache)
+
+        worker.alive = False
+        service.shutdown()
+        self.assertIsNone(service._page_cache)
+
+    def test_requests_after_shutdown_fail_explicitly(self):
+        service = PDFRenderingService(PageCache(), num_workers=0)
+        service.shutdown()
+        with self.assertRaisesRegex(RuntimeError, "shut down"):
+            service.render_page_async(
+                file_path="page.pdf",
+                page_index=0,
+                scale=1.0,
+                rotation=0,
+                callback=lambda _result: None,
+            )
 
 
 class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
