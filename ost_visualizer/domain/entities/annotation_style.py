@@ -45,7 +45,7 @@ def normalize_text_font_name(value, default: str = DEFAULT_TEXT_FONT_NAME) -> st
 def normalize_text_font_size(value, default: int = DEFAULT_TEXT_FONT_SIZE) -> int:
     try:
         size = int(round(float(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         size = int(default)
     return max(MIN_TEXT_FONT_SIZE, min(MAX_TEXT_FONT_SIZE, size))
 
@@ -53,7 +53,7 @@ def normalize_text_font_size(value, default: int = DEFAULT_TEXT_FONT_SIZE) -> in
 def normalize_text_align(value, default: int = DEFAULT_TEXT_ALIGN) -> int:
     try:
         align = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         align = int(default)
     return align if align in (0, 1, 2) else int(default)
 
