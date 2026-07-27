@@ -31,6 +31,18 @@ def _identity_annotation_specs(
     return specs
 
 
+def _require_complete_takeoff_insert(
+    inserted_uids: List[str], expected_count: int
+) -> List[str]:
+    result = list(inserted_uids)
+    if len(result) != expected_count:
+        raise ValueError(
+            "Takeoff insert returned "
+            f"{len(result)} identities for {expected_count} requested takeoffs"
+        )
+    return result
+
+
 def _default_insert_takeoffs(write_svc) -> TakeoffInsertFn:
     def _insert(bid_ref: BidRef, specs: List[InsertTakeoffSpec]) -> List[str]:
         return write_svc.insert_takeoffs(bid_ref.file_path, bid_ref.bid_uid, specs)
@@ -103,8 +115,10 @@ class InsertTakeoffsCommand:
             self._plan_view.clear_selection()
 
     def redo(self) -> None:
-        new_uids = self._insert_takeoffs_fn(
-            self._bid_ref, self._prepare_specs_fn(self._specs)
+        prepared_specs = self._prepare_specs_fn(self._specs)
+        new_uids = _require_complete_takeoff_insert(
+            self._insert_takeoffs_fn(self._bid_ref, prepared_specs),
+            len(self._specs),
         )
         for i, uid in enumerate(new_uids):
             self._current_uids[i] = uid
@@ -212,7 +226,10 @@ def _insert_takeoffs_with_source_parent_remap(
                 spec.parent_uid = source_to_new[source_parent_uid]
             specs.append(spec)
         prepared_specs = (prepare_specs_fn or _identity_takeoff_specs)(specs)
-        inserted_uids = insert_takeoffs_fn(bid_ref, prepared_specs)
+        inserted_uids = _require_complete_takeoff_insert(
+            insert_takeoffs_fn(bid_ref, prepared_specs),
+            len(ready),
+        )
         for i, uid in zip(ready, inserted_uids):
             source_uid = str(source_uids[i])
             source_parent_uid = str(source_parent_uids[i])

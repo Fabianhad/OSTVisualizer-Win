@@ -28,6 +28,7 @@ from ost_visualizer.presentation.handlers.plan_view_action_handler import (
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
+    InsertTakeoffsCommand,
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
 )
@@ -55,6 +56,31 @@ def _hotlink_annotation(uid: str, target_named_view_uid: str) -> BidAnnotation:
         position=[5.0, 6.0],
         properties={"BidPageViewUID": target_named_view_uid},
     )
+
+
+class SelectionCommandIdentityTests(unittest.TestCase):
+    def test_takeoff_redo_rejects_incomplete_authoritative_identity_result(self):
+        plan_view = SimpleNamespace(
+            set_selected_uids=lambda _uids: self.fail(
+                "Incomplete results must not be selected"
+            )
+        )
+        command = InsertTakeoffsCommand(
+            uids=["old-1", "old-2"],
+            bid_ref=BidRef("bid.mdb", "7"),
+            specs=[object(), object()],
+            write_svc=None,
+            plan_view=plan_view,
+            insert_takeoffs_fn=lambda _bid_ref, _specs: ["new-1"],
+            delete_takeoffs_fn=lambda _db_path, _uids: True,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "returned 1 identities for 2 requested"
+        ):
+            command.redo()
+
+        self.assertEqual(command._current_uids, ["old-1", "old-2"])
 
 
 def _rect_annotation(uid: str) -> BidAnnotation:

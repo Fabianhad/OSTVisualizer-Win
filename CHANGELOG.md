@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed takeoff undo/redo accepting incomplete authoritative insert identities,
+  which could retain stale IDs or misclassify a failed parent replay as a cycle.
 - Fixed cancelling employee detail edits after navigating records retaining
   unsaved field changes in the parent Employees dialog.
 - Fixed replacement or cleanup of a plan view leaving one placement signal
