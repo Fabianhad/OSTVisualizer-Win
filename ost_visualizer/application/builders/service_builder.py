@@ -84,7 +84,7 @@ class ServiceBuilder:
         if self.ost_signaler is not None:
 
             def _on_ost_signaler_main_thread(active: bool) -> None:
-                if conn_manager:
+                if conn_manager is not None:
                     conn_manager.set_write_blocked(active)
                 event_bus.publish(AppEvents.OST_STATUS_CHANGED, active=active)
 

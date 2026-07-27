@@ -363,6 +363,79 @@ class ApplicationLifecycleTests(unittest.TestCase):
         service = container.get("summary_csv_export_service")
         self.assertIsNotNone(service)
 
+    def test_ost_status_blocks_falsey_connection_manager(self):
+        class _FalseyConnectionManager:
+            def __init__(self):
+                self.write_blocks = []
+
+            def __bool__(self):
+                return False
+
+            def set_write_blocked(self, active):
+                self.write_blocks.append(active)
+
+        class _Signal:
+            def connect(self, callback):
+                self.callback = callback
+
+        class _Signaler:
+            def __init__(self):
+                self.ost_changed = _Signal()
+
+            def emit_status(self, active):
+                self.ost_changed.callback(active)
+
+        class _Monitor:
+            def set_ost_status_callback(self, callback):
+                self.callback = callback
+
+        class _Provider(FakeInfrastructureProvider):
+            def __init__(self, monitor):
+                self.monitor = monitor
+
+            def get_transaction_monitor(self):
+                return self.monitor
+
+        class _EventBus(FakeEventBus):
+            def __init__(self):
+                super().__init__()
+                self.publications = []
+
+            def publish(self, event_type, **payload):
+                self.publications.append((event_type, payload))
+
+        container = ServiceContainer()
+        container.register_instance("project_read_service", SimpleNamespace())
+        container.register_instance(
+            "reload_database_use_case",
+            SimpleNamespace(execute=lambda: None),
+        )
+        connection_manager = _FalseyConnectionManager()
+        monitor = _Monitor()
+        event_bus = _EventBus()
+        ServiceBuilder(
+            container=container,
+            logger=logging.getLogger("test"),
+            infrastructure_provider=_Provider(monitor),
+            scene_notifier=object(),
+            ost_signaler=_Signaler(),
+        ).build(
+            config_model=SimpleNamespace(),
+            project_data_service=SimpleNamespace(),
+            project_operations_service=SimpleNamespace(),
+            event_bus=event_bus,
+            connection_manager=connection_manager,
+            license_api_client=object(),
+        )
+
+        monitor.callback(True)
+
+        self.assertEqual(connection_manager.write_blocks, [True])
+        self.assertEqual(
+            event_bus.publications,
+            [(AppEvents.OST_STATUS_CHANGED, {"active": True})],
+        )
+
     def test_lifecycle_shutdown_releases_controller_and_container_references(self):
         participant = FakeShutdownParticipant()
         app_controller = SimpleNamespace(cleanup_calls=0)
