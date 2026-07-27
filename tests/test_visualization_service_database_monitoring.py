@@ -249,9 +249,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
 
     def test_pending_mesh_identity_is_exposed_only_until_delivery_or_cancellation(self):
         service = VisualizationService.__new__(VisualizationService)
-        identity = MeshSceneIdentity(
-            BidRef("db.mdb", "bid-42"), ("page-42",), 42
-        )
+        identity = MeshSceneIdentity(BidRef("db.mdb", "bid-42"), ("page-42",), 42)
         service._mesh_generation_lock = threading.Lock()
         service._mesh_generation_id = identity.generation
         service._mesh_generation_identity = identity
@@ -264,9 +262,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service._on_scene_ready([], identity.generation, False)
         self.assertIsNone(service.get_pending_mesh_scene_identity())
 
-        next_identity = MeshSceneIdentity(
-            BidRef("db.mdb", "bid-43"), ("page-43",), 43
-        )
+        next_identity = MeshSceneIdentity(BidRef("db.mdb", "bid-43"), ("page-43",), 43)
         service._mesh_generation_id = next_identity.generation
         service._mesh_generation_identity = next_identity
         service._mesh_generation_delivered = False

@@ -2093,9 +2093,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             last_mesh_scene=_MeshScenePublication(
                 ("vertices", "normals", "indices", "colors"),
                 {
-                    "scene_identity": scene_identity(
-                        active_ref, 7, ("other-page",)
-                    ),
+                    "scene_identity": scene_identity(active_ref, 7, ("other-page",)),
                     "page_floor_elevations": {"other-page": 7.0},
                 },
             ),
