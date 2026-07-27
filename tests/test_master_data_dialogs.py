@@ -1310,6 +1310,41 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_layers_dialog_interactivity_revocation_blocks_inline_writes(self):
+        rename_calls = []
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1)],
+            reload_fn=lambda: [],
+            update_name_fn=lambda uid, name: rename_calls.append((uid, name)) or True,
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.set_interactive(False)
+
+            self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertEqual(
+                dialog.tree.editTriggers(),
+                QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers,
+            )
+
+            dialog._set_item_text(item, "Renamed")
+            dialog._on_item_changed(item, 2)
+
+            self.assertEqual(item.text(2), "Layer 1")
+            self.assertEqual(rename_calls, [])
+
+            dialog.set_interactive(True)
+            self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertEqual(
+                dialog.tree.editTriggers(),
+                QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked,
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_default_layers_dialog_shows_ok_only_for_close_action(self):
         dialog = LayersDialog(
             FakeIconProvider(),

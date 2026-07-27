@@ -91,7 +91,11 @@ class LayersDialog(QtWidgets.QDialog):
         self.tree.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
-        self.tree.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked)
+        self.tree.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            if self._is_interactive
+            else QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
@@ -170,7 +174,7 @@ class LayersDialog(QtWidgets.QDialog):
             flags = (
                 QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
             )
-            if self._can_modify(layer):
+            if self._is_interactive and self._can_modify(layer):
                 flags |= QtCore.Qt.ItemFlag.ItemIsEditable
             item.setFlags(flags)
             self.tree.addTopLevelItem(item)
@@ -316,6 +320,14 @@ class LayersDialog(QtWidgets.QDialog):
 
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         if self._building or column != 2:
+            return
+        if not self._is_interactive:
+            if item is self._pending_new_item:
+                self._remove_pending_new_item()
+                return
+            layer = self._layer_for_item(item)
+            if layer is not None and item.text(2) != layer.name:
+                self._set_item_text(item, layer.name)
             return
         if item is self._pending_new_item:
             self._commit_new_item(item)
@@ -533,6 +545,22 @@ class LayersDialog(QtWidgets.QDialog):
         self._set_controls_interactive(self._is_interactive)
 
     def _set_controls_interactive(self, enabled: bool) -> None:
+        if not enabled and self._pending_new_item is not None:
+            self._remove_pending_new_item()
+        self.tree.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            if enabled
+            else QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            layer = self._layer_for_item(item)
+            flags = item.flags()
+            if enabled and self._can_modify(layer):
+                flags |= QtCore.Qt.ItemFlag.ItemIsEditable
+            else:
+                flags &= ~QtCore.Qt.ItemFlag.ItemIsEditable
+            item.setFlags(flags)
         for checkbox in self._checkboxes:
             checkbox.setEnabled(enabled)
         self._update_button_states()
