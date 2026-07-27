@@ -215,14 +215,12 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
         pipeline.submit(("old", 2), lambda success: completed.append(("old", success)))
         pipeline.submit(("new", 4), lambda success: completed.append(("new", success)))
         self.assertEqual(completed, [("old", False)])
-
         pool.run_next()
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
         pool.run_next()
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
-
         self.assertEqual(
             completed,
             [("old", False), ("in-flight", False), ("new", True)],
@@ -666,14 +664,12 @@ class ViewerRemotePlanUpdateTests(unittest.TestCase):
             completion=completions["current"].append,
         )
         self.assertEqual(completions["superseded"], [False])
-
         pool.run_next()
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
         pool.run_next()
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
-
         self.assertEqual(completions["first"], [False])
         self.assertEqual(completions["current"], [True])
         viewer.cleanup()
@@ -747,7 +743,6 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
             barrier=mismatched_barrier,
         )
         self.assertEqual(submissions, [])
-
         barrier = RemoteProjectionBarrier(
             database_id="sql-db",
             runtime_generation=2,

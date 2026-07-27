@@ -144,7 +144,6 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             ),
         ):
             self.assertFalse(monitor._connect_to_events())
-
         self.assertTrue(commit_event.closed)
         self.assertIsNone(monitor._event)
         self.assertIsNone(monitor._status_event)
@@ -257,11 +256,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service._mesh_pending_task = None
         service._mesh_shutdown = threading.Event()
         service.event_bus = SimpleNamespace(publish=lambda _event, **_payload: None)
-
         self.assertEqual(service.get_pending_mesh_scene_identity(), identity)
         service._on_scene_ready([], identity.generation, False)
         self.assertIsNone(service.get_pending_mesh_scene_identity())
-
         next_identity = MeshSceneIdentity(BidRef("db.mdb", "bid-43"), ("page-43",), 43)
         service._mesh_generation_id = next_identity.generation
         service._mesh_generation_identity = next_identity

@@ -393,7 +393,6 @@ class OverlayCoordinateContractTests(unittest.TestCase):
                     page.overlay_rect_canvas(100.0, 100.0),
                     EMPTY_OVERLAY_RECT,
                 )
-
         page = _page(CALIBRATED_64_RECT)
         for invalid in (float("nan"), float("inf")):
             with self.subTest(canvas_dimension=invalid):

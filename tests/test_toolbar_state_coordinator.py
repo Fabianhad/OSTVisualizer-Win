@@ -248,10 +248,8 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         backout_action.blockSignals(True)
         coordinator.set_select_action(select_action)
         coordinator.set_backout_action(backout_action)
-
         coordinator.set_select_checked()
         coordinator._set_backout_checked_silent(True)
-
         self.assertTrue(select_action.isChecked())
         self.assertTrue(select_action.signalsBlocked())
         self.assertTrue(backout_action.isChecked())
@@ -317,9 +315,7 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         plan_view.inline_edit_active = True
         coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
         coordinator.set_plan_view(plan_view)
-
         coordinator.refresh()
-
         self.assertEqual(plan_view.editing_enabled_calls, [])
         self.assertTrue(plan_view.editing_enabled)
         self.assertTrue(plan_view.inline_edit_enabled)
@@ -429,11 +425,9 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         placement = PlacementCoordinator(ui_state, access, None, project_data)
         placement.set_plan_view(plan_view)
         placement.set_area_state_change_callback(coordinator.refresh)
-
         annotation_action.setChecked(True)
         plan_view.has_selection = True
         plan_view.begin_area()
-
         self.assertTrue(access.area_active)
         self.assertTrue(annotation_action.isChecked())
         self.assertFalse(copy_action.isEnabled())
@@ -441,7 +435,6 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         self.assertTrue(access.area_active)
         self.assertTrue(annotation_action.isChecked())
         self.assertEqual(plan_view.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
-
         plan_view.end_area()
         self.assertFalse(access.area_active)
         self.assertTrue(annotation_action.isChecked())
@@ -488,13 +481,11 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         placement.set_area_state_change_callback(coordinator.refresh)
         area_transitions = []
         plan_view.area_placement_in_progress.connect(area_transitions.append)
-
         annotation_action.setChecked(True)
         plan_view.has_selection = True
         plan_view.begin_area()
         project_data.annotation_layer_visible = False
         coordinator.refresh()
-
         self.assertEqual(area_transitions, [True, False])
         self.assertFalse(access.area_active)
         self.assertTrue(select_action.isChecked())
@@ -538,10 +529,8 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         placement.set_area_state_change_callback(coordinator.refresh)
         place_action.setChecked(True)
         plan_view.begin_area()
-
         plan_view.current_page_uid = None
         coordinator.refresh()
-
         self.assertFalse(access.area_active)
         self.assertTrue(select_action.isChecked())
         self.assertFalse(place_action.isChecked())

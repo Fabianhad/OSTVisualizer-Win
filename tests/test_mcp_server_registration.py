@@ -91,7 +91,6 @@ class McpServerRegistrationTests(unittest.TestCase):
             registry = DatabaseRegistry(app_data_dir=Path(tmp))
             server = build_mcp_server(registry)
             tools = {tool["name"]: tool for tool in server.list_tools()}
-
         for name in (
             "list_databases",
             "list_projects",

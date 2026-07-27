@@ -8,7 +8,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-
 import pyodbc
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.mdb import database_creator
@@ -1152,7 +1151,6 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                     raw_data,
                     str(output_path),
                 )
-
             self.assertFalse(result.success)
             self.assertEqual(
                 output_path.read_text(encoding="utf-8"),

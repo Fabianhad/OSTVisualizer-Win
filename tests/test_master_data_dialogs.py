@@ -300,7 +300,6 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             item = dialog.tree.topLevelItem(0)
             dialog.tree.setCurrentItem(item)
             dialog.set_interactive(False)
-
             self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertEqual(
                 dialog.tree.editTriggers(),
@@ -310,16 +309,13 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertFalse(dialog.btn_delete.isEnabled())
             self.assertFalse(dialog.btn_move_up.isEnabled())
             self.assertFalse(dialog.btn_move_down.isEnabled())
-
             dialog._set_item_name(item, "Renamed")
             dialog._on_item_changed(item, 0)
             dialog._on_new()
             dialog._on_delete()
-
             self.assertEqual(item.text(0), "Main")
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
             self.assertEqual(save_calls, [])
-
             dialog.set_interactive(True)
             self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
         finally:
@@ -337,7 +333,6 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
             dialog._update_button_states()
             self.assertFalse(dialog.btn_select.isEnabled())
-
             dialog._on_select()
             self.assertIsNone(dialog.get_selected_uid())
         finally:
@@ -1345,16 +1340,13 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         try:
             item = dialog.tree.topLevelItem(0)
             dialog.set_interactive(False)
-
             self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertEqual(
                 dialog.tree.editTriggers(),
                 QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers,
             )
-
             dialog._set_item_text(item, "Asphalt")
             dialog._on_item_changed(item, 0)
-
             self.assertEqual(item.text(0), "Concrete")
             self.assertEqual(save_calls, [])
         finally:
@@ -1388,7 +1380,6 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 ) as warning,
             ):
                 dialog._on_delete()
-
             confirm_delete.assert_not_called()
             warning.assert_called_once_with(
                 dialog,
@@ -1455,19 +1446,15 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         try:
             item = dialog.tree.topLevelItem(0)
             dialog.set_interactive(False)
-
             self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertEqual(
                 dialog.tree.editTriggers(),
                 QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers,
             )
-
             dialog._set_item_text(item, "Renamed")
             dialog._on_item_changed(item, 2)
-
             self.assertEqual(item.text(2), "Layer 1")
             self.assertEqual(rename_calls, [])
-
             dialog.set_interactive(True)
             self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertEqual(
@@ -1814,14 +1801,11 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             sidebar._on_add_clicked()
             self.assertIsNotNone(sidebar._pending_new_item)
             self.assertTrue(sidebar._pending_new_editor_connected)
-
             sidebar.load_layers([layer])
-
             self.assertIsNone(sidebar._pending_new_item)
             self.assertFalse(sidebar._pending_new_editor_connected)
             self.assertEqual(sidebar._selected_uid, layer.uid)
             self.assertEqual(sidebar._table.topLevelItemCount(), 1)
-
             sidebar._on_add_clicked()
             self.assertIsNotNone(sidebar._pending_new_item)
             self.assertEqual(sidebar._table.topLevelItemCount(), 2)
@@ -1842,7 +1826,6 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             item.setText(1, "   ")
             self.assertEqual(item.text(1), "Layer 1")
             self.assertEqual(renamed, [])
-
             item.setText(1, "  Renamed Layer  ")
             self.assertEqual(renamed, [("layer-1", "Renamed Layer")])
         finally:

@@ -5,9 +5,7 @@ from collections import OrderedDict
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtGui import QColor, QImage, QPainter
-
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
@@ -108,7 +106,6 @@ class CompositeRendererTests(unittest.TestCase):
         release.set()
         render_thread.join(timeout=1.0)
         clear_thread.join(timeout=1.0)
-
         self.assertFalse(render_thread.is_alive())
         self.assertFalse(clear_thread.is_alive())
         self.assertEqual(render_errors, [])
@@ -134,7 +131,6 @@ class CompositeRendererTests(unittest.TestCase):
             rotation=0,
             cancelled_check=cancelled,
         )
-
         self.assertIsNone(result)
         self.assertGreaterEqual(cancellation_checks, 3)
 
@@ -143,7 +139,6 @@ class CompositeRendererTests(unittest.TestCase):
         page = _page()
         cache_key = renderer._build_cache_key(page, None, 1.0, 0)
         renderer._composite_cache[cache_key] = _image()
-
         result = renderer.render_composite(
             page,
             bid_ref=None,
@@ -151,7 +146,6 @@ class CompositeRendererTests(unittest.TestCase):
             raster_rotation=0,
             cancelled_check=lambda: True,
         )
-
         self.assertIsNone(result)
 
     def test_cancellation_after_compositing_discards_and_does_not_cache_result(self):
@@ -171,7 +165,6 @@ class CompositeRendererTests(unittest.TestCase):
             raster_rotation=0,
             cancelled_check=cancelled,
         )
-
         cache_key = renderer._build_cache_key(page, None, 1.0, 0)
         self.assertIsNone(result)
         self.assertNotIn(cache_key, renderer._composite_cache)

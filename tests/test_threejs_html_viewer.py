@@ -18,9 +18,7 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
                 "max": [1.0, 1.0, 1.0],
             },
         }
-
         rendered_html = _generate_html(scene_data, f"Bid & {injected_text}")
-
         self.assertIn(
             "<title>Bid &amp; &lt;/script&gt;&lt;script&gt;"
             "window.injected=true&lt;/script&gt;</title>",

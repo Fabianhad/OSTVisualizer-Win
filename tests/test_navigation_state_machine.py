@@ -419,9 +419,7 @@ class NavigationStateMachineTests(unittest.TestCase):
         new_view = PlanView()
         placement.set_plan_view(old_view)
         old_view.place_exited.fail_disconnect = True
-
         placement.set_plan_view(new_view)
-
         self.assertEqual(old_view.area_placement_in_progress.callbacks, [])
         self.assertEqual(len(new_view.place_exited.callbacks), 1)
         self.assertEqual(len(new_view.area_placement_in_progress.callbacks), 1)
@@ -436,12 +434,10 @@ class NavigationStateMachineTests(unittest.TestCase):
         placement.set_area_state_change_callback(
             lambda: callbacks.append(tuple(transitions))
         )
-
         placement._on_area_placement_changed(True)
         placement._on_area_placement_changed(True)
         placement._on_area_placement_changed(False)
         placement._on_area_placement_changed(False)
-
         self.assertEqual(transitions, [True, False])
         self.assertEqual(callbacks, [(True,), (True, False)])
 

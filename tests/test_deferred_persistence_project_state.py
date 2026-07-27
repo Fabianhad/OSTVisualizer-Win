@@ -176,9 +176,7 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
         model.get_page = lambda uid: next(
             (page for page in model.pages if page.uid == uid), None
         )
-
         changed_pages = ProjectDataService(model).remove_takeoffs(["t1"])
-
         self.assertEqual(changed_pages, ["p1"])
         self.assertEqual(model.bid_takeoffs, [retained])
         self.assertEqual(model.pages[0].takeoffs, [])

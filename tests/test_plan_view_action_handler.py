@@ -76,12 +76,10 @@ class SelectionCommandIdentityTests(unittest.TestCase):
             insert_takeoffs_fn=lambda _bid_ref, _specs: ["new-1"],
             delete_takeoffs_fn=lambda _db_path, _uids: True,
         )
-
         with self.assertRaisesRegex(
             ValueError, "returned 1 identities for 2 requested"
         ):
             command.redo()
-
         self.assertEqual(command._current_uids, ["old-1", "old-2"])
 
 
@@ -963,7 +961,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     "retired-tool": AnnotationStyle(color="#abcdef"),
                 }
             )
-
             self.assertEqual(styles["rect"].color, "#123456")
             self.assertNotIn("retired-tool", styles)
         finally:

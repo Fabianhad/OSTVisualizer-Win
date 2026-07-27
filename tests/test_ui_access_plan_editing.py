@@ -78,7 +78,6 @@ class UIAccessPlanEditingTests(unittest.TestCase):
                 bid_uid="41",
             )
         )
-
         self.assertEqual(service._bid_uid("c:/jobs/CURRENT.mdb"), 41)
 
     def test_revoking_plan_editing_cancels_every_active_mutation_mode(self):

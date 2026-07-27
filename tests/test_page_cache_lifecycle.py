@@ -364,10 +364,8 @@ class PageCacheLifecycleTests(unittest.TestCase):
         cache = PageCache()
         original_local = cache._local
         cache._renderers.extend((failing_renderer, remaining_renderer))
-
         with self.assertRaisesRegex(RuntimeError, "native close failed") as raised:
             cache.clear()
-
         self.assertIs(raised.exception, expected_error)
         self.assertTrue(failing_renderer.closed)
         self.assertTrue(remaining_renderer.closed)

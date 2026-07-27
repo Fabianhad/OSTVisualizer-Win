@@ -1,7 +1,6 @@
 import logging
 import unittest
 from contextlib import contextmanager
-
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 from ost_visualizer.application.use_cases.project.update_condition_use_case import (
     UpdateConditionUseCase,
@@ -109,9 +108,7 @@ class ConditionOperationsTests(unittest.TestCase):
         writer = _ConditionWriter()
         updates = UpdateConditionDto()
         updates.set("ref_no", 4)
-
         self.assertTrue(writer.update_condition("example.mdb", "7", "11", updates))
-
         self.assertEqual(writer.connection_entries, 1)
         statements = [sql for sql, _params in writer.connection.cursor_value.executed]
         self.assertEqual(
@@ -133,9 +130,7 @@ class ConditionOperationsTests(unittest.TestCase):
         use_case = UpdateConditionUseCase(writer)
         updates = UpdateConditionDto()
         updates.set("ref_no", 4)
-
         result = use_case.execute("example.mdb", "7", "11", updates)
-
         self.assertTrue(result.success)
         self.assertEqual(
             writer.update_calls,

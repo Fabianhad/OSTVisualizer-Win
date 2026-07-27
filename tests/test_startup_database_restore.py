@@ -107,9 +107,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 pass
 
         aggregate = FileStateAggregate(_Repository())
-
         aggregate.reload()
-
         self.assertEqual(aggregate.file_entries, [original])
 
     def test_startup_loads_access_synchronously_and_starts_sql_asynchronously(self):
@@ -723,7 +721,6 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             ) as warning,
         ):
             handler.open_files()
-
         self.assertEqual(state.file_entries, [checked])
         self.assertEqual(warning.call_count, 2)
         self.assertIn("checked state could not be cleared", warning.call_args.args[2])

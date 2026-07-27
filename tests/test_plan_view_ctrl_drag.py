@@ -1540,10 +1540,8 @@ class CtrlDragTests(unittest.TestCase):
             2: ("", -1.0, 0.0, QtCore.QPointF(), None, None)
         }
         view._drag_last_valid_new_pos = [10.0, 10.0]
-
         release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
         view.mouseReleaseEvent(release)
-
         self.assertTrue(release.accepted)
         self.assertIsNone(view._drag_plan_item_uid)
         self.assertEqual(view._drag_item_orig_positions, {})
@@ -1890,9 +1888,7 @@ class CtrlDragTests(unittest.TestCase):
         view.verticalScrollBar = lambda: vertical
         user_changes = []
         view._mark_user_view_changed_during_load = lambda: user_changes.append(True)
-
         self.assertTrue(view._apply_pan_update(QtCore.QPoint(3, 4)))
-
         self.assertEqual(horizontal_values, [7])
         self.assertEqual(vertical_values, [16])
         self.assertEqual(view._last_pan_point, QtCore.QPoint(3, 4))
@@ -1904,9 +1900,7 @@ class CtrlDragTests(unittest.TestCase):
         view._mark_user_view_changed_during_load = lambda: calls.append("changed")
         view._apply_zoom = lambda _factor: calls.append("zoom")
         view._publish_current_page_view_state = lambda: calls.append("publish")
-
         view._apply_wheel_zoom(FakeWheelEvent(), 0)
-
         self.assertEqual(calls, [])
 
     def test_ctrl_left_press_blocks_multi_select_drag_setup(self):
@@ -2230,11 +2224,9 @@ class CtrlDragTests(unittest.TestCase):
         view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
         view.find_takeoff_at = lambda _scene_pos: "parent"
         view.find_takeoffs_at = lambda _scene_pos: ["parent"]
-
         view.mousePressEvent(FakeMouseEvent(x=0, y=0))
         self.assertEqual(set(view._drag_multi_orig_positions), {"parent", "hole", "t2"})
         view.mouseMoveEvent(FakeMouseEvent(x=6, y=6))
-
         self.assertEqual(
             view._uid_to_items["parent"][0].pos(), QtCore.QPointF(107.0, 107.0)
         )
@@ -2359,9 +2351,7 @@ class CtrlDragTests(unittest.TestCase):
             "hole": [FakeItem(150.0, 150.0)],
         }
         view._snap_increments = 10.0
-
         InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
-
         self.assertEqual(
             view._current_takeoffs["parent"].position,
             [10.0, 3.0, 20.0, 3.0, 20.0, 13.0, 10.0, 13.0],
@@ -2389,14 +2379,11 @@ class CtrlDragTests(unittest.TestCase):
             dict(view._dirty_positions)
         )
         InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
-
         repeat_release = FakeKeyEvent(Qt.Key.Key_Right, auto_repeat=True)
         InputHandlerMixin.keyReleaseEvent(view, repeat_release)
-
         self.assertTrue(repeat_release.accepted)
         self.assertEqual(flushed, [])
         self.assertTrue(view._keyboard_move_dirty)
-
         final_release = FakeKeyEvent(Qt.Key.Key_Right)
         InputHandlerMixin.keyReleaseEvent(view, final_release)
         self.assertTrue(final_release.accepted)
@@ -2412,9 +2399,7 @@ class CtrlDragTests(unittest.TestCase):
         )
         view.reset_ctrl_held = lambda: reset_calls.append(True)
         InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
-
         InputHandlerMixin.focusOutEvent(view, object())
-
         self.assertEqual(flushed, [{"t1": [1.0, 0.0, 11.0, 0.0]}])
         self.assertFalse(view._keyboard_move_dirty)
         self.assertEqual(reset_calls, [True])
@@ -2425,9 +2410,7 @@ class CtrlDragTests(unittest.TestCase):
         view._rubber_band_origin = QtCore.QPointF(1.0, 2.0)
         view._rubber_band = SimpleNamespace(hide=lambda: hidden.append(True))
         view.reset_ctrl_held = lambda: None
-
         InputHandlerMixin.focusOutEvent(view, object())
-
         self.assertEqual(hidden, [True])
         self.assertIsNone(view._rubber_band_origin)
 
@@ -2441,9 +2424,7 @@ class CtrlDragTests(unittest.TestCase):
         view._right_pan_dragged = False
         view._publish_current_page_view_state = lambda: published.append(True)
         view.reset_ctrl_held = lambda: None
-
         InputHandlerMixin.focusOutEvent(view, object())
-
         self.assertFalse(view._panning)
         self.assertFalse(view._pan_view_changed)
         self.assertIsNone(view._last_pan_point)
@@ -2466,9 +2447,7 @@ class CtrlDragTests(unittest.TestCase):
         view._rotate_line_item = None
         view._rotate_line_outline_item = None
         view.reset_ctrl_held = lambda: None
-
         InputHandlerMixin.focusOutEvent(view, object())
-
         self.assertEqual(preview_item.rotation(), 0.0)
         self.assertEqual(handle_item.pos(), QtCore.QPointF(10.0, 20.0))
         self.assertFalse(view._rotation_drag_active)
@@ -2487,9 +2466,7 @@ class CtrlDragTests(unittest.TestCase):
 
         view._finish_pdf_text_selection_drag = finish_pdf_text_selection_drag
         view.reset_ctrl_held = lambda: None
-
         InputHandlerMixin.focusOutEvent(view, object())
-
         self.assertEqual(finished, [True])
         self.assertIsNone(view._pdf_text_drag_anchor)
 
@@ -2867,15 +2844,11 @@ class CtrlDragTests(unittest.TestCase):
         view._flush_dirty_positions = lambda: self.fail(
             "resize press must not persist before movement"
         )
-
         view._unrotate_annotation_for_resize(ann, "a1")
-
         self.assertNotEqual(ann.position, original)
         self.assertEqual(view._position_before_edit["a1"], original)
         self.assertEqual(view._dirty_ann_positions, {})
-
         view._clear_drag_tracking(restore_preview=True)
-
         self.assertEqual(ann.position, original)
         self.assertNotIn("a1", view._position_before_edit)
 
@@ -3153,16 +3126,12 @@ class CtrlDragTests(unittest.TestCase):
     def test_collapsed_bid_dimension_preview_removes_and_recreates_label(self):
         view, _ann = self._make_dimension_resize_view()
         original_label = self._dimension_label(view)
-
         view.update_drag_handle_positions([0.0, 0.0, 0.0, 0.0], "d1")
-
         self.assertTrue(self._dimension_path(view).path().isEmpty())
         self.assertIsNone(original_label.scene())
         self.assertNotIn(original_label, view._uid_to_items["d1"])
         self.assertNotIn(original_label, view._takeoff_items)
-
         view.update_drag_handle_positions([0.0, 0.0, 120.0, 0.0], "d1")
-
         replacement_label = self._dimension_label(view)
         self.assertIsNot(replacement_label, original_label)
         self.assertEqual(replacement_label.data(0), "d1")

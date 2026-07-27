@@ -173,7 +173,6 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
             get_coordinate_system=lambda: FakeCoordinateSystem()
         )
         selection._current_page_transform = lambda: None
-
         self.assertIsNone(selection.find_linear_annotation_near(QPointF(50.0, 0.0)))
 
     def test_pending_takeoff_preview_draws_after_committed_takeoffs(self):

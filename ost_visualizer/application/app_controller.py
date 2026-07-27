@@ -189,7 +189,6 @@ class AppController:
                     self.event_bus.unsubscribe(event_name, callback)
             except Exception:
                 self.logger.exception("Event unsubscription failed during cleanup")
-
         orchestrators = self.orchestrators
         if orchestrators is not None:
             for name, cleanup in (
@@ -200,7 +199,6 @@ class AppController:
                     cleanup()
                 except Exception:
                     self.logger.exception("%s orchestrator cleanup failed", name)
-
         cleanup_hooks = tuple(self._cleanup_hooks)
         self._cleanup_hooks.clear()
         for hook in cleanup_hooks:
@@ -208,7 +206,6 @@ class AppController:
                 hook()
             except Exception:
                 self.logger.exception("Cleanup hook failed")
-
         container = self.container
         self._project_data_service = None
         self._file_loading_service = None

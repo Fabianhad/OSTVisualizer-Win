@@ -81,11 +81,9 @@ class MdbFileParserTests(unittest.TestCase):
             HierarchyFileEntry(file_path="second-id"),
             {"1": CdnType(uid="1", name="Second type")},
         )
-
         first = repository.get_cdn_types("first-id")
         second = repository.get_cdn_types("second-id")
         first.clear()
-
         self.assertEqual(second["1"].name, "Second type")
         self.assertEqual(repository.get_cdn_types("first-id")["1"].name, "First type")
         self.assertEqual(repository.get_cdn_types()["1"].name, "First type")

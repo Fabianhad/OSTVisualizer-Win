@@ -1,8 +1,6 @@
 import unittest
 from types import SimpleNamespace
-
 from PySide6 import QtCore, QtWidgets
-
 from ost_visualizer.presentation.builders.component_builder import (
     _PlanRibbonToolBar,
     _PlanToolbarLayoutSyncFilter,
@@ -33,7 +31,6 @@ class ComponentBuilderTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.app.processEvents()
         self.assertEqual(calls, ["sync"])
-
         sync_filter.eventFilter(
             watched, QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest)
         )

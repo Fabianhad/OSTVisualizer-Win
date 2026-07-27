@@ -1018,7 +1018,6 @@ class SqlDialogTests(unittest.TestCase):
         self.assertEqual(created_names, ["Access Database"])
         self.assertEqual(loaded_paths, ["access.mdb"])
         self.assertTrue(_AccessNameDialog.instances[0].deleted)
-
         _AccessNameDialog.result = QtWidgets.QDialog.DialogCode.Rejected
         with patch(
             "ost_visualizer.presentation.controllers.menu_controller."
@@ -1031,7 +1030,6 @@ class SqlDialogTests(unittest.TestCase):
             MenuController._new_database(controller)
         self.assertEqual(created_names, ["Access Database"])
         self.assertTrue(_AccessNameDialog.instances[1].deleted)
-
         original_icon_provider = controller.icon_provider
         controller.icon_provider = SimpleNamespace(
             set_window_icon=lambda _dialog: (_ for _ in ()).throw(

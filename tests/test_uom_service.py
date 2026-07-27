@@ -1,6 +1,5 @@
 import math
 import unittest
-
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.services.uom_service import (
     CALC_LINEAR_LENGTH,
@@ -26,7 +25,6 @@ class UomServiceTests(unittest.TestCase):
             position=[1.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             curve=0,
         )
-
         self.assertAlmostEqual(quantity, math.pi / math.sqrt(2.0), delta=0.03)
 
 

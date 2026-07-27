@@ -312,10 +312,8 @@ class ApplicationLifecycleTests(unittest.TestCase):
         )
         callback = lambda **_call_options: None
         controller.subscribe_to_event(AppEvents.LICENSE_EXPIRED, callback)
-
         with self.assertLogs(controller.logger, level="ERROR") as logs:
             controller.cleanup()
-
         self.assertEqual(
             cleanup_calls,
             [
@@ -427,9 +425,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
             connection_manager=connection_manager,
             license_api_client=object(),
         )
-
         monitor.callback(True)
-
         self.assertEqual(connection_manager.write_blocks, [True])
         self.assertEqual(
             event_bus.publications,
@@ -472,10 +468,8 @@ class ApplicationLifecycleTests(unittest.TestCase):
             logger=logging.getLogger("test"),
         )
         lifecycle.set_app_controller(app_controller)
-
         lifecycle.shutdown()
         lifecycle.shutdown()
-
         self.assertEqual(participant.shutdown_calls, 1)
         self.assertIsNone(lifecycle._app_controller)
         self.assertIsNone(lifecycle._container)
@@ -562,10 +556,8 @@ class ApplicationLifecycleTests(unittest.TestCase):
         service.project_data = retained
         service.project_operations = retained
         service.event_bus = retained
-
         with self.assertRaisesRegex(RuntimeError, "worker did not stop"):
             VisualizationService.cleanup(service)
-
         self.assertEqual(monitor.cleanup_calls, 1)
         self.assertEqual(notifier.cleanup_calls, 0)
         self.assertIs(service._transaction_monitor, monitor)

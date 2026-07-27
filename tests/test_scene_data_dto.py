@@ -1,5 +1,4 @@
 import unittest
-
 from ost_visualizer.application.dtos.scene_data_dto import SceneData, ScenePageEntry
 
 
