@@ -554,12 +554,13 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
     ) -> bool:
         if not annotations:
             return True
-        by_table: dict = {}
-        for uid, annotation_type in annotations:
-            table = self._ANNOTATION_TABLE.get(annotation_type)
-            if table:
-                by_table.setdefault(table, []).append(int(uid))
         try:
+            by_table: dict = {}
+            for uid, annotation_type in annotations:
+                table = self._ANNOTATION_TABLE.get(annotation_type)
+                if not table:
+                    raise ValueError(f"Unsupported annotation type: {annotation_type}")
+                by_table.setdefault(table, []).append(int(uid))
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()

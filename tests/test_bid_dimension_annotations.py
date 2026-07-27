@@ -1575,6 +1575,38 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             0,
         )
 
+    def test_delete_annotations_rejects_unsupported_type(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidAnnotationRects (UID INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO BidAnnotationRects (UID) VALUES (1)")
+
+        result = _DimensionWriteOps(conn).delete_annotations(
+            "bid.mdb",
+            [("1", "rect"), ("2", "unsupported")],
+        )
+
+        self.assertFalse(result)
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidAnnotationRects").fetchall(),
+            [(1,)],
+        )
+
+    def test_delete_annotations_rejects_invalid_uid_without_raising(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidAnnotationRects (UID INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO BidAnnotationRects (UID) VALUES (1)")
+
+        result = _DimensionWriteOps(conn).delete_annotations(
+            "bid.mdb",
+            [("not-a-uid", "rect")],
+        )
+
+        self.assertFalse(result)
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidAnnotationRects").fetchall(),
+            [(1,)],
+        )
+
     def test_renderer_uses_annotation_color_not_global_default_style(self):
         from ost_visualizer.presentation.utils.annotation_defaults import (
             set_annotation_style_for_tool,
