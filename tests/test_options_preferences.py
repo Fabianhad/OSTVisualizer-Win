@@ -2125,6 +2125,25 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(aggregate.display_mode_3d, Config.DEFAULT_DISPLAY_MODE)
         self.assertEqual(event_bus.events, [])
 
+    def test_corrected_option_update_is_persisted_once(self):
+        repo = FakeConfigRepository()
+        aggregate = ConfigAggregate(repo)
+        event_bus = FakeEventBus()
+        service = ConfigService(aggregate, event_bus)
+        with self.assertLogs(
+            "ost_visualizer.domain.aggregates.config_aggregate",
+            level="WARNING",
+        ):
+            changed = service.update_app_options(
+                {
+                    "display_mode_3d": "BadMode",
+                    "grayscale_enabled": True,
+                }
+            )
+        self.assertEqual(changed, ["grayscale_enabled"])
+        self.assertEqual(len(repo.saved), 1)
+        self.assertTrue(repo.saved[0]["grayscale_enabled"])
+
     def test_invalid_snap_threshold_uses_config_aggregate_validation_policy(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)

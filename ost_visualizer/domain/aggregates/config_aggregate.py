@@ -166,7 +166,7 @@ class ConfigAggregate:
             self.logger.error("Error reading configuration: %s", exc)
             self._reset_to_defaults(save=False)
 
-    def _apply_config(self, config: Config) -> None:
+    def _apply_config(self, config: Config, *, save_corrections: bool = True) -> None:
         display_mode_3d, mode_3d_changed = self._validated_display_mode(
             config.display_mode_3d,
             "display_mode_3d",
@@ -305,7 +305,7 @@ class ConfigAggregate:
             pdf_elevation_callout_color=colors["pdf_elevation_callout_color"],
         )
         self._config = validated
-        if config_changed:
+        if config_changed and save_corrections:
             try:
                 self._save_config()
             except OSError:
@@ -332,7 +332,7 @@ class ConfigAggregate:
 
     def update_options(self, config: Config) -> list[str]:
         previous = self._config.to_dict()
-        self._apply_config(config)
+        self._apply_config(config, save_corrections=False)
         current = self._config.to_dict()
         changed = [key for key, value in current.items() if previous.get(key) != value]
         if changed:
