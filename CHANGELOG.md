@@ -26,7 +26,8 @@
 - Fixed overlay rectangle writes that accepted missing pages or pages with invalid calibration factors.
 - Fixed HTML exports so project text cannot terminate the embedded scene-data script or inject markup into the document title.
 - Fixed PDF cache shutdown so one native renderer cleanup failure cannot retain the remaining per-thread renderers.
-- Fixed Cover Sheet multi-file imports assigning default sheet dimensions to raster images instead of using their actual image size.
+- Fixed Cover Sheet multi-file imports assigning default sheet dimensions to raster images instead of using their actual image size, and existing pages can now be moved into folders created in the same save.
+- Fixed existing bid areas failing to move beneath an area created in the same save.
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.
 - Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
 - Fixed silent toolbar check-state synchronization so it preserves signal blocks owned by an enclosing UI update.
@@ -37,7 +38,7 @@
 - Fixed deleted takeoffs retaining stale supplemental metadata in the active project model after their visible and bid-level records were removed.
 - Fixed successful plan-page renders remaining marked as pending, which could suppress later raster-quality correction; invalid overlay placement geometry now finishes loading without leaving the page busy.
 - Fixed PDF export remaining unavailable for TIFF-backed pages after raster background export support was added; mixed selections now enable export whenever at least one selected page has valid dimensions.
-- Fixed condition-type deletion validation failing open when usage data could not be loaded; unavailable validation now blocks deletion instead of risking removal of an in-use type.
+- Fixed condition-type deletion validation failing open when usage data could not be loaded; unavailable validation now blocks deletion, direct MDB saves validate the complete deletion batch before changing any type, and schema failures are reported as failed writes.
 - Fixed plan input edge cases so panning can begin at the viewport origin, horizontal-only wheel input no longer zooms out, keyboard moves persist once across auto-repeat and focus changes, area holes stay aligned with translated parents, canceled resize/rotation previews do not write changes, and interrupted pan, zoom-band, PDF-text, and drag interactions clean up reliably.
 - Fixed grouped plan-item rotation failures so later writes stop after an earlier failed stage and committed position changes remain accurately projected and undoable; mixed takeoff-and-annotation delete undo also preserves takeoff metadata captured before the database reload.
 - Fixed repeated final application-close events rerunning already completed workspace and service cleanup.

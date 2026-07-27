@@ -17,6 +17,7 @@ from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
 from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationResult
+from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from ost_visualizer.domain.entities.cover_sheet import (
     CoverSheetData,
     CoverSheetFolder,
@@ -585,6 +586,39 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             {"new": [], "updated": [], "deleted_uids": []},
         )
         self.assertIs(result, True)
+
+    def test_existing_bid_area_can_move_under_new_area(self):
+        operations = _CoverSheetSettingsOps()
+        result = operations.save_bid_areas(
+            "test.mdb",
+            "7",
+            BidAreaChangeset(
+                new=[
+                    BidArea(
+                        uid="new_0",
+                        bid_uid="7",
+                        parent_uid="",
+                        name="New Parent",
+                        sequence=1,
+                    )
+                ],
+                updated=[
+                    BidArea(
+                        uid="5",
+                        bid_uid="7",
+                        parent_uid="new_0",
+                        name="Existing Child",
+                        sequence=1,
+                    )
+                ],
+                deleted_uids=[],
+            ),
+        )
+        self.assertEqual(result, {"new_0": "99"})
+        area_update = next(
+            update for update in operations.updates if update["table"] == "BidAreas"
+        )
+        self.assertEqual(area_update["values"]["ParentUID"], 99)
 
     def test_cover_sheet_plan_header_uses_default_layout_without_saved_state(self):
         dialog = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
@@ -1846,6 +1880,65 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual(ops.rescale_calls, [])
         self.assertEqual([insert["table"] for insert in ops.inserts], ["BidPages"])
+
+    def test_cover_sheet_existing_page_can_move_into_new_folder(self):
+        ops = _CoverSheetSettingsOps()
+        page = _cover_sheet_page_update()
+        page["folder_uid"] = "new_folder_0"
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "new_folders": [
+                    {
+                        "local_uid": "new_folder_0",
+                        "name": "New Folder",
+                        "parent_uid": None,
+                    }
+                ],
+                "pages": [page],
+            },
+        )
+        self.assertTrue(success)
+        folder_insert = next(
+            insert for insert in ops.inserts if insert["table"] == "BidPageFolders"
+        )
+        page_update = next(
+            update for update in ops.updates if update["table"] == "BidPages"
+        )
+        self.assertEqual(folder_insert["values"]["UID"], 99)
+        self.assertEqual(page_update["values"]["BidPageFolderUID"], 99)
+
+    def test_cover_sheet_existing_folder_can_move_into_new_folder(self):
+        ops = _CoverSheetSettingsOps()
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "new_folders": [
+                    {
+                        "local_uid": "new_folder_0",
+                        "name": "New Parent",
+                        "parent_uid": None,
+                    }
+                ],
+                "folders": [
+                    {
+                        "uid": "5",
+                        "name": "Existing Child",
+                        "parent_uid": "new_folder_0",
+                    }
+                ],
+                "pages": [],
+            },
+        )
+        self.assertTrue(success)
+        folder_update = next(
+            update for update in ops.updates if update["table"] == "BidPageFolders"
+        )
+        self.assertEqual(folder_update["values"]["ParentUID"], 99)
 
     def test_page_scale_save_uses_shared_content_rescale(self):
         ops = _PageScaleOps(old_sf1=0.125, old_sf2=12.0)

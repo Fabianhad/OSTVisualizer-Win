@@ -136,6 +136,10 @@ class _SqliteMdbOps(
     def _require_write_columns(self, _schema, _table, _columns):
         pass
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
 
 class _RecordingSchema:
     def __init__(self, columns_by_table=None):
@@ -855,6 +859,41 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(result, {})
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM CdnTypes").fetchone()[0], 0)
+
+    def test_save_condition_types_preflights_complete_delete_batch(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("CREATE TABLE CdnTypes (UID INTEGER PRIMARY KEY, Name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE BidConditions (
+                UID INTEGER PRIMARY KEY,
+                CdnTypeUID INTEGER REFERENCES CdnTypes(UID)
+            )
+            """
+        )
+        conn.execute("INSERT INTO CdnTypes (UID, Name) VALUES (1, 'Unused')")
+        conn.execute("INSERT INTO CdnTypes (UID, Name) VALUES (2, 'Used')")
+        conn.execute("INSERT INTO BidConditions (UID, CdnTypeUID) VALUES (10, 2)")
+
+        with self.assertLogs("test", level="WARNING"):
+            result = _SqliteMdbOps(conn).save_condition_types(
+                "bid.mdb", {"deleted_uids": ["1", "2"]}
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(
+            conn.execute("SELECT UID FROM CdnTypes ORDER BY UID").fetchall(),
+            [(1,), (2,)],
+        )
+
+    def test_save_condition_types_reports_schema_failure(self):
+        conn = sqlite3.connect(":memory:")
+        with self.assertLogs("test", level="ERROR"):
+            result = _SqliteMdbOps(conn).save_condition_types(
+                "bid.mdb", {"new": [{"uid": "new_0", "name": "Concrete"}]}
+            )
+        self.assertIsNone(result)
 
     def test_save_employees_returns_uid_map_for_new_employee(self):
         class EmployeeOps(_SqliteMdbOps):

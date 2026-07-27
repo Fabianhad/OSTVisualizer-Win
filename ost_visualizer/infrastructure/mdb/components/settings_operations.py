@@ -19,6 +19,25 @@ class SettingsOperationsMixin:
             return ""
         return str(path).replace("/", "\\")
 
+    @staticmethod
+    def _resolve_folder_uid(
+        raw_uid,
+        local_uid_map: dict,
+        *,
+        invalid_as_none: bool,
+    ) -> int | None:
+        if not raw_uid:
+            return None
+        local_key = str(raw_uid)
+        if local_key in local_uid_map:
+            return int(local_uid_map[local_key])
+        try:
+            return int(raw_uid)
+        except (TypeError, ValueError):
+            if invalid_as_none:
+                return None
+            raise
+
     def save_cover_sheet(self, db_path: str, bid_uid: str, updates: dict) -> bool:
         try:
             with self._connection(db_path) as conn:
@@ -85,35 +104,14 @@ class SettingsOperationsMixin:
                             "DELETE FROM [BidPageFolders] WHERE [UID]=?",
                             int(folder_uid),
                         )
-                for folder in updates.get("folders", []):
-                    if not folder.get("uid") or not folder.get("name"):
-                        continue
-                    parent_uid_val = (
-                        int(folder["parent_uid"]) if folder.get("parent_uid") else None
-                    )
-                    self._execute_update_values(
-                        cursor,
-                        schema,
-                        "BidPageFolders",
-                        {"Name": folder["name"], "ParentUID": parent_uid_val},
-                        ("UID", "Name"),
-                        "[UID]=?",
-                        [int(folder["uid"])],
-                        "save_cover_sheet_folder",
-                    )
                 local_uid_map: dict = {}
                 for new_folder in updates.get("new_folders", []):
                     name = new_folder.get("name") or "New Folder"
-                    raw_parent = new_folder.get("parent_uid")
-                    if raw_parent and str(raw_parent) in local_uid_map:
-                        parent_uid_val = local_uid_map[str(raw_parent)]
-                    elif raw_parent:
-                        try:
-                            parent_uid_val = int(raw_parent)
-                        except (ValueError, TypeError):
-                            parent_uid_val = None
-                    else:
-                        parent_uid_val = None
+                    parent_uid_val = self._resolve_folder_uid(
+                        new_folder.get("parent_uid"),
+                        local_uid_map,
+                        invalid_as_none=True,
+                    )
                     assigned_uid = self._next_uid(cursor, "BidPageFolders")
                     self._execute_insert_values(
                         cursor,
@@ -131,20 +129,33 @@ class SettingsOperationsMixin:
                     local_uid = new_folder.get("local_uid")
                     if local_uid:
                         local_uid_map[str(local_uid)] = assigned_uid
+                for folder in updates.get("folders", []):
+                    if not folder.get("uid") or not folder.get("name"):
+                        continue
+                    parent_uid_val = self._resolve_folder_uid(
+                        folder.get("parent_uid"),
+                        local_uid_map,
+                        invalid_as_none=False,
+                    )
+                    self._execute_update_values(
+                        cursor,
+                        schema,
+                        "BidPageFolders",
+                        {"Name": folder["name"], "ParentUID": parent_uid_val},
+                        ("UID", "Name"),
+                        "[UID]=?",
+                        [int(folder["uid"])],
+                        "save_cover_sheet_folder",
+                    )
                 for page in updates.get("pages", []):
                     if page.get("width") is None:
                         continue
                     if page.get("uid") is None:
-                        raw_folder = page.get("folder_uid")
-                        if raw_folder and str(raw_folder) in local_uid_map:
-                            folder_uid_val = local_uid_map[str(raw_folder)]
-                        elif raw_folder:
-                            try:
-                                folder_uid_val = int(raw_folder)
-                            except (ValueError, TypeError):
-                                folder_uid_val = None
-                        else:
-                            folder_uid_val = None
+                        folder_uid_val = self._resolve_folder_uid(
+                            page.get("folder_uid"),
+                            local_uid_map,
+                            invalid_as_none=True,
+                        )
                         new_guid = "{" + str(uuid.uuid4()).upper() + "}"
                         assigned_page_uid = self._next_uid(cursor, "BidPages")
                         overlay_values = replacement_overlay_storage_values(
@@ -185,8 +196,10 @@ class SettingsOperationsMixin:
                         )
                     else:
                         page_uid = int(page["uid"])
-                        folder_uid_val = (
-                            int(page["folder_uid"]) if page.get("folder_uid") else None
+                        folder_uid_val = self._resolve_folder_uid(
+                            page.get("folder_uid"),
+                            local_uid_map,
+                            invalid_as_none=False,
                         )
                         overlay_path = self._windows_path_separators(
                             page.get("overlay_path")
@@ -760,13 +773,23 @@ class SettingsOperationsMixin:
                         "This OST database does not support condition types."
                     )
                 cursor = conn.cursor()
+                deletion_uids = []
                 for uid in changes.get("deleted_uids", []):
                     try:
-                        uid_int = int(uid)
-                        self._require_write_columns(schema, "CdnTypes", ("UID",))
-                        if not schema.optional_table_missing(
-                            "BidConditions"
-                        ) and schema.column_exists("BidConditions", "CdnTypeUID"):
+                        deletion_uids.append((uid, int(uid)))
+                    except ValueError as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
+                        self.logger.warning(
+                            "Failed to delete condition type %s: %s", uid, exc
+                        )
+                if deletion_uids:
+                    self._require_write_columns(schema, "CdnTypes", ("UID",))
+                if not schema.optional_table_missing(
+                    "BidConditions"
+                ) and schema.column_exists("BidConditions", "CdnTypeUID"):
+                    for _uid, uid_int in deletion_uids:
+                        try:
                             cursor.execute(
                                 "SELECT COUNT(*) FROM [BidConditions] "
                                 "WHERE [CdnTypeUID]=?",
@@ -779,8 +802,19 @@ class SettingsOperationsMixin:
                                     uid_int,
                                 )
                                 return None
+                        except pyodbc.Error as exc:
+                            if self._record_caught_mutation_error(exc):
+                                raise
+                            self.logger.warning(
+                                "Failed to validate condition type %s usage: %s",
+                                uid_int,
+                                exc,
+                            )
+                            return None
+                for uid, uid_int in deletion_uids:
+                    try:
                         cursor.execute("DELETE FROM [CdnTypes] WHERE [UID]=?", uid_int)
-                    except (pyodbc.Error, ValueError) as exc:
+                    except pyodbc.Error as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
                         self.logger.warning(
@@ -828,7 +862,7 @@ class SettingsOperationsMixin:
             if self._record_caught_mutation_error(exc):
                 raise
             self.logger.exception("Failed to save condition types in %s", db_path)
-            return {}
+            return None
 
     def save_bid_areas(
         self, db_path: str, bid_uid: str, changes: BidAreaChangeset
@@ -886,26 +920,6 @@ class SettingsOperationsMixin:
                     except (pyodbc.Error, ValueError) as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                for area in changes.updated:
-                    try:
-                        parent_val = int(area.parent_uid) if area.parent_uid else None
-                        self._execute_update_values(
-                            cursor,
-                            schema,
-                            "BidAreas",
-                            {
-                                "Name": area.name,
-                                "ParentUID": parent_val,
-                                "Sequence": area.sequence,
-                            },
-                            ("UID", "Name"),
-                            "[UID]=?",
-                            [int(area.uid)],
-                            "save_bid_area",
-                        )
-                    except (pyodbc.Error, ValueError) as exc:
-                        if self._record_caught_mutation_error(exc):
-                            raise
                 for area in changes.new:
                     try:
                         if area.parent_uid and area.parent_uid in uid_map:
@@ -934,6 +948,27 @@ class SettingsOperationsMixin:
                         )
                         uid_map[area.uid] = str(assigned_uid)
                     except pyodbc.Error as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
+                for area in changes.updated:
+                    try:
+                        raw_parent_uid = uid_map.get(area.parent_uid, area.parent_uid)
+                        parent_val = int(raw_parent_uid) if raw_parent_uid else None
+                        self._execute_update_values(
+                            cursor,
+                            schema,
+                            "BidAreas",
+                            {
+                                "Name": area.name,
+                                "ParentUID": parent_val,
+                                "Sequence": area.sequence,
+                            },
+                            ("UID", "Name"),
+                            "[UID]=?",
+                            [int(area.uid)],
+                            "save_bid_area",
+                        )
+                    except (pyodbc.Error, ValueError) as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
         except Exception as exc:
