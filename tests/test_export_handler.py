@@ -723,6 +723,38 @@ class OspExporterProgressTests(unittest.TestCase):
             str(image),
         )
 
+    def test_osp_export_failure_preserves_existing_destination(self):
+        class FakeOstExporter:
+            def export(self, _raw_data, output_path):
+                Path(output_path).write_text("ost", encoding="utf-8")
+                return ExportResultDto(success=True, format_name="OST")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "existing.osp"
+            output.write_bytes(b"existing archive")
+            cab_outputs = []
+
+            def fail_after_partial_write(_source_files, _archive_names, temp_output):
+                cab_outputs.append(Path(temp_output))
+                Path(temp_output).write_bytes(b"partial archive")
+                return False
+
+            with patch.object(
+                osp_exporter.ost_cab,
+                "create_cab_with_names",
+                side_effect=fail_after_partial_write,
+            ):
+                result = self._make_osp_exporter(
+                    lambda _uom_service: FakeOstExporter()
+                ).export(RawBidData(), str(output))
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
+            self.assertEqual(output.read_bytes(), b"existing archive")
+            self.assertEqual(len(cab_outputs), 1)
+            self.assertNotEqual(cab_outputs[0], output)
+            self.assertFalse(cab_outputs[0].exists())
+
 
 if __name__ == "__main__":
     unittest.main()

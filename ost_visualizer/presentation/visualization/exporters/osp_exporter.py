@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import os
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
@@ -101,15 +102,31 @@ class OspExporter:
                     _report,
                 )
                 _report(4, 4, "Packaging archive")
-                if not ost_cab.create_cab_with_names(
-                    source_files, archive_names, output_file
-                ):
-                    return ExportResultDto(
-                        success=False,
-                        format_name="OSP",
-                        error_message="Failed to create CAB archive",
-                        error_code=ExportErrorCode.WRITE_FAILED,
-                    )
+                output_path = Path(output_file).resolve()
+                temp_fd, temp_output = tempfile.mkstemp(
+                    prefix=".osp-",
+                    suffix=".tmp",
+                    dir=output_path.parent,
+                )
+                os.close(temp_fd)
+                try:
+                    if not ost_cab.create_cab_with_names(
+                        source_files, archive_names, temp_output
+                    ):
+                        return ExportResultDto(
+                            success=False,
+                            format_name="OSP",
+                            error_message="Failed to create CAB archive",
+                            error_code=ExportErrorCode.WRITE_FAILED,
+                        )
+                    os.replace(temp_output, output_path)
+                    temp_output = ""
+                finally:
+                    if temp_output:
+                        try:
+                            os.remove(temp_output)
+                        except FileNotFoundError:
+                            pass
             return ExportResultDto(success=True, format_name="OSP")
         except Exception as e:
             logger.exception("OSP export failed")
