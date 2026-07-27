@@ -1,9 +1,19 @@
+import math
 from dataclasses import dataclass, field, fields
 from typing import List, Mapping, Optional
 from .area import UNASSIGNED_AREA_UID
 from .condition import Condition
 
 _ROOT_TAKEOFF_PARENT_UIDS = frozenset({"", "0"})
+
+
+def _is_finite_number(value: object) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def find_takeoff_parent_cycle_uids(
@@ -71,8 +81,8 @@ class Takeoff:
             and bool(self.page_uid)
             and isinstance(self.area_uid, str)
             and isinstance(self.position, list)
-            and all(type(value) in (int, float) for value in self.position)
-            and type(self.rotation) in (int, float)
+            and all(_is_finite_number(value) for value in self.position)
+            and _is_finite_number(self.rotation)
             and type(self.curve) is int
             and isinstance(self.parent_uid, str)
             and isinstance(self.is_negative, bool)

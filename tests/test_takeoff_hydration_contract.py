@@ -149,6 +149,22 @@ class TakeoffHydrationContractTests(unittest.TestCase):
         )
         self.assertFalse(takeoff.has_valid_contract())
 
+    def test_takeoff_contract_rejects_non_finite_numeric_storage(self):
+        for field_name, value in (
+            ("position", [1.0, float("nan"), 3.0, 4.0]),
+            ("position", [1.0, float("inf"), 3.0, 4.0]),
+            ("rotation", float("-inf")),
+            ("rotation", 10**1000),
+        ):
+            with self.subTest(field_name=field_name, value=value):
+                takeoff = Takeoff(
+                    uid="4485",
+                    condition_uid="10",
+                    page_uid="20",
+                )
+                setattr(takeoff, field_name, value)
+                self.assertFalse(takeoff.has_valid_contract())
+
     def test_takeoff_parent_cycle_detection_is_order_independent(self):
         self.assertEqual(
             find_takeoff_parent_cycle_uids(
