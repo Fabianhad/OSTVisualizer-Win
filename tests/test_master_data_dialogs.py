@@ -289,6 +289,62 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_bid_areas_interactivity_revocation_blocks_inline_writes(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.tree.setCurrentItem(item)
+            dialog.set_interactive(False)
+
+            self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertEqual(
+                dialog.tree.editTriggers(),
+                QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers,
+            )
+            dialog._update_button_states()
+            self.assertFalse(dialog.btn_delete.isEnabled())
+            self.assertFalse(dialog.btn_move_up.isEnabled())
+            self.assertFalse(dialog.btn_move_down.isEnabled())
+
+            dialog._set_item_name(item, "Renamed")
+            dialog._on_item_changed(item, 0)
+            dialog._on_new()
+            dialog._on_delete()
+
+            self.assertEqual(item.text(0), "Main")
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+            self.assertEqual(save_calls, [])
+
+            dialog.set_interactive(True)
+            self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_area_picker_selection_cannot_reenable_when_noninteractive(self):
+        dialog = BidAreaPickerDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+        )
+        try:
+            dialog.set_interactive(False)
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            dialog._update_button_states()
+            self.assertFalse(dialog.btn_select.isEnabled())
+
+            dialog._on_select()
+            self.assertIsNone(dialog.get_selected_uid())
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_condition_types_picker_keeps_select_and_cancel_buttons(self):
         dialog = self._condition_types_dialog()
         try:

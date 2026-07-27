@@ -44,6 +44,7 @@ class BidAreasDialog(BaseListDialog):
         self._used_uids: Set[str] = used_uids or set()
         self._on_saved_fn = on_saved_fn
         self._has_license: bool = has_license
+        self._is_interactive: bool = has_license
         self._saved_area_state: Dict[str, Tuple[str, str, int]] = {}
         self._has_saved_changes = False
         self._save_controller = DeferredDialogSaveController(
@@ -294,7 +295,15 @@ class BidAreasDialog(BaseListDialog):
         return self.tree.topLevelItem(idx)
 
     def _update_button_states(self) -> None:
-        if not self._has_license:
+        if not self._is_interactive:
+            for btn in (
+                self.btn_delete,
+                self.btn_indent,
+                self.btn_outdent,
+                self.btn_move_up,
+                self.btn_move_down,
+            ):
+                btn.setEnabled(False)
             return
         item = self._single_selected()
         has_sel = item is not None
@@ -315,8 +324,11 @@ class BidAreasDialog(BaseListDialog):
                 btn.setEnabled(False)
 
     def set_interactive(self, enabled: bool) -> None:
-        self.btn_ok.setEnabled(enabled)
-        self._set_controls_interactive(enabled)
+        self._is_interactive = bool(enabled) and self._has_license
+        self.btn_ok.setEnabled(self._is_interactive)
+        self._set_controls_interactive(self._is_interactive)
+        if self._is_interactive and self._save_controller.pending:
+            self._save_controller.schedule()
 
     def _set_controls_interactive(self, enabled: bool) -> None:
         self.btn_new.setEnabled(enabled)
@@ -326,6 +338,20 @@ class BidAreasDialog(BaseListDialog):
             else QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.tree.setEditTriggers(trigger)
+        root = self.tree.invisibleRootItem()
+
+        def _set_item_interactive(item: QtWidgets.QTreeWidgetItem) -> None:
+            flags = item.flags()
+            if enabled:
+                flags |= QtCore.Qt.ItemFlag.ItemIsEditable
+            else:
+                flags &= ~QtCore.Qt.ItemFlag.ItemIsEditable
+            item.setFlags(flags)
+            for index in range(item.childCount()):
+                _set_item_interactive(item.child(index))
+
+        for index in range(root.childCount()):
+            _set_item_interactive(root.child(index))
         if enabled:
             self._update_button_states()
         else:
@@ -339,7 +365,9 @@ class BidAreasDialog(BaseListDialog):
                 btn.setEnabled(False)
 
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, _column: int) -> None:
-        if not self._has_license:
+        if not self._is_interactive:
+            if self._item_name_changed(item):
+                self._restore_item_name(item)
             return
         if not self._validate_item_name(item):
             return
@@ -372,6 +400,8 @@ class BidAreasDialog(BaseListDialog):
         super().cleanup()
 
     def _on_new(self) -> None:
+        if not self._is_interactive:
+            return
         uid = f"new_{self._new_counter}"
         self._new_counter += 1
         self._new_uids.add(uid)
@@ -388,6 +418,8 @@ class BidAreasDialog(BaseListDialog):
         self._update_button_states()
 
     def _on_delete(self) -> None:
+        if not self._is_interactive:
+            return
         item = self._single_selected()
         if not item:
             return
@@ -406,6 +438,8 @@ class BidAreasDialog(BaseListDialog):
         self._schedule_live_save()
 
     def _on_indent(self) -> None:
+        if not self._is_interactive:
+            return
         item = self._single_selected()
         if not item:
             return
@@ -421,6 +455,8 @@ class BidAreasDialog(BaseListDialog):
         self._schedule_live_save()
 
     def _on_outdent(self) -> None:
+        if not self._is_interactive:
+            return
         item = self._single_selected()
         if not item:
             return
@@ -435,6 +471,8 @@ class BidAreasDialog(BaseListDialog):
         self._schedule_live_save()
 
     def _move(self, direction: int) -> None:
+        if not self._is_interactive:
+            return
         item = self._single_selected()
         if not item:
             return
@@ -455,6 +493,8 @@ class BidAreasDialog(BaseListDialog):
         self._move(1)
 
     def _live_save(self) -> bool:
+        if not self._is_interactive:
+            return False
         if not self._save_fn:
             return True
         if not self._validate_changed_area_names_for_save():
@@ -574,13 +614,22 @@ class BidAreaPickerDialog(BidAreasDialog):
 
     def _update_button_states(self) -> None:
         super()._update_button_states()
-        self.btn_select.setEnabled(self._single_selected() is not None)
+        self.btn_select.setEnabled(
+            self._is_interactive and self._single_selected() is not None
+        )
 
     def set_interactive(self, enabled: bool) -> None:
-        self.btn_select.setEnabled(enabled and self._single_selected() is not None)
-        self._set_controls_interactive(enabled)
+        self._is_interactive = bool(enabled) and self._has_license
+        self.btn_select.setEnabled(
+            self._is_interactive and self._single_selected() is not None
+        )
+        self._set_controls_interactive(self._is_interactive)
+        if self._is_interactive and self._save_controller.pending:
+            self._save_controller.schedule()
 
     def _on_select(self) -> None:
+        if not self._is_interactive:
+            return
         item = self._single_selected()
         if item:
             self._selected_uid = item.data(0, self._UID_ROLE)
