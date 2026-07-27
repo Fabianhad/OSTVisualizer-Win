@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed the page-area picker saving or restoring stale bid state when its
+  database context is cleared while the dialog is open.
 - Fixed axis-aligned curved linear takeoffs using a shorter quadratic fallback instead of their circular arc when calculating quantities.
 - Fixed conflicting condition reference-number updates committing other conditions' renumbering before the target condition save; both changes now share one database transaction.
 - Fixed condition-type IDs from different loaded databases overwriting each other in active-bid memory when the databases used the same numeric IDs.

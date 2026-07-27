@@ -194,27 +194,34 @@ class PageSettingsBar(QtWidgets.QWidget):
             or not self._save_areas_fn
         ):
             return
+        bid_ref = self._bid_ref
+        page_uid = self._page_uid
         areas = []
         try:
-            areas = self._load_areas_fn(self._bid_ref.file_path, self._bid_ref.bid_uid)
+            areas = self._load_areas_fn(bid_ref.file_path, bid_ref.bid_uid)
         except Exception:
             logger.exception("Failed to load bid areas for picker")
             return
         prev_area_uid = self.area_combo.get_current_area_uid()
 
         def _save_fn(changes: dict):
-            if not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            if (
+                not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+                or self._bid_ref != bid_ref
+            ):
                 return None
             return self._save_areas_fn(
-                self._bid_ref.file_path,
-                self._bid_ref.bid_uid,
+                bid_ref.file_path,
+                bid_ref.bid_uid,
                 changes,
                 publish_database_refreshed_after_write=False,
             )
 
         def _on_saved() -> None:
+            if self._bid_ref != bid_ref:
+                return
             self.load_bid_areas(
-                self._bid_ref,
+                bid_ref,
                 areas_with_takeoff=self._bid_areas_in_use,
                 selected_uid=self.area_combo.get_current_area_uid(),
             )
@@ -226,7 +233,7 @@ class PageSettingsBar(QtWidgets.QWidget):
             save_fn=_save_fn,
             used_uids=self._bid_areas_in_use,
             on_saved_fn=_on_saved,
-            bid_ref=self._bid_ref,
+            bid_ref=bid_ref,
         )
         selected_uid = None
         try:
@@ -240,8 +247,10 @@ class PageSettingsBar(QtWidgets.QWidget):
             saved_changes = dlg.has_saved_changes()
             dlg.deleteLater()
         if saved_changes:
-            self._refresh_areas_fn(self._bid_ref.file_path)
-        self.load_bid_areas(self._bid_ref, areas_with_takeoff=self._bid_areas_in_use)
+            self._refresh_areas_fn(bid_ref.file_path)
+        if self._bid_ref != bid_ref or self._page_uid != page_uid:
+            return
+        self.load_bid_areas(bid_ref, areas_with_takeoff=self._bid_areas_in_use)
         if self._page_areas_in_use is not None:
             self.update_bold_states(self._page_areas_in_use)
         target_uid = selected_uid if selected_uid is not None else prev_area_uid

@@ -840,6 +840,63 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         finally:
             bar.deleteLater()
 
+    def test_page_settings_area_picker_ignores_callbacks_after_bid_is_cleared(self):
+        save_calls = []
+        refresh_calls = []
+
+        class CapturingPicker:
+            def __init__(self, **kwargs):
+                self._save_fn = kwargs["save_fn"]
+                self._on_saved_fn = kwargs["on_saved_fn"]
+
+            def get_selected_uid(self):
+                return "area-2"
+
+            def has_saved_changes(self):
+                return False
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        bar = PageSettingsBar(
+            FakeIconProvider(),
+            event_bus=object(),
+            load_areas_fn=lambda _file_path, _bid_uid: [],
+            save_areas_fn=lambda *args, **kwargs: save_calls.append((args, kwargs)),
+            refresh_areas_fn=refresh_calls.append,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+        )
+        bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
+        bar.load_page("page-1", 1.0, 1.0, "")
+        bar.set_interactive(True)
+
+        def exec_picker(picker, _event_bus):
+            bar.clear_bid()
+            self.assertIsNone(picker._save_fn(object()))
+            picker._on_saved_fn()
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        try:
+            from ost_visualizer.presentation.components import page_settings_bar
+
+            old_dialog = page_settings_bar.BidAreaPickerDialog
+            old_exec = page_settings_bar.exec_with_ost_blocking
+            page_settings_bar.BidAreaPickerDialog = CapturingPicker
+            page_settings_bar.exec_with_ost_blocking = exec_picker
+            try:
+                bar._on_area_browse()
+            finally:
+                page_settings_bar.BidAreaPickerDialog = old_dialog
+                page_settings_bar.exec_with_ost_blocking = old_exec
+            self.assertEqual(save_calls, [])
+            self.assertEqual(refresh_calls, [])
+            self.assertIsNone(bar._bid_ref)
+        finally:
+            bar.deleteLater()
+
     def test_open_areas_dialog_refreshes_once_after_saved_changes(self):
         reload_calls = []
         bid_ref = BidRef("db.mdb", "bid-1")
