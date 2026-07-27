@@ -212,7 +212,7 @@ class ColorService:
         return False
 
     def get_condition_color(self, condition) -> List[int]:
-        color_int = condition.color_fill if condition.color_fill else 255
+        color_int = condition.color_fill if condition.color_fill is not None else 255
         hex_color = int_to_hex(color_int)
         return hex_to_rgb_int(hex_color)
 
