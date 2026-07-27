@@ -40,9 +40,7 @@ def _coerce_optional_str(value) -> Optional[str]:
 
 
 def _coerce_bool(value, default: bool) -> bool:
-    if value is None:
-        return default
-    return bool(value)
+    return value if isinstance(value, bool) else default
 
 
 def _coerce_int_list(value) -> List[int]:

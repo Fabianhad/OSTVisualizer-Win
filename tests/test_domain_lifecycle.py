@@ -191,6 +191,39 @@ class DomainLifecycleTests(unittest.TestCase):
         self.assertFalse(annotation_state.is_maximized)
         self.assertFalse(annotation_state.is_fullscreen)
 
+    def test_workspace_invalid_boolean_scalars_use_field_defaults(self):
+        state = WorkspaceState.from_dict(
+            {
+                "main_window": {
+                    "is_maximized": "false",
+                    "status_bar_visible": 0,
+                },
+                "takeoff_workspace": {
+                    "view_2d_tab_visible": [],
+                    "summary_group_by_page": "true",
+                },
+                "toolbar_visibility": {
+                    "main_toolbar_visible": 0,
+                },
+                "detached_windows": {
+                    "annotation_view": {
+                        "open": 1,
+                        "is_maximized": "true",
+                        "is_fullscreen": {},
+                    }
+                },
+            }
+        )
+
+        self.assertTrue(state.main_window.is_maximized)
+        self.assertTrue(state.main_window.status_bar_visible)
+        self.assertTrue(state.takeoff_workspace.view_2d_tab_visible)
+        self.assertFalse(state.takeoff_workspace.summary_group_by_page)
+        self.assertTrue(state.toolbar_visibility.main_toolbar_visible)
+        self.assertFalse(state.detached_windows.annotation_view.open)
+        self.assertFalse(state.detached_windows.annotation_view.is_maximized)
+        self.assertFalse(state.detached_windows.annotation_view.is_fullscreen)
+
 
 if __name__ == "__main__":
     unittest.main()
