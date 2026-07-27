@@ -5,9 +5,13 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     ResourceRef,
 )
+from ost_visualizer.application.services.annotation_write_service import (
+    AnnotationWriteService,
+)
 from ost_visualizer.application.services.base_write_service import (
     DatabaseMutationWriteService,
 )
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.components.plan_view.components.input_handler import (
     InputHandlerMixin,
 )
@@ -66,6 +70,17 @@ class _ConcurrencyTokens:
 
 
 class UIAccessPlanEditingTests(unittest.TestCase):
+    def test_annotation_resources_keep_bid_identity_for_equivalent_windows_path(self):
+        service = AnnotationWriteService.__new__(AnnotationWriteService)
+        service._project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef(
+                file_path=r"C:\Jobs\Current.mdb",
+                bid_uid="41",
+            )
+        )
+
+        self.assertEqual(service._bid_uid("c:/jobs/CURRENT.mdb"), 41)
+
     def test_revoking_plan_editing_cancels_every_active_mutation_mode(self):
         cancellations = []
 

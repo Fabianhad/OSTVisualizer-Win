@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple
+from ...domain.entities.file_state import normalize_path
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
     ResourceRef,
@@ -71,7 +72,9 @@ class AnnotationWriteService(DatabaseMutationWriteService):
 
     def _bid_uid(self, db_path: str) -> Optional[int]:
         bid_ref = self._project_data.get_current_bid_ref()
-        if bid_ref is None or bid_ref.file_path != db_path:
+        if bid_ref is None or normalize_path(bid_ref.file_path) != normalize_path(
+            db_path
+        ):
             return None
         return int(bid_ref.bid_uid)
 
