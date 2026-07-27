@@ -17,15 +17,16 @@ class FileStateAggregate:
 
     def _load_state(self) -> None:
         try:
-            self._state = self.repository.load()
+            state = self.repository.load()
         except FileNotFoundError:
-            self._state = FileState()
+            return
         except ValueError as exc:
-            self.logger.error("%s; starting with empty state", exc)
-            self._state = FileState()
+            self.logger.error("%s; keeping current file state", exc)
+            return
         except OSError as exc:
             self.logger.error("Error reading file state: %s", exc)
-            self._state = FileState()
+            return
+        self._state = state
 
     def _save_state(self, state: FileState) -> None:
         try:

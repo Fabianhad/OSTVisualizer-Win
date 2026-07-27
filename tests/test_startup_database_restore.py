@@ -91,6 +91,27 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         caller_entry.is_checked = False
         self.assertTrue(aggregate.file_entries[0].is_checked)
 
+    def test_file_state_reload_failure_preserves_last_known_entries(self):
+        original = FileEntry("C:/projects/active.mdb", is_checked=True)
+
+        class _Repository:
+            load_count = 0
+
+            def load(self):
+                self.load_count += 1
+                if self.load_count == 1:
+                    return FileState(file_entries=[original])
+                raise OSError("temporary read failure")
+
+            def save(self, _state):
+                pass
+
+        aggregate = FileStateAggregate(_Repository())
+
+        aggregate.reload()
+
+        self.assertEqual(aggregate.file_entries, [original])
+
     def test_startup_loads_access_synchronously_and_starts_sql_asynchronously(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             access_path = Path(temp_dir) / "available.mdb"
