@@ -36,12 +36,6 @@ class PageLoadStrategyService:
         show_mode = page.image_show_mode
         show_original = show_mode in (0, 2)
         show_overlay = show_mode in (1, 2) and page.has_overlay
-        is_overlay_pdf = (
-            show_overlay
-            and page.overlay_image_path
-            and is_pdf_suffix(page.overlay_image_path)
-        )
-        needs_async_loading = (has_image_file or is_overlay_pdf) and page.layer_visible
         page_has_dimensions = page.width_pts > 0 and page.height_pts > 0
         show_canvas = page_has_dimensions or not has_image_file
         view_scale = self._calculate_view_scale(
@@ -64,6 +58,9 @@ class PageLoadStrategyService:
         load_main = has_image_file and show_original and not load_composite
         load_overlay = (
             not (has_image_file and show_original) and show_overlay and page.has_overlay
+        )
+        needs_async_loading = bool(
+            page.layer_visible and (load_composite or load_main or load_overlay)
         )
         return LoadStrategy(
             needs_async_loading=needs_async_loading,

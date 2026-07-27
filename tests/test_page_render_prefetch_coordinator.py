@@ -140,6 +140,40 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         self.assertEqual(strategy.pdf_height_pts, 2160.0)
         self.assertEqual(size_provider.calls, [("slow.pdf", 0)])
 
+    def test_overlay_only_raster_without_main_image_still_loads(self):
+        strategy = PageLoadStrategyService(
+            FakePageSizeProvider({"overlay.tif": (1224.0, 1584.0)})
+        ).determine_load_strategy(
+            self._page(
+                "p1",
+                image_path=None,
+                overlay_image_path="overlay.tif",
+                image_show_mode=1,
+            )
+        )
+
+        self.assertTrue(strategy.needs_async_loading)
+        self.assertTrue(strategy.load_overlay)
+        self.assertFalse(strategy.load_main)
+        self.assertFalse(strategy.load_composite)
+
+    def test_overlay_only_mode_without_overlay_does_not_load_hidden_main(self):
+        strategy = PageLoadStrategyService(
+            FakePageSizeProvider()
+        ).determine_load_strategy(
+            self._page(
+                "p1",
+                image_path="main.pdf",
+                overlay_image_path=None,
+                image_show_mode=1,
+            )
+        )
+
+        self.assertFalse(strategy.needs_async_loading)
+        self.assertFalse(strategy.load_overlay)
+        self.assertFalse(strategy.load_main)
+        self.assertFalse(strategy.load_composite)
+
     def test_only_previous_and_next_pages_are_prefetched_at_lower_priority(self):
         rendering = FakeRenderingService()
         coordinator = self._coordinator(rendering)

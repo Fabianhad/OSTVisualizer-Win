@@ -90,6 +90,7 @@
 - Fixed OST imports failing on safely recoverable references by validating the complete takeoff graph, preserving valid child-before-parent relationships, skipping genuinely orphaned hole/backout takeoffs and their descendants with explicit diagnostics, rejecting malformed takeoff identities, duplicate record UIDs across every section, parent cycles, and missing required page or condition references, and clearing stale selected-page or annotation takeoff attachments while continuing to reject other invalid database references.
 - Fixed project-file imports so an existing active bid remains visually selected after importing into its folder, Import remains available from the Summary tab whenever the current context permits importing, and successful menu imports warn when the database view cannot be refreshed.
 - Fixed plan pages with both original and overlay images so hiding the image layer immediately reveals the white page canvas without an unexpected fit-to-page jump.
+- Fixed overlay-only plan pages so raster overlays load without a main image and a missing overlay does not leave an unused main image pending.
 - Fixed takeoff clicks after condition sidebar reloads so the clicked takeoff's condition is reselected and highlighted when the previous highlight was cleared.
 - Fixed OSP exports so the embedded OST keeps the drawing paths stored in the database instead of package-internal `TempImages!.tmp` paths.
 - Fixed the Select Named View dialog so refocusing a non-empty search field shows the current matching named views again.
