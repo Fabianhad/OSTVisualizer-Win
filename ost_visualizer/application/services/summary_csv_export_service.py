@@ -211,10 +211,6 @@ class SummaryCsvExportService:
         return not area or area == SUMMARY_UNASSIGNED_LABEL
 
     @staticmethod
-    def _display_name(value: str) -> str:
-        return value.replace('"', "''")
-
-    @staticmethod
     def _area_column_value(row: _ExportRow) -> str:
         if row.kind == SUMMARY_NODE_MULTI_AREA_TOTAL:
             return "Total"
@@ -298,11 +294,7 @@ class SummaryCsvExportService:
             pre_type_group,
             row.type_name if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
             values.number if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
-            (
-                self._display_name(values.name)
-                if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL
-                else ""
-            ),
+            values.name if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
             (
                 self._format_height(values.height_inches)
                 if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL

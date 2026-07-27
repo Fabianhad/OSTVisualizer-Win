@@ -430,6 +430,25 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
         parsed = list(csv.reader(text.splitlines()))
         self.assertEqual(parsed[0][3], "Type B")
 
+    def test_to_csv_text_preserves_quotes_in_condition_names(self):
+        self.conditions["c1"].name = 'Cond "B"'
+
+        text = self.csv_service.to_csv_text(
+            self.summary_service.build_summary(
+                conditions=self.conditions,
+                folders=self.folders,
+                takeoffs=self.takeoffs,
+                pages=self.pages,
+                areas=self.areas,
+                project_name="Bid",
+                grouping=ConditionSummaryGrouping(),
+            ),
+            ConditionSummaryGrouping(),
+        )
+
+        parsed = list(csv.reader(text.splitlines()))
+        self.assertEqual(parsed[0][5], 'Cond "B"')
+
     def test_export_current_summary_writes_selected_csv_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "summary.csv"
