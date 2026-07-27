@@ -8,6 +8,35 @@ from ost_visualizer.application.dtos.export_dto import (
 )
 from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.domain.services.project_data_service import CollectedTakeoffsResult
+from ost_visualizer.presentation.visualization.exporters.base_exporter import (
+    BaseExporter,
+)
+
+
+class _ResultExporter(BaseExporter):
+    def __init__(self, write_result):
+        self._write_result = write_result
+        self._takeoff_service = SimpleNamespace(
+            group_area_takeoffs_with_holes=lambda takeoffs, _conditions: (takeoffs, {})
+        )
+        self._color_service = SimpleNamespace(get_color_mapping=lambda *_args: ({}, {}))
+        self.area_holes_map = {}
+        self.processed_mesh_cache = {}
+
+    def _filter_exportable_takeoffs(self, bid_takeoffs, _bid_conditions):
+        return list(bid_takeoffs)
+
+    def _prepare_hierarchical_export(self, *_args):
+        return {}, {}
+
+    def _apply_boolean_operations(self, _takeoffs_by_group):
+        return None
+
+    def _write_output(self, *_args):
+        return self._write_result
+
+    def cleanup(self):
+        return None
 
 
 class ExportServiceFailureBoundaryTests(unittest.TestCase):
@@ -83,6 +112,10 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.assertEqual(result.format_name, "OBJ")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
         self.assertEqual(result.error_message, "title preparation failed")
+
+    def test_base_exporter_propagates_explicit_writer_failure(self):
+        self.assertFalse(_ResultExporter(False).export({}, [object()], "output.dxf"))
+        self.assertTrue(_ResultExporter(None).export({}, [object()], "output.obj"))
 
 
 if __name__ == "__main__":

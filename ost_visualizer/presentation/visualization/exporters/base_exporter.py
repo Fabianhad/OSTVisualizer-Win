@@ -71,14 +71,14 @@ class BaseExporter(ABC):
                 exportable_takeoffs, bid_conditions, color_map, page_area_selections
             )
             self._apply_boolean_operations(takeoffs_by_group)
-            self._write_output(
+            write_result = self._write_output(
                 output_path,
                 takeoffs_by_group,
                 materials_info,
                 bid_conditions,
                 display_mode,
             )
-            return True
+            return write_result is not False
         except Exception:
             logger.exception("Error during export")
             return False
