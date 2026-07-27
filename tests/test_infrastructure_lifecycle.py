@@ -288,6 +288,37 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         finally:
             providers._ost_pdf.PDFRenderer = original_renderer
 
+    def test_infrastructure_provider_reuses_one_owned_default_connection_manager(self):
+        class FalseyManager:
+            def __bool__(self):
+                return False
+
+        explicit_manager = FalseyManager()
+        service_provider = providers.InfrastructureServiceProvider(
+            logger=logging.getLogger("test"),
+            callback_bridge_factory=lambda: None,
+            database_session_registry=object(),
+            descriptor_registry=object(),
+            credential_store=object(),
+        )
+        with (
+            patch.object(providers, "DatabaseProjectReader") as reader_type,
+            patch.object(providers, "DatabaseProjectWriter") as writer_type,
+        ):
+            default_reader = service_provider.get_mdb_reader()
+            self.assertIs(service_provider.get_mdb_reader(), default_reader)
+            default_writer = service_provider.get_mdb_writer()
+            self.assertIs(service_provider.get_mdb_writer(), default_writer)
+
+            default_manager = reader_type.call_args_list[0].args[0]
+            self.assertIs(writer_type.call_args_list[0].args[0], default_manager)
+            service_provider.get_mdb_reader(explicit_manager)
+            service_provider.get_mdb_writer(explicit_manager)
+            self.assertIs(reader_type.call_args_list[1].args[0], explicit_manager)
+            self.assertIs(writer_type.call_args_list[1].args[0], explicit_manager)
+            self.assertEqual(reader_type.call_count, 2)
+            self.assertEqual(writer_type.call_count, 2)
+
     def test_database_creator_closes_cursor_and_connection_on_schema_failure(self):
         class FakeCursor:
             def __init__(self):

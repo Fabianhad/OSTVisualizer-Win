@@ -188,6 +188,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
             WindowsCredentialStore() if credential_store is None else credential_store
         )
         self._database_session_registry = database_session_registry
+        self._default_connection_manager = MdbConnectionManager()
         self._database_readers: dict[int, IMdbReader] = {}
         self._database_writers: dict[int, IMdbWriter] = {}
 
@@ -306,7 +307,9 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
     def get_mdb_reader(
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IMdbReader:
-        resolved_manager = conn_manager or MdbConnectionManager()
+        resolved_manager = (
+            self._default_connection_manager if conn_manager is None else conn_manager
+        )
         key = id(resolved_manager)
         reader = self._database_readers.get(key)
         if reader is None:
@@ -322,7 +325,9 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
     def get_mdb_writer(
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IMdbWriter:
-        resolved_manager = conn_manager or MdbConnectionManager()
+        resolved_manager = (
+            self._default_connection_manager if conn_manager is None else conn_manager
+        )
         key = id(resolved_manager)
         writer = self._database_writers.get(key)
         if writer is None:
