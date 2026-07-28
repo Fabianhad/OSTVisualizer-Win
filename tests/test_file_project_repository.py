@@ -52,7 +52,6 @@ class MdbFileParserTests(unittest.TestCase):
                 ),
             ]
         )
-
         self.assertIsNone(hierarchy.find_file_path_for_project("1"))
         self.assertEqual(
             hierarchy.find_file_path_for_project("1", "second-id"),

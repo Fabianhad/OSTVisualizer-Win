@@ -1790,7 +1790,6 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
 
         capabilities = SnapshotChangingCapabilities()
         capabilities.mark_connected(descriptor.database_id)
-
         self.assertFalse(capabilities.is_editable(descriptor.database_id, locked))
         self.assertEqual(capabilities.status_reads, 1)
 

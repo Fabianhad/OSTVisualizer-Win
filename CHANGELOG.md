@@ -22,6 +22,10 @@
 
 ### Fixed
 
+- Fixed plan editing handles so standard selection, placement, rotation, and
+  Move Overlay Image handles retain a white fill with a black outline in both
+  light and dark modes; the overlay handle also opens at the visible viewport
+  center and remains centered through scrolling, panning, zooming, and resizing.
 - Fixed native PDF rendering accepting invalid scales or frame coordinates that
   could overflow bitmap sizing, and explicit PDFium shutdown can now be followed
   by a clean reinitialization.

@@ -1,21 +1,15 @@
 from typing import Optional, Tuple
 from PySide6.QtGui import QBrush, QColor, QPen
 
-TAKEOFF_HANDLE_LIGHT_FILL = QColor(255, 255, 255, 224)
-TAKEOFF_HANDLE_LIGHT_OUTLINE = QColor(0, 0, 0)
-TAKEOFF_HANDLE_DARK_FILL = QColor(0, 0, 0, 224)
-TAKEOFF_HANDLE_DARK_OUTLINE = QColor(255, 255, 255)
-_DARK_BACKGROUND_LUMINANCE_THRESHOLD = 128.0
+STANDARD_HANDLE_FILL_HEX = "#ffffff"
+STANDARD_HANDLE_FILL_RGB = (255, 255, 255)
+STANDARD_HANDLE_OUTLINE_RGB = (0, 0, 0)
+TAKEOFF_HANDLE_FILL = QColor(*STANDARD_HANDLE_FILL_RGB, 224)
+TAKEOFF_HANDLE_OUTLINE = QColor(*STANDARD_HANDLE_OUTLINE_RGB)
 
 
-def _relative_luminance(color: QColor) -> float:
-    return 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
-
-
-def handle_colors_for_background(background: QColor) -> Tuple[QColor, QColor]:
-    if _relative_luminance(background) < _DARK_BACKGROUND_LUMINANCE_THRESHOLD:
-        return QColor(TAKEOFF_HANDLE_LIGHT_FILL), QColor(TAKEOFF_HANDLE_LIGHT_OUTLINE)
-    return QColor(TAKEOFF_HANDLE_DARK_FILL), QColor(TAKEOFF_HANDLE_DARK_OUTLINE)
+def handle_colors_for_background(_background: QColor) -> Tuple[QColor, QColor]:
+    return QColor(TAKEOFF_HANDLE_FILL), QColor(TAKEOFF_HANDLE_OUTLINE)
 
 
 def apply_takeoff_handle_style(

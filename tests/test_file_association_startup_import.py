@@ -287,9 +287,7 @@ class FileAssociationStartupImportTests(unittest.TestCase):
                 get_current_file_path=lambda: "first.mdb",
             ),
         )
-
         target = MainWindow._current_project_import_target(window)
-
         self.assertEqual(target.file_path, "second.mdb")
         self.assertEqual(target.project_uid, "1")
 

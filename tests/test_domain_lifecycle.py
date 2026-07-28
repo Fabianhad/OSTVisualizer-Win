@@ -141,7 +141,6 @@ class DomainLifecycleTests(unittest.TestCase):
                 }
             }
         )
-
         style = state.takeoff_workspace.annotation_styles["text"]
         self.assertEqual(style.font_size, 12)
         self.assertEqual(style.text_align, 0)

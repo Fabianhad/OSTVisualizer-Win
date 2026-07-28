@@ -259,15 +259,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         scheduler.start()
         self.assertTrue(task_started.wait(timeout=1))
         thread = scheduler._thread
-
         with patch.object(threading.Thread, "join"):
             scheduler.stop()
-
         self.assertIs(scheduler._thread, thread)
         self.assertTrue(scheduler.is_running())
         scheduler.start()
         self.assertIs(scheduler._thread, thread)
-
         release_task.set()
         thread.join(timeout=1)
         scheduler.stop()

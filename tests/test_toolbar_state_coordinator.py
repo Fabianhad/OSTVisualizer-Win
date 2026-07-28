@@ -491,9 +491,7 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         area_transitions = []
         plan_view.area_placement_in_progress.connect(area_transitions.append)
         place_action.setChecked(True)
-
         plan_view.begin_area()
-
         self.assertEqual(area_transitions, [True])
         self.assertTrue(access.area_active)
         self.assertTrue(place_action.isChecked())

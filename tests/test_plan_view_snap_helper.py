@@ -121,16 +121,12 @@ def _install_fake_native_modules():
     geometry_module.rotate_points_around = lambda pos, *_args: list(pos)
     sys.modules[GEOMETRY_MODULE_NAME] = geometry_module
     handle_style_module = types.ModuleType(HANDLE_STYLE_MODULE_NAME)
+    handle_style_module.STANDARD_HANDLE_FILL_HEX = "#ffffff"
+    handle_style_module.STANDARD_HANDLE_FILL_RGB = (255, 255, 255)
+    handle_style_module.STANDARD_HANDLE_OUTLINE_RGB = (0, 0, 0)
 
-    def handle_colors_for_background(background):
-        luminance = (
-            0.299 * background.red()
-            + 0.587 * background.green()
-            + 0.114 * background.blue()
-        )
-        if luminance < 128.0:
-            return QColor(255, 255, 255, 224), QColor(0, 0, 0)
-        return QColor(0, 0, 0, 224), QColor(255, 255, 255)
+    def handle_colors_for_background(_background):
+        return QColor(255, 255, 255, 224), QColor(0, 0, 0)
 
     handle_style_module.handle_colors_for_background = handle_colors_for_background
     handle_style_module.apply_takeoff_handle_style = (

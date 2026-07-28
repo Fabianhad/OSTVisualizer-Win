@@ -6,23 +6,15 @@ from ost_visualizer.presentation.components.plan_view.components.handle_style im
 
 
 class PlanViewHandleStyleTests(unittest.TestCase):
-    def test_dark_background_uses_light_handle_fill(self):
+    def test_dark_background_uses_white_fill_with_black_outline(self):
         fill, outline = handle_colors_for_background(QColor(12, 16, 20))
-        self.assertGreater(fill.red(), 240)
-        self.assertGreater(fill.green(), 240)
-        self.assertGreater(fill.blue(), 240)
-        self.assertLess(outline.red(), 20)
-        self.assertLess(outline.green(), 20)
-        self.assertLess(outline.blue(), 20)
+        self.assertEqual(fill, QColor(255, 255, 255, 224))
+        self.assertEqual(outline, QColor(0, 0, 0))
 
-    def test_light_background_uses_dark_handle_fill(self):
+    def test_light_background_keeps_white_fill_with_black_outline(self):
         fill, outline = handle_colors_for_background(QColor(245, 245, 245))
-        self.assertLess(fill.red(), 20)
-        self.assertLess(fill.green(), 20)
-        self.assertLess(fill.blue(), 20)
-        self.assertGreater(outline.red(), 240)
-        self.assertGreater(outline.green(), 240)
-        self.assertGreater(outline.blue(), 240)
+        self.assertEqual(fill, QColor(255, 255, 255, 224))
+        self.assertEqual(outline, QColor(0, 0, 0))
 
 
 if __name__ == "__main__":

@@ -1722,6 +1722,250 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(view._resolve_cursor(handle_pos), view._move_overlay_cursor)
         view.cleanup()
 
+    def test_move_overlay_handle_uses_white_fill_with_black_outline(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 544.0, 704.0),
+        )
+        self._install_page_canvas(view, page)
+        with patch.object(
+            view,
+            "_outlined_icon_pixmap",
+            wraps=view._outlined_icon_pixmap,
+        ) as build_pixmap:
+            self.assertTrue(view.show_overlay_move_handle())
+        build_pixmap.assert_called_once_with(
+            "recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+            "#ffffff",
+        )
+        image = view._overlay_move_handle_item.pixmap().toImage()
+        colors = {
+            image.pixelColor(x, y).rgba()
+            for y in range(image.height())
+            for x in range(image.width())
+        }
+        self.assertIn(QColor(255, 255, 255).rgba(), colors)
+        self.assertIn(QColor(0, 0, 0).rgba(), colors)
+        view.cleanup()
+
+    def test_rotate_handle_uses_white_fill_and_line_with_black_outline(self):
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[0.0, 0.0, 100.0, 100.0],
+        )
+        view._current_annotations = {"a1": annotation}
+        view._element_center = lambda *_args: (50.0, 50.0)
+        with patch.object(
+            view,
+            "_outlined_icon_pixmap",
+            wraps=view._outlined_icon_pixmap,
+        ) as build_pixmap:
+            self.assertTrue(view._create_rotate_handle("a1"))
+        build_pixmap.assert_called_once_with(
+            "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+            "#ffffff",
+        )
+        self.assertEqual(view._rotate_line_item.pen().color(), QColor(255, 255, 255))
+        self.assertEqual(
+            view._rotate_line_outline_item.pen().color(),
+            QColor(0, 0, 0),
+        )
+        view.cleanup()
+
+    def test_move_overlay_handle_starts_at_scrolled_zoomed_viewport_center(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 544.0, 704.0),
+        )
+        self._install_page_canvas(view, page)
+        view._load_view_applied = True
+        view.show()
+        view.scale(1.75, 1.75)
+        view.horizontalScrollBar().setValue(225)
+        view.verticalScrollBar().setValue(375)
+        QApplication.processEvents()
+        self.assertTrue(view.show_overlay_move_handle())
+        viewport_center = view.viewport().rect().center()
+        handle_viewport_pos = view.mapFromScene(view._overlay_move_handle_item.pos())
+        expected_scene_pos = view.mapToScene(viewport_center)
+        self.assertLessEqual(
+            (handle_viewport_pos - viewport_center).manhattanLength(),
+            1,
+        )
+        self.assertAlmostEqual(
+            view._overlay_move_handle_item.pos().x(),
+            expected_scene_pos.x(),
+        )
+        self.assertAlmostEqual(
+            view._overlay_move_handle_item.pos().y(),
+            expected_scene_pos.y(),
+        )
+        view.cleanup()
+
+    def test_move_overlay_handle_centers_with_small_drawing_and_off_page_overlay(
+        self,
+    ):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=72.0,
+            height_pts=72.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(5000.0, -3000.0, 64.0, 64.0),
+        )
+        self._install_page_canvas(view, page)
+        view._load_view_applied = True
+        view.show()
+        QApplication.processEvents()
+        self.assertTrue(view.show_overlay_move_handle())
+        self.assertEqual(view.horizontalScrollBar().maximum(), 0)
+        self.assertEqual(view.verticalScrollBar().maximum(), 0)
+        self.assertLessEqual(
+            (
+                view.mapFromScene(view._overlay_move_handle_item.pos())
+                - view.viewport().rect().center()
+            ).manhattanLength(),
+            1,
+        )
+        view.cleanup()
+
+    def test_move_overlay_handle_follows_scroll_zoom_and_resize(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 544.0, 704.0),
+        )
+        self._install_page_canvas(view, page)
+        view._load_view_applied = True
+        view.show()
+        view.scale(2.0, 2.0)
+        QApplication.processEvents()
+        self.assertGreater(view.horizontalScrollBar().maximum(), 0)
+        self.assertGreater(view.verticalScrollBar().maximum(), 0)
+        self.assertTrue(view.show_overlay_move_handle())
+        initial_scene_pos = QtCore.QPointF(view._overlay_move_handle_item.pos())
+        view.horizontalScrollBar().setValue(
+            min(
+                view.horizontalScrollBar().maximum(),
+                view.horizontalScrollBar().value() + 100,
+            )
+        )
+        view.verticalScrollBar().setValue(
+            min(
+                view.verticalScrollBar().maximum(),
+                view.verticalScrollBar().value() + 125,
+            )
+        )
+        QApplication.processEvents()
+        scrolled_scene_pos = QtCore.QPointF(view._overlay_move_handle_item.pos())
+        self.assertNotEqual(scrolled_scene_pos, initial_scene_pos)
+        self.assertLessEqual(
+            (
+                view.mapFromScene(scrolled_scene_pos) - view.viewport().rect().center()
+            ).manhattanLength(),
+            1,
+        )
+        viewport_center = view.viewport().rect().center()
+        before_pan_scene_pos = QtCore.QPointF(view._overlay_move_handle_item.pos())
+        view.mousePressEvent(
+            self._right_press_event(viewport_center.x(), viewport_center.y())
+        )
+        view.mouseMoveEvent(
+            self._right_move_event(
+                viewport_center.x() + 40,
+                viewport_center.y() + 35,
+            )
+        )
+        view.mouseReleaseEvent(
+            self._right_release_event(
+                viewport_center.x() + 40,
+                viewport_center.y() + 35,
+            )
+        )
+        self.assertFalse(view._panning)
+        self.assertEqual(view._cursor_mode, "move_overlay_handle")
+        self.assertNotEqual(
+            view._overlay_move_handle_item.pos(),
+            before_pan_scene_pos,
+        )
+        self.assertLessEqual(
+            (
+                view.mapFromScene(view._overlay_move_handle_item.pos())
+                - view.viewport().rect().center()
+            ).manhattanLength(),
+            1,
+        )
+        for zoom_percent in (25.0, 800.0):
+            view.set_zoom_percent(zoom_percent)
+            QApplication.processEvents()
+            self.assertLessEqual(
+                (
+                    view.mapFromScene(view._overlay_move_handle_item.pos())
+                    - view.viewport().rect().center()
+                ).manhattanLength(),
+                1,
+            )
+        view.resize(420, 340)
+        QApplication.processEvents()
+        self.assertLessEqual(
+            (
+                view.mapFromScene(view._overlay_move_handle_item.pos())
+                - view.viewport().rect().center()
+            ).manhattanLength(),
+            1,
+        )
+        view.cleanup()
+
+    def test_move_overlay_handle_stops_tracking_after_mode_ends(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 544.0, 704.0),
+        )
+        self._install_page_canvas(view, page)
+        view._load_view_applied = True
+        view.show()
+        QApplication.processEvents()
+        self.assertTrue(view.show_overlay_move_handle())
+        handle = view._overlay_move_handle_item
+        view.cancel_overlay_move_mode(restore_preview=True)
+        with patch.object(
+            view,
+            "_set_overlay_move_handle_pos",
+            wraps=view._set_overlay_move_handle_pos,
+        ) as set_handle_pos:
+            view.horizontalScrollBar().setValue(
+                max(0, view.horizontalScrollBar().value() - 75)
+            )
+            view.resize(360, 320)
+            view.set_zoom_percent(175.0)
+            QApplication.processEvents()
+        set_handle_pos.assert_not_called()
+        self.assertIsNone(view._overlay_move_handle_item)
+        self.assertIsNone(handle.scene())
+        view.cleanup()
+
     def test_move_overlay_preview_hides_stale_composite_after_base_ready(self):
         view = self._make_plan_view()
         page = Page(
@@ -5717,6 +5961,36 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             QtCore.QPointF(x, y),
             QtCore.QPointF(x, y),
             QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.NoButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+
+    def _right_press_event(self, x, y):
+        return QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonPress,
+            QtCore.QPointF(x, y),
+            QtCore.QPointF(x, y),
+            QtCore.Qt.MouseButton.RightButton,
+            QtCore.Qt.MouseButton.RightButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+
+    def _right_move_event(self, x, y):
+        return QMouseEvent(
+            QtCore.QEvent.Type.MouseMove,
+            QtCore.QPointF(x, y),
+            QtCore.QPointF(x, y),
+            QtCore.Qt.MouseButton.NoButton,
+            QtCore.Qt.MouseButton.RightButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+
+    def _right_release_event(self, x, y):
+        return QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonRelease,
+            QtCore.QPointF(x, y),
+            QtCore.QPointF(x, y),
+            QtCore.Qt.MouseButton.RightButton,
             QtCore.Qt.MouseButton.NoButton,
             QtCore.Qt.KeyboardModifier.NoModifier,
         )

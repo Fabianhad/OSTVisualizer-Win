@@ -14,7 +14,6 @@ from PySide6.QtGui import (
     QIcon,
     QPainter,
     QPainterPath,
-    QPalette,
     QPen,
     QPixmap,
     QTextCursor,
@@ -78,7 +77,7 @@ from ...utils.annotation_defaults import (
 from ...utils.color_swatch import rounded_color_swatch
 from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
-from ...utils.themed_icon import current_text_hex, recolor_svg
+from ...utils.themed_icon import recolor_svg
 from ...utils.zoom_debouncer import ZoomDebouncer
 from ...visualization.pdf.render_priority import RenderPriority
 from ...visualization.pdf.renderers.annotation_item_renderer import (
@@ -103,6 +102,11 @@ from .components.graphics_items import (
     ClippedTextGraphicsItem,
     ImageBackgroundItem,
     TileGraphicsItem,
+)
+from .components.handle_style import (
+    STANDARD_HANDLE_FILL_HEX,
+    STANDARD_HANDLE_FILL_RGB,
+    STANDARD_HANDLE_OUTLINE_RGB,
 )
 from .components.input_handler import InputHandlerMixin
 from .components.page_loader import (
@@ -503,6 +507,7 @@ class TakeoffPlanView(
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._set_palette_background()
         self._position_viewport_overlay_bars()
+        self.zoom_changed.connect(self._update_overlay_move_handle_position)
 
     def _build_condition_text_toolbar(self) -> QFrame:
         toolbar = QFrame(self)
@@ -737,6 +742,12 @@ class TakeoffPlanView(
         super().resizeEvent(event)
         self._position_condition_text_toolbar()
         self._position_viewport_overlay_bars()
+        self._update_overlay_move_handle_position()
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        if dx or dy:
+            self._update_overlay_move_handle_position()
 
     def eventFilter(self, watched, event):
         if watched is self.viewport() and event.type() in (
@@ -745,6 +756,7 @@ class TakeoffPlanView(
             QtCore.QEvent.Type.Show,
         ):
             self._position_viewport_overlay_bars()
+            self._update_overlay_move_handle_position()
         return super().eventFilter(watched, event)
 
     def _condition_text_label_at(
@@ -2404,6 +2416,7 @@ class TakeoffPlanView(
         self._scene.setSceneRect(rect)
         if center is not None:
             self.centerOn(center)
+        self._update_overlay_move_handle_position()
 
     def _update_scene_rect(self) -> None:
         rect = QtCore.QRectF()
@@ -3792,12 +3805,9 @@ class TakeoffPlanView(
         self._overlay_move_drag_start_rect = None
         self._overlay_move_dragging = False
         self._start_overlay_move_preview_setup(rect)
-        page_rect = self._page_scene_rect()
-        center = (
-            page_rect.center()
-            if page_rect.isValid()
-            else self._scene.sceneRect().center()
-        )
+        center = self._viewport_center_scene_pos()
+        if center is None:
+            return False
         if not self._set_overlay_move_handle_pos(center):
             return False
         self._apply_cursor_mode(CURSOR_MODE_MOVE_OVERLAY_HANDLE)
@@ -4206,7 +4216,7 @@ class TakeoffPlanView(
         painter = QPainter(icon_pm)
         renderer.render(painter)
         painter.end()
-        black_pm = recolor_pixmap(icon_pm, QColor(0, 0, 0))
+        black_pm = recolor_pixmap(icon_pm, QColor(*STANDARD_HANDLE_OUTLINE_RGB))
         outlined_pm = QPixmap(26, 26)
         outlined_pm.fill(Qt.GlobalColor.transparent)
         painter = QPainter(outlined_pm)
@@ -4222,7 +4232,10 @@ class TakeoffPlanView(
         ):
             self._overlay_move_handle_item = None
         if self._overlay_move_handle_item is None:
-            pixmap = self._outlined_icon_pixmap(_MOVE_OVERLAY_ICON, current_text_hex())
+            pixmap = self._outlined_icon_pixmap(
+                _MOVE_OVERLAY_ICON,
+                STANDARD_HANDLE_FILL_HEX,
+            )
             if pixmap.isNull():
                 return False
             handle = QGraphicsPixmapItem(pixmap)
@@ -4235,6 +4248,28 @@ class TakeoffPlanView(
             self._scene.addItem(self._overlay_move_handle_item)
         self._overlay_move_handle_item.setPos(scene_pos)
         return True
+
+    def _viewport_center_scene_pos(self) -> Optional[QtCore.QPointF]:
+        viewport = self.viewport()
+        if viewport is None or not viewport.size().isValid():
+            return None
+        center = self.mapToScene(viewport.rect().center())
+        if not (math.isfinite(center.x()) and math.isfinite(center.y())):
+            return None
+        return center
+
+    def _update_overlay_move_handle_position(self, *_args) -> None:
+        if (
+            getattr(self, "_cursor_mode", None) != CURSOR_MODE_MOVE_OVERLAY_HANDLE
+            or getattr(self, "_overlay_move_dragging", False)
+            or getattr(self, "_overlay_move_handle_item", None) is None
+        ):
+            return
+        center = self._viewport_center_scene_pos()
+        if center is None:
+            return
+        if self._set_overlay_move_handle_pos(center):
+            self._update_cursor()
 
     def _remove_overlay_move_handle(self) -> None:
         if self._overlay_move_handle_item is not None:
@@ -4314,7 +4349,7 @@ class TakeoffPlanView(
         self._set_overlay_move_handle_pos(scene_pos)
         self._apply_cursor_mode(CURSOR_MODE_MOVE_OVERLAY_HANDLE)
         self.cursor_mode_change_requested.emit(CURSOR_MODE_MOVE_OVERLAY_HANDLE)
-        self._update_cursor(self.mapFromScene(scene_pos))
+        self._update_overlay_move_handle_position()
 
     def _commit_overlay_move(self) -> None:
         if not self._editing_enabled:
@@ -4404,7 +4439,7 @@ class TakeoffPlanView(
         start_angle_rad = math.radians(start_angle)
         handle_x = center_scene.x() + radius * math.cos(start_angle_rad)
         handle_y = center_scene.y() + radius * math.sin(start_angle_rad)
-        hex_color = SLOPE_ROTATE_HANDLE_HEX if slope_mode else current_text_hex()
+        hex_color = SLOPE_ROTATE_HANDLE_HEX if slope_mode else STANDARD_HANDLE_FILL_HEX
         outlined_pm = self._outlined_icon_pixmap(
             "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
             hex_color,
@@ -4414,7 +4449,7 @@ class TakeoffPlanView(
         handle.setZValue(20)
         handle.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         handle.setPos(handle_x, handle_y)
-        black_pen = QPen(QColor(0, 0, 0))
+        black_pen = QPen(QColor(*STANDARD_HANDLE_OUTLINE_RGB))
         black_pen.setWidthF(3.0)
         black_pen.setCosmetic(True)
         line_outline = QGraphicsLineItem(
@@ -4425,7 +4460,7 @@ class TakeoffPlanView(
         text_color = (
             QColor(*SLOPE_ROTATE_HANDLE_RGB)
             if slope_mode
-            else self.palette().color(QPalette.ColorRole.WindowText)
+            else QColor(*STANDARD_HANDLE_FILL_RGB)
         )
         line_pen = QPen(text_color)
         line_pen.setWidthF(1.0)

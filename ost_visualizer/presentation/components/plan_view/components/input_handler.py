@@ -480,8 +480,12 @@ class InputHandlerMixin:
                 self._commit_overlay_move()
                 event.accept()
                 return
-            event.accept()
-            return
+            if (
+                event.button() != Qt.MouseButton.RightButton
+                or not advanced_mouse_controls
+            ):
+                event.accept()
+                return
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self.is_text_annotation_inline_edit_active()
