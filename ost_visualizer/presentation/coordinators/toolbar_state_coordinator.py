@@ -1,7 +1,7 @@
 from typing import Optional
 from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
-from ..managers.ui_access_manager import Feature
+from ..managers.ui_access_manager import Feature, PlanSurfaceAccessState
 from ..modes.cursor import CURSOR_MODE_SELECT
 from ..services.bid_clipboard_service import BidClipboardService
 
@@ -41,6 +41,8 @@ class ToolbarStateCoordinator:
         self._view_stack = None
         self._refreshing = False
         self._refresh_requested = False
+        self._access_listener_registered = True
+        self._access.subscribe_access_state_changed(self.refresh)
 
     def set_copy_action(self, action: QtGui.QAction) -> None:
         self._copy_action = action
@@ -210,13 +212,16 @@ class ToolbarStateCoordinator:
             self._refreshing = False
 
     def _refresh_once(self) -> None:
-        if self._normalize_active_tool():
+        plan_access = self._access.get_plan_surface_access(
+            self._access.current_plan_surface_context()
+        )
+        if self._normalize_active_tool(plan_access):
             self._refresh_requested = True
             return
         active_placement_feature = self._active_placement_feature()
         active_placement_valid = bool(
             active_placement_feature
-            and self._active_placement_is_valid(active_placement_feature)
+            and self._active_placement_is_valid(active_placement_feature, plan_access)
         )
         current_tab = self._tab_widget.currentIndex() if self._tab_widget else 0
         on_takeoff_tab = current_tab == TAB_INDEX_TAKEOFF
@@ -228,8 +233,7 @@ class ToolbarStateCoordinator:
         if self._copy_action:
             if on_takeoff_tab:
                 self._copy_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
-                    and has_takeoff_selection
+                    plan_access.can_select_plan_items and has_takeoff_selection
                 )
             elif on_summary_tab:
                 self._copy_action.setEnabled(
@@ -258,8 +262,7 @@ class ToolbarStateCoordinator:
         if self._paste_action:
             if on_takeoff_tab:
                 self._paste_action.setEnabled(
-                    self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
-                    and bool(
+                    bool(
                         self.plan_view_handler
                         and self.plan_view_handler.can_paste_to_current_bid()
                     )
@@ -271,7 +274,7 @@ class ToolbarStateCoordinator:
         if self._delete_action:
             if on_takeoff_tab:
                 self._delete_action.setEnabled(
-                    self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
+                    plan_access.can_edit_plan_items
                     and bool(self.plan_view and self.plan_view.has_selection)
                 )
             elif on_summary_tab:
@@ -299,7 +302,7 @@ class ToolbarStateCoordinator:
                 self._delete_action.setEnabled(False)
         undo_redo_allowed = (
             on_takeoff_tab
-            and self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
+            and plan_access.can_edit_plan_items
             and bool(self.undo_service)
         )
         if self._undo_action:
@@ -313,7 +316,7 @@ class ToolbarStateCoordinator:
         if self._duplicate_action:
             if on_takeoff_tab:
                 self._duplicate_action.setEnabled(
-                    self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
+                    plan_access.can_edit_plan_items
                     and bool(self.plan_view and self.plan_view.has_selection)
                 )
             elif on_summary_tab:
@@ -325,8 +328,7 @@ class ToolbarStateCoordinator:
         if self._select_all_action:
             if on_takeoff_tab:
                 self._select_all_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
-                    and bool(self.plan_view)
+                    plan_access.can_select_plan_items and bool(self.plan_view)
                 )
             elif on_summary_tab:
                 self._select_all_action.setEnabled(False)
@@ -337,9 +339,7 @@ class ToolbarStateCoordinator:
                 self._access.is_allowed(Feature.COVER_SHEET)
             )
         if self._page_settings_bar:
-            self._page_settings_bar.set_interactive(
-                self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
-            )
+            self._page_settings_bar.set_interactive(plan_access.can_edit_page_settings)
         selected_condition_uids = (
             self.conditions_sidebar.get_selected_condition_uids()
             if self.conditions_sidebar
@@ -364,7 +364,7 @@ class ToolbarStateCoordinator:
         ) and self._is_condition_placeable(active_place_condition_uid)
         can_place_plan_items = (
             self.is_takeoff_2d_view_active()
-            and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)
+            and plan_access.can_place_plan_items
             and bool(self.plan_view)
             and bool(self._ui_state.active_page_uid)
             and bool(self.plan_view.current_page_uid)
@@ -378,7 +378,7 @@ class ToolbarStateCoordinator:
             self._place_action.setEnabled(can_place_plan_items)
         can_place_annotation = (
             on_takeoff_tab
-            and self._access.is_allowed(Feature.PLACE_ANNOTATIONS)
+            and plan_access.can_place_annotations
             and bool(self.plan_view)
             and bool(self.plan_view.current_page_uid)
             and bool(self._view_stack and self._view_stack.currentIndex() == 1)
@@ -387,21 +387,20 @@ class ToolbarStateCoordinator:
             action.setEnabled(can_place_annotation)
         can_move_overlay = (
             self.is_takeoff_2d_view_active()
-            and self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+            and plan_access.can_edit_page_settings
             and bool(self.plan_view)
             and self.plan_view.can_move_overlay_image()
         )
         if self._move_overlay_action:
             self._move_overlay_action.setEnabled(can_move_overlay)
-        select_allowed = self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
-        edit_allowed = self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
-        inline_edit_allowed = self._access.is_allowed(Feature.EDIT_ANNOTATION_TEXT)
+        select_allowed = plan_access.can_select_plan_items
+        edit_allowed = plan_access.can_edit_plan_items
+        inline_edit_allowed = plan_access.can_edit_annotation_text
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
             inline_edit_active = self.plan_view.is_text_annotation_inline_edit_active()
-            if (
-                not active_placement_valid
-                and (not inline_edit_active or not inline_edit_allowed)
+            if not active_placement_valid and (
+                not inline_edit_active or not inline_edit_allowed
             ):
                 self.plan_view.set_editing_enabled(edit_allowed)
             self.plan_view.set_text_annotation_inline_edit_enabled(inline_edit_allowed)
@@ -409,9 +408,7 @@ class ToolbarStateCoordinator:
             self.opengl_viewer.set_pick_enabled(select_allowed)
             self.opengl_viewer.set_editing_enabled(edit_allowed)
         if self._bid_layers_sidebar:
-            self._bid_layers_sidebar.set_interactive(
-                self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
-            )
+            self._bid_layers_sidebar.set_interactive(plan_access.can_edit_page_settings)
         if self.conditions_sidebar:
             self.conditions_sidebar.set_create_enabled(
                 self._access.is_allowed(Feature.EDIT_CONDITION)
@@ -443,7 +440,9 @@ class ToolbarStateCoordinator:
             return Feature.PLACE_ANNOTATIONS
         return None
 
-    def _active_placement_is_valid(self, feature: Feature) -> bool:
+    def _active_placement_is_valid(
+        self, feature: Feature, plan_access: PlanSurfaceAccessState
+    ) -> bool:
         if feature == Feature.PLACE_PLAN_ITEMS:
             condition_uid = (
                 self.plan_view.place_condition_uid if self.plan_view else None
@@ -467,17 +466,15 @@ class ToolbarStateCoordinator:
                 and self.plan_view.current_page_uid
                 and self._view_stack
                 and self._view_stack.currentIndex() == 1
-                and self._access.is_allowed_for_active_placement(
-                    Feature.PLACE_ANNOTATIONS
-                )
+                and plan_access.can_continue_annotation_placement
             )
         return False
 
-    def _normalize_active_tool(self) -> bool:
+    def _normalize_active_tool(self, plan_access: PlanSurfaceAccessState) -> bool:
         active_feature = self._active_placement_feature()
         if active_feature is None or not self._select_action:
             return False
-        if self._active_placement_is_valid(active_feature):
+        if self._active_placement_is_valid(active_feature, plan_access):
             return False
         if active_feature == Feature.PLACE_PLAN_ITEMS:
             self._set_action_checked_silent(self._place_action, False)
@@ -492,6 +489,9 @@ class ToolbarStateCoordinator:
         return True
 
     def cleanup(self) -> None:
+        if self._access_listener_registered and self._access is not None:
+            self._access.unsubscribe_access_state_changed(self.refresh)
+        self._access_listener_registered = False
         self._copy_action = None
         self._cut_action = None
         self._paste_action = None

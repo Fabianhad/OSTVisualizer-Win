@@ -31,7 +31,10 @@ from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.undo_redo_service import UndoRedoService
 from ..utils.qt_callback_bridge import QtVoidCallback
 from ..coordinators.remote_plan_update_pipeline import RemotePlanUpdatePipeline
-from .ui_access_manager import Feature
+from .ui_access_manager import (
+    PlanSurfaceAccessContext,
+    PlanSurfaceAccessState,
+)
 
 
 def _collect_pages_from_bid(bid) -> List[Tuple[str, str]]:
@@ -111,6 +114,7 @@ class DetachedPageViewManager(IShutdownAware):
         self._annotation_write_service = annotation_write_service
         self._saved_window_state_provider = saved_window_state_provider
         self._ui_access_manager = None
+        self._access_listener_registered = False
         self._window: Optional[QtWidgets.QMainWindow] = None
         self._window_undo_service: Optional[UndoRedoService] = None
         self._opening = False
@@ -128,10 +132,6 @@ class DetachedPageViewManager(IShutdownAware):
         )
         self.event_bus.subscribe(
             AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
-        )
-        self.event_bus.subscribe(
-            AppEvents.DATABASE_CAPABILITIES_CHANGED,
-            self._on_database_capabilities_changed,
         )
         self.event_bus.subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
         self.event_bus.subscribe(
@@ -162,13 +162,10 @@ class DetachedPageViewManager(IShutdownAware):
         )
 
     def shutdown(self) -> None:
+        self._release_access_tracking()
         if self.event_bus is not None:
             self.event_bus.unsubscribe(
                 AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.DATABASE_CAPABILITIES_CHANGED,
-                self._on_database_capabilities_changed,
             )
             self.event_bus.unsubscribe(
                 AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed
@@ -234,6 +231,7 @@ class DetachedPageViewManager(IShutdownAware):
     def _on_window_destroyed(self, window_identity: int) -> None:
         if self._window is None or id(self._window) != window_identity:
             return
+        self._release_access_tracking()
         self._window = None
         self._window_undo_service = None
         self._opening = False
@@ -271,16 +269,6 @@ class DetachedPageViewManager(IShutdownAware):
         if bid_ref and file_path and bid_ref.file_path != file_path:
             return
         self._refresh_signaler.request()
-
-    def _on_database_capabilities_changed(self, file_path: str = "") -> None:
-        if not self.is_view_open():
-            return
-        view = self.repository.get_active_view()
-        if view is None or view.bid_ref is None:
-            return
-        if file_path and view.bid_ref.file_path != file_path:
-            return
-        self._window.set_read_only(self._is_read_only())
 
     def _on_layer_visibility_changed(
         self,
@@ -455,7 +443,13 @@ class DetachedPageViewManager(IShutdownAware):
         )
 
     def set_ui_access_manager(self, manager) -> None:
+        if manager is self._ui_access_manager:
+            return
+        self._release_access_tracking()
         self._ui_access_manager = manager
+        if self.is_view_open():
+            self._register_access_listener()
+            self._refresh_access_state()
 
     def set_visibility_changed_callback(self, callback) -> None:
         self._visibility_changed_callback = callback
@@ -464,17 +458,74 @@ class DetachedPageViewManager(IShutdownAware):
         if self._visibility_changed_callback:
             self._visibility_changed_callback(self.is_view_open())
 
-    def _is_read_only(self) -> bool:
+    def _get_access_state(
+        self,
+        view: AnnotationView,
+        page_data: PageViewDto,
+    ) -> PlanSurfaceAccessState:
+        if self._ui_access_manager is None or view.bid_ref is None:
+            return PlanSurfaceAccessState()
+        annotation_layer_visible = bool(
+            page_data and page_data.is_layer_visible(page_data.annotation_layer_uid)
+        )
+        context = PlanSurfaceAccessContext(
+            surface_id=self._remote_surface_id,
+            database_id=str(view.bid_ref.file_path or ""),
+            bid_ref=view.bid_ref,
+            page_uid=str(view.target_page_uid or ""),
+            annotation_layer_visible=annotation_layer_visible,
+        )
+        return self._ui_access_manager.get_plan_surface_access(context)
+
+    def _refresh_access_state(self) -> None:
+        if not self.is_view_open():
+            return
         view = self.repository.get_active_view()
-        if (
-            not self._ui_access_manager
-            or view is None
-            or view.bid_ref != self.project_data.get_current_bid_ref()
-        ):
-            return True
-        return not (
-            self._ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)
-            and self._ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+        if view is None:
+            self._window.set_access_state(PlanSurfaceAccessState())
+            return
+        self._window.set_access_state(
+            self._get_access_state(view, self._window.page_data)
+        )
+
+    def _register_access_listener(self) -> None:
+        if self._access_listener_registered or self._ui_access_manager is None:
+            return
+        self._ui_access_manager.subscribe_access_state_changed(
+            self._refresh_access_state
+        )
+        self._access_listener_registered = True
+
+    def _unregister_access_listener(self) -> None:
+        if not self._access_listener_registered:
+            return
+        manager = self._ui_access_manager
+        self._access_listener_registered = False
+        if manager is not None:
+            manager.unsubscribe_access_state_changed(self._refresh_access_state)
+
+    def _clear_surface_interaction(self) -> None:
+        if self._ui_access_manager is not None:
+            self._ui_access_manager.clear_plan_surface_interaction(
+                self._remote_surface_id
+            )
+
+    def _release_access_tracking(self) -> None:
+        self._unregister_access_listener()
+        self._clear_surface_interaction()
+
+    def _on_window_area_placement_changed(self, active: bool) -> None:
+        if self._ui_access_manager is None or not self.is_view_open():
+            return
+        self._ui_access_manager.set_area_placement_active(
+            bool(active), surface_id=self._remote_surface_id
+        )
+
+    def _on_window_inline_text_edit_changed(self, active: bool) -> None:
+        if self._ui_access_manager is None or not self.is_view_open():
+            return
+        self._ui_access_manager.set_text_annotation_edit_active(
+            bool(active), surface_id=self._remote_surface_id
         )
 
     def _refresh_window(self) -> None:
@@ -487,7 +538,7 @@ class DetachedPageViewManager(IShutdownAware):
         if page_data.page is None and self._retarget_missing_active_page(view):
             page_data = self._get_page_data(view)
         self._update_window_navigation(view)
-        self._window.set_read_only(self._is_read_only())
+        self._window.set_access_state(self._get_access_state(view, page_data))
         self._window.update_page(page_data)
 
     def _retarget_missing_active_page(self, view: AnnotationView) -> bool:
@@ -534,9 +585,13 @@ class DetachedPageViewManager(IShutdownAware):
                 )
                 self.repository.update_view(existing_view)
                 self._update_window_navigation(existing_view)
+                page_data = self._get_page_data(existing_view)
+                self._window.set_access_state(
+                    self._get_access_state(existing_view, page_data)
+                )
                 self._window.load_view(
                     existing_view,
-                    self._get_page_data(existing_view),
+                    page_data,
                     navigation_source=navigation_source,
                 )
                 self.bring_to_front()
@@ -603,6 +658,7 @@ class DetachedPageViewManager(IShutdownAware):
 
     def close_view(self) -> None:
         self._remote_update_generation += 1
+        self._release_access_tracking()
         if self._window is not None:
             window = self._window
             window.close()
@@ -626,9 +682,9 @@ class DetachedPageViewManager(IShutdownAware):
             view.file_path = current_bid_ref.file_path
         view.update_view_target(page_uid=page_uid, named_view_uid=named_view_uid)
         self.repository.update_view(view)
-        self._window.load_view(
-            view, self._get_page_data(view), navigation_source="hotlink"
-        )
+        page_data = self._get_page_data(view)
+        self._window.set_access_state(self._get_access_state(view, page_data))
+        self._window.load_view(view, page_data, navigation_source="hotlink")
 
     def bring_to_front(self) -> None:
         if not self._window:
@@ -654,6 +710,7 @@ class DetachedPageViewManager(IShutdownAware):
         view.update_view_target(page_uid=page_uid, named_view_uid=None)
         self.repository.update_view(view)
         page_data = self._get_page_data(view)
+        self._window.set_access_state(self._get_access_state(view, page_data))
         self._window.load_view(view, page_data, navigation_source="combobox")
 
     def _on_window_scale_changed(self, page_uid: str, sf1: float, sf2: float) -> None:
@@ -661,9 +718,12 @@ class DetachedPageViewManager(IShutdownAware):
         if (
             not self._write_service
             or not self._ui_access_manager
+            or not self._window
             or view is None
-            or view.bid_ref != self.project_data.get_current_bid_ref()
-            or not self._ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+            or not self._get_access_state(
+                view, self._window.page_data
+            ).can_edit_page_settings
+            or str(view.target_page_uid or "") != str(page_uid or "")
         ):
             return
         db_path = view.file_path
@@ -686,6 +746,7 @@ class DetachedPageViewManager(IShutdownAware):
         view.update_view_target(page_uid=page_uid, named_view_uid=named_view_uid)
         self.repository.update_view(view)
         page_data = self._get_page_data(view)
+        self._window.set_access_state(self._get_access_state(view, page_data))
         self._window.load_view(view, page_data, navigation_source="named_view_combo")
 
     def _collect_named_views(self, bid) -> List[Tuple[str, str, str, str]]:
@@ -791,15 +852,23 @@ class DetachedPageViewManager(IShutdownAware):
             parent=self.parent_window,
         )
         try:
-            window.set_read_only(self._is_read_only())
+            window.set_access_state(self._get_access_state(view, page_data))
+            window.area_placement_state_changed.connect(
+                self._on_window_area_placement_changed
+            )
+            window.inline_text_edit_state_changed.connect(
+                self._on_window_inline_text_edit_changed
+            )
             window_identity = id(window)
             window.destroyed.connect(
                 lambda _object: self._on_window_destroyed(window_identity)
             )
             self._window = window
             self._window_undo_service = undo_svc
+            self._register_access_listener()
             window.show_when_page_ready()
         except Exception:
+            self._release_access_tracking()
             if self._window is window:
                 self._window = None
                 self._window_undo_service = None
@@ -939,6 +1008,6 @@ class DetachedPageViewManager(IShutdownAware):
         if view is None:
             return False
         self._update_window_navigation(view)
-        self._window.set_read_only(self._is_read_only())
+        self._window.set_access_state(self._get_access_state(view, page_data))
         self._window.update_page(page_data)
         return True

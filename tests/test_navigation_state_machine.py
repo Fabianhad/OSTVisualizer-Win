@@ -13,7 +13,10 @@ from ost_visualizer.presentation.coordinators.placement_coordinator import (
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
     ToolbarStateCoordinator,
 )
-from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
+    PlanSurfaceAccessState,
+)
 
 
 class FakeUiState:
@@ -194,7 +197,7 @@ class NavigationStateMachineTests(unittest.TestCase):
             ui_state_manager=ui_state,
             ui_access_manager=SimpleNamespace(
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
-                set_area_placement_active=lambda _active: None,
+                set_area_placement_active=lambda _active, *, surface_id: None,
             ),
             color_service=SimpleNamespace(
                 get_color_mapping=lambda *_args, **_call_options: ({}, {})
@@ -248,7 +251,7 @@ class NavigationStateMachineTests(unittest.TestCase):
             ui_state_manager=ui_state,
             ui_access_manager=SimpleNamespace(
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
-                set_area_placement_active=lambda _active: None,
+                set_area_placement_active=lambda _active, *, surface_id: None,
             ),
             color_service=SimpleNamespace(
                 get_color_mapping=lambda *_args, **_call_options: ({}, {})
@@ -316,7 +319,7 @@ class NavigationStateMachineTests(unittest.TestCase):
             ui_state_manager=ui_state,
             ui_access_manager=SimpleNamespace(
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
-                set_area_placement_active=lambda _active: None,
+                set_area_placement_active=lambda _active, *, surface_id: None,
             ),
             color_service=SimpleNamespace(get_color_mapping=record_color_map_request),
             project_data=SimpleNamespace(
@@ -368,7 +371,7 @@ class NavigationStateMachineTests(unittest.TestCase):
             ui_state_manager=ui_state,
             ui_access_manager=SimpleNamespace(
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
-                set_area_placement_active=lambda _active: None,
+                set_area_placement_active=lambda _active, *, surface_id: None,
             ),
             color_service=SimpleNamespace(
                 get_color_mapping=lambda *_args, **_options: ({}, {})
@@ -424,22 +427,22 @@ class NavigationStateMachineTests(unittest.TestCase):
         self.assertEqual(len(new_view.place_exited.callbacks), 1)
         self.assertEqual(len(new_view.area_placement_in_progress.callbacks), 1)
 
-    def test_area_placement_transition_refreshes_once_after_access_update(self):
+    def test_area_placement_transition_updates_main_surface_once(self):
         transitions = []
-        callbacks = []
-        access = SimpleNamespace(
-            set_area_placement_active=lambda active: transitions.append(bool(active))
-        )
+
+        def record(active, *, surface_id):
+            transitions.append((bool(active), surface_id))
+
+        access = SimpleNamespace(set_area_placement_active=record)
         placement = PlacementCoordinator(None, access, None, None)
-        placement.set_area_state_change_callback(
-            lambda: callbacks.append(tuple(transitions))
+        placement._on_area_placement_changed(True)
+        placement._on_area_placement_changed(True)
+        placement._on_area_placement_changed(False)
+        placement._on_area_placement_changed(False)
+        self.assertEqual(
+            transitions,
+            [(True, "main-plan"), (False, "main-plan")],
         )
-        placement._on_area_placement_changed(True)
-        placement._on_area_placement_changed(True)
-        placement._on_area_placement_changed(False)
-        placement._on_area_placement_changed(False)
-        self.assertEqual(transitions, [True, False])
-        self.assertEqual(callbacks, [(True,), (True, False)])
 
     def test_toolbar_disables_place_action_when_bid_has_no_active_page(self):
         class FakeAction:
@@ -489,6 +492,10 @@ class NavigationStateMachineTests(unittest.TestCase):
                 is_allowed=lambda _feature: True,
                 is_bid_locked=lambda: False,
                 has_license=lambda: True,
+                current_plan_surface_context=lambda: object(),
+                get_plan_surface_access=lambda _context: PlanSurfaceAccessState(),
+                subscribe_access_state_changed=lambda _callback: None,
+                unsubscribe_access_state_changed=lambda _callback: None,
             ),
             project_data=SimpleNamespace(
                 get_bid_conditions=lambda: {

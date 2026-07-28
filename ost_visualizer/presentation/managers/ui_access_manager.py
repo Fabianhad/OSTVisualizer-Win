@@ -1,7 +1,11 @@
+from dataclasses import dataclass
 from enum import Enum, auto
-from typing import FrozenSet, List, Tuple
+from typing import Callable, FrozenSet, List, Optional, Tuple
 from ...application.dtos.collaboration_dtos import ResourceRef
 from ...application.events.app_events import AppEvents
+from ...domain.entities.identity_refs import BidRef
+
+MAIN_PLAN_SURFACE_ID = "main-plan"
 
 
 class Feature(Enum):
@@ -30,6 +34,33 @@ class Feature(Enum):
     CREATE_DATABASE = auto()
     EDIT_MASTER_DATA = auto()
     EDIT_ANNOTATION_TEXT = auto()
+
+
+@dataclass(frozen=True)
+class PlanSurfaceAccessContext:
+    surface_id: str
+    database_id: str
+    bid_ref: Optional[BidRef]
+    page_uid: str
+    annotation_layer_visible: bool
+
+
+@dataclass(frozen=True)
+class _PlanSurfaceInteractionState:
+    area_placement_active: bool = False
+    inline_text_edit_active: bool = False
+
+
+@dataclass(frozen=True)
+class PlanSurfaceAccessState:
+    can_select_plan_items: bool = False
+    can_place_plan_items: bool = False
+    can_edit_plan_items: bool = False
+    can_place_annotations: bool = False
+    can_continue_annotation_placement: bool = False
+    can_edit_annotations: bool = False
+    can_edit_annotation_text: bool = False
+    can_edit_page_settings: bool = False
 
 
 _OST_BLOCKED: FrozenSet[Feature] = frozenset(
@@ -216,11 +247,14 @@ class UIAccessManager:
         self._ui_state_manager = ui_state_manager
         self._database_capability_service = database_capability_service
         self._ost_active: bool = False
-        self._area_placement_active: bool = False
-        self._text_annotation_edit_active: bool = False
+        self._surface_interactions: dict[str, _PlanSurfaceInteractionState] = {}
+        self._access_state_listeners: List[Callable[[], None]] = []
         self._placement_coordinator = None
         self._subscriptions: List[Tuple] = []
         self._subscribe(AppEvents.OST_STATUS_CHANGED, self._on_ost_status_changed)
+        self._subscribe(
+            AppEvents.LICENSE_STATUS_CHANGED, self._on_license_status_changed
+        )
         self.refresh()
 
     @property
@@ -255,6 +289,7 @@ class UIAccessManager:
             self._transaction_monitor and self._transaction_monitor.is_ost_active()
         )
         self._cancel_place_if_blocked()
+        self._notify_access_state_changed()
 
     def has_license(self) -> bool:
         return bool(
@@ -270,11 +305,116 @@ class UIAccessManager:
             return False
         return self.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
 
-    def set_area_placement_active(self, active: bool) -> None:
-        self._area_placement_active = active
+    def set_area_placement_active(self, active: bool, *, surface_id: str) -> None:
+        self._update_surface_interaction(surface_id, area_placement_active=bool(active))
 
-    def set_text_annotation_edit_active(self, active: bool) -> None:
-        self._text_annotation_edit_active = bool(active)
+    def set_text_annotation_edit_active(self, active: bool, *, surface_id: str) -> None:
+        self._update_surface_interaction(
+            surface_id, inline_text_edit_active=bool(active)
+        )
+
+    def clear_plan_surface_interaction(self, surface_id: str) -> None:
+        if not surface_id or surface_id not in self._surface_interactions:
+            return
+        self._surface_interactions.pop(surface_id, None)
+        self._notify_access_state_changed()
+
+    def subscribe_access_state_changed(self, callback: Callable[[], None]) -> None:
+        if callback not in self._access_state_listeners:
+            self._access_state_listeners.append(callback)
+
+    def unsubscribe_access_state_changed(self, callback: Callable[[], None]) -> None:
+        try:
+            self._access_state_listeners.remove(callback)
+        except ValueError:
+            pass
+
+    def current_plan_surface_context(self) -> PlanSurfaceAccessContext:
+        bid_ref = (
+            self._ui_state_manager.get_selected_bid_ref()
+            if self._ui_state_manager is not None
+            else None
+        )
+        database_id = (
+            str(self._ui_state_manager.selected_file_path or "")
+            if self._ui_state_manager is not None
+            else ""
+        )
+        page_uid = (
+            str(self._ui_state_manager.active_page_uid or "")
+            if self._ui_state_manager is not None
+            else ""
+        )
+        annotation_layer_visible = bool(
+            self._project_data and self._project_data.is_annotation_layer_visible()
+        )
+        return PlanSurfaceAccessContext(
+            surface_id=MAIN_PLAN_SURFACE_ID,
+            database_id=database_id,
+            bid_ref=bid_ref,
+            page_uid=page_uid,
+            annotation_layer_visible=annotation_layer_visible,
+        )
+
+    def get_plan_surface_access(
+        self, context: PlanSurfaceAccessContext
+    ) -> PlanSurfaceAccessState:
+        if not self._is_valid_plan_surface_context(context):
+            return PlanSurfaceAccessState()
+        page_resource = self._page_resource(context)
+        can_select = not self._feature_blocked(
+            Feature.SELECT_PLAN_ITEMS,
+            require_current_selection=True,
+            resource=None,
+            context=context,
+        )
+        can_place_plan = not self._feature_blocked(
+            Feature.PLACE_PLAN_ITEMS,
+            require_current_selection=True,
+            resource=None,
+            context=context,
+        )
+        can_edit_plan = not self._feature_blocked(
+            Feature.EDIT_PLAN_ITEMS,
+            require_current_selection=True,
+            resource=None,
+            context=context,
+        )
+        can_place_annotations = not self._feature_blocked(
+            Feature.PLACE_ANNOTATIONS,
+            require_current_selection=True,
+            resource=None,
+            context=context,
+        )
+        can_continue_annotations = not self._feature_blocked(
+            Feature.PLACE_ANNOTATIONS,
+            require_current_selection=True,
+            resource=None,
+            context=context,
+            ignore_area_surface_id=context.surface_id,
+        )
+        can_edit_annotation_text = not self._feature_blocked(
+            Feature.EDIT_ANNOTATION_TEXT,
+            require_current_selection=True,
+            resource=None,
+            context=context,
+        )
+        can_edit_page_settings = bool(page_resource) and not self._feature_blocked(
+            Feature.EDIT_PAGE_SETTINGS,
+            require_current_selection=True,
+            resource=page_resource,
+            context=context,
+        )
+        return PlanSurfaceAccessState(
+            can_select_plan_items=can_select,
+            can_place_plan_items=can_place_plan,
+            can_edit_plan_items=can_edit_plan,
+            can_place_annotations=can_place_annotations,
+            can_continue_annotation_placement=can_continue_annotations,
+            can_edit_annotations=can_edit_plan,
+            can_edit_annotation_text=can_edit_annotation_text,
+            can_edit_page_settings=can_edit_page_settings,
+        )
 
     def is_allowed(self, feature: Feature, resource: ResourceRef | None = None) -> bool:
         if resource is None:
@@ -366,14 +506,16 @@ class UIAccessManager:
         require_current_selection: bool,
         resource: ResourceRef | None,
         ignore_area_placement: bool = False,
+        context: PlanSurfaceAccessContext | None = None,
+        ignore_area_surface_id: str | None = None,
     ) -> bool:
         if not isinstance(feature, Feature):
             return True
-        if self._text_annotation_edit_active and feature in _TEXT_EDIT_BLOCKED:
+        if self._has_inline_text_edit() and feature in _TEXT_EDIT_BLOCKED:
             return True
         if (
             not ignore_area_placement
-            and self._area_placement_active
+            and self._has_area_placement(ignore_area_surface_id)
             and feature in _PLACEMENT_BLOCKED
         ):
             return True
@@ -387,26 +529,52 @@ class UIAccessManager:
             feature in _DATABASE_EDIT_FEATURES
             and feature is not Feature.CREATE_DATABASE
         ):
-            if not self.is_database_editable(resource):
+            if context is None:
+                editable = self.is_database_editable(resource)
+            else:
+                editable = self._is_context_database_editable(context, resource)
+            if not editable:
                 return True
-        if (
-            feature == Feature.PLACE_ANNOTATIONS
-            and self._project_data
-            and not self._project_data.is_annotation_layer_visible()
+        if feature == Feature.PLACE_ANNOTATIONS and not (
+            context.annotation_layer_visible
+            if context is not None
+            else bool(
+                self._project_data and self._project_data.is_annotation_layer_visible()
+            )
         ):
             return True
         if require_current_selection:
-            if not self._bid_selected and feature in _REQUIRES_BID:
+            has_bid = (
+                context.bid_ref is not None
+                if context is not None
+                else self._bid_selected
+            )
+            has_selection = (
+                bool(context.database_id or context.bid_ref)
+                if context is not None
+                else self._any_selection
+            )
+            has_database = (
+                bool(context.database_id)
+                if context is not None
+                else self._database_selected
+            )
+            if not has_bid and feature in _REQUIRES_BID:
                 return True
-            if not self._any_selection and feature in _REQUIRES_ANY_SELECTION:
+            if not has_selection and feature in _REQUIRES_ANY_SELECTION:
                 return True
-            if not self._database_selected and feature in _REQUIRES_DATABASE:
+            if not has_database and feature in _REQUIRES_DATABASE:
                 return True
         return False
 
     def _on_ost_status_changed(self, active: bool = False) -> None:
         self._ost_active = bool(active)
         self._cancel_place_if_blocked()
+        self._notify_access_state_changed()
+
+    def _on_license_status_changed(self, has_license: bool = False) -> None:
+        del has_license
+        self._notify_access_state_changed()
 
     def set_placement_coordinator(self, placement_coordinator) -> None:
         self._placement_coordinator = placement_coordinator
@@ -424,10 +592,98 @@ class UIAccessManager:
         self._event_bus.subscribe(event_type, callback)
         self._subscriptions.append((event_type, callback))
 
+    def _update_surface_interaction(
+        self,
+        surface_id: str,
+        *,
+        area_placement_active: Optional[bool] = None,
+        inline_text_edit_active: Optional[bool] = None,
+    ) -> None:
+        if not surface_id:
+            return
+        current = self._surface_interactions.get(
+            surface_id, _PlanSurfaceInteractionState()
+        )
+        updated = _PlanSurfaceInteractionState(
+            area_placement_active=(
+                current.area_placement_active
+                if area_placement_active is None
+                else bool(area_placement_active)
+            ),
+            inline_text_edit_active=(
+                current.inline_text_edit_active
+                if inline_text_edit_active is None
+                else bool(inline_text_edit_active)
+            ),
+        )
+        if updated == current:
+            return
+        if updated == _PlanSurfaceInteractionState():
+            self._surface_interactions.pop(surface_id, None)
+        else:
+            self._surface_interactions[surface_id] = updated
+        self._notify_access_state_changed()
+
+    def _has_area_placement(self, ignore_surface_id: str | None = None) -> bool:
+        return any(
+            state.area_placement_active
+            for surface_id, state in self._surface_interactions.items()
+            if surface_id != ignore_surface_id
+        )
+
+    def _has_inline_text_edit(self) -> bool:
+        return any(
+            state.inline_text_edit_active
+            for state in self._surface_interactions.values()
+        )
+
+    def _notify_access_state_changed(self) -> None:
+        for callback in list(self._access_state_listeners):
+            callback()
+
+    def _is_valid_plan_surface_context(self, context: PlanSurfaceAccessContext) -> bool:
+        if (
+            not context.surface_id
+            or not context.database_id
+            or context.bid_ref is None
+            or not context.page_uid
+            or context.database_id != str(context.bid_ref.file_path or "")
+        ):
+            return False
+        current_bid_ref = (
+            self._project_data.get_current_bid_ref() if self._project_data else None
+        )
+        return context.bid_ref == current_bid_ref
+
+    @staticmethod
+    def _page_resource(
+        context: PlanSurfaceAccessContext,
+    ) -> ResourceRef | None:
+        if context.bid_ref is None or not context.page_uid:
+            return None
+        bid_value = str(context.bid_ref.bid_uid)
+        bid_uid = int(bid_value) if bid_value.isdecimal() else None
+        return ResourceRef("page", str(context.page_uid), bid_uid)
+
+    def _is_context_database_editable(
+        self,
+        context: PlanSurfaceAccessContext,
+        resource: ResourceRef | None = None,
+    ) -> bool:
+        if not context.database_id or self._database_capability_service is None:
+            return False
+        if resource is None:
+            return self._database_capability_service.is_editable(context.database_id)
+        return self._database_capability_service.is_editable(
+            context.database_id, resource
+        )
+
     def cleanup(self) -> None:
         for event_type, callback in self._subscriptions:
             self._event_bus.unsubscribe(event_type, callback)
         self._subscriptions.clear()
+        self._access_state_listeners.clear()
+        self._surface_interactions.clear()
         self._event_bus = None
         self._license_orchestrator = None
         self._transaction_monitor = None

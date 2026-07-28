@@ -163,7 +163,6 @@ class CanonicalExecutionPathTests(unittest.TestCase):
             },
             AnnotationWriteCoordinator: {"publish_annotations_changed_for_pages"},
             DetachedPageViewManager: {
-                "_on_database_capabilities_changed",
                 "_on_takeoffs_changed",
                 "_on_annotations_changed",
                 "shutdown",

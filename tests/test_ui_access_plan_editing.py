@@ -184,6 +184,7 @@ class UIAccessPlanEditingTests(unittest.TestCase):
         view = SimpleNamespace(
             _editing_enabled=False,
             _cursor_mode=CURSOR_MODE_PLACE,
+            _editing_cursor_mode_allowed=lambda: False,
         )
         InputHandlerMixin.mouseReleaseEvent(view, event)
         self.assertTrue(event.accepted)

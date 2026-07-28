@@ -692,7 +692,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             coordinator._on_license_status_changed,
         )
         event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
-        self.assertEqual(calls, ["plan", "clear", "toolbar", "select"])
+        self.assertEqual(calls, ["plan", "clear", "select"])
 
     def test_empty_access_hierarchy_still_delegates_monitoring_to_database_owner(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

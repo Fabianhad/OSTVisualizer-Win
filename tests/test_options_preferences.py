@@ -2538,6 +2538,12 @@ class OptionsPreferencesTests(unittest.TestCase):
             def is_allowed(self, feature):
                 return self.allowed and feature == Feature.PLACE_PLAN_ITEMS
 
+            def subscribe_access_state_changed(self, _callback):
+                pass
+
+            def unsubscribe_access_state_changed(self, _callback):
+                pass
+
         class FakeUiState:
             def get_selected_bid_refs(self):
                 return []

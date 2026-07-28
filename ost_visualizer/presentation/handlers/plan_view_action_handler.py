@@ -184,16 +184,31 @@ class PlanViewActionHandler:
         return accepted
 
     def can_paste_to_current_bid(self) -> bool:
-        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
-            return False
         bid_ref = self._ui_state.get_selected_bid_ref()
-        if not bid_ref or not self._clipboard_svc.has_content():
+        if not bid_ref:
             return False
-        if self._clipboard_svc.source_file_path != bid_ref.file_path:
-            return False
-        if self._clipboard_svc.source_bid_uid == bid_ref.bid_uid:
-            return True
-        return bool(self._clipboard_svc.items)
+        items, annotations = self._permitted_paste_content(bid_ref)
+        return bool(items or annotations)
+
+    def _permitted_paste_content(self, bid_ref) -> tuple[list, list]:
+        if (
+            not self._clipboard_svc.has_content()
+            or self._clipboard_svc.source_file_path != bid_ref.file_path
+        ):
+            return [], []
+        items = (
+            list(self._clipboard_svc.items)
+            if self._is_allowed(Feature.EDIT_PLAN_ITEMS)
+            else []
+        )
+        annotations = (
+            list(self._clipboard_svc.annotations)
+            if self._is_allowed(Feature.PLACE_ANNOTATIONS)
+            else []
+        )
+        if not items and self._clipboard_svc.source_bid_uid != bid_ref.bid_uid:
+            annotations = []
+        return items, annotations
 
     def on_condition_text_properties_flushed(self, changes: list) -> None:
         if not changes or not self._is_allowed(Feature.EDIT_CONDITION):
@@ -1799,10 +1814,6 @@ class PlanViewActionHandler:
         return uid_map
 
     def on_paste_requested(self) -> None:
-        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
-            return
-        if not self._clipboard_svc.has_content():
-            return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref:
             return
@@ -1812,18 +1823,11 @@ class PlanViewActionHandler:
         area_uid = self._page_settings_bar.get_current_area_uid()
         source_bid_uid = self._clipboard_svc.source_bid_uid
         source_file_path = self._clipboard_svc.source_file_path
-        all_items = list(self._clipboard_svc.items)
-        clipboard_anns = self._clipboard_svc.annotations
-        if not all_items and (
-            source_bid_uid != bid_ref.bid_uid or source_file_path != bid_ref.file_path
-        ):
+        all_items, clipboard_anns = self._permitted_paste_content(bid_ref)
+        if not all_items and not clipboard_anns:
             return
         regulars = [t for t in all_items if not t.is_hole]
         holes = [t for t in all_items if t.is_hole]
-        if clipboard_anns and not self._is_allowed(Feature.PLACE_ANNOTATIONS):
-            if not all_items:
-                return
-            clipboard_anns = []
         if holes and not regulars:
             if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
                 return

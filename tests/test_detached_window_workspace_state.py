@@ -38,7 +38,10 @@ from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
-from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
+    PlanSurfaceAccessState,
+)
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_SELECT,
@@ -58,6 +61,69 @@ from ost_visualizer.presentation.windows.annotation_view_window import (
 )
 from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.windows.view_window import ViewWindow
+
+
+def _full_plan_surface_access() -> PlanSurfaceAccessState:
+    return PlanSurfaceAccessState(
+        can_select_plan_items=True,
+        can_place_plan_items=True,
+        can_edit_plan_items=True,
+        can_place_annotations=True,
+        can_continue_annotation_placement=True,
+        can_edit_annotations=True,
+        can_edit_annotation_text=True,
+        can_edit_page_settings=True,
+    )
+
+
+class FakePlanSurfaceAccessManager:
+    def __init__(self, state=None):
+        self.state = state or PlanSurfaceAccessState()
+        self.listeners = []
+        self.contexts = []
+        self.interactions = {}
+
+    def get_plan_surface_access(self, context):
+        self.contexts.append(context)
+        return self.state
+
+    def subscribe_access_state_changed(self, callback):
+        if callback not in self.listeners:
+            self.listeners.append(callback)
+
+    def unsubscribe_access_state_changed(self, callback):
+        if callback in self.listeners:
+            self.listeners.remove(callback)
+
+    def clear_plan_surface_interaction(self, surface_id):
+        if self.interactions.pop(surface_id, None) is None:
+            return
+        for callback in list(self.listeners):
+            callback()
+
+    def set_area_placement_active(self, active, *, surface_id):
+        current = self.interactions.get(surface_id, (False, False))
+        updated = (bool(active), current[1])
+        if any(updated):
+            self.interactions[surface_id] = updated
+        else:
+            self.interactions.pop(surface_id, None)
+        for callback in list(self.listeners):
+            callback()
+
+    def set_text_annotation_edit_active(self, active, *, surface_id):
+        current = self.interactions.get(surface_id, (False, False))
+        updated = (current[0], bool(active))
+        if any(updated):
+            self.interactions[surface_id] = updated
+        else:
+            self.interactions.pop(surface_id, None)
+        for callback in list(self.listeners):
+            callback()
+
+    def notify(self):
+        for callback in list(self.listeners):
+            callback()
 
 
 def _encoded_geometry(value: bytes = b"geometry") -> str:
@@ -334,6 +400,7 @@ class FakeInitialRestoreWindow(FakeInitialGeometryWindow):
 class FakeDetachedPlanView:
     def __init__(self, annotations=None):
         self.annotations = {ann.uid: ann for ann in annotations or []}
+        self.annotation_place_type = ""
         self.current_page_uid = "p1"
         self.snap_increments = 1.0
         self.intelligent_paste_enabled = True
@@ -378,10 +445,15 @@ class FakeDetachedPlanView:
 
     def activate_annotation_placement(self, annotation_type):
         self.activate_calls.append(annotation_type)
+        self.annotation_place_type = annotation_type
         return True
 
     def cancel_place_mode(self):
         self.cancel_place_mode_calls += 1
+        self.annotation_place_type = ""
+
+    def is_text_annotation_inline_edit_active(self):
+        return False
 
     def current_mouse_ost_position(self):
         return self.mouse_ost_position
@@ -627,6 +699,8 @@ class CleanupPlanView:
         self.named_view_created = CleanupSignal()
         self.hotlink_placement_requested = CleanupSignal()
         self.cursor_mode_change_requested = CleanupSignal()
+        self.area_placement_in_progress = CleanupSignal()
+        self.text_annotation_edit_mode_changed = CleanupSignal()
         self.undo_requested = CleanupSignal()
         self.redo_requested = CleanupSignal()
         self.blocked = None
@@ -678,9 +752,11 @@ class FakeConstructedWindow:
     def __init__(self, calls):
         self._calls = calls
         self.destroyed = FakeSignal(calls)
+        self.area_placement_state_changed = TrackableSignal()
+        self.inline_text_edit_state_changed = TrackableSignal()
 
-    def set_read_only(self, read_only):
-        self._calls.append(("set_read_only", read_only))
+    def set_access_state(self, access_state):
+        self._calls.append(("set_access_state", access_state))
 
     def show_when_page_ready(self):
         self._calls.append("show_when_page_ready")
@@ -1799,25 +1875,33 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
     undo_requested = QtCore.Signal()
     redo_requested = QtCore.Signal()
     cursor_mode_change_requested = QtCore.Signal(str)
+    area_placement_in_progress = QtCore.Signal(bool)
+    text_annotation_edit_mode_changed = QtCore.Signal(bool)
     annotation_place_type = ""
 
     def __init__(self, *_args, **_kwargs):
         super().__init__()
         self.cursor_modes = []
+        self.selection_enabled = None
+        self.editing_enabled = None
+        self.inline_edit_enabled = None
 
-    def set_selection_enabled(self, _enabled):
-        pass
+    def set_selection_enabled(self, enabled):
+        self.selection_enabled = bool(enabled)
 
-    def set_editing_enabled(self, _enabled):
-        pass
+    def set_editing_enabled(self, enabled):
+        self.editing_enabled = bool(enabled)
 
     def set_annotation_only_selection(self, _enabled):
         pass
 
-    def set_text_annotation_inline_edit_enabled(self, _enabled):
-        pass
+    def set_text_annotation_inline_edit_enabled(self, enabled):
+        self.inline_edit_enabled = bool(enabled)
 
     def set_annotation_placement_allowed_fn(self, _callback):
+        pass
+
+    def set_paste_allowed_fn(self, _callback):
         pass
 
     def set_named_view_name_validator(self, _callback):
@@ -1872,6 +1956,9 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
         self.annotation_place_type = annotation_type
         return True
 
+    def is_text_annotation_inline_edit_active(self):
+        return False
+
 
 def _detached_toolbar_renderers():
     return SimpleNamespace(
@@ -1909,7 +1996,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         ), patch.object(
             DetachedPageViewWindow, "load_view", lambda *_args, **_kwargs: None
         ):
-            return window_cls(
+            window = window_cls(
                 FakeWindowIconProvider(),
                 AnnotationView(
                     uid="view-1",
@@ -1923,6 +2010,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 _detached_toolbar_renderers(),
                 **window_options,
             )
+            window.set_access_state(_full_plan_surface_access())
+            return window
 
     def test_editable_detached_view_requires_canonical_annotation_writer(self):
         with self.assertRaisesRegex(
@@ -1980,6 +2069,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def test_annotation_view_cursor_mode_signal_restores_select_button(self):
         window = self._make_toolbar_window(AnnotationViewWindow)
         try:
+            window.set_access_state(_full_plan_surface_access())
             window.plan_view.annotation_place_type = ANNOTATION_TYPE_NAMED_VIEW
             window._on_cursor_mode_change_requested(CURSOR_MODE_ANNOTATION_PLACE)
             named_view_button = window._annotation_tool_buttons["named_view_tool"]
@@ -1988,6 +2078,37 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             window._on_cursor_mode_change_requested(CURSOR_MODE_SELECT)
             self.assertTrue(window._btn_select.isChecked())
             self.assertFalse(named_view_button.isChecked())
+        finally:
+            window.cleanup()
+            window.deleteLater()
+
+    def test_detached_controls_apply_capability_specific_state(self):
+        window = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            placement_only = PlanSurfaceAccessState(
+                can_place_annotations=True,
+                can_continue_annotation_placement=True,
+            )
+            window.set_access_state(placement_only)
+            self.assertTrue(
+                all(
+                    button.isEnabled()
+                    for button in window._annotation_tool_buttons.values()
+                )
+            )
+            self.assertFalse(window._scale_combo.isEnabled())
+            self.assertFalse(window.plan_view.editing_enabled)
+            self.assertTrue(window.plan_view.selection_enabled)
+            self.assertFalse(window.plan_view.inline_edit_enabled)
+            settings_only = PlanSurfaceAccessState(can_edit_page_settings=True)
+            window.set_access_state(settings_only)
+            self.assertFalse(
+                any(
+                    button.isEnabled()
+                    for button in window._annotation_tool_buttons.values()
+                )
+            )
+            self.assertTrue(window._scale_combo.isEnabled())
         finally:
             window.cleanup()
             window.deleteLater()
@@ -2002,7 +2123,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView(annotations)
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service or FakeAnnotationWriteService()
@@ -2282,12 +2403,14 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._annotation_write_service = None
         manager._write_service = None
         manager.parent_window = None
+        manager._ui_access_manager = None
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
         manager._on_window_destroyed = lambda *args: None
         manager._on_window_page_selected = lambda page_uid: None
         manager._on_window_named_view_selected = lambda page_uid, _named_view_uid: None
         manager._on_window_scale_changed = lambda page_uid, _sf1, _sf2: None
         manager._collect_pages_with_takeoffs = lambda bid_ref: set()
-        manager._is_read_only = lambda: False
         manager._get_page_data = lambda view: SimpleNamespace(page=object())
         view = SimpleNamespace(uid="view-1", bid_ref=None)
         geometry = QtCore.QByteArray(b"geometry")
@@ -2298,7 +2421,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                ("set_read_only", False),
+                ("set_access_state", PlanSurfaceAccessState()),
                 "destroyed_connected",
                 "show_when_page_ready",
             ],
@@ -2306,6 +2429,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
     def test_create_window_releases_partial_window_when_setup_fails(self):
         calls = []
+        access = FakePlanSurfaceAccessManager()
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager.icon_provider = object()
         manager.event_bus = object()
@@ -2333,23 +2457,28 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._annotation_write_service = None
         manager._write_service = None
         manager.parent_window = None
+        manager._ui_access_manager = access
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
         manager._window = None
         manager._window_undo_service = None
         manager._on_window_page_selected = lambda page_uid: None
         manager._on_window_named_view_selected = lambda page_uid, _named_view_uid: None
         manager._on_window_scale_changed = lambda page_uid, _sf1, _sf2: None
         manager._collect_pages_with_takeoffs = lambda bid_ref: set()
-        manager._is_read_only = lambda: False
         manager._get_page_data = lambda view: SimpleNamespace(page=object())
+        access.set_area_placement_active(True, surface_id=manager._remote_surface_id)
         view = SimpleNamespace(uid="view-1", bid_ref=None)
         with self.assertRaisesRegex(RuntimeError, "show failed"):
             manager._create_window(view)
         self.assertIsNone(manager._window)
         self.assertIsNone(manager._window_undo_service)
+        self.assertEqual(access.listeners, [])
+        self.assertEqual(access.interactions, {})
         self.assertEqual(
             calls,
             [
-                ("set_read_only", False),
+                ("set_access_state", PlanSurfaceAccessState()),
                 "destroyed_connected",
                 "close",
             ],
@@ -2388,6 +2517,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._window = None
         manager._opening = False
         manager._saved_window_state_provider = None
+        manager._ui_access_manager = None
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
 
         def create_view(bid_ref, target_page_uid, target_named_view_uid=None):
             nonlocal active_view
@@ -2435,6 +2567,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._window = None
         manager._opening = False
         manager._saved_window_state_provider = None
+        manager._ui_access_manager = None
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
 
         def create_view(bid_ref, target_page_uid, target_named_view_uid=None):
             nonlocal active_view
@@ -2486,6 +2621,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._window_undo_service = object()
         manager._opening = False
         manager._remote_update_generation = 0
+        manager._ui_access_manager = None
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
         manager._notify_visibility_changed = lambda: calls.append("notify")
         manager.close_view()
         replacement = SimpleNamespace()
@@ -2611,19 +2749,23 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         page_data = SimpleNamespace(page=Page(uid="p1", name="Page 1"))
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = SimpleNamespace(
-            set_read_only=lambda read_only: calls.append(("read_only", read_only)),
+            set_access_state=lambda state: calls.append(("access", state)),
             update_page=lambda data: calls.append(("page", data.page.uid)),
         )
+        manager._ui_access_manager = None
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
         manager._get_page_data = lambda active_view: page_data
         manager._update_window_navigation = lambda active_view: calls.append(
             ("navigation", active_view.uid)
         )
-        manager._is_read_only = lambda: False
         manager._refresh_window()
         self.assertEqual(
             calls,
-            [("navigation", "view-1"), ("read_only", False), ("page", "p1")],
+            [
+                ("navigation", "view-1"),
+                ("access", PlanSurfaceAccessState()),
+                ("page", "p1"),
+            ],
         )
 
     def test_database_refresh_refreshes_matching_detached_view(self):
@@ -2644,8 +2786,35 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._on_database_refreshed(file_path="file.mdb")
         self.assertEqual(calls, ["refresh"])
 
-    def test_capability_change_updates_read_only_without_page_refresh(self):
+    def test_capability_change_updates_access_without_page_refresh(self):
         calls = []
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p1",
+        )
+        access = FakePlanSurfaceAccessManager()
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            page_data=PageViewDto(
+                page=Page(uid="p1", name="Page 1"), bid_ref=view.bid_ref
+            ),
+            set_access_state=lambda value: calls.append(("access", value)),
+        )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._ui_access_manager = access
+        manager._remote_surface_id = "detached-plan:test"
+        manager._access_listener_registered = False
+        manager._register_access_listener()
+        access.state = _full_plan_surface_access()
+        access.notify()
+        self.assertEqual(calls, [("access", _full_plan_surface_access())])
+        manager._unregister_access_listener()
+
+    def test_access_listener_lifecycle_has_no_duplicates_or_closed_updates(self):
+        calls = []
+        access = FakePlanSurfaceAccessManager(_full_plan_surface_access())
         view = AnnotationView(
             uid="view-1",
             bid_uid="bid-1",
@@ -2654,16 +2823,142 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = SimpleNamespace(
-            set_read_only=lambda value: calls.append(("read_only", value))
+            page_data=PageViewDto(
+                page=Page(uid="p1", name="Page 1"), bid_ref=view.bid_ref
+            ),
+            set_access_state=lambda state: calls.append(state),
+            close=lambda: None,
         )
+        manager._window_undo_service = None
+        manager._opening = False
+        manager._remote_update_generation = 0
+        manager._remote_surface_id = "detached-plan:test"
+        manager._ui_access_manager = access
+        manager._access_listener_registered = False
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
-        manager._is_read_only = lambda: True
-        manager._refresh_signaler = SimpleNamespace(
-            request=lambda: calls.append(("refresh", None))
+        manager._visibility_changed_callback = None
+        manager._register_access_listener()
+        manager._register_access_listener()
+        self.assertEqual(len(access.listeners), 1)
+        manager._on_window_area_placement_changed(True)
+        self.assertEqual(access.interactions["detached-plan:test"], (True, False))
+        access.notify()
+        self.assertEqual(
+            calls,
+            [_full_plan_surface_access(), _full_plan_surface_access()],
         )
-        manager._on_database_capabilities_changed(file_path="other.mdb")
-        manager._on_database_capabilities_changed(file_path="file.mdb")
-        self.assertEqual(calls, [("read_only", True)])
+        manager.close_view()
+        self.assertEqual(access.listeners, [])
+        self.assertEqual(access.interactions, {})
+        access.notify()
+        self.assertEqual(
+            calls,
+            [_full_plan_surface_access(), _full_plan_surface_access()],
+        )
+
+    def test_shutdown_releases_access_listener_and_surface_interaction(self):
+        access = FakePlanSurfaceAccessManager()
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._ui_access_manager = access
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
+        manager._window = None
+        manager._remote_update_generation = 0
+        manager._remote_plan_pipeline = None
+        manager._refresh_signaler = None
+        manager._visibility_changed_callback = None
+        manager.event_bus = None
+        manager._register_access_listener()
+        access.set_area_placement_active(True, surface_id=manager._remote_surface_id)
+        manager.shutdown()
+        self.assertEqual(access.listeners, [])
+        self.assertEqual(access.interactions, {})
+
+    def test_window_destruction_releases_access_listener_and_surface_interaction(self):
+        access = FakePlanSurfaceAccessManager()
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        window = SimpleNamespace()
+        manager._window = window
+        manager._window_undo_service = object()
+        manager._opening = False
+        manager._ui_access_manager = access
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
+        manager._visibility_changed_callback = None
+        access.set_area_placement_active(True, surface_id=manager._remote_surface_id)
+        manager._register_access_listener()
+        manager._on_window_destroyed(id(window))
+        self.assertIsNone(manager._window)
+        self.assertEqual(access.listeners, [])
+        self.assertEqual(access.interactions, {})
+
+    def test_access_manager_replacement_releases_old_surface_tracking(self):
+        old_access = FakePlanSurfaceAccessManager()
+        new_access = FakePlanSurfaceAccessManager()
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._ui_access_manager = old_access
+        manager._access_listener_registered = False
+        manager._remote_surface_id = "detached-plan:test"
+        manager._window = None
+        manager._register_access_listener()
+        old_access.set_text_annotation_edit_active(
+            True, surface_id=manager._remote_surface_id
+        )
+        manager.set_ui_access_manager(new_access)
+        self.assertEqual(old_access.listeners, [])
+        self.assertEqual(old_access.interactions, {})
+        self.assertEqual(new_access.listeners, [])
+
+    def test_detached_context_uses_target_page_and_surface_identity(self):
+        access = FakePlanSurfaceAccessManager(_full_plan_surface_access())
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="detached-page",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = None
+        manager._ui_access_manager = access
+        manager._remote_surface_id = "detached-plan:one"
+        manager._get_access_state(
+            view,
+            PageViewDto(
+                page=Page(uid="detached-page", name="Detached"),
+                bid_ref=view.bid_ref,
+            ),
+        )
+        context = access.contexts[-1]
+        self.assertEqual(context.page_uid, "detached-page")
+        self.assertEqual(context.surface_id, "detached-plan:one")
+        self.assertEqual(context.bid_ref, view.bid_ref)
+        self.assertEqual(context.database_id, "file.mdb")
+
+    def test_detached_interaction_signal_updates_its_surface_only(self):
+        calls = []
+        access = FakePlanSurfaceAccessManager(_full_plan_surface_access())
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p1",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            page_data=PageViewDto(
+                page=Page(uid="p1", name="Page 1"), bid_ref=view.bid_ref
+            ),
+            set_access_state=lambda state: calls.append(state),
+        )
+        manager._ui_access_manager = access
+        manager._remote_surface_id = "detached-plan:test"
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._access_listener_registered = False
+        manager._register_access_listener()
+        manager._on_window_area_placement_changed(True)
+        self.assertEqual(access.interactions["detached-plan:test"], (True, False))
+        self.assertEqual(calls, [_full_plan_surface_access()])
+        manager._unregister_access_listener()
 
     def test_takeoff_refresh_isolated_to_matching_detached_bid(self):
         calls = []
@@ -2735,9 +3030,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = SimpleNamespace(
-            set_read_only=lambda read_only: calls.append(("read_only", read_only)),
+            set_access_state=lambda state: calls.append(("access", state)),
             update_page=lambda data: calls.append(("page", data.page.uid)),
         )
+        manager._ui_access_manager = None
         manager.repository = SimpleNamespace(
             get_active_view=lambda: view,
             update_view=lambda active_view: calls.append(
@@ -2753,7 +3049,6 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._update_window_navigation = lambda active_view: calls.append(
             ("navigation", active_view.target_page_uid)
         )
-        manager._is_read_only = lambda: False
         manager._refresh_window()
         self.assertEqual(view.target_page_uid, "p2")
         self.assertEqual(
@@ -2761,7 +3056,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             [
                 ("repo", "p2", None),
                 ("navigation", "p2"),
-                ("read_only", False),
+                ("access", PlanSurfaceAccessState()),
                 ("page", "p2"),
             ],
         )
@@ -2776,9 +3071,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = SimpleNamespace(
-            set_read_only=lambda read_only: calls.append(("read_only", read_only)),
+            set_access_state=lambda state: calls.append(("access", state)),
             update_page=lambda data: calls.append(("page", data.page)),
         )
+        manager._ui_access_manager = None
         manager.repository = SimpleNamespace(
             get_active_view=lambda: view,
             update_view=lambda active_view: calls.append(
@@ -2795,11 +3091,14 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._update_window_navigation = lambda active_view: calls.append(
             ("navigation", active_view.uid)
         )
-        manager._is_read_only = lambda: False
         manager._refresh_window()
         self.assertEqual(
             calls,
-            [("navigation", "view-1"), ("read_only", False), ("page", None)],
+            [
+                ("navigation", "view-1"),
+                ("access", PlanSurfaceAccessState()),
+                ("page", None),
+            ],
         )
 
     def test_pending_visible_view_state_ignores_reentrant_resize_apply(self):
@@ -2904,7 +3203,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def test_failed_detached_scale_save_refreshes_window_state(self):
         calls = []
         bid_ref = BidRef("file.mdb", "bid-1")
-        view = SimpleNamespace(file_path="file.mdb", bid_ref=bid_ref)
+        view = SimpleNamespace(
+            file_path="file.mdb",
+            bid_ref=bid_ref,
+            target_page_uid="page-1",
+        )
         write_service = SimpleNamespace(
             save_page_scale=lambda db_path, page_uid, sf1, sf2: calls.append(
                 ("save", db_path, page_uid, sf1, sf2)
@@ -2913,56 +3216,76 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._write_service = write_service
-        manager._ui_access_manager = SimpleNamespace(
-            is_allowed=lambda feature: feature is Feature.EDIT_PAGE_SETTINGS
+        manager._remote_surface_id = "detached-plan:test"
+        manager._ui_access_manager = FakePlanSurfaceAccessManager(
+            PlanSurfaceAccessState(can_edit_page_settings=True)
         )
+        page_data = PageViewDto(page=Page(uid="page-1", name="Page 1"), bid_ref=bid_ref)
+        manager._window = SimpleNamespace(page_data=page_data)
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
         manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
         manager._refresh_window = lambda: calls.append("refresh")
         manager.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         manager._on_window_scale_changed("page-1", 0.25, 12.0)
         self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
-        manager._ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: False)
+        manager._ui_access_manager.state = PlanSurfaceAccessState()
         manager._on_window_scale_changed("page-1", 0.5, 12.0)
         self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
 
-    def test_detached_view_is_read_only_without_complete_write_access(self):
+    def test_detached_view_projects_independent_capabilities(self):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._remote_surface_id = "detached-plan:test"
         bid_ref = BidRef("file.mdb", "bid-1")
-        manager.repository = SimpleNamespace(
-            get_active_view=lambda: SimpleNamespace(bid_ref=bid_ref)
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="page-1",
         )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
         manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
         manager._ui_access_manager = None
-        self.assertTrue(manager._is_read_only())
-        allowed = {Feature.EDIT_PLAN_ITEMS, Feature.EDIT_PAGE_SETTINGS}
-        manager._ui_access_manager = SimpleNamespace(
-            is_allowed=lambda feature: feature in allowed
+        page_data = PageViewDto(page=Page(uid="page-1", name="Page 1"), bid_ref=bid_ref)
+        self.assertEqual(
+            manager._get_access_state(view, page_data), PlanSurfaceAccessState()
         )
-        self.assertFalse(manager._is_read_only())
-        allowed.remove(Feature.EDIT_PLAN_ITEMS)
-        self.assertTrue(manager._is_read_only())
-        allowed.add(Feature.EDIT_PLAN_ITEMS)
-        allowed.remove(Feature.EDIT_PAGE_SETTINGS)
-        self.assertTrue(manager._is_read_only())
+        manager._ui_access_manager = FakePlanSurfaceAccessManager(
+            PlanSurfaceAccessState(
+                can_place_annotations=True,
+                can_edit_annotations=True,
+                can_edit_page_settings=False,
+            )
+        )
+        state = manager._get_access_state(view, page_data)
+        self.assertTrue(state.can_place_annotations)
+        self.assertTrue(state.can_edit_annotations)
+        self.assertFalse(state.can_edit_page_settings)
 
     def test_detached_view_cannot_write_after_active_database_switch(self):
         calls = []
         old_ref = BidRef("old.mdb", "old-bid")
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._remote_surface_id = "detached-plan:test"
         manager.repository = SimpleNamespace(
             get_active_view=lambda: SimpleNamespace(
-                file_path=old_ref.file_path, bid_ref=old_ref
+                file_path=old_ref.file_path,
+                bid_ref=old_ref,
+                target_page_uid="page-1",
             )
         )
         manager.project_data = SimpleNamespace(
             get_current_bid_ref=lambda: BidRef("new.mdb", "new-bid"),
         )
-        manager._ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
+        manager._ui_access_manager = FakePlanSurfaceAccessManager()
+        page_data = PageViewDto(page=Page(uid="page-1", name="Page 1"), bid_ref=old_ref)
+        manager._window = SimpleNamespace(page_data=page_data)
         manager._write_service = SimpleNamespace(
             save_page_scale=lambda *_args: calls.append("write") or True
         )
-        self.assertTrue(manager._is_read_only())
+        view = manager.repository.get_active_view()
+        self.assertEqual(
+            manager._get_access_state(view, page_data), PlanSurfaceAccessState()
+        )
         manager._on_window_scale_changed("page-1", 1.0, 1.0)
         self.assertEqual(calls, [])
 
@@ -2981,10 +3304,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._opening = False
         manager._window = SimpleNamespace(
+            set_access_state=lambda state: calls.append(("access", state)),
             load_view=lambda view, data, navigation_source="unknown": calls.append(
                 ("load", view.bid_uid, view.file_path, data, navigation_source)
-            )
+            ),
         )
+        manager._ui_access_manager = None
         manager.repository = SimpleNamespace(
             get_active_view=lambda: existing_view,
             update_view=lambda view: calls.append(
@@ -3007,6 +3332,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 ("target", "new-page", "named-view"),
                 ("repo", "new-bid", "new.mdb"),
                 ("navigation", "new-bid", "new.mdb"),
+                ("access", PlanSurfaceAccessState()),
                 ("load", "new-bid", "new.mdb", "page-data", "hotlink"),
                 "front",
                 "notify",
@@ -3021,7 +3347,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
@@ -3042,7 +3368,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
@@ -3064,7 +3390,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView([annotation])
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
@@ -3102,7 +3428,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 )
                 window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
                 window._config = SimpleNamespace(allow_annotation_editing=True)
-                window._read_only = False
+                window._access_state = _full_plan_surface_access()
                 window.page_data = FakeDetachedPageData()
                 window._is_closing = False
                 window._ann_write_svc = write_service
@@ -3143,7 +3469,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view.annotation_key_map[("ann-1", "text")] = "ann-1_text"
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3181,7 +3507,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         write_service = FakeAnnotationWriteService()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3200,7 +3526,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3230,7 +3556,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view.annotation_key_map[("ann-1", "namedview")] = "ann-1_namedview"
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3267,7 +3593,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view.annotation_key_map[("ann-1", "hotlink")] = "ann-1_hotlink"
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3306,7 +3632,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3349,7 +3675,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 plan_view = FakeDetachedPlanView([named_view])
                 window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
                 window._config = SimpleNamespace(allow_annotation_editing=True)
-                window._read_only = False
+                window._access_state = _full_plan_surface_access()
                 window.page_data = FakeDetachedPageData()
                 window._is_closing = False
                 window._ann_write_svc = write_service
@@ -3392,7 +3718,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView([named_view])
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3447,7 +3773,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view = FakeDetachedPlanView([skipped_view, confirmed_view, rect])
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3505,7 +3831,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         undo_service = FakeUndoService()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3542,7 +3868,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         write_service = FakeAnnotationWriteService()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = True
+        window._access_state = PlanSurfaceAccessState()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3559,7 +3885,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = True
+        window._access_state = PlanSurfaceAccessState()
         self.assertTrue(window._selection_enabled())
         self.assertFalse(window._editing_enabled())
 
@@ -3571,7 +3897,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         write_service = FakeAnnotationWriteService()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = PlanSurfaceAccessState(
+            can_edit_annotations=True,
+            can_edit_annotation_text=True,
+            can_edit_page_settings=True,
+        )
         window.page_data = FakeDetachedPageData(annotation_layer_hidden=True)
         window._is_closing = False
         window._ann_write_svc = write_service
@@ -3589,17 +3919,23 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         calls = []
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = PlanSurfaceAccessState(
+            can_edit_annotations=True,
+            can_edit_annotation_text=True,
+            can_edit_page_settings=True,
+        )
         window.page_data = FakeDetachedPageData(annotation_layer_hidden=True)
         window.plan_view = SimpleNamespace(
+            annotation_place_type="",
             activate_annotation_placement=lambda annotation_type: calls.append(
                 annotation_type
             )
-            or True
+            or True,
         )
         self.assertFalse(window._activate_annotation_tool("dimension"))
         self.assertEqual(calls, [])
         window.page_data.hidden_layer_uids.clear()
+        window._access_state = _full_plan_surface_access()
         self.assertTrue(window._activate_annotation_tool("dimension"))
         self.assertEqual(calls, ["dimension"])
 
@@ -3607,13 +3943,14 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         calls = []
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
+        window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window.plan_view = SimpleNamespace(
+            annotation_place_type="",
             activate_annotation_placement=lambda annotation_type: calls.append(
                 annotation_type
             )
-            or True
+            or True,
         )
         for annotation_type in (
             "dimension",

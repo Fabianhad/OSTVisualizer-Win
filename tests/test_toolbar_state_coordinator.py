@@ -13,7 +13,10 @@ from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
 from ost_visualizer.presentation.coordinators.placement_coordinator import (
     PlacementCoordinator,
 )
-from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
+    PlanSurfaceAccessState,
+)
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PLACE,
@@ -29,15 +32,44 @@ def _app():
 
 
 class _Access:
+    def __init__(self):
+        self.listeners = []
+
     def is_allowed(self, _feature: Feature) -> bool:
         return True
 
     def is_allowed_for_active_placement(self, _feature: Feature) -> bool:
         return True
 
+    def current_plan_surface_context(self):
+        return object()
+
+    def get_plan_surface_access(self, _context):
+        return PlanSurfaceAccessState(
+            can_select_plan_items=self.is_allowed(Feature.SELECT_PLAN_ITEMS),
+            can_place_plan_items=self.is_allowed(Feature.PLACE_PLAN_ITEMS),
+            can_edit_plan_items=self.is_allowed(Feature.EDIT_PLAN_ITEMS),
+            can_place_annotations=self.is_allowed(Feature.PLACE_ANNOTATIONS),
+            can_continue_annotation_placement=(
+                self.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+            ),
+            can_edit_annotations=self.is_allowed(Feature.EDIT_PLAN_ITEMS),
+            can_edit_annotation_text=self.is_allowed(Feature.EDIT_ANNOTATION_TEXT),
+            can_edit_page_settings=self.is_allowed(Feature.EDIT_PAGE_SETTINGS),
+        )
+
+    def subscribe_access_state_changed(self, callback):
+        if callback not in self.listeners:
+            self.listeners.append(callback)
+
+    def unsubscribe_access_state_changed(self, callback):
+        if callback in self.listeners:
+            self.listeners.remove(callback)
+
 
 class _SelectiveAccess:
     def __init__(self, allowed):
+        self.listeners = []
         self.allowed = set(allowed)
 
     def is_allowed(self, feature: Feature) -> bool:
@@ -45,6 +77,11 @@ class _SelectiveAccess:
 
     def is_allowed_for_active_placement(self, feature: Feature) -> bool:
         return feature in self.allowed
+
+    current_plan_surface_context = _Access.current_plan_surface_context
+    get_plan_surface_access = _Access.get_plan_surface_access
+    subscribe_access_state_changed = _Access.subscribe_access_state_changed
+    unsubscribe_access_state_changed = _Access.unsubscribe_access_state_changed
 
 
 class _UiState:
@@ -174,11 +211,15 @@ class _Signal:
 
 class _AreaPlacementAccess(_Access):
     def __init__(self, project_data):
+        super().__init__()
         self.area_active = False
         self.project_data = project_data
 
-    def set_area_placement_active(self, active: bool) -> None:
+    def set_area_placement_active(self, active: bool, *, surface_id: str) -> None:
+        self.last_surface_id = surface_id
         self.area_active = bool(active)
+        for callback in list(self.listeners):
+            callback()
 
     def is_allowed(self, feature: Feature) -> bool:
         if (
@@ -253,6 +294,13 @@ class _CancellingAreaPlacementPlanView(_AreaPlacementPlanView):
 
 
 class ToolbarStateCoordinatorTests(unittest.TestCase):
+    def test_cleanup_unregisters_access_listener(self):
+        access = _Access()
+        coordinator = ToolbarStateCoordinator(_UiState(), access, _ProjectData())
+        self.assertEqual(access.listeners, [coordinator.refresh])
+        coordinator.cleanup()
+        self.assertEqual(access.listeners, [])
+
     def test_silent_action_updates_preserve_caller_owned_signal_blocks(self):
         _app()
         coordinator = ToolbarStateCoordinator(_UiState(), _Access(), _ProjectData())
@@ -305,7 +353,16 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
             )()
         )
         coordinator.set_plan_view_handler(
-            type("Handler", (), {"can_paste_to_current_bid": lambda self: True})()
+            type(
+                "Handler",
+                (),
+                {
+                    "can_paste_to_current_bid": lambda self: (
+                        access.is_allowed(Feature.EDIT_PLAN_ITEMS)
+                        or access.is_allowed(Feature.PLACE_ANNOTATIONS)
+                    )
+                },
+            )()
         )
         coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
         coordinator.set_plan_view(plan_view)
@@ -440,7 +497,6 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.set_plan_view(plan_view)
         placement = PlacementCoordinator(ui_state, access, None, project_data)
         placement.set_plan_view(plan_view)
-        placement.set_area_state_change_callback(coordinator.refresh)
         annotation_action.setChecked(True)
         plan_view.has_selection = True
         plan_view.begin_area()
@@ -487,7 +543,6 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.set_plan_view(plan_view)
         placement = PlacementCoordinator(ui_state, access, None, project_data)
         placement.set_plan_view(plan_view)
-        placement.set_area_state_change_callback(coordinator.refresh)
         area_transitions = []
         plan_view.area_placement_in_progress.connect(area_transitions.append)
         place_action.setChecked(True)
@@ -537,7 +592,6 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.set_plan_view(plan_view)
         placement = PlacementCoordinator(ui_state, access, None, project_data)
         placement.set_plan_view(plan_view)
-        placement.set_area_state_change_callback(coordinator.refresh)
         area_transitions = []
         plan_view.area_placement_in_progress.connect(area_transitions.append)
         annotation_action.setChecked(True)
@@ -585,7 +639,6 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.set_plan_view(plan_view)
         placement = PlacementCoordinator(ui_state, access, None, project_data)
         placement.set_plan_view(plan_view)
-        placement.set_area_state_change_callback(coordinator.refresh)
         place_action.setChecked(True)
         plan_view.begin_area()
         plan_view.current_page_uid = None

@@ -1038,10 +1038,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._handle_inline_text_shortcut("paste"):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS):
-                return
-            if not self._plan_view_handler.can_paste_to_current_bid():
-                return
             self.plan_view.paste_clipboard()
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:

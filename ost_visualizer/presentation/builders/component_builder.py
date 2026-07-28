@@ -316,12 +316,23 @@ class ComponentBuilder:
             viewer_frame_2d,
         )
         if ui_access_manager:
+
+            def _main_plan_access():
+                return ui_access_manager.get_plan_surface_access(
+                    ui_access_manager.current_plan_surface_context()
+                )
+
             plan_view.set_text_annotation_inline_edit_allowed_fn(
-                lambda: ui_access_manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT)
+                lambda: _main_plan_access().can_edit_annotation_text
             )
-            plan_view.set_annotation_placement_allowed_fn(
-                lambda: ui_access_manager.is_allowed(Feature.PLACE_ANNOTATIONS)
-            )
+
+            def _annotation_placement_allowed() -> bool:
+                access = _main_plan_access()
+                if plan_view.annotation_place_type:
+                    return access.can_continue_annotation_placement
+                return access.can_place_annotations
+
+            plan_view.set_annotation_placement_allowed_fn(_annotation_placement_allowed)
         plan_view.setContentsMargins(*NO_MARGINS)
         viewer_layout_2d.addWidget(plan_view)
         hotlink_adapter = HotlinkEventAdapter(event_bus)
@@ -472,6 +483,7 @@ class ComponentBuilder:
             deferred_persistence_manager=deferred_persistence_manager,
         )
         _plan_view_handler.connect_signals()
+        plan_view.set_paste_allowed_fn(_plan_view_handler.can_paste_to_current_bid)
         _last_2d_zoom = [1.0]
         _popup_open = [False]
         zoom_combo.popup_shown.connect(lambda: _popup_open.__setitem__(0, True))

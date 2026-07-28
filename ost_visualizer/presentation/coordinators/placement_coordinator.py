@@ -1,6 +1,6 @@
 from enum import Enum, auto
-from typing import Callable, Optional
-from ..managers.ui_access_manager import Feature
+from typing import Optional
+from ..managers.ui_access_manager import Feature, MAIN_PLAN_SURFACE_ID
 from .navigation_state_machine import NavState
 
 
@@ -22,15 +22,9 @@ class PlacementCoordinator:
         self._state = PlacementState.IDLE
         self._nav = None
         self._area_placement_in_progress = False
-        self._state_change_callback: Optional[Callable[[], None]] = None
 
     def set_nav(self, nav) -> None:
         self._nav = nav
-
-    def set_area_state_change_callback(
-        self, callback: Optional[Callable[[], None]]
-    ) -> None:
-        self._state_change_callback = callback
 
     @property
     def state(self) -> PlacementState:
@@ -105,9 +99,9 @@ class PlacementCoordinator:
             self._state = PlacementState.AREA_IN_PROGRESS
         elif not in_progress and self._state == PlacementState.AREA_IN_PROGRESS:
             self._state = PlacementState.READY
-        self._access.set_area_placement_active(in_progress)
-        if self._state_change_callback:
-            self._state_change_callback()
+        self._access.set_area_placement_active(
+            in_progress, surface_id=MAIN_PLAN_SURFACE_ID
+        )
 
     def _finalize_exit(self) -> None:
         if self._state == PlacementState.IDLE:
@@ -181,7 +175,6 @@ class PlacementCoordinator:
             self._disconnect_plan_view(self._plan_view)
         self._plan_view = None
         self._nav = None
-        self._state_change_callback = None
         self._ui_state = None
         self._access = None
         self._color_service = None

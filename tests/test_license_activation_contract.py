@@ -100,9 +100,6 @@ class FakeEventPublisher:
     def publish_license_lost(self):
         self.lost_calls += 1
 
-    def reset_failure_state(self):
-        pass
-
 
 class ImmediateThreadManager:
     def spawn_with_bridge(

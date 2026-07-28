@@ -48,7 +48,7 @@ from ..dialogs.set_scale_dialog import ScaleSettings, SetScaleDialog
 from ..dialogs.synchronization_conflict_dialog import SynchronizationConflictDialog
 from ..handlers.condition_action_handler import ConditionActionHandler
 from ..managers.app_config_presentation_manager import AppConfigPresentationManager
-from ..managers.ui_access_manager import Feature
+from ..managers.ui_access_manager import Feature, MAIN_PLAN_SURFACE_ID
 from ..modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PLACE,
@@ -180,7 +180,6 @@ class UIEventCoordinator:
             project_data=self.project_data,
         )
         self._placement.set_nav(self._nav)
-        self._placement.set_area_state_change_callback(self._toolbar.refresh)
         ui_access_manager.set_placement_coordinator(self._placement)
         self._condition_handler = ConditionActionHandler(
             coordinator=self,
@@ -219,7 +218,7 @@ class UIEventCoordinator:
         self._plan_view_signaler = QtVoidCallback(parent=main_window)
         self._plan_view_signaler.set_callback(self._update_plan_view_for_active)
         self._menu_state_signaler = QtVoidCallback(parent=main_window)
-        self._menu_state_signaler.set_callback(self._update_export_menu_state)
+        self._menu_state_signaler.set_callback(self._update_menu_state)
         self._setup_event_subscriptions()
 
     def set_copy_action(self, action: QtGui.QAction) -> None:
@@ -1174,8 +1173,10 @@ class UIEventCoordinator:
         self._toolbar.refresh_backout_action()
 
     def _on_text_annotation_edit_mode_changed(self, active: bool) -> None:
-        self.ui_access_manager.set_text_annotation_edit_active(active)
-        self._update_export_menu_state()
+        self.ui_access_manager.set_text_annotation_edit_active(
+            active, surface_id=MAIN_PLAN_SURFACE_ID
+        )
+        self._update_menu_state()
 
     def _setup_event_subscriptions(self) -> None:
         self._subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
@@ -1231,8 +1232,11 @@ class UIEventCoordinator:
         self._subscriptions.append((event_name, callback))
 
     def _update_export_menu_state(self) -> None:
-        self.main_window.menu_controller.update_menu_states()
+        self._update_menu_state()
         self._toolbar.refresh()
+
+    def _update_menu_state(self) -> None:
+        self.main_window.menu_controller.update_menu_states()
 
     def refresh_conditions_ui(self) -> None:
         self._sidebar.refresh_conditions_from_memory()
@@ -1854,7 +1858,7 @@ class UIEventCoordinator:
             selected_file_path = self.ui_state_manager.selected_file_path
             if selected_file_path and not self.ui_access_manager.is_database_editable():
                 self._deferred_persistence.cancel_for_file(selected_file_path)
-            self._update_export_menu_state()
+            self._update_menu_state()
             self._refresh_mesh_window_access()
 
     def _is_summary_tab_active(self) -> bool:
@@ -2359,7 +2363,7 @@ class UIEventCoordinator:
                     NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
                 )
                 self.ui_access_manager.refresh()
-                self._update_export_menu_state()
+                self._update_menu_state()
                 self.main_window.set_database_window_title(
                     snap.selected_file_path or snap.bid_ref.file_path
                 )
@@ -2456,7 +2460,7 @@ class UIEventCoordinator:
                 NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
             )
         self.ui_access_manager.refresh()
-        self._update_export_menu_state()
+        self._update_menu_state()
         self.main_window.refresh_window_title()
 
     def _validate_condition_uids(self, uids: set) -> set:
@@ -2478,7 +2482,7 @@ class UIEventCoordinator:
             self._discard_mesh_camera_states(file_path=removed_path)
             self._refresh_project_tree_after_file_unload()
             self.ui_access_manager.refresh()
-            self._update_export_menu_state()
+            self._update_menu_state()
             return
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
@@ -2583,7 +2587,6 @@ class UIEventCoordinator:
             )
         else:
             self._clear_mesh_views_for_scene_update()
-        self._toolbar.refresh()
         self.ensure_select_mode()
 
     def _on_native_scene_updated(
@@ -2709,7 +2712,7 @@ class UIEventCoordinator:
             elif prev_bid_ref:
                 self.project_data.set_current_file(prev_bid_ref.file_path)
             self.ui_access_manager.refresh()
-            self._update_export_menu_state()
+            self._update_menu_state()
             self._restore_project_tree_bid_selection_if_needed()
             if load_error:
                 show_warning(self.main_window, "Open SQL Bid", load_error)

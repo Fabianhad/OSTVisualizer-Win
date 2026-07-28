@@ -99,7 +99,10 @@ from ost_visualizer.presentation.managers.deferred_persistence_manager import (
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
-from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
+    PlanSurfaceAccessState,
+)
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_SELECT,
@@ -1770,11 +1773,11 @@ class DetachedChaosRepository:
 class DetachedChaosWindow:
     def __init__(self):
         self.page_updates: list[str | None] = []
-        self.read_only_updates: list[bool] = []
+        self.access_updates: list[PlanSurfaceAccessState] = []
         self.navigation_updates = 0
 
-    def set_read_only(self, read_only):
-        self.read_only_updates.append(bool(read_only))
+    def set_access_state(self, access_state):
+        self.access_updates.append(access_state)
 
     def update_page(self, page_data):
         self.page_updates.append(page_data.page.uid if page_data.page else None)
@@ -1837,7 +1840,7 @@ class DetachedWindowChaosHarness:
         self.manager._window = self.window
         self.manager.repository = self.repository
         self.manager.project_data = self.project_data
-        self.manager._is_read_only = lambda: False
+        self.manager._ui_access_manager = None
         self.manager._update_window_navigation = self._update_window_navigation
         self.manager._get_page_data = self._get_page_data
         self.manager._refresh_signaler = DetachedChaosRefreshSignaler(self.manager)

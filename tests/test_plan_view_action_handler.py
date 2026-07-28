@@ -1017,6 +1017,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view=None,
         write=None,
         ann_write=None,
+        allowed_features=None,
     ):
         return PlanViewActionHandler(
             plan_view=FakePlanView() if plan_view is None else plan_view,
@@ -1030,7 +1031,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess(set(Feature)),
+            ui_access_manager=FakeAccess(
+                set(Feature) if allowed_features is None else allowed_features
+            ),
         )
 
     def _copied_takeoff(self, position=None):
@@ -4804,6 +4807,33 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             plan_view.intelligent_paste_calls,
             [(["ann-1"], (10.0, 20.0))],
         )
+
+    def test_annotation_only_paste_uses_placement_not_plan_edit_permission(self):
+        source = self._copied_annotation()
+        plan_view = FakePlanView()
+        plan_view.annotation_key_map = {("ann-1", "line"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            ann_write=ann_write,
+            allowed_features={Feature.PLACE_ANNOTATIONS},
+        )
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+        self.assertTrue(handler.can_paste_to_current_bid())
+        handler.on_paste_requested()
+        self.assertEqual(len(ann_write.insert_calls), 1)
+
+    def test_annotation_only_paste_is_denied_without_placement_permission(self):
+        source = self._copied_annotation()
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(
+            ann_write=ann_write,
+            allowed_features={Feature.EDIT_PLAN_ITEMS},
+        )
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+        self.assertFalse(handler.can_paste_to_current_bid())
+        handler.on_paste_requested()
+        self.assertEqual(ann_write.insert_calls, [])
 
     def test_paste_bid_dimension_preserves_style_properties(self):
         source = self._copied_annotation(

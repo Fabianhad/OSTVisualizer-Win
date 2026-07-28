@@ -46,6 +46,7 @@ from ...config import (
 )
 from ...dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ...managers.icon_manager import IconId, IconManager
+from ...managers.ui_access_manager import PlanSurfaceAccessState
 from ...modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PAN,
@@ -102,6 +103,8 @@ class DetachedPageViewWindowConfig:
 
 class DetachedPageViewWindow(QtWidgets.QMainWindow):
     dropdown_size_changed = QtCore.Signal()
+    area_placement_state_changed = QtCore.Signal(bool)
+    inline_text_edit_state_changed = QtCore.Signal(bool)
     _PAGE_UID_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
     def __init__(
@@ -182,7 +185,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             SelectionClipboardService() if config.allow_annotation_editing else None
         )
         self.plan_view: Optional[TakeoffPlanView] = None
-        self._read_only: bool = False
+        self._access_state = PlanSurfaceAccessState()
         if self._undo_svc is not None:
             self._undo_svc.set_write_guard(self._editing_enabled)
         self._is_closing: bool = False
@@ -478,10 +481,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.set_annotation_only_selection(
             self._config.allow_annotation_editing
         )
-        self.plan_view.set_text_annotation_inline_edit_enabled(self._editing_enabled())
+        self.plan_view.set_text_annotation_inline_edit_enabled(
+            self._text_editing_enabled()
+        )
         self.plan_view.set_annotation_placement_allowed_fn(
             self._annotation_placement_enabled
         )
+        self.plan_view.set_paste_allowed_fn(self._can_paste_annotations)
         self.plan_view.set_named_view_name_validator(self._validate_named_view_name)
         self.plan_view.set_roping_selection_method(self._roping_selection_method)
         self.plan_view.set_disable_high_resolution_images(
@@ -561,6 +567,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.cursor_mode_change_requested.connect(
             self._on_cursor_mode_change_requested
         )
+        self.plan_view.area_placement_in_progress.connect(
+            self._on_area_placement_in_progress
+        )
+        self.plan_view.text_annotation_edit_mode_changed.connect(
+            self._on_inline_text_edit_changed
+        )
         self.plan_view.set_zoom_cursor(make_zoom_cursor())
         self._set_default_cursor_mode()
 
@@ -603,13 +615,30 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         return self._config.allow_annotation_editing
 
     def _editing_enabled(self) -> bool:
-        return self._config.allow_annotation_editing and not self._read_only
+        return (
+            self._config.allow_annotation_editing
+            and self._access_state.can_edit_annotations
+        )
+
+    def _text_editing_enabled(self) -> bool:
+        return (
+            self._config.allow_annotation_editing
+            and self._access_state.can_edit_annotation_text
+        )
 
     def _annotation_placement_enabled(self) -> bool:
-        return self._editing_enabled() and bool(
-            self.page_data
-            and self.page_data.is_layer_visible(self.page_data.annotation_layer_uid)
-        )
+        if not self._config.allow_annotation_editing:
+            return False
+        access_state = self._access_state
+        if self.plan_view and self.plan_view.annotation_place_type:
+            return access_state.can_continue_annotation_placement
+        return access_state.can_place_annotations
+
+    def _on_area_placement_in_progress(self, active: bool) -> None:
+        self.area_placement_state_changed.emit(bool(active))
+
+    def _on_inline_text_edit_changed(self, active: bool) -> None:
+        self.inline_text_edit_state_changed.emit(bool(active))
 
     def _refresh_annotation_tool_access(self) -> None:
         enabled = self._annotation_placement_enabled()
@@ -1026,16 +1055,24 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         self.show()
 
-    def set_read_only(self, read_only: bool) -> None:
-        self._read_only = read_only
+    def set_access_state(self, access_state: PlanSurfaceAccessState) -> None:
+        self._access_state = access_state
         if self._scale_combo is not None:
-            self._scale_combo.setEnabled(not read_only)
+            self._scale_combo.setEnabled(access_state.can_edit_page_settings)
         self._refresh_annotation_tool_access()
         if self.plan_view:
             self.plan_view.set_selection_enabled(self._selection_enabled())
-            self.plan_view.set_editing_enabled(self._editing_enabled())
+            active_placement_valid = bool(
+                self.plan_view.annotation_place_type
+                and access_state.can_continue_annotation_placement
+            )
+            if not active_placement_valid and (
+                not self.plan_view.is_text_annotation_inline_edit_active()
+                or not access_state.can_edit_annotation_text
+            ):
+                self.plan_view.set_editing_enabled(self._editing_enabled())
             self.plan_view.set_text_annotation_inline_edit_enabled(
-                self._editing_enabled()
+                self._text_editing_enabled()
             )
 
     def apply_config_preferences(
@@ -1147,7 +1184,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         return self._file_path
 
     def _on_positions_flushed(self, _takeoff_changes: list, ann_changes: list) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._editing_enabled():
             return
         if self._is_closing or self._ann_write_svc is None or not ann_changes:
             return
@@ -1180,7 +1217,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._undo_svc.push(_undo_move, _redo_move)
 
     def _on_annotation_text_properties_flushed(self, changes: list) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._text_editing_enabled():
             return
         if self._is_closing or self._ann_write_svc is None or not changes:
             return
@@ -1214,7 +1251,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
 
     def _on_annotation_styles_flushed(self, changes: list) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._editing_enabled():
             return
         if self._is_closing or self._ann_write_svc is None or not changes:
             return
@@ -1327,7 +1364,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _can_paste_annotations(self) -> bool:
         if (
-            not self._editing_enabled()
+            not self._annotation_placement_enabled()
             or self._is_closing
             or self._ann_write_svc is None
             or self.plan_view is None
@@ -1616,7 +1653,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._undo_svc.push(cmd.undo, cmd.redo)
 
     def _on_elements_deleted(self, uids: list) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._editing_enabled():
             return
         bid_ref = self.view.bid_ref if self.view else None
         if (
@@ -1718,6 +1755,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             plan_view.set_context_menu_command_handlers(None, None)
         plan_view.cursor_mode_change_requested.disconnect(
             self._on_cursor_mode_change_requested
+        )
+        plan_view.area_placement_in_progress.disconnect(
+            self._on_area_placement_in_progress
+        )
+        plan_view.text_annotation_edit_mode_changed.disconnect(
+            self._on_inline_text_edit_changed
         )
         if self._undo_svc is not None:
             plan_view.undo_requested.disconnect(self._undo_svc.undo)

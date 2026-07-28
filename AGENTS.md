@@ -212,6 +212,12 @@ Expected public MCP counts should remain 38 tools, 1 resource, 4 resource templa
 
 `UIAccessManager` gates feature availability. New write operations must be tied to an existing `Feature` or add a new one in the same access model.
 
+Equivalent plan actions in Main and detached windows use
+`UIAccessManager.get_plan_surface_access()` with an explicit surface, database,
+bid, displayed-page, and annotation-layer context. Page-scoped checks must not
+fall back to the Main Window's active page, and temporary interaction blockers
+are tracked per surface.
+
 Free/no-license basics:
 
 - View/open/browse projects and conditions.

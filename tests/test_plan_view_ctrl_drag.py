@@ -347,6 +347,12 @@ class InputHandlerHarness(
         self._editing_text_annotation_uid = None
         self._editing_named_view_uid = None
 
+    def _editing_cursor_mode_allowed(self):
+        return self._editing_enabled
+
+    def _paste_allowed(self):
+        return self._editing_enabled
+
     def _active_inline_text_editor_contains_scene_point(self, _scene_pos):
         return False
 
@@ -2046,6 +2052,29 @@ class CtrlDragTests(unittest.TestCase):
         self.assertFalse(event.accepted)
         self.assertEqual(calls, [])
         self.assertEqual(view.cursor_mode_change_requested.emitted, [])
+
+    def test_ctrl_v_uses_content_specific_paste_state_when_editing_is_disabled(self):
+        view = self._make_view(set())
+        view._editing_enabled = False
+        paste_allowed = [True]
+        view._paste_allowed = lambda: paste_allowed[0]
+        view.paste_requested = FakeSignal()
+        event = FakeKeyEvent(
+            Qt.Key.Key_V,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        InputHandlerMixin.keyPressEvent(view, event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view.paste_requested.emitted, [()])
+
+        paste_allowed[0] = False
+        blocked_event = FakeKeyEvent(
+            Qt.Key.Key_V,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        InputHandlerMixin.keyPressEvent(view, blocked_event)
+        self.assertFalse(blocked_event.accepted)
+        self.assertEqual(view.paste_requested.emitted, [()])
 
     def test_ctrl_r_clears_snap_preview_without_removing_selection_items(self):
         view = self._make_view({"t1"})

@@ -33,6 +33,3 @@ class LicenseEventPublisher:
             self._logger.warning("License invalid: %s", message)
         self._event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=False)
         return True
-
-    def reset_failure_state(self) -> None:
-        self._failure_notified = False

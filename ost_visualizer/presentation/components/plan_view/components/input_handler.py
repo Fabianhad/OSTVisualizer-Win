@@ -459,7 +459,10 @@ class InputHandlerMixin:
         self.mousePressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if not self._editing_enabled and self._cursor_mode in EDITING_CURSOR_MODES:
+        if (
+            self._cursor_mode in EDITING_CURSOR_MODES
+            and not self._editing_cursor_mode_allowed()
+        ):
             event.accept()
             return
         advanced_mouse_controls = self._advanced_mouse_controls_active()
@@ -930,7 +933,10 @@ class InputHandlerMixin:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if not self._editing_enabled and self._cursor_mode in EDITING_CURSOR_MODES:
+        if (
+            self._cursor_mode in EDITING_CURSOR_MODES
+            and not self._editing_cursor_mode_allowed()
+        ):
             event.accept()
             return
         cur_vp = event.position().toPoint()
@@ -1164,7 +1170,10 @@ class InputHandlerMixin:
             self._update_cursor(cur_vp)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if not self._editing_enabled and self._cursor_mode in EDITING_CURSOR_MODES:
+        if (
+            self._cursor_mode in EDITING_CURSOR_MODES
+            and not self._editing_cursor_mode_allowed()
+        ):
             event.accept()
             return
         vp_pos = event.position().toPoint()
@@ -2218,7 +2227,7 @@ class InputHandlerMixin:
                 self.copy_requested.emit(list(self._selected_uids))
                 event.accept()
                 return
-            if event.key() == Qt.Key.Key_V and self._editing_enabled:
+            if event.key() == Qt.Key.Key_V and self._paste_allowed():
                 self.paste_requested.emit()
                 event.accept()
                 return

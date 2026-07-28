@@ -2670,6 +2670,33 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(view._cursor_mode, "annotation_place")
         view.cleanup()
 
+    def test_annotation_placement_does_not_require_general_editing_or_selection(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view.set_selection_enabled(False)
+        view.set_editing_enabled(False)
+        view.set_annotation_placement_allowed_fn(lambda: True)
+        self.assertTrue(view.activate_annotation_placement("dimension"))
+        self.assertEqual(view._cursor_mode, "annotation_place")
+        self.assertTrue(view._editing_cursor_mode_allowed())
+        view.cleanup()
+
+    def test_paste_uses_content_specific_callback_when_general_editing_is_disabled(
+        self,
+    ):
+        view = self._make_plan_view()
+        calls = []
+        view.paste_requested.connect(lambda: calls.append("paste"))
+        view.set_editing_enabled(False)
+        view.set_paste_allowed_fn(lambda: True)
+        view.paste_clipboard()
+        self.assertEqual(calls, ["paste"])
+        view.set_paste_allowed_fn(lambda: False)
+        view.paste_clipboard()
+        self.assertEqual(calls, ["paste"])
+        view.cleanup()
+
     def test_paste_backout_cancels_move_overlay_state(self):
         view = self._make_plan_view()
         page = Page(

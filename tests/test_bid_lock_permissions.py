@@ -49,6 +49,7 @@ from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.components.project_tree_view import _BidTreeWidget
 from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
+    MAIN_PLAN_SURFACE_ID,
     UIAccessManager,
     _DATABASE_EDIT_FEATURES,
 )
@@ -314,6 +315,12 @@ class _FakeAccess:
     def is_project_bid_clipboard_allowed(self, feature):
         self.checked.append(feature)
         return feature in self.allowed
+
+    def subscribe_access_state_changed(self, _callback):
+        pass
+
+    def unsubscribe_access_state_changed(self, _callback):
+        pass
 
 
 class _ConditionStructureWriteService:
@@ -704,7 +711,6 @@ class BidLockPermissionTests(unittest.TestCase):
                 "refresh",
                 ("cancel", "sql-db-1"),
                 "menu",
-                "toolbar",
                 ("mesh-pick", True),
                 ("mesh-edit", False),
             ],
@@ -736,7 +742,7 @@ class BidLockPermissionTests(unittest.TestCase):
             cancel_for_file=lambda file_path: calls.append(("cancel", file_path))
         )
         coordinator._mesh_window = None
-        coordinator._update_export_menu_state = lambda: calls.append("project")
+        coordinator._update_menu_state = lambda: calls.append("project")
         coordinator._on_database_capabilities_changed("sql-db-1")
         self.assertEqual(calls, ["refresh", "project"])
 
@@ -783,13 +789,13 @@ class BidLockPermissionTests(unittest.TestCase):
         project_data.locked = True
         self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
         project_data.locked = False
-        manager.set_text_annotation_edit_active(True)
+        manager.set_text_annotation_edit_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
         self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
 
     def test_active_annotation_placement_ignores_only_its_own_area_lock(self):
         project_data = _ProjectData()
         manager = self._access_manager(project_data)
-        manager.set_area_placement_active(True)
+        manager.set_area_placement_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
         self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
         self.assertTrue(
             manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
@@ -814,12 +820,12 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(manager.can_create_project_tree_items(False))
         self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
         self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
-        manager.set_area_placement_active(True)
+        manager.set_area_placement_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
         self.assertFalse(manager.can_create_project_tree_items(True))
         self.assertFalse(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
         self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
-        manager.set_area_placement_active(False)
-        manager.set_text_annotation_edit_active(True)
+        manager.set_area_placement_active(False, surface_id=MAIN_PLAN_SURFACE_ID)
+        manager.set_text_annotation_edit_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
         self.assertFalse(manager.can_create_project_tree_items(True))
         self.assertFalse(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
         self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
@@ -835,7 +841,7 @@ class BidLockPermissionTests(unittest.TestCase):
         coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
         coordinator.refresh()
         self.assertTrue(conditions_sidebar.create_folder_enabled)
-        manager.set_text_annotation_edit_active(True)
+        manager.set_text_annotation_edit_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
         coordinator.refresh()
         self.assertFalse(conditions_sidebar.create_folder_enabled)
 
@@ -979,7 +985,7 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
-        manager.set_text_annotation_edit_active(True)
+        manager.set_text_annotation_edit_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
         self.assertFalse(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
         self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
         self.assertFalse(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
@@ -999,7 +1005,7 @@ class BidLockPermissionTests(unittest.TestCase):
         toolbar.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_access_manager = manager
-        coordinator._update_export_menu_state = toolbar.refresh
+        coordinator._update_menu_state = lambda: None
         coordinator._on_text_annotation_edit_mode_changed(True)
         self.assertFalse(manager.is_allowed(Feature.COVER_SHEET))
         self.assertFalse(cover_sheet_button.enabled)
@@ -1059,12 +1065,12 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(line_action.enabled)
         self.assertFalse(cloud_action.enabled)
         project_data.locked = False
-        manager.set_text_annotation_edit_active(True)
+        manager.set_text_annotation_edit_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
         coordinator.refresh()
         self.assertFalse(dimension_action.enabled)
         self.assertFalse(line_action.enabled)
         self.assertFalse(cloud_action.enabled)
-        manager.set_text_annotation_edit_active(False)
+        manager.set_text_annotation_edit_active(False, surface_id=MAIN_PLAN_SURFACE_ID)
         plan_view.current_page_uid = None
         coordinator.refresh()
         self.assertFalse(dimension_action.enabled)

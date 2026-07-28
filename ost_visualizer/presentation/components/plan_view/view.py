@@ -374,6 +374,7 @@ class TakeoffPlanView(
         self._selection_enabled: bool = False
         self._editing_enabled: bool = False
         self._annotation_only_selection: bool = False
+        self._paste_allowed_fn = None
         self._selected_uids: Set[str] = set()
         self._selection_items: List = []
         self._handle_infos: List[HandleInfo] = []
@@ -1740,6 +1741,9 @@ class TakeoffPlanView(
     def set_annotation_placement_allowed_fn(self, allowed_fn) -> None:
         self._annotation_placement_allowed_fn = allowed_fn
 
+    def set_paste_allowed_fn(self, allowed_fn) -> None:
+        self._paste_allowed_fn = allowed_fn
+
     def set_named_view_name_validator(self, validator) -> None:
         self._named_view_name_validator = validator
 
@@ -1757,11 +1761,19 @@ class TakeoffPlanView(
         return bool(self._text_annotation_inline_edit_allowed_fn())
 
     def _can_begin_annotation_placement(self) -> bool:
-        if not self._selection_enabled:
-            return False
         if self._annotation_placement_allowed_fn is None:
-            return True
+            return self._selection_enabled
         return bool(self._annotation_placement_allowed_fn())
+
+    def _paste_allowed(self) -> bool:
+        if self._paste_allowed_fn is None:
+            return self._editing_enabled
+        return bool(self._paste_allowed_fn())
+
+    def _editing_cursor_mode_allowed(self) -> bool:
+        if self._cursor_mode == CURSOR_MODE_ANNOTATION_PLACE:
+            return bool(self._annotation_place_type)
+        return self._editing_enabled
 
     def handle_inline_text_shortcut(self, action_key: str) -> bool:
         item = self._active_inline_text_item()
@@ -3649,7 +3661,7 @@ class TakeoffPlanView(
         self.copy_requested.emit(list(self._selected_uids))
 
     def paste_clipboard(self) -> None:
-        if not self._editing_enabled:
+        if not self._paste_allowed():
             return
         self.paste_requested.emit()
 
@@ -5655,7 +5667,11 @@ class TakeoffPlanView(
         self._deferred_page_visual_result = None
 
     def set_cursor_mode(self, mode: str) -> None:
-        if mode in EDITING_CURSOR_MODES and not self._editing_enabled:
+        if mode in EDITING_CURSOR_MODES and not (
+            self._can_begin_annotation_placement()
+            if mode == CURSOR_MODE_ANNOTATION_PLACE
+            else self._editing_enabled
+        ):
             return
         if not self._finish_inline_text_edit_before_tool_change():
             return
@@ -5699,8 +5715,6 @@ class TakeoffPlanView(
         return True
 
     def activate_annotation_placement(self, annotation_type: str) -> bool:
-        if not self._editing_enabled:
-            return False
         if not self._finish_inline_text_edit_before_tool_change():
             return False
         if not self._can_begin_annotation_placement():
@@ -5910,6 +5924,7 @@ class TakeoffPlanView(
         self._editing_text_original = ""
         self._text_annotation_inline_edit_allowed_fn = None
         self._annotation_placement_allowed_fn = None
+        self._paste_allowed_fn = None
         self._rendering_service = None
         self._prefetch_coordinator = None
         self._load_coordinator = None

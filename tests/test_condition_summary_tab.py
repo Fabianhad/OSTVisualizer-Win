@@ -964,6 +964,27 @@ class ConditionSummaryTabTests(unittest.TestCase):
         MainWindow._copy_selected(window)
         self.assertEqual(calls, ["summary-copy"])
 
+    def test_main_window_plan_paste_delegates_without_broad_edit_gate(self):
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _action: False
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_TAKEOFF)
+        window.plan_view = SimpleNamespace(
+            paste_clipboard=lambda: calls.append("plan-paste")
+        )
+        window.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: (_ for _ in ()).throw(
+                AssertionError("plan paste must use its content-specific predicate")
+            )
+        )
+        window._plan_view_handler = SimpleNamespace(
+            can_paste_to_current_bid=lambda: (_ for _ in ()).throw(
+                AssertionError("the plan view owns paste availability")
+            )
+        )
+        MainWindow._paste_clipboard(window)
+        self.assertEqual(calls, ["plan-paste"])
+
     def test_group_actions_are_checkable_and_request_rebuild(self):
         self._load()
         calls = []
@@ -1352,6 +1373,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._sync_undo_bid = lambda: None
         coordinator._reset_to_select_mode = lambda: None
         coordinator._update_export_menu_state = lambda: None
+        coordinator._update_menu_state = lambda: None
         coordinator.condition_summary_tab = tab
         coordinator.ui_access_manager = SimpleNamespace(refresh=lambda: None)
         coordinator.ui_state_manager = SimpleNamespace(
