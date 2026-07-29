@@ -1023,8 +1023,7 @@ class PlacementModeMixin:
             page_uid = self._current_bid_page_uid or ""
             if not page_uid:
                 return False
-            self._selected_uids.clear()
-            self.update_selection_visuals()
+            self.clear_selection()
             self.clear_place_preview()
             self._point_annotation_release_pending = True
             self.hotlink_placement_requested.emit([ost_x, ost_y], page_uid)
@@ -1046,8 +1045,7 @@ class PlacementModeMixin:
             ost_x, ost_y, _cx, _cy, _snap_kind = self._placement_snap_from_scene(
                 scene_pos
             )
-            self._selected_uids.clear()
-            self.update_selection_visuals()
+            self.clear_selection()
             self._annotation_place_points = [(ost_x, ost_y)]
             self._annotation_place_dragging = True
             self.update_annotation_place_preview(scene_pos)
@@ -1055,8 +1053,7 @@ class PlacementModeMixin:
             return True
         if self._annotation_place_type in _INK_ANNOTATION_TYPES:
             point = self._ink_annotation_point_from_scene(scene_pos)
-            self._selected_uids.clear()
-            self.update_selection_visuals()
+            self.clear_selection()
             self._annotation_place_points = [point]
             self._annotation_place_dragging = True
             self.update_annotation_place_preview(scene_pos)
@@ -1066,8 +1063,7 @@ class PlacementModeMixin:
         if self._annotation_area_rect_dragging:
             self._annotation_area_rect_dragging = False
         if not self._annotation_place_points:
-            self._selected_uids.clear()
-            self.update_selection_visuals()
+            self.clear_selection()
             self._annotation_place_points = [(ost_x, ost_y)]
             self._annotation_area_rect_dragging = True
             self.update_annotation_place_preview(scene_pos)
@@ -1486,8 +1482,7 @@ class PlacementModeMixin:
             if not parent_uid:
                 event.accept()
                 return
-            self._selected_uids.clear()
-            self.update_selection_visuals()
+            self.clear_selection()
             self._invalidate_snap_index()
             self.hole_created.emit(
                 self._place_session_uid,
@@ -1496,8 +1491,7 @@ class PlacementModeMixin:
                 parent_uid,
             )
         elif cond_type == Condition.TYPE_COUNT:
-            self._selected_uids.clear()
-            self.update_selection_visuals()
+            self.clear_selection()
             self._invalidate_snap_index()
             self.takeoff_created.emit(
                 self._place_session_uid,
@@ -1505,8 +1499,7 @@ class PlacementModeMixin:
                 self._current_bid_page_uid or "",
             )
         elif cond_type == Condition.TYPE_LINEAR:
-            self._selected_uids.clear()
-            self.update_selection_visuals()
+            self.clear_selection()
             self._place_points = [(ost_x, ost_y)]
             self._place_linear_dragging = True
             self.update_place_preview(scene_pos)
@@ -1520,8 +1513,7 @@ class PlacementModeMixin:
                         event.accept()
                         return
                 if not self._backout_parent_uid:
-                    self._selected_uids.clear()
-                    self.update_selection_visuals()
+                    self.clear_selection()
                     if self._place_session_uid is None:
                         event.accept()
                         return

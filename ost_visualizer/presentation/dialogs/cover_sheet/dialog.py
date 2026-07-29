@@ -1343,56 +1343,40 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if len(page_sizes) <= 1:
             return
         filename = Path(path).name
-        parent_item = item.parent()
-        folder_uid = None
-        if parent_item:
-            parent_data = parent_item.data(0, self._ITEM_ROLE) or ()
-            if parent_data and parent_data[0] == "folder":
-                folder_uid = parent_data[1]
-            base_position = parent_item.indexOfChild(item) + 1
-        else:
-            base_position = self.plan_tree.indexOfTopLevelItem(item) + 1
+        parent_item, folder_uid, insertion_index = self._insertion_point_for_item(item)
+        if insertion_index is None:
+            return
         default_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
-        existing_page_indexes = self._page_indexes_for_image_path(
+        existing_page_items = self._page_items_by_index_for_image_path(
             parent_item,
             path,
         )
-        inserted_count = 0
         next_sheet_no = int(self._next_sheet_no())
         for page_number, (width, height, _label) in enumerate(
             page_sizes[1:],
             start=2,
         ):
-            if page_number in existing_page_indexes:
+            existing_item = existing_page_items.get(page_number)
+            if existing_item is not None:
+                existing_index = (
+                    parent_item.indexOfChild(existing_item)
+                    if parent_item is not None
+                    else self.plan_tree.indexOfTopLevelItem(existing_item)
+                )
+                if existing_index >= insertion_index:
+                    insertion_index = existing_index + 1
                 continue
             new_uid = f"new_{self._new_page_counter}"
             self._new_page_counter += 1
-            new_item = QtWidgets.QTreeWidgetItem(
-                [
-                    str(next_sheet_no),
-                    f"{filename} ({page_number})",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                ]
+            new_item = self._create_new_page_item(
+                new_uid,
+                folder_uid,
+                str(next_sheet_no),
+                f"{filename} ({page_number})",
+                parent_item,
+                insertion_index=insertion_index,
             )
-            new_item.setData(
-                0,
-                self._ITEM_ROLE,
-                ("new_page", new_uid, folder_uid),
-            )
-            new_item.setFlags(new_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-            if parent_item:
-                parent_item.insertChild(base_position + inserted_count, new_item)
-            else:
-                self.plan_tree.insertTopLevelItem(
-                    base_position + inserted_count,
-                    new_item,
-                )
-            inserted_count += 1
+            insertion_index += 1
             self._wire_page_widgets(
                 new_item,
                 new_uid,
@@ -1413,21 +1397,21 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _path_identity(path: str) -> str:
         return os.path.normcase(os.path.normpath(path or ""))
 
-    def _page_indexes_for_image_path(
+    def _page_items_by_index_for_image_path(
         self,
         parent_item: Optional[QtWidgets.QTreeWidgetItem],
         image_path: str,
-    ) -> set[int]:
+    ) -> Dict[int, QtWidgets.QTreeWidgetItem]:
         path_identity = self._path_identity(image_path)
-        indexes: set[int] = set()
+        items_by_index: Dict[int, QtWidgets.QTreeWidgetItem] = {}
         for page_uid, row in self._page_rows.items():
             if self._path_identity(row.image_path) != path_identity:
                 continue
             item = self._page_items[page_uid]
             if item.parent() is not parent_item:
                 continue
-            indexes.add(row.page_index)
-        return indexes
+            items_by_index.setdefault(row.page_index, item)
+        return items_by_index
 
     def _on_measure_base_changed(self, inches_checked: bool) -> None:
         if inches_checked:
@@ -1490,13 +1474,18 @@ class CoverSheetDialog(QtWidgets.QDialog):
         return count
 
     def _add_new_page(self) -> None:
-        parent_item, folder_uid = self._resolve_insertion_point()
+        parent_item, folder_uid, insertion_index = self._resolve_insertion_point()
         new_uid = f"new_{self._new_page_counter}"
         self._new_page_counter += 1
         def_size = self.combo_pref_page_size.currentData() or (42.0, 30.0)
         def_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
         item = self._create_new_page_item(
-            new_uid, folder_uid, self._next_sheet_no(), "", parent_item
+            new_uid,
+            folder_uid,
+            self._next_sheet_no(),
+            "",
+            parent_item,
+            insertion_index=insertion_index,
         )
         self._wire_page_widgets(
             item,
@@ -1612,12 +1601,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if not src_data or src_data[0] not in ("page", "new_page"):
             return
         src_uid = src_data[1]
-        parent_item = src.parent()
-        folder_uid = None
-        if parent_item:
-            pdata = parent_item.data(0, self._ITEM_ROLE) or ()
-            if pdata and pdata[0] == "folder":
-                folder_uid = pdata[1]
+        parent_item, folder_uid, insertion_index = self._resolve_insertion_point()
         src_row = self._page_rows[src_uid]
         orig_name = src.text(1)
         new_uid = f"new_{self._new_page_counter}"
@@ -1629,6 +1613,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._next_sheet_no(),
             copy_name,
             parent_item,
+            insertion_index=insertion_index,
         )
         self._wire_page_widgets(
             item,
@@ -1696,7 +1681,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _populate_imported_pages(
         self, file_sizes: List[Tuple[str, List[PdfPageSize]]]
     ) -> None:
-        parent_item, folder_uid = self._resolve_insertion_point()
+        parent_item, folder_uid, insertion_index = self._resolve_insertion_point()
         def_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
         last_item = None
         next_sheet_no = int(self._next_sheet_no())
@@ -1719,7 +1704,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     str(next_sheet_no),
                     page_name,
                     parent_item,
+                    insertion_index=insertion_index,
                 )
+                if insertion_index is not None:
+                    insertion_index += 1
                 next_sheet_no += 1
                 self._wire_page_widgets(
                     item,
@@ -1919,23 +1907,54 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _resolve_insertion_point(
         self,
-    ) -> Tuple[Optional[QtWidgets.QTreeWidgetItem], Optional[str]]:
+    ) -> Tuple[
+        Optional[QtWidgets.QTreeWidgetItem],
+        Optional[str],
+        Optional[int],
+    ]:
         selected = self.plan_tree.selectedItems()
         if not selected:
-            return None, None
-        sel = selected[0]
-        data = sel.data(0, self._ITEM_ROLE) or ()
+            return None, None, None
+        current = self.plan_tree.currentItem()
+        if current is not None and current.isSelected():
+            return self._insertion_point_for_item(current)
+        if len(selected) == 1:
+            return self._insertion_point_for_item(selected[0])
+        return None, None, None
+
+    def _insertion_point_for_item(
+        self,
+        item: QtWidgets.QTreeWidgetItem,
+    ) -> Tuple[
+        Optional[QtWidgets.QTreeWidgetItem],
+        Optional[str],
+        Optional[int],
+    ]:
+        if item.treeWidget() is not self.plan_tree:
+            return None, None, None
+        data = item.data(0, self._ITEM_ROLE) or ()
         if data and data[0] in ("folder", "new_folder"):
             folder_uid = data[1] if data[0] == "folder" else None
-            return sel, folder_uid
+            return item, folder_uid, None
         if data and data[0] in ("page", "new_page"):
-            p = sel.parent()
-            if p:
-                pdata = p.data(0, self._ITEM_ROLE) or ()
+            parent_item = item.parent()
+            if parent_item:
+                pdata = parent_item.data(0, self._ITEM_ROLE) or ()
                 if pdata and pdata[0] in ("folder", "new_folder"):
                     folder_uid = pdata[1] if pdata[0] == "folder" else None
-                    return p, folder_uid
-        return None, None
+                    index = parent_item.indexOfChild(item)
+                    if index < 0:
+                        return None, None, None
+                    return (
+                        parent_item,
+                        folder_uid,
+                        index + 1,
+                    )
+            else:
+                index = self.plan_tree.indexOfTopLevelItem(item)
+                if index >= 0:
+                    return None, None, index + 1
+        return None, None, None
 
     def _create_new_page_item(
         self,
@@ -1944,14 +1963,21 @@ class CoverSheetDialog(QtWidgets.QDialog):
         sheet_no: str,
         name: str,
         parent_item: Optional[QtWidgets.QTreeWidgetItem],
+        *,
+        insertion_index: Optional[int] = None,
     ) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem([sheet_no, name, "", "", "", "", "", ""])
         item.setData(0, self._ITEM_ROLE, ("new_page", uid, folder_uid))
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         item.setIcon(1, self._draft_icon_default)
         if parent_item is not None:
-            parent_item.addChild(item)
+            if insertion_index is None:
+                parent_item.addChild(item)
+            else:
+                parent_item.insertChild(insertion_index, item)
             parent_item.setExpanded(True)
+        elif insertion_index is not None:
+            self.plan_tree.insertTopLevelItem(insertion_index, item)
         else:
             self.plan_tree.addTopLevelItem(item)
         return item

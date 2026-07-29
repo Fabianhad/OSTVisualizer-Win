@@ -3,7 +3,7 @@ import os
 import uuid
 import weakref
 from dataclasses import replace
-from typing import Callable, Dict, List, Optional, Set, Tuple, cast
+from typing import Callable, Collection, Dict, List, Optional, Set, Tuple, cast
 from PySide6 import QtCore, QtSvg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (
@@ -847,6 +847,17 @@ class TakeoffPlanView(
         self._selected_text_model_font_size = None
         self._selected_text_annotation_font_scale = 1.0
         self._condition_text_toolbar.hide()
+
+    def _clear_deleted_text_toolbar_target(self, uids: Collection[str]) -> None:
+        item = self._selected_text_item
+        if item is None:
+            return
+        target_uid = self._selected_text_annotation_uid
+        if target_uid is None and item.data(2) == "condition_label":
+            item_uid = item.data(0)
+            target_uid = str(item_uid) if item_uid is not None else None
+        if target_uid is not None and target_uid in uids:
+            self._clear_text_selection()
 
     def _set_condition_text_control_signals_blocked(self, blocked: bool) -> None:
         for widget in (
@@ -3225,11 +3236,8 @@ class TakeoffPlanView(
     def set_selection_enabled(self, enabled: bool) -> None:
         self._selection_enabled = enabled
         if not enabled:
-            self.clear_selection_items()
-            had_selection = bool(self._selected_uids)
-            self._selected_uids.clear()
-            if had_selection:
-                self.takeoff_selection_changed.emit([])
+            self._clear_text_selection()
+            self.clear_selection()
 
     def set_editing_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -3641,8 +3649,8 @@ class TakeoffPlanView(
         if not self._editing_enabled or not self._selected_uids:
             return
         uids = list(self._selected_uids)
-        self._selected_uids.clear()
-        self.update_selection_visuals()
+        self._clear_deleted_text_toolbar_target(uids)
+        self.clear_selection()
         self._invalidate_snap_index()
         self.elements_deleted.emit(uids)
         self._update_cursor()
@@ -3676,8 +3684,7 @@ class TakeoffPlanView(
             )
             if self._is_selectable(uid)
         }
-        self._selected_uids = all_uids
-        self.update_selection_visuals()
+        self.set_selected_uids(all_uids)
 
     def set_snap_settings(self, takeoff_increments: float, measure_base: int) -> None:
         if takeoff_increments <= 0:

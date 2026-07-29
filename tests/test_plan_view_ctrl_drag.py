@@ -183,6 +183,10 @@ class AnnotationPlacementHarness(PlacementModeMixin):
     def update_selection_visuals(self):
         self.selection_updates += 1
 
+    def clear_selection(self):
+        self._selected_uids.clear()
+        self.update_selection_visuals()
+
     def begin_text_annotation_draft(self, position, page_uid):
         self.text_drafts.append((list(position), page_uid))
         return True
@@ -243,6 +247,10 @@ class AreaPlacementHarness(PlacementModeMixin):
 
     def update_selection_visuals(self):
         self.selection_updates += 1
+
+    def clear_selection(self):
+        self._selected_uids.clear()
+        self.update_selection_visuals()
 
     def update_place_preview(self, _scene_pos):
         self.preview_updates += 1
@@ -2066,7 +2074,6 @@ class CtrlDragTests(unittest.TestCase):
         InputHandlerMixin.keyPressEvent(view, event)
         self.assertTrue(event.accepted)
         self.assertEqual(view.paste_requested.emitted, [()])
-
         paste_allowed[0] = False
         blocked_event = FakeKeyEvent(
             Qt.Key.Key_V,

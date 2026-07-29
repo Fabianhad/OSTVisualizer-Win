@@ -2330,13 +2330,7 @@ class InputHandlerMixin:
             and self._selected_uids
             and event.key() == Qt.Key.Key_Delete
         ):
-            uids = list(self._selected_uids)
-            self._selected_uids.clear()
-            self._on_selection_changed()
-            self.update_selection_visuals()
-            self._invalidate_snap_index()
-            self.elements_deleted.emit(uids)
-            self._update_cursor()
+            self.delete_selected()
             event.accept()
             return
         if (

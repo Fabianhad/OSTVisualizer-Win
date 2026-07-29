@@ -4235,6 +4235,199 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
 
+    def test_text_annotation_toolbar_clears_before_delete_signal(self):
+        view = self._make_plan_view()
+        _annotation, item = self._add_text_annotation(view, text="Before")
+        view._editing_enabled = True
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        event_order = []
+
+        def remove_annotation(uids):
+            event_order.append(
+                (
+                    "deleted",
+                    list(uids),
+                    view.get_selected_uids(),
+                    view._selected_text_item,
+                    view._selected_text_annotation_uid,
+                    view._condition_text_toolbar.isHidden(),
+                )
+            )
+            view._current_annotations.pop("a1")
+            view._uid_to_items.pop("a1")
+            view._scene.removeItem(item)
+
+        view.takeoff_selection_changed.connect(
+            lambda uids: event_order.append(("selection", list(uids)))
+        )
+        view.elements_deleted.connect(remove_annotation)
+        view.delete_selected()
+        self.assertEqual(
+            event_order,
+            [
+                ("selection", []),
+                ("deleted", ["a1"], [], None, None, True),
+            ],
+        )
+        self.assertIsNone(item.scene())
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_multi_selection_delete_clears_text_toolbar_once_before_delete_signal(self):
+        view = self._make_plan_view()
+        annotation_1, item_1 = self._add_text_annotation(view, uid="a1", text="First")
+        annotation_2, item_2 = self._add_text_annotation(view, uid="a2", text="Second")
+        view._current_annotations = {"a1": annotation_1, "a2": annotation_2}
+        view._uid_to_items = {"a1": [item_1], "a2": [item_2]}
+        view._editing_enabled = True
+        view._selected_uids = {"a1", "a2"}
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        events = []
+        view.takeoff_selection_changed.connect(
+            lambda uids: events.append(("selection", list(uids)))
+        )
+        view.elements_deleted.connect(
+            lambda uids: events.append(("deleted", sorted(uids)))
+        )
+        view.delete_selected()
+        self.assertEqual(
+            events,
+            [("selection", []), ("deleted", ["a1", "a2"])],
+        )
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_deleting_selected_takeoff_clears_its_condition_text_toolbar_target(self):
+        view = self._make_plan_view()
+        path_item = self._make_condition_label_path_item("t1")
+        label = QGraphicsTextItem("Area")
+        label.setData(0, "t1")
+        label.setData(1, "c1")
+        label.setData(2, "condition_label")
+        label.setData(3, "display_name")
+        view._scene.addItem(path_item)
+        view._scene.addItem(label)
+        view._uid_to_items = {"t1": [path_item, label]}
+        view._current_takeoffs = {"t1": Takeoff(uid="t1", condition_uid="c1")}
+        view._current_conditions = {
+            "c1": Condition(uid="c1", name="Area", condition_type=Condition.TYPE_AREA)
+        }
+        view._editing_enabled = True
+        view._selected_uids = {"t1"}
+        view._select_condition_text_label(label)
+        states = []
+        view.elements_deleted.connect(
+            lambda _uids: states.append(
+                (
+                    view._selected_text_item,
+                    view._condition_text_toolbar.isHidden(),
+                )
+            )
+        )
+        view.delete_selected()
+        self.assertEqual(states, [(None, True)])
+        self.assertIsNone(view._selected_text_annotation_uid)
+        view.cleanup()
+
+    def test_disabling_selection_clears_text_toolbar_without_extra_interaction(self):
+        view = self._make_plan_view()
+        self._add_text_annotation(view, text="Before")
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        view.set_selection_enabled(False)
+        self.assertEqual(view.get_selected_uids(), [])
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_starting_annotation_placement_clears_selected_text_toolbar(self):
+        view = self._make_plan_view()
+        self._add_text_annotation(view, text="Before")
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        self.assertTrue(view._enter_annotation_place_mode("line"))
+        event = SimpleNamespace(
+            pos=lambda: QtCore.QPoint(10, 12),
+            accept=lambda: None,
+        )
+        self.assertTrue(view.handle_annotation_place_press(event))
+        self.assertEqual(view.get_selected_uids(), [])
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_delete_key_clears_text_annotation_toolbar_before_delete_signal(self):
+        view = self._make_plan_view()
+        _annotation, _item = self._add_text_annotation(view, text="Before")
+        view._editing_enabled = True
+        view._selected_uids = {"a1"}
+        view._cursor_mode = "select"
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        delete_states = []
+        view.elements_deleted.connect(
+            lambda uids: delete_states.append(
+                (
+                    list(uids),
+                    view.get_selected_uids(),
+                    view._selected_text_annotation_uid,
+                    view._condition_text_toolbar.isHidden(),
+                )
+            )
+        )
+        view.keyPressEvent(
+            QKeyEvent(
+                QtCore.QEvent.Type.KeyPress,
+                QtCore.Qt.Key.Key_Delete,
+                QtCore.Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        self.assertEqual(delete_states, [(["a1"], [], None, True)])
+        self.assertIsNone(view._selected_text_item)
+        view.cleanup()
+
+    def test_deleted_text_target_clears_toolbar_and_keeps_remaining_selection(self):
+        view = self._make_plan_view()
+        annotation_1, item_1 = self._add_text_annotation(view, uid="a1", text="First")
+        annotation_2, item_2 = self._add_text_annotation(view, uid="a2", text="Second")
+        view._current_annotations = {"a1": annotation_1, "a2": annotation_2}
+        view._uid_to_items = {"a1": [item_1], "a2": [item_2]}
+        view._selected_uids = {"a1", "a2"}
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        view._current_annotations.pop("a1")
+        view._uid_to_items.pop("a1")
+        view._scene.removeItem(item_1)
+        view.update_selection_visuals()
+        self.assertEqual(view.get_selected_uids(), ["a2"])
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_deleting_unselected_annotation_keeps_valid_text_toolbar_target(self):
+        view = self._make_plan_view()
+        annotation_1, item_1 = self._add_text_annotation(view, uid="a1", text="First")
+        annotation_2, item_2 = self._add_text_annotation(view, uid="a2", text="Second")
+        view._current_annotations = {"a1": annotation_1, "a2": annotation_2}
+        view._uid_to_items = {"a1": [item_1], "a2": [item_2]}
+        view._selected_uids = {"a2"}
+        self.assertTrue(view._select_text_annotation_label("a2"))
+        view._current_annotations.pop("a1")
+        view._uid_to_items.pop("a1")
+        view._scene.removeItem(item_1)
+        view.update_selection_visuals()
+        self.assertEqual(view.get_selected_uids(), ["a2"])
+        self.assertIs(view._selected_text_item, item_2)
+        self.assertEqual(view._selected_text_annotation_uid, "a2")
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
     def test_reenter_inline_text_annotation_edit_has_no_stale_text_selection(self):
         view = self._make_plan_view()
         _annotation, item = self._add_text_annotation(view, text="Before")

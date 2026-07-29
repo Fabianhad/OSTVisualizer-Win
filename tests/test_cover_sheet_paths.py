@@ -462,6 +462,19 @@ def _cover_sheet_data(
     )
 
 
+def _cover_sheet_data_with_pages(count=3):
+    data = _cover_sheet_data()
+    template = data.pages_without_folder[0]
+    data.pages_without_folder = []
+    for index in range(1, count + 1):
+        page = deepcopy(template)
+        page.uid = f"p{index}"
+        page.sheet_no = f"A10{index}"
+        page.name = f"Page {index}"
+        data.pages_without_folder.append(page)
+    return data
+
+
 class _ManualRunnablePool:
     def __init__(self):
         self.runnables = []
@@ -2281,6 +2294,302 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                     for page in dialog.get_updates()["pages"]
                 ],
                 [("Level 1", 1), ("A102.pdf (1)", 2), ("A102.pdf (2)", 3)],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_new_page_inserts_after_selected_root_page(self):
+        data = _cover_sheet_data_with_pages(5)
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            dialog.plan_tree.setCurrentItem(dialog._page_items["p2"])
+            dialog._add_new_page()
+            tree_order = [
+                dialog.plan_tree.topLevelItem(index).data(0, dialog._ITEM_ROLE)[1]
+                for index in range(dialog.plan_tree.topLevelItemCount())
+            ]
+            self.assertEqual(tree_order, ["p1", "p2", "new_0", "p3", "p4", "p5"])
+            self.assertEqual(
+                [
+                    (page["uid"], page["sequence"])
+                    for page in dialog.get_updates()["pages"]
+                ],
+                [
+                    ("p1", 1),
+                    ("p2", 2),
+                    (None, 3),
+                    ("p3", 4),
+                    ("p4", 5),
+                    ("p5", 6),
+                ],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_new_page_handles_first_last_and_no_selection(self):
+        for selected_uid, expected_order in (
+            ("p1", ["p1", "new_0", "p2", "p3"]),
+            ("p3", ["p1", "p2", "p3", "new_0"]),
+            (None, ["p1", "p2", "p3", "new_0"]),
+        ):
+            with self.subTest(selected_uid=selected_uid):
+                data = _cover_sheet_data_with_pages()
+                dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+                try:
+                    if selected_uid is not None:
+                        dialog.plan_tree.setCurrentItem(
+                            dialog._page_items[selected_uid]
+                        )
+                    dialog._add_new_page()
+                    self.assertEqual(
+                        [
+                            dialog.plan_tree.topLevelItem(index).data(
+                                0, dialog._ITEM_ROLE
+                            )[1]
+                            for index in range(dialog.plan_tree.topLevelItemCount())
+                        ],
+                        expected_order,
+                    )
+                finally:
+                    dialog.close()
+                    dialog.deleteLater()
+
+    def test_cover_sheet_import_inserts_ordered_block_after_selected_page(self):
+        data = _cover_sheet_data_with_pages()
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            dialog.plan_tree.setCurrentItem(dialog._page_items["p2"])
+            dialog._populate_imported_pages(
+                [
+                    ("C:/Plans/A.pdf", [(42.0, 30.0, ""), (42.0, 30.0, "")]),
+                    ("C:/Plans/B.png", [(42.0, 30.0, "")]),
+                ]
+            )
+            names = [page["name"] for page in dialog.get_updates()["pages"]]
+            self.assertEqual(
+                names,
+                [
+                    "Page 1",
+                    "Page 2",
+                    "A.pdf (1)",
+                    "A.pdf (2)",
+                    "B.png",
+                    "Page 3",
+                ],
+            )
+            self.assertEqual(
+                [page["sequence"] for page in dialog.get_updates()["pages"]],
+                [1, 2, 3, 4, 5, 6],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_duplicate_inserts_after_selected_page(self):
+        data = _cover_sheet_data_with_pages()
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            dialog.plan_tree.setCurrentItem(dialog._page_items["p2"])
+            dialog._duplicate_page()
+            self.assertEqual(
+                [page["name"] for page in dialog.get_updates()["pages"]],
+                ["Page 1", "Page 2", "Copy of Page 2", "Page 3"],
+            )
+            self.assertEqual(
+                [
+                    dialog.plan_tree.topLevelItem(index).data(0, dialog._ITEM_ROLE)[1]
+                    for index in range(dialog.plan_tree.topLevelItemCount())
+                ],
+                ["p1", "p2", "new_0", "p3"],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_multiple_selection_inserts_after_explicit_current_page(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(), None, _cover_sheet_data_with_pages()
+        )
+        try:
+            first = dialog._page_items["p1"]
+            last = dialog._page_items["p3"]
+            first.setSelected(True)
+            last.setSelected(True)
+            dialog.plan_tree.setCurrentItem(first)
+            last.setSelected(True)
+            self.assertEqual(len(dialog.plan_tree.selectedItems()), 2)
+            dialog._add_new_page()
+            self.assertEqual(
+                [
+                    dialog.plan_tree.topLevelItem(index).data(0, dialog._ITEM_ROLE)[1]
+                    for index in range(dialog.plan_tree.topLevelItemCount())
+                ],
+                ["p1", "new_0", "p2", "p3"],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_ambiguous_multiple_selection_falls_back_to_root_append(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(), None, _cover_sheet_data_with_pages()
+        )
+        try:
+            dialog.plan_tree.setCurrentItem(None)
+            dialog._page_items["p1"].setSelected(True)
+            dialog._page_items["p3"].setSelected(True)
+            self.assertEqual(len(dialog.plan_tree.selectedItems()), 2)
+            dialog._add_new_page()
+            self.assertEqual(
+                [
+                    dialog.plan_tree.topLevelItem(index).data(0, dialog._ITEM_ROLE)[1]
+                    for index in range(dialog.plan_tree.topLevelItemCount())
+                ],
+                ["p1", "p2", "p3", "new_0"],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_import_skips_empty_sources_without_reordering_successes(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(), None, _cover_sheet_data_with_pages()
+        )
+        try:
+            dialog.plan_tree.setCurrentItem(dialog._page_items["p2"])
+            dialog._populate_imported_pages(
+                [
+                    ("C:/Plans/Skipped.pdf", []),
+                    ("C:/Plans/A.png", [(42.0, 30.0, "")]),
+                    ("C:/Plans/AlsoSkipped.pdf", []),
+                    ("C:/Plans/B.png", [(42.0, 30.0, "")]),
+                ]
+            )
+            self.assertEqual(
+                [page["name"] for page in dialog.get_updates()["pages"]],
+                ["Page 1", "Page 2", "A.png", "B.png", "Page 3"],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_multipage_expansion_uses_same_ordered_insertion_path(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(), None, _cover_sheet_data_with_pages()
+        )
+        try:
+            source = dialog._page_items["p2"]
+            dialog._add_missing_multipage_rows(
+                source,
+                "C:/Plans/Expanded.pdf",
+                [
+                    (42.0, 30.0, ""),
+                    (42.0, 30.0, ""),
+                    (42.0, 30.0, ""),
+                ],
+            )
+            self.assertEqual(
+                [page["name"] for page in dialog.get_updates()["pages"]],
+                [
+                    "Page 1",
+                    "Page 2",
+                    "Expanded.pdf (2)",
+                    "Expanded.pdf (3)",
+                    "Page 3",
+                ],
+            )
+            self.assertEqual(
+                [page["sequence"] for page in dialog.get_updates()["pages"]],
+                [1, 2, 3, 4, 5],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_multipage_expansion_keeps_existing_indexes_in_order(self):
+        data = _cover_sheet_data_with_pages()
+        source_path = "C:/Plans/Expanded.pdf"
+        data.pages_without_folder[0].image_path = source_path
+        data.pages_without_folder[0].index = 1
+        data.pages_without_folder[1].image_path = source_path
+        data.pages_without_folder[1].index = 2
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            dialog._add_missing_multipage_rows(
+                dialog._page_items["p1"],
+                source_path,
+                [
+                    (42.0, 30.0, ""),
+                    (42.0, 30.0, ""),
+                    (42.0, 30.0, ""),
+                ],
+            )
+            pages = dialog.get_updates()["pages"]
+            self.assertEqual(
+                [page["name"] for page in pages],
+                ["Page 1", "Page 2", "Expanded.pdf (3)", "Page 3"],
+            )
+            self.assertEqual([page["index"] for page in pages], [1, 2, 3, 1])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_folder_selection_appends_and_nested_page_inserts_after(self):
+        data = _cover_sheet_data()
+        template = data.pages_without_folder.pop()
+        page_1 = deepcopy(template)
+        page_1.uid = "p1"
+        page_1.sheet_no = "A101"
+        page_1.name = "Page 1"
+        page_2 = deepcopy(template)
+        page_2.uid = "p2"
+        page_2.sheet_no = "A102"
+        page_2.name = "Page 2"
+        nested_page_1 = deepcopy(template)
+        nested_page_1.uid = "p3"
+        nested_page_1.sheet_no = "A103"
+        nested_page_1.name = "Nested 1"
+        nested_page_2 = deepcopy(template)
+        nested_page_2.uid = "p4"
+        nested_page_2.sheet_no = "A104"
+        nested_page_2.name = "Nested 2"
+        nested = CoverSheetFolder(
+            uid="f2",
+            name="Nested",
+            pages=[nested_page_1, nested_page_2],
+        )
+        data.folders["f1"] = CoverSheetFolder(
+            uid="f1",
+            name="Plans",
+            subfolders={"f2": nested},
+            pages=[page_1, page_2],
+        )
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            root_folder = dialog._folder_items["f1"]
+            dialog.plan_tree.setCurrentItem(root_folder)
+            dialog._add_new_page()
+            self.assertEqual(
+                _child_labels(root_folder),
+                ["Nested", "A101", "A102", "00001"],
+            )
+            nested_folder = dialog._folder_items["f2"]
+            dialog.plan_tree.setCurrentItem(dialog._page_items["p3"])
+            dialog._add_new_page()
+            self.assertEqual(
+                _child_labels(nested_folder),
+                ["A103", "00002", "A104"],
+            )
+            page_updates = dialog.get_updates()["pages"]
+            self.assertEqual(
+                [
+                    page["folder_uid"]
+                    for page in page_updates
+                    if page["sheet_no"] == "00002"
+                ],
+                ["f2"],
             )
         finally:
             dialog.close()

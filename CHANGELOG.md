@@ -22,6 +22,12 @@
 
 ### Fixed
 
+- Fixed deleting a selected text annotation or formatted takeoff label leaving
+  its formatting toolbar visible with a stale target until the next plan-view
+  selection change.
+- Fixed new blank, imported, and duplicated Cover Sheet pages always appending
+  to their folder; page selections now insert new pages immediately afterward
+  while preserving source order and persisted page sequence.
 - Fixed plan editing handles so standard selection, placement, rotation, and
   Move Overlay Image handles retain a white fill with a black outline in both
   light and dark modes; the overlay handle also opens at the visible viewport
