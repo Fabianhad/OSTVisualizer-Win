@@ -3236,6 +3236,13 @@ class TakeoffPlanView(
     def set_selection_enabled(self, enabled: bool) -> None:
         self._selection_enabled = enabled
         if not enabled:
+            if self.is_text_annotation_inline_edit_active():
+                self.clear_selection_items()
+                had_selection = bool(self._selected_uids)
+                self._selected_uids.clear()
+                if had_selection:
+                    self.takeoff_selection_changed.emit([])
+                return
             self._clear_text_selection()
             self.clear_selection()
 

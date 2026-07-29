@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtTest, QtWidgets
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -62,9 +62,18 @@ from ost_visualizer.presentation.components.plan_view.components.page_loader imp
     VISUAL_KIND_PAGE,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
 )
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
+    PlanSurfaceAccessState,
+)
+from ost_visualizer.presentation.modes.cursor import CURSOR_MODE_SELECT
 from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
 from ost_visualizer.presentation.windows.annotation_view_window import (
     _ANNOTATION_WINDOW_CONFIG,
@@ -6096,6 +6105,118 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertFalse(view._begin_text_annotation_edit("a1"))
         self.assertFalse(view.is_text_annotation_inline_edit_active())
         view.cleanup()
+
+    def test_qt_double_click_keeps_main_surface_inline_text_editor_active(self):
+        class InlineEditAccess:
+            def __init__(self):
+                self.inline_edit_active = False
+                self.listeners = []
+
+            def current_plan_surface_context(self):
+                return object()
+
+            def get_plan_surface_access(self, _context):
+                return PlanSurfaceAccessState(
+                    can_select_plan_items=not self.inline_edit_active,
+                    can_edit_plan_items=not self.inline_edit_active,
+                    can_edit_annotations=not self.inline_edit_active,
+                    can_edit_annotation_text=True,
+                )
+
+            def is_allowed(self, feature):
+                state = self.get_plan_surface_access(None)
+                return {
+                    Feature.SELECT_PLAN_ITEMS: state.can_select_plan_items,
+                    Feature.EDIT_PLAN_ITEMS: state.can_edit_plan_items,
+                    Feature.EDIT_ANNOTATION_TEXT: state.can_edit_annotation_text,
+                }.get(feature, False)
+
+            def subscribe_access_state_changed(self, callback):
+                self.listeners.append(callback)
+
+            def unsubscribe_access_state_changed(self, callback):
+                self.listeners.remove(callback)
+
+            def set_inline_edit_active(self, active):
+                self.inline_edit_active = bool(active)
+                for callback in list(self.listeners):
+                    callback()
+
+        class ToolbarUiState:
+            selected_project_uid = None
+            selected_file_path = "bid.mdb"
+            selected_page_uids = ["page-1"]
+            active_page_uid = "page-1"
+            place_condition_uid = None
+
+            def get_selected_bid_refs(self):
+                return []
+
+            def get_selected_bid_ref(self):
+                return None
+
+        class ToolbarProjectData:
+            def get_bid_conditions(self):
+                return {}
+
+            def is_current_bid_locked(self):
+                return False
+
+        class TakeoffTab:
+            def currentIndex(self):
+                return TAB_INDEX_TAKEOFF
+
+        view = self._make_plan_view()
+        _annotation, item = self._add_text_annotation(
+            view,
+            position=[100.0, 100.0, 120.0, 40.0],
+        )
+        item.setPos(100.0, 100.0)
+        view._current_bid_page_uid = "page-1"
+        view._cursor_mode = CURSOR_MODE_SELECT
+        view.setSceneRect(0.0, 0.0, 500.0, 350.0)
+        view.resize(500, 350)
+        access = InlineEditAccess()
+        toolbar = ToolbarStateCoordinator(
+            ToolbarUiState(),
+            access,
+            ToolbarProjectData(),
+        )
+        toolbar.set_tab_widget(TakeoffTab())
+        toolbar.set_plan_view(view)
+        toolbar.refresh()
+        mode_changes = []
+
+        def on_mode_changed(active):
+            mode_changes.append(bool(active))
+            access.set_inline_edit_active(active)
+
+        view.text_annotation_edit_mode_changed.connect(on_mode_changed)
+        view.show()
+        QApplication.processEvents()
+        target = view.mapFromScene(item.sceneBoundingRect().center())
+        QtTest.QTest.mouseDClick(
+            view.viewport(),
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+            target,
+        )
+        QApplication.processEvents()
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(view._editing_text_annotation_uid, "a1")
+        self.assertEqual(view.get_selected_uids(), [])
+        self.assertFalse(view._selection_enabled)
+        self.assertTrue(view._condition_text_toolbar.isVisible())
+        self.assertTrue(item.hasFocus())
+        self.assertEqual(
+            item.textInteractionFlags(),
+            QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+        self.assertEqual(mode_changes, [True])
+        self.assertTrue(access.get_plan_surface_access(None).can_edit_annotation_text)
+        toolbar.cleanup()
+        view.cleanup()
+        view.close()
 
     def test_detached_window_configs_control_inline_text_edit_capability(self):
         self.assertTrue(_ANNOTATION_WINDOW_CONFIG.allow_annotation_editing)

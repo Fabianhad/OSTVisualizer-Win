@@ -24,7 +24,8 @@
 
 - Fixed deleting a selected text annotation or formatted takeoff label leaving
   its formatting toolbar visible with a stale target until the next plan-view
-  selection change.
+  selection change, while keeping an authorized inline text editor active when
+  the surrounding plan selection is temporarily suspended.
 - Fixed new blank, imported, and duplicated Cover Sheet pages always appending
   to their folder; page selections now insert new pages immediately afterward
   while preserving source order and persisted page sequence.
