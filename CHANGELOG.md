@@ -22,6 +22,9 @@
 
 ### Fixed
 
+- Fixed page takeoff indicators in open Annotation and View windows so first
+  and final takeoff changes immediately update every listed page by UID,
+  including non-current pages and undo/redo changes.
 - Fixed deleting a selected text annotation or formatted takeoff label leaving
   its formatting toolbar visible with a stale target until the next plan-view
   selection change, while keeping an authorized inline text editor active when

@@ -254,10 +254,21 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref != self.project_data.get_current_bid_ref()
         ):
             return
-        affected_page_uids = set(page_uids or ([page_uid] if page_uid else []))
-        if affected_page_uids and view.target_page_uid not in affected_page_uids:
+        affected_page_uids = list(
+            dict.fromkeys(str(uid) for uid in (page_uids or ()) if uid)
+        )
+        if not affected_page_uids and page_uid:
+            affected_page_uids = [str(page_uid)]
+        if not affected_page_uids:
             return
-        self._refresh_signaler.request()
+        for affected_page_uid in affected_page_uids:
+            self._window.set_page_has_takeoffs(
+                affected_page_uid,
+                self.project_data.has_takeoffs_for_pages([affected_page_uid]),
+            )
+        if view.target_page_uid not in affected_page_uids:
+            return
+        self._apply_window_page(view, self._get_page_data(view))
 
     def _on_database_refreshed(self, file_path: str = "") -> None:
         if not self.is_view_open():
@@ -538,6 +549,9 @@ class DetachedPageViewManager(IShutdownAware):
         if page_data.page is None and self._retarget_missing_active_page(view):
             page_data = self._get_page_data(view)
         self._update_window_navigation(view)
+        self._apply_window_page(view, page_data)
+
+    def _apply_window_page(self, view: AnnotationView, page_data: PageViewDto) -> None:
         self._window.set_access_state(self._get_access_state(view, page_data))
         self._window.update_page(page_data)
 

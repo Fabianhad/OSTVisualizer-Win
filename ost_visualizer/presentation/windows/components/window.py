@@ -671,14 +671,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         self._page_combo.load_bid(bid, pages_with_takeoffs=self._pages_with_takeoffs)
 
-    def _current_page_has_takeoffs(self) -> set[str]:
+    def _current_page_has_takeoffs(self) -> bool:
         if not self.page_data:
-            return set()
-        return {
-            takeoff.page_uid
-            for takeoff in self.page_data.takeoffs
-            if takeoff and takeoff.page_uid
-        }
+            return False
+        return any(takeoff and takeoff.page_uid for takeoff in self.page_data.takeoffs)
 
     def _populate_named_view_combo(self) -> None:
         self._named_view_combo.blockSignals(True)
@@ -714,6 +710,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         page_uid = self.view.target_page_uid if self.view else ""
         self._update_combo_to_page(page_uid)
         self._page_combo.set_pages_with_takeoffs(self._pages_with_takeoffs)
+
+    def set_page_has_takeoffs(self, page_uid: str, has_takeoffs: bool = True) -> None:
+        if self._is_closing or not page_uid or self._page_combo is None:
+            return
+        if has_takeoffs:
+            self._pages_with_takeoffs.add(page_uid)
+        else:
+            self._pages_with_takeoffs.discard(page_uid)
+        self._page_combo.set_page_has_takeoffs(page_uid, has_takeoffs)
 
     def _on_named_view_combo_changed(self, index: int) -> None:
         if self._is_closing or not self._on_named_view_selected or index < 0:
