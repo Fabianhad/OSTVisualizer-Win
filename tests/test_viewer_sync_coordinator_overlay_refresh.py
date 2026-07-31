@@ -3166,6 +3166,93 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertAlmostEqual(center.y(), 792.0, delta=2.0)
         view.cleanup()
 
+    def test_page_scale_reload_preserves_even_and_odd_fractional_zoom_viewports(self):
+        for view_size in ((420, 320), (419, 319)):
+            with self.subTest(view_size=view_size):
+                view, page = self._make_page_scale_view(view_size=view_size)
+                expected_viewport = self._viewport_state(view)
+                expected_scene_rect = QtCore.QRectF(view.sceneRect())
+                expected_transform = QTransform(view.transform())
+                scaled_page = self._reload_page_with_scale(view, page, 1.0, 2.0)
+                self._assert_viewport_state(view, expected_viewport)
+                self.assertEqual(view.sceneRect(), expected_scene_rect)
+                self.assertEqual(view.transform(), expected_transform)
+                self.assertEqual(
+                    (scaled_page.scale_factor1, scaled_page.scale_factor2),
+                    (1.0, 2.0),
+                )
+                view.cleanup()
+
+    def test_repeated_page_scale_reloads_do_not_accumulate_viewport_drift(self):
+        view, page = self._make_page_scale_view()
+        expected_viewport = self._viewport_state(view)
+        for scale_factor1, scale_factor2 in (
+            (1.0, 2.0),
+            (1.0, 2.0),
+            (2.0, 1.0),
+            (1.0, 1.0),
+        ) * 3:
+            page = self._reload_page_with_scale(
+                view, page, scale_factor1, scale_factor2
+            )
+            self._assert_viewport_state(view, expected_viewport)
+        view.cleanup()
+
+    def test_page_scale_reload_preserves_viewport_across_zoom_and_scroll_extremes(self):
+        for zoom_percent in (25.0, 137.0, 800.0):
+            for scroll_edge in ("minimum", "maximum"):
+                with self.subTest(zoom_percent=zoom_percent, scroll_edge=scroll_edge):
+                    view, page = self._make_page_scale_view(
+                        zoom_percent=zoom_percent,
+                        scroll_values=None,
+                    )
+                    h_scroll = view.horizontalScrollBar()
+                    v_scroll = view.verticalScrollBar()
+                    h_scroll.setValue(
+                        self._scroll_value_near_edge(h_scroll, scroll_edge)
+                    )
+                    v_scroll.setValue(
+                        self._scroll_value_near_edge(v_scroll, scroll_edge)
+                    )
+                    QApplication.processEvents()
+                    expected_viewport = self._viewport_state(view)
+                    page = self._reload_page_with_scale(view, page, 1.0, 4.0)
+                    self._reload_page_with_scale(view, page, 4.0, 1.0)
+                    self._assert_viewport_state(view, expected_viewport)
+                    view.cleanup()
+
+    def test_page_scale_reload_keeps_centered_small_page_stable(self):
+        page = Page(uid="p1", name="P1", width_pts=100.0, height_pts=120.0)
+        view, page = self._make_page_scale_view(
+            page=page,
+            view_size=(600, 500),
+            zoom_percent=25.0,
+            scroll_values=None,
+        )
+        expected_viewport = self._viewport_state(view)
+        self._reload_page_with_scale(view, page, 1.0, 4.0)
+        self._assert_viewport_state(view, expected_viewport)
+        view.cleanup()
+
+    def test_page_scale_reload_preserves_viewport_for_rotated_pages(self):
+        for rotation in (0, 90, 180, 270):
+            with self.subTest(rotation=rotation):
+                page = Page(
+                    uid="p1",
+                    name="P1",
+                    width_pts=900.0,
+                    height_pts=1400.0,
+                    rotation=rotation,
+                )
+                view, page = self._make_page_scale_view(
+                    page=page,
+                    scroll_values=(517, 683),
+                )
+                expected_viewport = self._viewport_state(view)
+                self._reload_page_with_scale(view, page, 1.0, 4.0)
+                self._assert_viewport_state(view, expected_viewport)
+                view.cleanup()
+
     def test_legacy_out_of_bounds_page_view_state_fits_to_page(self):
         view = self._make_plan_view()
         page = Page(
@@ -6351,6 +6438,71 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.set_editing_enabled(True)
         return view
 
+    def _make_page_scale_view(
+        self,
+        page=None,
+        *,
+        view_size=(420, 320),
+        zoom_percent=137.0,
+        scroll_values=(731, 913),
+    ):
+        view = self._make_plan_view()
+        view.resize(*view_size)
+        view.show()
+        QApplication.processEvents()
+        page = page or Page(
+            uid="p1",
+            name="P1",
+            width_pts=1200.0,
+            height_pts=1600.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        view.set_zoom_percent(zoom_percent)
+        if scroll_values is not None:
+            view.horizontalScrollBar().setValue(scroll_values[0])
+            view.verticalScrollBar().setValue(scroll_values[1])
+        QApplication.processEvents()
+        return view, page
+
+    def _reload_page_with_scale(self, view, page, scale_factor1, scale_factor2):
+        zoom_fac, current_x, current_y = view.get_view_state()
+        page = replace(
+            page,
+            scale_factor1=scale_factor1,
+            scale_factor2=scale_factor2,
+            zoom_fac=zoom_fac,
+            current_x=current_x,
+            current_y=current_y,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        QApplication.processEvents()
+        return page
+
+    @staticmethod
+    def _viewport_state(view):
+        center = view.mapToScene(view.viewport().rect()).boundingRect().center()
+        return (
+            (
+                view.horizontalScrollBar().value(),
+                view.verticalScrollBar().value(),
+            ),
+            center,
+        )
+
+    def _assert_viewport_state(self, view, expected):
+        expected_scroll, expected_center = expected
+        actual_scroll, actual_center = self._viewport_state(view)
+        self.assertEqual(actual_scroll, expected_scroll)
+        self.assertAlmostEqual(actual_center.x(), expected_center.x(), delta=1e-9)
+        self.assertAlmostEqual(actual_center.y(), expected_center.y(), delta=1e-9)
+
+    @staticmethod
+    def _scroll_value_near_edge(scrollbar, edge):
+        inset = max(1, round((scrollbar.maximum() - scrollbar.minimum()) * 0.05))
+        if edge == "minimum":
+            return scrollbar.minimum() + inset
+        return scrollbar.maximum() - inset
+
     def _load_completed_page_visual(self, page, return_initial_canvas=False):
         view = self._make_plan_view()
         view.resize(300, 300)
@@ -7692,8 +7844,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         ]
         view._hotlink_items = []
         view._load_view_applied = True
-        view.viewport = lambda: FakeSizedViewport()
-        view.mapToScene = lambda _point: QtCore.QPointF(25.0, 50.0)
+        view.get_precise_viewport_scene_center = lambda: QtCore.QPointF(25.0, 50.0)
         view.centerOn = lambda point: calls.append(point)
         view._update_scene_rect()
         self.assertTrue(scene.sceneRect().contains(QtCore.QPointF(0.0, 0.0)))

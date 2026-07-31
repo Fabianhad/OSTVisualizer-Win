@@ -182,7 +182,12 @@ class PresentationImportExportWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(captured)
         page_paths = [row["ImagePath"] for row in captured.bid_tables["BidPages"]]
         self.assertEqual(len(set(page_paths)), 2)
-        self.assertTrue(all(path.endswith("\\sheet.pdf") for path in page_paths))
+        self.assertTrue(
+            all(
+                path.startswith("TempImages!.tmp\\") and path.count("\\") == 1
+                for path in page_paths
+            )
+        )
         self.assertEqual(
             captured.bid_tables["BidNamedViews"],
             [{"UID": "201", "BidUID": "1", "BidPageUID": "10", "Name": "View A"}],
@@ -197,6 +202,7 @@ class PresentationImportExportWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(image_archive_names), 2)
         self.assertEqual(len(set(image_archive_names)), 2)
+        self.assertCountEqual(image_archive_names, page_paths)
 
 
 class PresentationScriptedWorkflowTests(unittest.TestCase):

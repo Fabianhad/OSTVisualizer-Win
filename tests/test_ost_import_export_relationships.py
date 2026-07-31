@@ -18,6 +18,9 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
+from ost_visualizer.infrastructure.mdb.importers import (
+    osp_importer as osp_importer_module,
+)
 from ost_visualizer.infrastructure.mdb.importers.osp_importer import OspImporter
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
@@ -35,6 +38,7 @@ from ost_visualizer.infrastructure.mdb.schema_contract import (
 from ost_visualizer.infrastructure.parsers.ost_serializer import serialize_value
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
+from ost_visualizer.presentation.visualization.exporters import ost_cab
 
 _ACCESS_DRIVER = "Microsoft Access Driver (*.mdb, *.accdb)"
 
@@ -1643,20 +1647,46 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 conn.close()
 
     def test_osp_export_import_preserves_valid_selected_page_reference(self):
-        raw_data = RawBidData(
-            bid_row={"UID": "1", "JobName": "Imported"},
-            bid_tables={
-                "BidSettings": [{"UID": "2", "BidUID": "1", "BidPageSelectedUID": "3"}],
-                "BidPages": [
-                    {"UID": "3", "BidUID": "1", "Name": "Sheet", "Sequence": "1"}
-                ],
-            },
-        )
         connection = sqlite3.connect(":memory:")
         _create_import_schema(connection)
         writer = _SqliteMdbWriter(connection)
         with tempfile.TemporaryDirectory() as temp_dir:
-            osp_path = Path(temp_dir) / "roundtrip.osp"
+            temp_path = Path(temp_dir)
+            drawing_paths = []
+            for directory_name, content in (
+                ("first", b"%PDF-1.4 first"),
+                ("second", b"%PDF-1.4 second"),
+            ):
+                drawing_dir = temp_path / directory_name
+                drawing_dir.mkdir()
+                drawing_path = drawing_dir / "sheet.pdf"
+                drawing_path.write_bytes(content)
+                drawing_paths.append(drawing_path)
+            raw_data = RawBidData(
+                bid_row={"UID": "1", "JobName": "Imported"},
+                bid_tables={
+                    "BidSettings": [
+                        {"UID": "2", "BidUID": "1", "BidPageSelectedUID": "3"}
+                    ],
+                    "BidPages": [
+                        {
+                            "UID": "3",
+                            "BidUID": "1",
+                            "Name": "Sheet One",
+                            "Sequence": "1",
+                            "ImagePath": str(drawing_paths[0]),
+                        },
+                        {
+                            "UID": "4",
+                            "BidUID": "1",
+                            "Name": "Sheet Two",
+                            "Sequence": "2",
+                            "ImagePath": str(drawing_paths[1]),
+                        },
+                    ],
+                },
+            )
+            osp_path = temp_path / "roundtrip.osp"
             exporter = OspExporter(
                 SimpleNamespace(),
                 "test",
@@ -1664,12 +1694,33 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             )
             result = exporter.export(raw_data, str(osp_path), bid_name="Roundtrip")
             self.assertTrue(result.success, result.error_message)
-            self.assertTrue(
-                OspImporter(OstImporter(writer)).import_osp(str(osp_path), "target.mdb")
+            archive_names = list(ost_cab.list_cab(str(osp_path)))
+            image_members = [
+                name for name in archive_names if name.startswith("TempImages!.tmp\\")
+            ]
+            self.assertEqual(len(image_members), 2)
+            self.assertEqual(len(set(image_members)), 2)
+            self.assertFalse(any(name.count("\\") > 1 for name in image_members))
+            working_dir = temp_path / "working"
+            with patch.object(
+                osp_importer_module,
+                "get_default_working_dir",
+                return_value=working_dir,
+            ):
+                self.assertTrue(
+                    OspImporter(OstImporter(writer)).import_osp(
+                        str(osp_path), "target.mdb"
+                    )
+                )
+            page_uid = connection.execute(
+                "SELECT UID FROM BidPages WHERE Name='Sheet One'"
+            ).fetchone()[0]
+            imported_drawings = sorted((working_dir / "Roundtrip").glob("*.pdf"))
+            self.assertEqual(len(imported_drawings), 2)
+            self.assertEqual(
+                {path.read_bytes() for path in imported_drawings},
+                {b"%PDF-1.4 first", b"%PDF-1.4 second"},
             )
-        page_uid = connection.execute(
-            "SELECT UID FROM BidPages WHERE Name='Sheet'"
-        ).fetchone()[0]
         selected_uid = connection.execute(
             "SELECT BidPageSelectedUID FROM BidSettings"
         ).fetchone()[0]

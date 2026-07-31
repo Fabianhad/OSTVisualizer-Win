@@ -10,6 +10,18 @@ _DISPLAY_ZOOM_RATIO = 0.333
 
 
 class ZoomHandlerMixin:
+    def get_precise_viewport_scene_center(self) -> Optional[QPointF]:
+        viewport = self.viewport()
+        if viewport is None or not viewport.size().isValid():
+            return None
+        inverse, invertible = self.viewportTransform().inverted()
+        if not invertible:
+            return None
+        center = inverse.map(QRectF(viewport.rect()).center())
+        if not (math.isfinite(center.x()) and math.isfinite(center.y())):
+            return None
+        return center
+
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
         if dx or dy:
@@ -161,7 +173,9 @@ class ZoomHandlerMixin:
     def get_view_state(self) -> Tuple[float, float, float]:
         m11 = self.transform().m11()
         zoom_fac = m11 * self._scene_scale * _DISPLAY_ZOOM_RATIO
-        center = self.mapToScene(self.viewport().rect().center())
+        center = self.get_precise_viewport_scene_center()
+        if center is None:
+            return 0.0, 0.0, 0.0
         persisted_x, persisted_y = self._scene_center_to_persisted_coords(center)
         return zoom_fac, persisted_x, persisted_y
 

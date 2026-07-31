@@ -4,8 +4,9 @@ import os
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable, List, Optional
 from ....application.dtos.export_dto import (
     ExportErrorCode,
@@ -23,6 +24,16 @@ _DEFAULT_BID_NAME = "Bid"
 _IMAGE_PATH_ATTRS = ("ImagePath", "OverlayImagePath")
 _INVALID_PATH_CHARS = set('/\\:*?"<>|')
 _PACKAGE_IMAGE_ROOT = "TempImages!.tmp"
+
+
+@dataclass(frozen=True)
+class _PackageImageReference:
+    page_row: dict[str, str]
+    attribute_name: str
+    canonical_source_path: str
+    source_path: str
+    filename: str
+    page_uid: str
 
 
 class OspExporter:
@@ -157,7 +168,10 @@ class OspExporter:
         package_data = self._clone_raw_bid_data(raw_data)
         package_image_sources: dict[str, str] = {}
         package_member_by_source: dict[str, str] = {}
+        reserved_member_names: set[str] = set()
         missing_images: list[str] = []
+        image_references: list[_PackageImageReference] = []
+        filename_by_source: dict[str, str] = {}
         for page_row in package_data.bid_tables.get("BidPages", []):
             page_uid = str(page_row.get("UID", "") or "page")
             for attr in _IMAGE_PATH_ATTRS:
@@ -170,15 +184,73 @@ class OspExporter:
                 if not source_image_path.exists():
                     missing_images.append(original_image_path)
                     continue
-                source_key = str(source_image_path.resolve())
-                package_member_path = package_member_by_source.get(source_key)
-                if package_member_path is None:
-                    package_member_path = self._package_image_member_path(
-                        source_key, source_image_path.name, page_uid
+                source_path = str(source_image_path.resolve())
+                canonical_source_path = source_path.casefold()
+                filename = self._safe_image_filename(source_image_path.name)
+                filename_by_source.setdefault(canonical_source_path, filename)
+                image_references.append(
+                    _PackageImageReference(
+                        page_row=page_row,
+                        attribute_name=attr,
+                        canonical_source_path=canonical_source_path,
+                        source_path=source_path,
+                        filename=filename,
+                        page_uid=page_uid,
                     )
-                    package_member_by_source[source_key] = package_member_path
-                    package_image_sources[package_member_path] = source_key
+                )
+        sources_by_filename: dict[str, set[str]] = {}
+        for source_path, filename in filename_by_source.items():
+            sources_by_filename.setdefault(filename.casefold(), set()).add(source_path)
+        for image_reference in image_references:
+            package_member_path = package_member_by_source.get(
+                image_reference.canonical_source_path
+            )
+            has_filename_collision = (
+                len(sources_by_filename[image_reference.filename.casefold()]) > 1
+            )
+            direct_member_path = self._package_image_member_path(
+                image_reference.filename
+            )
+            if package_member_path is None:
+                if has_filename_collision:
+                    preferred_member_path = self._collision_package_image_member_path(
+                        image_reference.canonical_source_path,
+                        image_reference.filename,
+                        image_reference.page_uid,
+                    )
+                else:
+                    preferred_member_path = direct_member_path
+                package_member_path = self._reserve_package_image_member_path(
+                    preferred_member_path,
+                    reserved_member_names,
+                )
+                package_member_by_source[image_reference.canonical_source_path] = (
+                    package_member_path
+                )
+                package_image_sources[package_member_path] = image_reference.source_path
+            if package_member_path.casefold() != direct_member_path.casefold():
+                image_reference.page_row[image_reference.attribute_name] = (
+                    package_member_path
+                )
         return package_data, package_image_sources, missing_images
+
+    def _reserve_package_image_member_path(
+        self,
+        preferred_member_path: str,
+        reserved_member_names: set[str],
+    ) -> str:
+        member_path = PureWindowsPath(preferred_member_path)
+        candidate = preferred_member_path
+        suffix_number = 2
+        while candidate.casefold() in reserved_member_names:
+            candidate = str(
+                member_path.with_name(
+                    f"{member_path.stem}_{suffix_number}{member_path.suffix}"
+                )
+            )
+            suffix_number += 1
+        reserved_member_names.add(candidate.casefold())
+        return candidate
 
     def _safe_path_component(self, value: str, *, default: str) -> str:
         safe = "".join(c if c not in _INVALID_PATH_CHARS else "_" for c in value)
@@ -201,16 +273,21 @@ class OspExporter:
             },
         )
 
-    def _package_image_member_path(
+    def _package_image_member_path(self, filename: str) -> str:
+        return f"{_PACKAGE_IMAGE_ROOT}\\{self._safe_image_filename(filename)}"
+
+    def _collision_package_image_member_path(
         self, source_key: str, filename: str, page_uid: str
     ) -> str:
-        digest = hashlib.sha1(source_key.casefold().encode("utf-8")).hexdigest()[:16]
+        digest = hashlib.sha1(source_key.encode("utf-8")).hexdigest()[:16]
         safe_page_uid = "".join(c if c.isalnum() else "_" for c in page_uid) or "page"
-        safe_filename = self._safe_path_component(
-            filename or "image",
-            default="image",
+        return (
+            f"{_PACKAGE_IMAGE_ROOT}\\{safe_page_uid}_{digest}_"
+            f"{self._safe_image_filename(filename)}"
         )
-        return f"{_PACKAGE_IMAGE_ROOT}\\{safe_page_uid}_{digest}\\{safe_filename}"
+
+    def _safe_image_filename(self, filename: str) -> str:
+        return self._safe_path_component(filename or "image", default="image")
 
     def _generate_bid_trans_xml(self, tmp_path: Path) -> Path:
         root = ET.Element("XML_ROOT")

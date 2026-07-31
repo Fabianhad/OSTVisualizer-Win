@@ -226,7 +226,7 @@ class PDFRenderingService:
         apply_invert_effect: bool = True,
         apply_bitonal_effect: bool = True,
     ) -> str:
-        del view_scale  # Retained by the current rendering-service protocol.
+        del view_scale
         scale = render_scale
         if scale is None:
             scale = 2.0 if is_pdf_suffix(page.overlay_image_path) else 1.0

@@ -2428,14 +2428,11 @@ class TakeoffPlanView(
         current_rect = self._scene.sceneRect()
         if current_rect.isValid() and _rects_nearly_equal(current_rect, rect):
             return
-        center = None
-        viewport = self.viewport()
-        if (
-            self._load_view_applied
-            and viewport is not None
-            and viewport.size().isValid()
-        ):
-            center = self.mapToScene(viewport.rect().center())
+        center = (
+            self.get_precise_viewport_scene_center()
+            if self._load_view_applied
+            else None
+        )
         self._scene.setSceneRect(rect)
         if center is not None:
             self.centerOn(center)
@@ -3339,10 +3336,7 @@ class TakeoffPlanView(
     def _current_mouse_scene_position(self) -> Optional[QtCore.QPointF]:
         if self._last_mouse_vp_pos is not None:
             return self.mapToScene(self._last_mouse_vp_pos)
-        viewport = self.viewport()
-        if viewport is not None and viewport.size().isValid():
-            return self.mapToScene(viewport.rect().center())
-        return None
+        return self._viewport_center_pixel_scene_pos()
 
     def current_mouse_ost_position(self) -> Optional[Tuple[float, float]]:
         scene_pos = self._current_mouse_scene_position()
@@ -3831,7 +3825,7 @@ class TakeoffPlanView(
         self._overlay_move_drag_start_rect = None
         self._overlay_move_dragging = False
         self._start_overlay_move_preview_setup(rect)
-        center = self._viewport_center_scene_pos()
+        center = self._viewport_center_pixel_scene_pos()
         if center is None:
             return False
         if not self._set_overlay_move_handle_pos(center):
@@ -4275,7 +4269,7 @@ class TakeoffPlanView(
         self._overlay_move_handle_item.setPos(scene_pos)
         return True
 
-    def _viewport_center_scene_pos(self) -> Optional[QtCore.QPointF]:
+    def _viewport_center_pixel_scene_pos(self) -> Optional[QtCore.QPointF]:
         viewport = self.viewport()
         if viewport is None or not viewport.size().isValid():
             return None
@@ -4291,7 +4285,7 @@ class TakeoffPlanView(
             or getattr(self, "_overlay_move_handle_item", None) is None
         ):
             return
-        center = self._viewport_center_scene_pos()
+        center = self._viewport_center_pixel_scene_pos()
         if center is None:
             return
         if self._set_overlay_move_handle_pos(center):

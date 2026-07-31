@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from unittest.mock import patch
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import Optional
 from ost_visualizer.application.dtos.condition_summary_dtos import (
@@ -471,9 +471,11 @@ class OspExporterProgressTests(unittest.TestCase):
                 }
             )
             exporter = self._make_osp_exporter()
-            _package_data, image_sources, missing = exporter._prepare_package_data(
-                raw_data
-            )
+            (
+                _package_data,
+                image_sources,
+                missing,
+            ) = exporter._prepare_package_data(raw_data)
             self.assertEqual(missing, [])
             source_files = []
             archive_names = []
@@ -490,15 +492,16 @@ class OspExporterProgressTests(unittest.TestCase):
             set(source_files), {str(first.resolve()), str(second.resolve())}
         )
         self.assertEqual(len(archive_names), 2)
-        self.assertTrue(
-            all(name.startswith("TempImages!.tmp\\") for name in archive_names)
+        self.assertCountEqual(
+            archive_names,
+            ["TempImages!.tmp\\first.pdf", "TempImages!.tmp\\second.tif"],
         )
         self.assertCountEqual(
             [description for _current, _total, description in progress],
             ["Collecting first.pdf", "Collecting second.tif"],
         )
 
-    def test_prepare_package_data_keeps_same_filenames_from_different_folders(self):
+    def test_prepare_package_data_flattens_distinct_same_filename_images(self):
         with tempfile.TemporaryDirectory() as tmp:
             first_dir = Path(tmp) / "first"
             second_dir = Path(tmp) / "second"
@@ -518,14 +521,24 @@ class OspExporterProgressTests(unittest.TestCase):
                 },
             )
             exporter = self._make_osp_exporter()
-            package_data, image_sources, missing = exporter._prepare_package_data(
-                raw_data
-            )
+            (
+                package_data,
+                image_sources,
+                missing,
+            ) = exporter._prepare_package_data(raw_data)
         page_paths = [row["ImagePath"] for row in package_data.bid_tables["BidPages"]]
         self.assertEqual(missing, [])
         self.assertEqual(len(image_sources), 2)
+        self.assertEqual(set(image_sources.values()), {str(first), str(second)})
+        self.assertEqual(len({path.casefold() for path in image_sources}), 2)
+        self.assertTrue(
+            all(
+                path.startswith("TempImages!.tmp\\") and path.count("\\") == 1
+                for path in image_sources
+            )
+        )
         self.assertEqual(len(set(page_paths)), 2)
-        self.assertTrue(all(path.endswith("\\sheet.pdf") for path in page_paths))
+        self.assertEqual(set(page_paths), set(image_sources))
 
     def test_prepare_package_data_preserves_database_paths_for_unique_images(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -538,13 +551,15 @@ class OspExporterProgressTests(unittest.TestCase):
                 },
             )
             exporter = self._make_osp_exporter()
-            package_data, image_sources, missing = exporter._prepare_package_data(
-                raw_data
-            )
+            (
+                package_data,
+                image_sources,
+                missing,
+            ) = exporter._prepare_package_data(raw_data)
         self.assertEqual(missing, [])
         self.assertEqual(len(image_sources), 1)
         package_member_path = next(iter(image_sources))
-        self.assertTrue(package_member_path.startswith("TempImages!.tmp\\"))
+        self.assertEqual(package_member_path, "TempImages!.tmp\\A0.01.pdf")
         self.assertEqual(
             package_data.bid_tables["BidPages"][0]["ImagePath"],
             str(image),
@@ -555,16 +570,14 @@ class OspExporterProgressTests(unittest.TestCase):
             )
         )
 
-    def test_prepare_package_data_preserves_duplicate_database_paths(
-        self,
-    ):
+    def test_prepare_package_data_maps_case_insensitive_filename_collisions(self):
         with tempfile.TemporaryDirectory() as tmp:
             first_dir = Path(tmp) / "first"
             second_dir = Path(tmp) / "second"
             first_dir.mkdir()
             second_dir.mkdir()
             first = first_dir / "sheet.pdf"
-            second = second_dir / "sheet.pdf"
+            second = second_dir / "SHEET.PDF"
             first.write_bytes(b"first")
             second.write_bytes(b"second")
             raw_data = RawBidData(
@@ -577,16 +590,95 @@ class OspExporterProgressTests(unittest.TestCase):
                 },
             )
             exporter = self._make_osp_exporter()
-            package_data, image_sources, missing = exporter._prepare_package_data(
-                raw_data
-            )
+            (
+                package_data,
+                image_sources,
+                missing,
+            ) = exporter._prepare_package_data(raw_data)
         page_paths = [row["ImagePath"] for row in package_data.bid_tables["BidPages"]]
         self.assertEqual(missing, [])
         self.assertEqual(len(image_sources), 2)
+        self.assertEqual(set(image_sources.values()), {str(first), str(second)})
+        self.assertEqual(len({path.casefold() for path in image_sources}), 2)
+        self.assertTrue(all(path.count("\\") == 1 for path in image_sources))
         self.assertEqual(len(set(page_paths)), 2)
-        self.assertEqual(page_paths, [str(first), str(second)])
-        self.assertTrue(
-            all(path.startswith("TempImages!.tmp\\") for path in image_sources)
+        self.assertEqual(set(page_paths), set(image_sources))
+
+    def test_prepare_package_data_avoids_generated_and_direct_name_collision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first" / "sheet.pdf"
+            second = root / "second" / "sheet.pdf"
+            first.parent.mkdir()
+            second.parent.mkdir()
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            exporter = self._make_osp_exporter()
+            generated_member = exporter._collision_package_image_member_path(
+                str(first.resolve()).casefold(),
+                first.name,
+                "10",
+            )
+            third = root / "third" / PureWindowsPath(generated_member).name
+            third.parent.mkdir()
+            third.write_bytes(b"third")
+            raw_data = RawBidData(
+                bid_tables={
+                    "BidPages": [
+                        {"UID": "10", "ImagePath": str(first)},
+                        {"UID": "11", "ImagePath": str(second)},
+                        {"UID": "12", "ImagePath": str(third)},
+                    ]
+                }
+            )
+            package_data, image_sources, missing = exporter._prepare_package_data(
+                raw_data
+            )
+            repeated_data, repeated_sources, repeated_missing = (
+                exporter._prepare_package_data(raw_data)
+            )
+        page_paths = [row["ImagePath"] for row in package_data.bid_tables["BidPages"]]
+        self.assertEqual(missing, [])
+        self.assertEqual(len(image_sources), 3)
+        self.assertEqual(len({name.casefold() for name in image_sources}), 3)
+        self.assertEqual(
+            set(image_sources.values()), {str(first), str(second), str(third)}
+        )
+        self.assertEqual(set(page_paths), set(image_sources))
+        self.assertTrue(all(name.count("\\") == 1 for name in image_sources))
+        self.assertEqual(repeated_missing, missing)
+        self.assertEqual(repeated_sources, image_sources)
+        self.assertEqual(
+            [row["ImagePath"] for row in repeated_data.bid_tables["BidPages"]],
+            page_paths,
+        )
+
+    def test_osp_export_writes_original_app_compatible_flat_image_member(self):
+        class FakeOstExporter:
+            def __init__(self, _uom_service):
+                pass
+
+            def export(self, _raw_data, output_path, on_progress=None):
+                Path(output_path).write_text("ost", encoding="utf-8")
+                return ExportResultDto(success=True, format_name="OST")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "sheet.pdf"
+            image.write_bytes(b"pdf")
+            output = Path(tmp) / "out.osp"
+            raw_data = RawBidData(
+                bid_tables={"BidPages": [{"UID": "10", "ImagePath": str(image)}]}
+            )
+            exporter = self._make_osp_exporter(FakeOstExporter)
+            result = exporter.export(raw_data, str(output))
+            archive_names = list(osp_exporter.ost_cab.list_cab(str(output)))
+        self.assertTrue(result.success, result.error_message)
+        self.assertIn("TempImages!.tmp\\sheet.pdf", archive_names)
+        self.assertFalse(
+            any(
+                name.startswith("TempImages!.tmp\\") and name.count("\\") > 1
+                for name in archive_names
+            )
         )
 
     def test_prepare_package_data_reports_missing_drawing_files(self):
@@ -603,7 +695,11 @@ class OspExporterProgressTests(unittest.TestCase):
             },
         )
         exporter = self._make_osp_exporter()
-        _package_data, image_sources, missing = exporter._prepare_package_data(raw_data)
+        (
+            _package_data,
+            image_sources,
+            missing,
+        ) = exporter._prepare_package_data(raw_data)
         self.assertEqual(image_sources, {})
         self.assertEqual(missing, [r"C:\missing\sheet.pdf"])
 
@@ -665,12 +761,7 @@ class OspExporterProgressTests(unittest.TestCase):
             ],
         )
         self.assertEqual(len(cab_calls), 1)
-        self.assertTrue(
-            any(
-                name.startswith("TempImages!.tmp\\") and name.endswith("\\sheet.pdf")
-                for name in cab_calls[0][1]
-            )
-        )
+        self.assertIn("TempImages!.tmp\\sheet.pdf", cab_calls[0][1])
 
     def test_osp_export_preserves_database_image_paths_in_embedded_ost(self):
         class FakeOstExporter:

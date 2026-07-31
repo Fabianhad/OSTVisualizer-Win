@@ -62,6 +62,47 @@ class FakeIconProvider:
 
 
 class MasterDataDialogButtonModeTests(unittest.TestCase):
+    def test_page_settings_scale_activation_emits_one_request_per_commit(self):
+        bar = PageSettingsBar(
+            FakeIconProvider(),
+            event_bus=object(),
+            refresh_areas_fn=lambda _file_path: None,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+        )
+        bar.load_bid_areas(BidRef("db.mdb", "bid-1"), areas=[])
+        bar.load_page("page-1", 1.0, 1.0, "")
+        bar.set_interactive(True)
+        scale_requests = []
+        custom_requests = []
+        bar.scale_change_requested.connect(
+            lambda *args: scale_requests.append(tuple(args))
+        )
+        bar.custom_scale_requested.connect(
+            lambda *args: custom_requests.append(tuple(args))
+        )
+        try:
+            predefined_index = next(
+                index
+                for index in range(bar.scale_combo.count())
+                if isinstance(bar.scale_combo.itemData(index), tuple)
+                and bar.scale_combo.itemData(index) != (1.0, 1.0)
+            )
+            expected_scale = bar.scale_combo.itemData(predefined_index)
+            bar.scale_combo.activated.emit(predefined_index)
+            bar.scale_combo.activated.emit(predefined_index)
+            custom_index = bar.scale_combo.count() - 1
+            bar.scale_combo.activated.emit(custom_index)
+            self.assertEqual(
+                scale_requests,
+                [
+                    ("db.mdb", "page-1", *expected_scale),
+                    ("db.mdb", "page-1", *expected_scale),
+                ],
+            )
+            self.assertEqual(custom_requests, [("db.mdb", "page-1")])
+        finally:
+            bar.deleteLater()
+
     @classmethod
     def setUpClass(cls):
         cls.app = _app()

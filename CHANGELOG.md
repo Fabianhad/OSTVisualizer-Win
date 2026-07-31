@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed repeated page-scale changes shifting the visible plan viewport by one
+  pixel per refresh at affected viewport sizes and zoom levels.
 - Fixed rotated oval annotations exporting to PDF with axis-aligned, distorted
   dimensions, and prevented thick oval strokes from being clipped flat at the
   appearance bounds.
@@ -122,5 +124,5 @@
 - Fixed plan pages with both original and overlay images so hiding the image layer immediately reveals the white page canvas without an unexpected fit-to-page jump.
 - Fixed overlay-only plan pages so raster overlays load without a main image and a missing overlay does not leave an unused main image pending.
 - Fixed takeoff clicks after condition sidebar reloads so the clicked takeoff's condition is reselected and highlighted when the previous highlight was cleared.
-- Fixed OSP exports so the embedded OST keeps the drawing paths stored in the database instead of package-internal `TempImages!.tmp` paths.
+- Fixed OSP interoperability so current exports and original On-Screen Takeoff packages use the same flat `TempImages!.tmp` image layout: ordinary database paths remain unchanged, colliding basenames map to deterministic unique flat members, and imports now reject legacy nested Visualizer packages or missing drawings instead of silently importing incomplete pages.
 - Fixed the Select Named View dialog so refocusing a non-empty search field shows the current matching named views again.
