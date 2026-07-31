@@ -56,7 +56,6 @@ class MdbReader(
     def _record_caught_read_error(
         _exc: BaseException, _locator: Optional[str] = None
     ) -> bool:
-        """Keep Access's optional-table read compatibility unchanged."""
         return False
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:

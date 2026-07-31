@@ -7,6 +7,7 @@
 #include <cctype>
 #include <random>
 #include <stdexcept>
+#include <qpdf/QUtil.hh>
 namespace ost_pdf_writer
 {
     constexpr double CLOUD_BORDER_EFFECT_INTENSITY = 2.0;
@@ -1032,20 +1033,76 @@ namespace ost_pdf_writer
         }
         return oss.str();
     }
-    std::string generate_bluebeam_oval_dict(const BluebeamOval &oval)
+    static void validate_oval(const BluebeamOval &oval)
+    {
+        const std::array<double, 7> values{
+            oval.center_x,
+            oval.center_y,
+            oval.x_axis_dx,
+            oval.x_axis_dy,
+            oval.y_axis_dx,
+            oval.y_axis_dy,
+            oval.width};
+        if (!std::all_of(values.begin(), values.end(), [](double value)
+                         { return std::isfinite(value); }))
+        {
+            throw std::invalid_argument("Oval geometry and stroke width must be finite");
+        }
+        if (oval.width < 0.0)
+        {
+            throw std::invalid_argument("Oval stroke width must not be negative");
+        }
+        double determinant = oval.x_axis_dx * oval.y_axis_dy -
+                             oval.x_axis_dy * oval.y_axis_dx;
+        if (!std::isfinite(determinant) || determinant == 0.0)
+        {
+            throw std::invalid_argument("Oval radius vectors must define a finite ellipse");
+        }
+    }
+    static std::string oval_pdf_real(double value)
+    {
+        return QUtil::double_to_string(value, 12);
+    }
+    std::array<double, 4> compute_oval_rect(const BluebeamOval &oval)
+    {
+        validate_oval(oval);
+        double x_extent = std::hypot(oval.x_axis_dx, oval.y_axis_dx);
+        double y_extent = std::hypot(oval.x_axis_dy, oval.y_axis_dy);
+        double stroke_inset = oval.width / 2.0;
+        std::array<double, 4> rect{
+            oval.center_x - x_extent - stroke_inset,
+            oval.center_y - y_extent - stroke_inset,
+            oval.center_x + x_extent + stroke_inset,
+            oval.center_y + y_extent + stroke_inset};
+        if (!std::all_of(rect.begin(), rect.end(), [](double value)
+                         { return std::isfinite(value); }))
+        {
+            throw std::invalid_argument("Oval bounds exceed the finite PDF coordinate range");
+        }
+        return rect;
+    }
+    std::string generate_bluebeam_oval_dict(
+        const BluebeamOval &oval,
+        const std::array<double, 4> &rect)
     {
         std::ostringstream oss;
+        double stroke_inset = oval.width / 2.0;
         auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(oval.color);
         std::string pdf_date = oval.created_date.empty() ? generate_pdf_date() : oval.created_date;
         std::string nm = generate_nm();
         oss << "<<\n";
+        oss << "/BS << /S /S /Type /Border /W " << oval_pdf_real(oval.width) << " >>\n";
         oss << "/C [ " << stroke_r << " " << stroke_g << " " << stroke_b << " ]\n";
         oss << "/CreationDate (" << pdf_date << ")\n";
         oss << "/F 4\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/RD [ 0.5 0.5 0.5 0.5 ]\n";
-        oss << "/Rect [ " << oval.min_x << " " << oval.min_y << " " << oval.max_x << " " << oval.max_y << " ]\n";
+        std::string stroke_inset_pdf = oval_pdf_real(stroke_inset);
+        oss << "/RD [ " << stroke_inset_pdf << " " << stroke_inset_pdf << " "
+            << stroke_inset_pdf << " " << stroke_inset_pdf << " ]\n";
+        oss << "/Rect [ " << oval_pdf_real(rect[0]) << " "
+            << oval_pdf_real(rect[1]) << " " << oval_pdf_real(rect[2]) << " "
+            << oval_pdf_real(rect[3]) << " ]\n";
         oss << "/Subj (Ellipse)\n";
         oss << "/Subtype /Circle\n";
         oss << "/T (" << oval.author << ")\n";
@@ -1056,31 +1113,41 @@ namespace ost_pdf_writer
     std::string generate_oval_appearance_stream(const BluebeamOval &oval)
     {
         auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(oval.color);
-        double width = oval.max_x - oval.min_x;
-        double height = oval.max_y - oval.min_y;
-        double cx = (oval.min_x + oval.max_x) / 2.0;
-        double cy = (oval.min_y + oval.max_y) / 2.0;
-        double rx = width / 2.0;
-        double ry = height / 2.0;
         double kappa = 0.5522847498;
-        double ox = rx * kappa;
-        double oy = ry * kappa;
+        auto point = [&](double x_factor, double y_factor)
+        {
+            return std::array<double, 2>{
+                oval.center_x + x_factor * oval.x_axis_dx + y_factor * oval.y_axis_dx,
+                oval.center_y + x_factor * oval.x_axis_dy + y_factor * oval.y_axis_dy};
+        };
+        auto right = point(1.0, 0.0);
+        auto top = point(0.0, 1.0);
+        auto left = point(-1.0, 0.0);
+        auto bottom = point(0.0, -1.0);
+        auto right_to_top_1 = point(1.0, kappa);
+        auto right_to_top_2 = point(kappa, 1.0);
+        auto top_to_left_1 = point(-kappa, 1.0);
+        auto top_to_left_2 = point(-1.0, kappa);
+        auto left_to_bottom_1 = point(-1.0, -kappa);
+        auto left_to_bottom_2 = point(-kappa, -1.0);
+        auto bottom_to_right_1 = point(kappa, -1.0);
+        auto bottom_to_right_2 = point(1.0, -kappa);
         std::ostringstream oss;
         oss << stroke_r << " " << stroke_g << " " << stroke_b << " RG ";
-        oss << oval.width << " w ";
-        oss << (cx + rx) << " " << cy << " m ";
-        oss << (cx + rx) << " " << (cy + oy) << " ";
-        oss << (cx + ox) << " " << (cy + ry) << " ";
-        oss << cx << " " << (cy + ry) << " c ";
-        oss << (cx - ox) << " " << (cy + ry) << " ";
-        oss << (cx - rx) << " " << (cy + oy) << " ";
-        oss << (cx - rx) << " " << cy << " c ";
-        oss << (cx - rx) << " " << (cy - oy) << " ";
-        oss << (cx - ox) << " " << (cy - ry) << " ";
-        oss << cx << " " << (cy - ry) << " c ";
-        oss << (cx + ox) << " " << (cy - ry) << " ";
-        oss << (cx + rx) << " " << (cy - oy) << " ";
-        oss << (cx + rx) << " " << cy << " c S ";
+        oss << oval_pdf_real(oval.width) << " w ";
+        oss << oval_pdf_real(right[0]) << " " << oval_pdf_real(right[1]) << " m ";
+        oss << oval_pdf_real(right_to_top_1[0]) << " " << oval_pdf_real(right_to_top_1[1]) << " ";
+        oss << oval_pdf_real(right_to_top_2[0]) << " " << oval_pdf_real(right_to_top_2[1]) << " ";
+        oss << oval_pdf_real(top[0]) << " " << oval_pdf_real(top[1]) << " c ";
+        oss << oval_pdf_real(top_to_left_1[0]) << " " << oval_pdf_real(top_to_left_1[1]) << " ";
+        oss << oval_pdf_real(top_to_left_2[0]) << " " << oval_pdf_real(top_to_left_2[1]) << " ";
+        oss << oval_pdf_real(left[0]) << " " << oval_pdf_real(left[1]) << " c ";
+        oss << oval_pdf_real(left_to_bottom_1[0]) << " " << oval_pdf_real(left_to_bottom_1[1]) << " ";
+        oss << oval_pdf_real(left_to_bottom_2[0]) << " " << oval_pdf_real(left_to_bottom_2[1]) << " ";
+        oss << oval_pdf_real(bottom[0]) << " " << oval_pdf_real(bottom[1]) << " c ";
+        oss << oval_pdf_real(bottom_to_right_1[0]) << " " << oval_pdf_real(bottom_to_right_1[1]) << " ";
+        oss << oval_pdf_real(bottom_to_right_2[0]) << " " << oval_pdf_real(bottom_to_right_2[1]) << " ";
+        oss << oval_pdf_real(right[0]) << " " << oval_pdf_real(right[1]) << " c h S ";
         return oss.str();
     }
     std::string generate_bluebeam_polygon_annot_dict(const BluebeamPolygonAnnot &poly)

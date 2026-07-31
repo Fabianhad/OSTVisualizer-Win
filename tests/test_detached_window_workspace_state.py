@@ -3118,9 +3118,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         try:
             default_p1 = combo._page_items["p1"].data(_ITEM_ROLE_PRECHECK_ICON)
             default_p2 = combo._page_items["p2"].data(_ITEM_ROLE_PRECHECK_ICON)
-
             window.set_page_has_takeoffs("p2", True)
-
             active_p2 = combo._page_items["p2"].data(_ITEM_ROLE_PRECHECK_ICON)
             self.assertNotEqual(active_p2.cacheKey(), default_p2.cacheKey())
             self.assertEqual(
@@ -3129,9 +3127,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             )
             self.assertEqual(window._pages_with_takeoffs, {"p2"})
             self.assertEqual(changed_rows, ["p2"])
-
             window.set_page_has_takeoffs("p2", False)
-
             restored_p2 = combo._page_items["p2"].data(_ITEM_ROLE_PRECHECK_ICON)
             self.assertEqual(restored_p2.cacheKey(), default_p2.cacheKey())
             self.assertEqual(window._pages_with_takeoffs, set())
@@ -3158,11 +3154,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             manager._on_takeoffs_changed(page_uid="p1", takeoff_uids=["t1"])
             manager._on_takeoffs_changed(page_uid="p1", takeoff_uids=["t2"])
             self.assertEqual(role_changes, [True])
-
             pages_with_takeoffs.clear()
             manager._on_takeoffs_changed(page_uid="p1", takeoff_uids=["t1"])
             self.assertEqual(role_changes, [True, False])
-
             pages_with_takeoffs.add("p1")
             manager._on_takeoffs_changed(page_uid="p1", takeoff_uids=["undo-t1"])
             pages_with_takeoffs.clear()
@@ -3210,7 +3204,6 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             self.assertTrue(self._indicator_is_active(view_combo, "p1"))
             self.assertEqual(annotation_refreshes, ["p1"])
             self.assertEqual(view_refreshes, [])
-
             pages_with_takeoffs.clear()
             event_bus.publish(
                 AppEvents.TAKEOFFS_CHANGED,
@@ -3219,7 +3212,6 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             )
             self.assertFalse(self._indicator_is_active(annotation_combo, "p1"))
             self.assertFalse(self._indicator_is_active(view_combo, "p1"))
-
             view_manager._window = None
             pages_with_takeoffs.add("p1")
             event_bus.publish(

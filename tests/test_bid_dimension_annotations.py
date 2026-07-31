@@ -2077,10 +2077,12 @@ class BidDimensionAnnotationTests(unittest.TestCase):
 
     def _native_oval(self):
         oval = ost_pdf_writer.OvalAnnotationData()
-        oval.min_x = 35.0
-        oval.min_y = 40.0
-        oval.max_x = 135.0
-        oval.max_y = 100.0
+        oval.center_x = 85.0
+        oval.center_y = 70.0
+        oval.x_axis_dx = 50.0
+        oval.x_axis_dy = 0.0
+        oval.y_axis_dx = 0.0
+        oval.y_axis_dy = 30.0
         oval.color = [0, 180, 90]
         oval.width = 1.0
         return oval

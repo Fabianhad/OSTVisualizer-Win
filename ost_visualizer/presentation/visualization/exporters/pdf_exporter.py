@@ -1027,33 +1027,41 @@ class PDFExporter:
                 annotation, page_uid, ANNOTATION_TYPE_OVAL
             ):
                 continue
-            position = annotation.position
-            if len(position) < 4:
+            geometry = annotation.get_oval_geometry_ost()
+            if (
+                geometry is None
+                or not math.isfinite(annotation.width)
+                or annotation.width < 0.0
+            ):
                 continue
-            if len(position) >= 8:
-                xs = position[0::2]
-                ys = position[1::2]
-                min_x, max_x = min(xs), max(xs)
-                min_y, max_y = min(ys), max(ys)
-            else:
-                min_x, min_y, max_x, max_y = (
-                    position[0],
-                    position[1],
-                    position[2],
-                    position[3],
-                )
+            center_x, center_y, radius_x, radius_y, rotation = geometry
+            cos_r = math.cos(rotation)
+            sin_r = math.sin(rotation)
+            x_axis_x = center_x + radius_x * cos_r
+            x_axis_y = center_y + radius_x * sin_r
+            y_axis_x = center_x - radius_y * sin_r
+            y_axis_y = center_y + radius_y * cos_r
             pdf_coords = self._coord_system.ost_to_pdf_coordinates(
-                [min_x, min_y, max_x, max_y], page_info
+                [
+                    center_x,
+                    center_y,
+                    x_axis_x,
+                    x_axis_y,
+                    y_axis_x,
+                    y_axis_y,
+                ],
+                page_info,
             )
-            if len(pdf_coords) < 2:
+            if len(pdf_coords) < 3:
                 continue
-            pdf_x1, pdf_y1 = pdf_coords[0]
-            pdf_x2, pdf_y2 = pdf_coords[1]
+            pdf_center, pdf_x_axis, pdf_y_axis = pdf_coords[:3]
             oval_data = ost_pdf_writer.OvalAnnotationData()
-            oval_data.min_x = min(pdf_x1, pdf_x2)
-            oval_data.min_y = min(pdf_y1, pdf_y2)
-            oval_data.max_x = max(pdf_x1, pdf_x2)
-            oval_data.max_y = max(pdf_y1, pdf_y2)
+            oval_data.center_x = pdf_center[0]
+            oval_data.center_y = pdf_center[1]
+            oval_data.x_axis_dx = pdf_x_axis[0] - pdf_center[0]
+            oval_data.x_axis_dy = pdf_x_axis[1] - pdf_center[1]
+            oval_data.y_axis_dx = pdf_y_axis[0] - pdf_center[0]
+            oval_data.y_axis_dy = pdf_y_axis[1] - pdf_center[1]
             oval_data.color = self._color_service.hex_to_rgb_int(annotation.color)
             oval_data.width = annotation.width
             ovals.append(oval_data)

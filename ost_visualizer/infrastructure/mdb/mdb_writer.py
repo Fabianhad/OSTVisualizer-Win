@@ -58,7 +58,6 @@ class MdbWriter(
 
     @staticmethod
     def _record_caught_mutation_error(_exc: BaseException) -> bool:
-        """Keep Access's established best-effort row handling unchanged."""
         return False
 
     def _require_write_columns(

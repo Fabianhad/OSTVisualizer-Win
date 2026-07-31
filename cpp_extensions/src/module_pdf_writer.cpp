@@ -113,14 +113,18 @@ NB_MODULE(ost_pdf_writer, m)
         nb::class_<PDFWriter::OvalAnnotationData>(m, "OvalAnnotationData",
                                                   "Data for a single oval/circle annotation")
             .def(nb::init<>())
-            .def_rw("min_x", &PDFWriter::OvalAnnotationData::min_x,
-                    "Minimum X coordinate (left) in PDF points")
-            .def_rw("min_y", &PDFWriter::OvalAnnotationData::min_y,
-                    "Minimum Y coordinate (bottom) in PDF points")
-            .def_rw("max_x", &PDFWriter::OvalAnnotationData::max_x,
-                    "Maximum X coordinate (right) in PDF points")
-            .def_rw("max_y", &PDFWriter::OvalAnnotationData::max_y,
-                    "Maximum Y coordinate (top) in PDF points")
+            .def_rw("center_x", &PDFWriter::OvalAnnotationData::center_x,
+                    "Ellipse center X coordinate in PDF points")
+            .def_rw("center_y", &PDFWriter::OvalAnnotationData::center_y,
+                    "Ellipse center Y coordinate in PDF points")
+            .def_rw("x_axis_dx", &PDFWriter::OvalAnnotationData::x_axis_dx,
+                    "Local X radius vector X component in PDF points")
+            .def_rw("x_axis_dy", &PDFWriter::OvalAnnotationData::x_axis_dy,
+                    "Local X radius vector Y component in PDF points")
+            .def_rw("y_axis_dx", &PDFWriter::OvalAnnotationData::y_axis_dx,
+                    "Local Y radius vector X component in PDF points")
+            .def_rw("y_axis_dy", &PDFWriter::OvalAnnotationData::y_axis_dy,
+                    "Local Y radius vector Y component in PDF points")
             .def_rw("color", &PDFWriter::OvalAnnotationData::color,
                     "RGB color as [r, g, b] (0-255)")
             .def_rw("width", &PDFWriter::OvalAnnotationData::width,

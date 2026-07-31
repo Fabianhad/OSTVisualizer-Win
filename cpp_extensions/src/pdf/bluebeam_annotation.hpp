@@ -130,21 +130,28 @@ namespace ost_pdf_writer
     std::array<double, 4> compute_dimension_rect(const BluebeamDimension &dimension);
     struct BluebeamOval
     {
-        double min_x;
-        double min_y;
-        double max_x;
-        double max_y;
+        double center_x;
+        double center_y;
+        double x_axis_dx;
+        double x_axis_dy;
+        double y_axis_dx;
+        double y_axis_dy;
         std::array<uint8_t, 3> color;
         double width;
         std::string author;
         std::string created_date;
         BluebeamOval()
-            : min_x(0), min_y(0), max_x(0), max_y(0),
+            : center_x(0), center_y(0),
+              x_axis_dx(0), x_axis_dy(0),
+              y_axis_dx(0), y_axis_dy(0),
               color{255, 0, 0},
               width(1.0),
               author("OST Visualizer") {}
     };
-    std::string generate_bluebeam_oval_dict(const BluebeamOval &oval);
+    std::array<double, 4> compute_oval_rect(const BluebeamOval &oval);
+    std::string generate_bluebeam_oval_dict(
+        const BluebeamOval &oval,
+        const std::array<double, 4> &rect);
     std::string generate_oval_appearance_stream(const BluebeamOval &oval);
     struct BluebeamPolygonAnnot
     {

@@ -779,18 +779,11 @@ class SelectionManagerMixin:
         if atype in (ANNOTATION_TYPE_RECT, ANNOTATION_TYPE_HIGHLIGHT) and len(pos) >= 8:
             return [pos[0], pos[1], pos[6], pos[7], pos[2], pos[3], pos[4], pos[5]]
         if atype == ANNOTATION_TYPE_OVAL and len(pos) >= 4:
-            cx = (pos[0] + pos[2]) / 2
-            cy = (pos[1] + pos[3]) / 2
-            rot_rad = ann.stored_rotation_rad
+            geometry = ann.get_oval_geometry_ost()
+            if geometry is None:
+                return []
+            cx, cy, hw, hh, rot_rad = geometry
             cos_r, sin_r = math.cos(rot_rad), math.sin(rot_rad)
-            dx0, dy0 = pos[0] - cx, pos[1] - cy
-            ux0 = cx + dx0 * cos_r + dy0 * sin_r
-            uy0 = cy - dx0 * sin_r + dy0 * cos_r
-            dx1, dy1 = pos[2] - cx, pos[3] - cy
-            ux1 = cx + dx1 * cos_r + dy1 * sin_r
-            uy1 = cy - dx1 * sin_r + dy1 * cos_r
-            hw = abs(ux1 - ux0) / 2
-            hh = abs(uy1 - uy0) / 2
             corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
             result = []
             for dx, dy in corners:

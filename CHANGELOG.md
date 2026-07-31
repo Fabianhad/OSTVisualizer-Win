@@ -22,6 +22,9 @@
 
 ### Fixed
 
+- Fixed rotated oval annotations exporting to PDF with axis-aligned, distorted
+  dimensions, and prevented thick oval strokes from being clipped flat at the
+  appearance bounds.
 - Fixed page takeoff indicators in open Annotation and View windows so first
   and final takeoff changes immediately update every listed page by UID,
   including non-current pages and undo/redo changes.

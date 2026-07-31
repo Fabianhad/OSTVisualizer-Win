@@ -554,18 +554,21 @@ namespace ost_pdf_writer
         for (const auto &oval_data : ovals)
         {
             BluebeamOval oval;
-            oval.min_x = oval_data.min_x;
-            oval.min_y = oval_data.min_y;
-            oval.max_x = oval_data.max_x;
-            oval.max_y = oval_data.max_y;
+            oval.center_x = oval_data.center_x;
+            oval.center_y = oval_data.center_y;
+            oval.x_axis_dx = oval_data.x_axis_dx;
+            oval.x_axis_dy = oval_data.x_axis_dy;
+            oval.y_axis_dx = oval_data.y_axis_dx;
+            oval.y_axis_dy = oval_data.y_axis_dy;
             oval.color = oval_data.color;
             oval.width = oval_data.width;
-            std::string annot_dict_str = generate_bluebeam_oval_dict(oval);
+            std::array<double, 4> rect = compute_oval_rect(oval);
+            std::string annot_dict_str = generate_bluebeam_oval_dict(oval, rect);
             QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
             annot_obj.replaceKey("/P", page_dict);
             std::string ap_content = generate_oval_appearance_stream(oval);
             attach_appearance_stream(output, annot_obj, ap_content,
-                                     oval.min_x, oval.min_y, oval.max_x, oval.max_y);
+                                     rect[0], rect[1], rect[2], rect[3]);
             QPDFObjectHandle annot = output.makeIndirectObject(annot_obj);
             annots.appendItem(annot);
         }

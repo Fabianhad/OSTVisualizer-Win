@@ -82,10 +82,12 @@ namespace ost_pdf_writer
         };
         struct OvalAnnotationData
         {
-            double min_x;
-            double min_y;
-            double max_x;
-            double max_y;
+            double center_x;
+            double center_y;
+            double x_axis_dx;
+            double x_axis_dy;
+            double y_axis_dx;
+            double y_axis_dy;
             std::array<uint8_t, 3> color;
             double width;
         };

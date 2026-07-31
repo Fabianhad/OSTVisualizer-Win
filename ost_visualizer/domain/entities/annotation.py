@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
@@ -188,6 +189,33 @@ class BidAnnotation:
                 return None
             return min(xs), min(ys), max(xs), max(ys)
         return None
+
+    def get_oval_geometry_ost(
+        self,
+    ) -> Optional[Tuple[float, float, float, float, float]]:
+        if not self.is_oval or len(self.position) < 4:
+            return None
+        x1, y1, x2, y2 = self.position[:4]
+        rotation = self.stored_rotation_rad
+        if not all(math.isfinite(value) for value in (x1, y1, x2, y2, rotation)):
+            return None
+        cos_r = math.cos(rotation)
+        sin_r = math.sin(rotation)
+        diagonal_x = x2 - x1
+        diagonal_y = y2 - y1
+        unrotated_width = diagonal_x * cos_r + diagonal_y * sin_r
+        unrotated_height = -diagonal_x * sin_r + diagonal_y * cos_r
+        radius_x = abs(unrotated_width) / 2.0
+        radius_y = abs(unrotated_height) / 2.0
+        if radius_x == 0.0 or radius_y == 0.0:
+            return None
+        return (
+            (x1 + x2) / 2.0,
+            (y1 + y2) / 2.0,
+            radius_x,
+            radius_y,
+            rotation,
+        )
 
     def get_text_content(self) -> str:
         return self.properties.get("Text", "")
