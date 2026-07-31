@@ -1,3 +1,4 @@
+import math
 from typing import Dict, List, Tuple
 
 ARCH_SCALES: List[Tuple[float, float, str]] = [
@@ -52,3 +53,23 @@ SCALES_BY_STYLE: Dict[int, List[Tuple[float, float, str]]] = {
     3: METRIC_SCALES,
 }
 ALL_SCALES: List[Tuple[float, float, str]] = ARCH_SCALES + CIVIL_SCALES + METRIC_SCALES
+
+
+def format_custom_scale(sf1: float, sf2: float) -> str:
+    """Return a readable label for a valid scale not listed in ``ALL_SCALES``."""
+    try:
+        drawing_units = float(sf1)
+        real_units = float(sf2)
+    except (TypeError, ValueError):
+        return ""
+    if (
+        not math.isfinite(drawing_units)
+        or not math.isfinite(real_units)
+        or drawing_units <= 0.0
+        or real_units <= 0.0
+    ):
+        return ""
+    drawing_text = f"{drawing_units:.15g}"
+    if math.isclose(real_units, 12.0, rel_tol=0.0, abs_tol=1e-9):
+        return f'{drawing_text}" = 1\' 0"'
+    return f"{drawing_text} : {real_units:.15g}"

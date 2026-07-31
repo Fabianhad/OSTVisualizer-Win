@@ -61,6 +61,89 @@ class FakeIconProvider:
         pass
 
 
+class PageSettingsScaleDisplayTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def setUp(self):
+        self.bar = PageSettingsBar(
+            FakeIconProvider(),
+            event_bus=object(),
+            refresh_areas_fn=lambda _file_path: None,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+        )
+
+    def tearDown(self):
+        self.bar.deleteLater()
+        self.app.processEvents()
+
+    def test_custom_scale_display_tracks_page_refresh_without_emitting_requests(self):
+        scale_requests = []
+        custom_requests = []
+        self.bar.scale_change_requested.connect(
+            lambda *args: scale_requests.append(args)
+        )
+        self.bar.custom_scale_requested.connect(
+            lambda *args: custom_requests.append(args)
+        )
+        initial_count = self.bar.scale_combo.count()
+        for _ in range(12):
+            self.bar.load_page("custom-1", 0.26, 12.0, "")
+        self.assertEqual(self.bar.scale_combo.currentText(), '0.26" = 1\' 0"')
+        self.assertEqual(self.bar.scale_combo.count(), initial_count)
+        self.assertEqual(scale_requests, [])
+        self.assertEqual(custom_requests, [])
+        self.bar.load_page("custom-2", 0.3751, 12.0, "")
+        self.assertEqual(self.bar.scale_combo.currentText(), '0.3751" = 1\' 0"')
+        self.assertEqual(self.bar.scale_combo.count(), initial_count)
+        self.bar.load_page("custom-1", 0.26000000000000001, 12.0, "")
+        self.assertEqual(self.bar.scale_combo.currentText(), '0.26" = 1\' 0"')
+        self.assertEqual(self.bar.scale_combo.count(), initial_count)
+
+    def test_switching_between_custom_and_predefined_resets_one_custom_item(self):
+        custom_index = self.bar.scale_combo.count() - 1
+        initial_count = self.bar.scale_combo.count()
+        self.bar.load_page("custom", 0.26, 12.0, "")
+        self.assertEqual(self.bar.scale_combo.currentIndex(), custom_index)
+        self.assertEqual(self.bar.scale_combo.itemText(custom_index), '0.26" = 1\' 0"')
+        self.bar.load_page("predefined", 0.125, 12.0, "")
+        self.assertEqual(self.bar.scale_combo.currentText(), '1/8" = 1\' 0"')
+        self.assertEqual(self.bar.scale_combo.itemText(custom_index), "Custom scale")
+        self.bar.load_page("custom", 0.26, 12.0, "")
+        self.assertEqual(self.bar.scale_combo.currentIndex(), custom_index)
+        self.assertEqual(self.bar.scale_combo.count(), initial_count)
+
+    def test_predefined_and_reloaded_scale_labels_remain_readable(self):
+        for sf1, sf2, expected in (
+            (1.0, 240.0, '1" = 20\' 0"'),
+            (0.125, 12.0, '1/8" = 1\' 0"'),
+            (0.1875, 12.0, '3/16" = 1\' 0"'),
+        ):
+            self.bar.load_page("page", sf1, sf2, "")
+            self.assertEqual(self.bar.scale_combo.currentText(), expected)
+        self.bar.load_page("custom", 0.26, 12.0, "")
+        self.bar.scale_combo.blockSignals(True)
+        self.bar.clear_bid()
+        self.assertTrue(self.bar.scale_combo.signalsBlocked())
+        self.bar.scale_combo.blockSignals(False)
+        self.bar.load_page("custom", 0.26, 12.0, "")
+        self.assertEqual(self.bar.scale_combo.currentText(), '0.26" = 1\' 0"')
+
+    def test_non_architectural_custom_and_invalid_scales_use_safe_display(self):
+        self.bar.load_page("metric-custom", 2.5, 1000.0, "")
+        self.assertEqual(self.bar.scale_combo.currentText(), "2.5 : 1000")
+        for sf1, sf2 in (
+            (None, 12.0),
+            (0.0, 12.0),
+            (0.26, 0.0),
+            (float("nan"), 12.0),
+        ):
+            self.bar.load_page("invalid", sf1, sf2, "")
+            self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
+            self.assertEqual(self.bar.scale_combo.currentText(), "")
+
+
 class MasterDataDialogButtonModeTests(unittest.TestCase):
     def test_page_settings_scale_activation_emits_one_request_per_commit(self):
         bar = PageSettingsBar(

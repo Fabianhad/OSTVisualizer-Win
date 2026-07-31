@@ -22,6 +22,10 @@
 
 ### Fixed
 
+- Fixed custom page scales appearing blank in the page settings control; the
+  current scale now remains visible after edits, refreshes, and page changes.
+- Fixed the 2D/3D view selector occupying space when workspace settings leave
+  only one view available; the remaining view now opens without redundant tabs.
 - Fixed repeated page-scale changes shifting the visible plan viewport by one
   pixel per refresh at affected viewport sizes and zoom levels.
 - Fixed rotated oval annotations exporting to PDF with axis-aligned, distorted

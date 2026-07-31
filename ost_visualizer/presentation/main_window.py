@@ -1541,9 +1541,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not visible and not other_action.isVisible():
             visible = True
         action.setVisible(visible)
-        if not visible and self._view_stack.currentIndex() == index:
-            other_index = 0 if index == 1 else 1
-            self._view_stack.setCurrentIndex(other_index)
 
     def _sync_left_splitter_visibility(self) -> None:
         self._left_splitter.setVisible(

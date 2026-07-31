@@ -149,6 +149,41 @@ class _PlanToolbarLayoutSyncFilter(QtCore.QObject):
         self._callback()
 
 
+class _TakeoffViewSelectorController(QtCore.QObject):
+    def __init__(
+        self,
+        toolbar: QtWidgets.QToolBar,
+        view_stack: QtWidgets.QStackedWidget,
+        view_3d_action: QtGui.QAction,
+        view_2d_action: QtGui.QAction,
+    ) -> None:
+        super().__init__(toolbar)
+        self._toolbar = toolbar
+        self._view_stack = view_stack
+        self._actions_by_index = {
+            0: view_3d_action,
+            1: view_2d_action,
+        }
+        for action in self._actions_by_index.values():
+            action.changed.connect(self.refresh)
+        self.refresh()
+
+    def refresh(self) -> None:
+        available_indexes = [
+            index
+            for index, action in self._actions_by_index.items()
+            if action.isVisible() and action.isEnabled()
+        ]
+        selector_visible = len(available_indexes) == 2
+        if self._toolbar.isHidden() == selector_visible:
+            self._toolbar.setVisible(selector_visible)
+        if (
+            len(available_indexes) == 1
+            and self._view_stack.currentIndex() != available_indexes[0]
+        ):
+            self._view_stack.setCurrentIndex(available_indexes[0])
+
+
 @dataclass
 class ComponentBundle:
     central_widget: QtWidgets.QWidget
@@ -568,6 +603,12 @@ class ComponentBuilder:
         plan_view.zoom_changed.connect(_on_zoom_changed)
         canvas.zoom_changed.connect(_on_3d_zoom_changed)
         view_stack.currentChanged.connect(_on_view_changed)
+        _TakeoffViewSelectorController(
+            view_toolbar,
+            view_stack,
+            btn_3d_action,
+            btn_2d_action,
+        )
         zoom_combo.activated.connect(_on_zoom_combo_activated)
         zoom_combo.lineEdit().returnPressed.connect(_on_zoom_text_entered)
         select_action.toggled.connect(

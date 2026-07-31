@@ -10,7 +10,7 @@ from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.button_policy import apply_no_highlight_button_policy
 from ..utils.ost_blocking import exec_with_ost_blocking
-from ..utils.scales import ALL_SCALES
+from ..utils.scales import ALL_SCALES, format_custom_scale
 
 logger = logging.getLogger(__name__)
 _DEFAULT_AREA_UID = "0"
@@ -61,6 +61,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         self.scale_combo.setToolTip(SCALE_TOOLTIP)
         for sf1, sf2, label in ALL_SCALES:
             self.scale_combo.addItem(label, (sf1, sf2))
+        self._custom_scale_index = self.scale_combo.count()
         self.scale_combo.addItem("Custom scale", _CUSTOM_SCALE_DATA)
         self.scale_combo.setCurrentIndex(-1)
         self.scale_combo.activated.connect(self._on_scale_activated)
@@ -128,20 +129,19 @@ class PageSettingsBar(QtWidgets.QWidget):
         areas_with_takeoff: Optional[Set] = None,
     ) -> None:
         self._page_uid = page_uid
-        self.scale_combo.blockSignals(True)
-        scale_idx = -1
-        for i in range(self.scale_combo.count()):
-            data = self.scale_combo.itemData(i)
-            if (
-                isinstance(data, tuple)
-                and abs(data[0] - sf1) < 1e-9
-                and abs(data[1] - sf2) < 1e-9
-            ):
-                scale_idx = i
-                break
-        self._current_scale_index = scale_idx
-        self.scale_combo.setCurrentIndex(scale_idx)
-        self.scale_combo.blockSignals(False)
+        signals_were_blocked = self.scale_combo.blockSignals(True)
+        try:
+            self.scale_combo.setItemText(self._custom_scale_index, "Custom scale")
+            scale_idx = self._predefined_scale_index(sf1, sf2)
+            if scale_idx < 0:
+                custom_label = format_custom_scale(sf1, sf2)
+                if custom_label:
+                    self.scale_combo.setItemText(self._custom_scale_index, custom_label)
+                    scale_idx = self._custom_scale_index
+            self._current_scale_index = scale_idx
+            self.scale_combo.setCurrentIndex(scale_idx)
+        finally:
+            self.scale_combo.blockSignals(signals_were_blocked)
         self.area_combo.blockSignals(True)
         self.area_combo.set_current_area_uid(selected_area_uid or "")
         if areas_with_takeoff is not None:
@@ -150,6 +150,21 @@ class PageSettingsBar(QtWidgets.QWidget):
         self.area_combo.blockSignals(False)
         if self._interactive:
             self._sync_interactive_controls()
+
+    def _predefined_scale_index(self, sf1: float, sf2: float) -> int:
+        try:
+            target_sf1 = float(sf1)
+            target_sf2 = float(sf2)
+        except (TypeError, ValueError):
+            return -1
+        for index in range(self._custom_scale_index):
+            scale_sf1, scale_sf2 = self.scale_combo.itemData(index)
+            if (
+                abs(scale_sf1 - target_sf1) < 1e-9
+                and abs(scale_sf2 - target_sf2) < 1e-9
+            ):
+                return index
+        return -1
 
     def _sync_interactive_controls(self) -> None:
         self.scale_combo.setEnabled(True)
@@ -172,9 +187,12 @@ class PageSettingsBar(QtWidgets.QWidget):
         self.area_combo.blockSignals(True)
         self.area_combo.clear_areas()
         self.area_combo.blockSignals(False)
-        self.scale_combo.blockSignals(True)
-        self.scale_combo.setCurrentIndex(-1)
-        self.scale_combo.blockSignals(False)
+        signals_were_blocked = self.scale_combo.blockSignals(True)
+        try:
+            self.scale_combo.setCurrentIndex(-1)
+            self.scale_combo.setItemText(self._custom_scale_index, "Custom scale")
+        finally:
+            self.scale_combo.blockSignals(signals_were_blocked)
         for w in (self.scale_combo, self.area_combo, self.area_browse_btn):
             w.setEnabled(False)
 
