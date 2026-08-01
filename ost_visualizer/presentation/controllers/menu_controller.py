@@ -600,14 +600,10 @@ class MenuController:
             current_value = self._current_state_value(variable)
             for action in actions:
                 data = action.data()
-                previous_blocked = action.blockSignals(True)
-                try:
-                    if data is None:
-                        action.setChecked(bool(current_value))
-                    else:
-                        action.setChecked(data == current_value)
-                finally:
-                    action.blockSignals(previous_blocked)
+                if data is None:
+                    action.setChecked(bool(current_value))
+                else:
+                    action.setChecked(data == current_value)
 
     @staticmethod
     def _clear_checked_actions(actions) -> None:
@@ -617,13 +613,16 @@ class MenuController:
             group.setExclusive(False)
         try:
             for action in actions:
-                previous_blocked = action.blockSignals(True)
-                try:
-                    action.setChecked(False)
-                finally:
-                    action.blockSignals(previous_blocked)
+                action.setChecked(False)
         finally:
             for group, was_exclusive in previous_exclusive.items():
+                stale_checked_action = group.checkedAction()
+                if stale_checked_action and not stale_checked_action.isChecked():
+                    group_actions = list(group.actions())
+                    for action in group_actions:
+                        group.removeAction(action)
+                    for action in group_actions:
+                        group.addAction(action)
                 group.setExclusive(was_exclusive)
 
     def _current_state_value(self, key: str):

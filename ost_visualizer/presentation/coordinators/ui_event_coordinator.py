@@ -210,9 +210,9 @@ class UIEventCoordinator:
         self._pending_takeoff_selected_area_uid: str = ""
         self._pending_takeoff_place_condition_uid: Optional[str] = None
         self._pending_takeoff_place_condition_uids: List[str] = []
-        self._last_takeoff_selection_context_by_source: Dict[
-            str, Tuple[Tuple[str, ...], Tuple[str, ...]]
-        ] = {}
+        self._selected_takeoff_uids: Tuple[str, ...] = ()
+        self._selected_takeoff_condition_uids: set[str] = set()
+        self._selection_projected_condition_uids: set[str] = set()
         self._pending_hotlink_page_uid: Optional[str] = None
         self._pending_hotlink_named_view: Optional[NamedView] = None
         self._plan_view_signaler = QtVoidCallback(parent=main_window)
@@ -757,7 +757,9 @@ class UIEventCoordinator:
     def _reset_takeoff_workspace_state(self, clear_sidebars: bool = True) -> None:
         self._takeoff_workspace_bid_ref = None
         self._clear_staged_takeoff_restore()
-        self._last_takeoff_selection_context_by_source.clear()
+        self._selected_takeoff_uids = ()
+        self._selected_takeoff_condition_uids = set()
+        self._selection_projected_condition_uids = set()
         if clear_sidebars:
             self._sidebar.clear_sidebars()
         if clear_sidebars and self._page_settings_bar:
@@ -993,6 +995,7 @@ class UIEventCoordinator:
     def highlight_sidebar(self, uids: set, reveal: bool = True) -> None:
         if self._nav.is_refreshing:
             return
+        self._selection_projected_condition_uids = set()
         self.ui_state_manager.set_highlighted_conditions(uids)
         if self.conditions_sidebar:
             self.conditions_sidebar.highlight_conditions(uids, reveal=reveal)
@@ -1076,15 +1079,62 @@ class UIEventCoordinator:
                 )
         self._suspended_layer_tool = None
 
-    def _takeoff_uids_to_condition_uids(self, uids: list) -> set:
-        if not uids:
-            return set()
-        wanted = set(uids)
-        result = set()
-        for takeoff in self.project_data.get_all_takeoffs():
-            if takeoff.uid in wanted:
-                result.add(takeoff.condition_uid)
-        return result
+    def _canonical_takeoff_selection(
+        self, uids: list
+    ) -> tuple[Tuple[str, ...], set[str]]:
+        condition_uid_by_takeoff = {
+            takeoff.uid: takeoff.condition_uid
+            for takeoff in self.project_data.get_all_takeoffs()
+        }
+        selected = tuple(
+            uid for uid in dict.fromkeys(uids) if uid in condition_uid_by_takeoff
+        )
+        condition_uids = {condition_uid_by_takeoff[uid] for uid in selected}
+        return selected, condition_uids
+
+    def _project_takeoff_selection_conditions(
+        self,
+        condition_uids: set[str],
+        *,
+        selection_changed: bool,
+        conditions_changed: bool,
+    ) -> bool:
+        current = set(self.ui_state_manager.highlighted_condition_uids)
+        previously_projected = self._selection_projected_condition_uids
+        if condition_uids:
+            if current == condition_uids:
+                return False
+            incomplete_projection = bool(previously_projected) and (
+                current.issubset(previously_projected)
+                and current.issubset(condition_uids)
+            )
+            if (
+                not selection_changed
+                and not conditions_changed
+                and current
+                and not incomplete_projection
+            ):
+                return False
+            self.highlight_sidebar(condition_uids)
+            self._selection_projected_condition_uids = set(condition_uids)
+            return True
+        placement_owns_highlight = bool(
+            self._placement.is_active
+            and self._placement.condition_uid
+            and self._placement.condition_uid in previously_projected
+        )
+        selection_owns_highlight = bool(
+            previously_projected and current.issubset(previously_projected)
+        )
+        self._selection_projected_condition_uids = set()
+        if (
+            not conditions_changed
+            or not selection_owns_highlight
+            or placement_owns_highlight
+        ):
+            return False
+        self.highlight_sidebar(set())
+        return True
 
     _SOURCE_2D = "2d"
     _SOURCE_3D = "3d_embedded"
@@ -1093,24 +1143,34 @@ class UIEventCoordinator:
     def _sync_selection(self, source: str, takeoff_uids: list) -> None:
         if self._placement is None or self._nav is None:
             return
-        if takeoff_uids:
-            cond_uids = self._takeoff_uids_to_condition_uids(takeoff_uids)
-            selection_context = (tuple(sorted(takeoff_uids)), tuple(sorted(cond_uids)))
-            selection_changed = (
-                self._last_takeoff_selection_context_by_source.get(source)
-                != selection_context
-            )
-            self._last_takeoff_selection_context_by_source[source] = selection_context
-            current_highlight = set(self.ui_state_manager.highlighted_condition_uids)
-            highlight_missing = bool(cond_uids) and not current_highlight
-            if selection_changed or highlight_missing:
-                self.highlight_sidebar(cond_uids)
+        selected_uids, cond_uids = self._canonical_takeoff_selection(takeoff_uids)
+        previous_selection = self._selected_takeoff_uids
+        previous_conditions = self._selected_takeoff_condition_uids
+        selection_changed = selected_uids != previous_selection
+        conditions_changed = cond_uids != previous_conditions
+        self._selected_takeoff_uids = selected_uids
+        self._selected_takeoff_condition_uids = cond_uids
+        projection_changed = self._project_takeoff_selection_conditions(
+            cond_uids,
+            selection_changed=selection_changed,
+            conditions_changed=conditions_changed,
+        )
+        if not selection_changed:
+            if (
+                projection_changed
+                and self._tab_widget
+                and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
+            ):
+                self._toolbar.refresh()
+            return
+        if selected_uids:
+            mirrored_uids = list(selected_uids)
             if source != self._SOURCE_2D and self.plan_view:
-                self.plan_view.set_selected_uids(set(takeoff_uids), emit=False)
+                self.plan_view.set_selected_uids(set(selected_uids), emit=False)
             if source != self._SOURCE_3D and self.opengl_viewer:
-                self.opengl_viewer.set_selected_takeoffs(takeoff_uids)
+                self.opengl_viewer.set_selected_takeoffs(mirrored_uids)
             if source != self._SOURCE_3D_WINDOW and self._mesh_window:
-                self._mesh_window.set_selected_takeoffs(takeoff_uids)
+                self._mesh_window.set_selected_takeoffs(mirrored_uids)
             if (
                 source != self._SOURCE_2D
                 and self._placement.is_active
@@ -1123,7 +1183,6 @@ class UIEventCoordinator:
                 ):
                     self._placement.enter(new_uid, list(cond_uids))
         else:
-            self._last_takeoff_selection_context_by_source[source] = ((), ())
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.clear_selection(emit=False)
             if source != self._SOURCE_3D and self.opengl_viewer:
@@ -2611,12 +2670,6 @@ class UIEventCoordinator:
             scene_identity.bid_ref != bid_ref
             or scene_identity.page_uids != selected_pages
         ):
-            logger.info(
-                "Discarding stale native scene for %s; active scene is %s/%s",
-                scene_identity,
-                bid_ref,
-                selected_pages,
-            )
             return
         if scene_failed:
             self._clear_mesh_replay_buffer()
@@ -2992,6 +3045,7 @@ class UIEventCoordinator:
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
 
     def _on_condition_selected(self, condition_uid: str) -> None:
+        self._selection_projected_condition_uids = set()
         if not condition_uid:
             self.ui_state_manager.set_highlighted_conditions(set())
             selected_takeoff_condition_uid = (

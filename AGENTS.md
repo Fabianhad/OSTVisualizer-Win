@@ -165,6 +165,12 @@ State and identity:
 - Do not use display labels as logic keys when a stable ID, type, enum, registry entry, or value object exists.
 - Prefer registry and service lookups over type-specific branches. Special-case behavior only when the domain model proves the behavior is genuinely different.
 - Mirrored UI/render state is acceptable when synchronized from an owner; avoid adding competing mutation paths or extra refresh/event dispatch paths.
+- `UIEventCoordinator` owns the canonical cross-view takeoff selection and its
+  takeoff-to-condition sidebar projection. Direct 2D/3D user selections update
+  that owner; mirrored viewer updates remain non-emitting. Plan cursor mode is
+  authoritative for interaction state, and its toolbar actions must remain in
+  the existing exclusive action group rather than using signal-blocked checked
+  states that bypass group exclusivity.
 
 C++ extensions:
 

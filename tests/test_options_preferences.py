@@ -2039,6 +2039,53 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertTrue(action.isChecked())
         self.assertTrue(action.signalsBlocked())
 
+    def test_menu_radio_sync_updates_exclusive_group_ownership(self):
+        first = QtGui.QAction()
+        second = QtGui.QAction()
+        for action, value in ((first, "first"), (second, "second")):
+            action.setCheckable(True)
+            action.setData(value)
+        group = QtGui.QActionGroup(None)
+        group.setExclusive(True)
+        group.addAction(first)
+        group.addAction(second)
+        first.setChecked(True)
+        triggered = []
+        second.triggered.connect(triggered.append)
+        controller = MenuController.__new__(MenuController)
+        controller._variable_actions = {"display_mode_3d": [first, second]}
+        controller._state_getters = {"display_mode_3d": lambda: "second"}
+        controller._sync_variable_actions(takeoff_active=True)
+        controller._sync_variable_actions(takeoff_active=True)
+        self.assertFalse(first.isChecked())
+        self.assertTrue(second.isChecked())
+        self.assertIs(group.checkedAction(), second)
+        self.assertEqual(triggered, [])
+        first.trigger()
+        self.assertTrue(first.isChecked())
+        self.assertFalse(second.isChecked())
+        self.assertIs(group.checkedAction(), first)
+
+    def test_menu_radio_clear_releases_exclusive_group_ownership(self):
+        first = QtGui.QAction()
+        second = QtGui.QAction()
+        for action, value in ((first, "first"), (second, "second")):
+            action.setCheckable(True)
+            action.setData(value)
+        group = QtGui.QActionGroup(None)
+        group.setExclusive(True)
+        group.addAction(first)
+        group.addAction(second)
+        first.setChecked(True)
+        controller = MenuController.__new__(MenuController)
+        controller._variable_actions = {"display_mode_3d": [first, second]}
+        controller._state_getters = {"display_mode_3d": lambda: "first"}
+        controller._sync_variable_actions(takeoff_active=False)
+        controller._sync_variable_actions(takeoff_active=False)
+        self.assertFalse(first.isChecked())
+        self.assertFalse(second.isChecked())
+        self.assertIsNone(group.checkedAction())
+
     def test_summary_tab_disables_project_tree_creation_but_allows_import(self):
         controller = MenuController.__new__(MenuController)
         controller.window = SimpleNamespace(is_summary_tab_active=lambda: True)

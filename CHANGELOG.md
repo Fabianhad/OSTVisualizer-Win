@@ -92,7 +92,10 @@
 - Fixed moving ordinary bid layers up or down reporting success without changing their stored sequence.
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.
 - Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
-- Fixed silent toolbar check-state synchronization so it preserves signal blocks owned by an enclosing UI update.
+- Fixed takeoff selection synchronization so 2D and 3D share one canonical
+  takeoff-to-condition projection while preserving explicit sidebar ownership;
+  cursor-toolbar and radio-menu synchronization also preserve exclusive QAction
+  group ownership.
 - Fixed hidden-layer line, arrow, and dimension annotations remaining selectable through geometric fallback hit-testing.
 - Fixed native 3D viewer cleanup so a renderer shutdown failure cannot retain a stale native renderer or prevent the remaining Qt-owned resources from being released.
 - Fixed native 3D renderer shutdown releasing all picking and selection GPU

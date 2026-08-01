@@ -7843,6 +7843,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             FakePageItem(scene, QtCore.QRectF(-10000.0, -10000.0, 20.0, 20.0))
         ]
         view._hotlink_items = []
+        view._cursor_mode = CURSOR_MODE_SELECT
+        view._overlay_move_dragging = False
+        view._overlay_move_handle_item = None
         view._load_view_applied = True
         view.get_precise_viewport_scene_center = lambda: QtCore.QPointF(25.0, 50.0)
         view.centerOn = lambda point: calls.append(point)

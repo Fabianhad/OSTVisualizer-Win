@@ -1363,7 +1363,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget()
         coordinator._page_settings_bar = None
         coordinator._takeoff_workspace_bid_ref = bid_ref
-        coordinator._last_takeoff_selection_context_by_source = {}
+        coordinator._selected_takeoff_uids = ()
+        coordinator._selected_takeoff_condition_uids = set()
+        coordinator._selection_projected_condition_uids = set()
         coordinator._clear_staged_takeoff_restore = lambda: None
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
         coordinator._is_condition_placeable = lambda _condition_uid: True

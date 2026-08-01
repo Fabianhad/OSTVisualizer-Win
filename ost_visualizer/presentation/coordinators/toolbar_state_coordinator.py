@@ -2,7 +2,6 @@ from typing import Optional
 from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
 from ..managers.ui_access_manager import Feature, PlanSurfaceAccessState
-from ..modes.cursor import CURSOR_MODE_SELECT
 from ..services.bid_clipboard_service import BidClipboardService
 
 _BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
@@ -136,21 +135,7 @@ class ToolbarStateCoordinator:
             return
         if self._select_action.isChecked():
             return
-        signals_blocked = self._select_action.blockSignals(True)
-        try:
-            self._select_action.setChecked(True)
-        finally:
-            self._select_action.blockSignals(signals_blocked)
-
-    @staticmethod
-    def _set_action_checked_silent(action: QtGui.QAction, checked: bool) -> None:
-        if action.isChecked() == checked:
-            return
-        signals_blocked = action.blockSignals(True)
-        try:
-            action.setChecked(checked)
-        finally:
-            action.blockSignals(signals_blocked)
+        self._select_action.setChecked(True)
 
     def is_takeoff_2d_view_active(self) -> bool:
         return bool(
@@ -476,16 +461,9 @@ class ToolbarStateCoordinator:
             return False
         if self._active_placement_is_valid(active_feature, plan_access):
             return False
-        if active_feature == Feature.PLACE_PLAN_ITEMS:
-            self._set_action_checked_silent(self._place_action, False)
-        else:
-            for action in self._annotation_tool_actions:
-                if action.isChecked():
-                    self._set_action_checked_silent(action, False)
-        self.set_select_checked()
         if self.plan_view:
             self.plan_view.reset_ctrl_held()
-            self.plan_view.set_cursor_mode(CURSOR_MODE_SELECT)
+        self.set_select_checked()
         return True
 
     def cleanup(self) -> None:

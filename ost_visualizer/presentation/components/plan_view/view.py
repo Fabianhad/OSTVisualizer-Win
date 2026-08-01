@@ -4280,9 +4280,9 @@ class TakeoffPlanView(
 
     def _update_overlay_move_handle_position(self, *_args) -> None:
         if (
-            getattr(self, "_cursor_mode", None) != CURSOR_MODE_MOVE_OVERLAY_HANDLE
-            or getattr(self, "_overlay_move_dragging", False)
-            or getattr(self, "_overlay_move_handle_item", None) is None
+            self._cursor_mode != CURSOR_MODE_MOVE_OVERLAY_HANDLE
+            or self._overlay_move_dragging
+            or self._overlay_move_handle_item is None
         ):
             return
         center = self._viewport_center_pixel_scene_pos()
