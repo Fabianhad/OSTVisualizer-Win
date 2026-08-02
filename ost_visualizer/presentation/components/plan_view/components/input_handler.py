@@ -178,6 +178,9 @@ class InputHandlerMixin:
     def begin_intelligent_paste_drag_if_pending(self, _drag_positions) -> bool:
         return False
 
+    def request_geometry_edit_lease(self, _uids) -> bool:
+        return True
+
     def finish_intelligent_paste_placement(self) -> None:
         pass
 
@@ -295,6 +298,16 @@ class InputHandlerMixin:
         self._zoom_press_ctrl = False
         self._clear_drag_tracking(restore_preview=restore_preview)
         return True
+
+    def prepare_for_modal_mutation_error(self) -> None:
+        """Release pointer interaction state before a modal mutation error."""
+        self._cancel_active_drag_interaction(restore_preview=True)
+        self._cancel_rotation_drag_interaction()
+        if self._panning:
+            self._finish_pan_interaction()
+        self.reset_ctrl_held()
+        self._last_mouse_vp_pos = None
+        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
 
     def _clear_stale_drag_tracking_if_mouse_released(self, event: QMouseEvent) -> None:
         if event.buttons() & Qt.MouseButton.LeftButton:
@@ -615,6 +628,12 @@ class InputHandlerMixin:
             and event.button() == Qt.MouseButton.LeftButton
         ):
             if self._is_over_rotate_handle(vp_pos):
+                rotation_preview_uids = self._selected_rotation_preview_uids()
+                if self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE:
+                    rotation_preview_uids = {self._rotate_handle_uid}
+                if not self.request_geometry_edit_lease(rotation_preview_uids):
+                    event.accept()
+                    return
                 scene_pos = self.mapToScene(vp_pos)
                 dx = scene_pos.x() - self._rotate_center_scene.x()
                 dy = scene_pos.y() - self._rotate_center_scene.y()
@@ -636,7 +655,6 @@ class InputHandlerMixin:
                         self._rotation_drag_active = False
                     event.accept()
                     return
-                rotation_preview_uids = self._selected_rotation_preview_uids()
                 for sel_uid in rotation_preview_uids:
                     t = self._current_takeoffs.get(sel_uid)
                     if t:
@@ -770,6 +788,11 @@ class InputHandlerMixin:
                                 self._press_changed_selection = True
                                 _can_start_drag = True
                 if _can_start_drag:
+                    if not self.request_geometry_edit_lease(set(self._selected_uids)):
+                        self._clear_drag_tracking(restore_preview=True)
+                        self._select_band_origin = None
+                        event.accept()
+                        return
                     if len(self._selected_uids) == 1:
                         uid = next(iter(self._selected_uids))
                         takeoff = self._current_takeoffs.get(uid)
@@ -2356,6 +2379,9 @@ class InputHandlerMixin:
             and self._selected_uids
             and event.key() in _arrow_keys
         ):
+            if not self.request_geometry_edit_lease(set(self._selected_uids)):
+                event.accept()
+                return
             step = self._snap_increments if self._snap_increments > 0 else 1.0
             key = event.key()
             ost_dx = (

@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import pyodbc
 from ....domain.entities.area import BidAreaChangeset
 from ....domain.services.uom_service import normalize_uom_for_system
@@ -466,7 +466,10 @@ class SettingsOperationsMixin:
         self._require_write_columns(schema, "BidPages", ("UID",))
         cursor.execute("DELETE FROM [BidPages] WHERE [UID]=?", page_int)
 
-    def save_job_statuses(self, db_path: str, changes: dict) -> bool:
+    def save_job_statuses(
+        self, db_path: str, changes: Dict[str, Any]
+    ) -> Optional[Dict[str, str]]:
+        uid_map: dict[str, str] = {}
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -518,12 +521,13 @@ class SettingsOperationsMixin:
                 for s in changes.get("new", []):
                     try:
                         locked_val = -1 if s.get("locked") else 0
+                        assigned_uid = self._next_uid(cursor, "JobStatuses")
                         self._execute_insert_values(
                             cursor,
                             schema,
                             "JobStatuses",
                             {
-                                "UID": self._next_uid(cursor, "JobStatuses"),
+                                "UID": assigned_uid,
                                 "Name": s.get("name", "New Status"),
                                 "Locked": locked_val,
                                 "Sequence": s.get("sequence", 0),
@@ -531,15 +535,16 @@ class SettingsOperationsMixin:
                             ("UID", "Name"),
                             "save_job_status_new",
                         )
+                        uid_map[str(s.get("uid", ""))] = str(assigned_uid)
                     except pyodbc.Error as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                return True
+                return uid_map
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
             self.logger.exception("Failed to save job statuses in %s", db_path)
-            return False
+            return None
 
     def save_employees(self, db_path: str, changes: dict) -> dict | None:
         uid_map: dict = {}
@@ -684,7 +689,10 @@ class SettingsOperationsMixin:
             self.logger.exception("Failed to save employees in %s", db_path)
             return None
 
-    def save_pay_classes(self, db_path: str, changes: Dict[str, Any]) -> bool:
+    def save_pay_classes(
+        self, db_path: str, changes: Dict[str, Any]
+    ) -> Optional[Dict[str, str]]:
+        uid_map: dict[str, str] = {}
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -753,15 +761,16 @@ class SettingsOperationsMixin:
                             ("UID", "Name"),
                             "save_pay_class_new",
                         )
+                        uid_map[str(pc.get("uid", ""))] = str(assigned_uid)
                     except pyodbc.Error as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                return True
+                return uid_map
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
             self.logger.exception("Failed to save pay classes in %s", db_path)
-            return False
+            return None
 
     def save_condition_types(self, db_path: str, changes: dict) -> dict | None:
         uid_map: dict = {}

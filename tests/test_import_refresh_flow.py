@@ -1,8 +1,13 @@
 import tempfile
 import unittest
+import uuid
 from pathlib import Path, PureWindowsPath
 from PySide6 import QtWidgets
 from ost_visualizer.application.services.import_service import ImportService
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+)
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.infrastructure.mdb.importers import (
     osp_importer as osp_importer_module,
@@ -27,6 +32,12 @@ class FakeImporter:
     def import_osp(self, source_path, target_path, project_uid=None):
         self.calls.append(("osp", source_path, target_path, project_uid))
         return True
+
+    def import_ost_mutation(self, source_path, target_path, project_uid, recorder):
+        self.calls.append(
+            ("ost_mutation", source_path, target_path, project_uid, recorder)
+        )
+        return {"bid_uids": {"source": "target"}}
 
 
 class FakeOspCab:
@@ -74,6 +85,8 @@ class FakeImportService:
         self.reloads = []
         self.next_result = True
         self.reload_result = True
+        self.sql_collaboration = False
+        self.queued_imports = []
 
     def import_ost(self, filename, target_db, target_project_uid, refresh=True):
         self.import_calls.append((filename, target_db, target_project_uid, refresh))
@@ -82,6 +95,17 @@ class FakeImportService:
     def reload_and_notify(self, target_db):
         self.reloads.append(target_db)
         return self.reload_result
+
+    def uses_sql_collaboration_import(self, _target_db):
+        return self.sql_collaboration
+
+    def queue_project_import(
+        self, source, source_kind, target_db, project_uid, callback
+    ):
+        self.queued_imports.append(
+            (source, source_kind, target_db, project_uid, callback)
+        )
+        return len(self.queued_imports)
 
 
 class FakeProjectData:
@@ -163,6 +187,11 @@ class ImportRefreshFlowTests(unittest.TestCase):
         service = ImportService(
             ost_importer=importer,
             osp_importer=importer,
+            project_write_service=type(
+                "ProjectWriteService",
+                (),
+                {"uses_sql_collaboration_mutations": lambda _self, _path: False},
+            )(),
             reload_database=lambda path: reloads.append(path) or True,
             event_bus=event_bus,
         )
@@ -195,6 +224,24 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self.assertEqual(len(importer.calls), 1)
         self.assertEqual(importer.calls[0][0], "ost")
         self.assertEqual(importer.calls[0][2:], ("target.mdb", "project-1"))
+        self.assertFalse(fake_cab.root.exists())
+
+    def test_osp_mutation_uses_shared_extraction_and_cleans_temp_files(self):
+        fake_cab = FakeOspCab()
+        importer = FakeImporter()
+        recorder = object()
+        original_cab = osp_importer_module.ost_cab
+        try:
+            osp_importer_module.ost_cab = fake_cab
+            result = OspImporter(importer).import_osp_mutation(
+                "source.osp", "target.sql", "project-1", recorder
+            )
+        finally:
+            osp_importer_module.ost_cab = original_cab
+        self.assertEqual(result, {"bid_uids": {"source": "target"}})
+        self.assertEqual(len(importer.calls), 1)
+        self.assertEqual(importer.calls[0][0], "ost_mutation")
+        self.assertEqual(importer.calls[0][2:], ("target.sql", "project-1", recorder))
         self.assertFalse(fake_cab.root.exists())
 
     def test_osp_import_rejects_unsafe_cab_member_paths_before_extraction(self):
@@ -520,6 +567,54 @@ class ImportRefreshFlowTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_sql_import_handler_queues_without_modal_or_ui_thread_reload(self):
+        service = FakeImportService()
+        service.sql_collaboration = True
+        messages = []
+        window = object()
+        handler = ImportHandler(
+            window=window,
+            project_data_service=FakeProjectData(),
+            import_service=service,
+            ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
+        )
+        original_dialog = import_handler_module.ProgressDialog
+        original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
+        original_show_info = import_handler_module.show_info
+        try:
+            import_handler_module.ProgressDialog = lambda *_args, **_kwargs: self.fail(
+                "SQL import must not open the synchronous progress path"
+            )
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                lambda *_args, **_kwargs: ("source.ost", "")
+            )
+            import_handler_module.show_info = (
+                lambda parent, title, message: messages.append((parent, title, message))
+            )
+            handler.import_ost()
+            self.assertEqual(service.reloads, [])
+            self.assertEqual(len(service.queued_imports), 1)
+            queued = service.queued_imports[0]
+            self.assertEqual(queued[:4], ("source.ost", "ost", "target.mdb", None))
+            queued[4](
+                QueuedMutationResult(
+                    database_id="target.mdb",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                )
+            )
+        finally:
+            import_handler_module.ProgressDialog = original_dialog
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                original_get_open
+            )
+            import_handler_module.show_info = original_show_info
+        self.assertEqual(messages[0][1], "Import Complete")
+        self.assertEqual(service.reloads, [])
 
     def test_import_handler_denies_direct_call_when_import_access_is_read_only(self):
         service = FakeImportService()

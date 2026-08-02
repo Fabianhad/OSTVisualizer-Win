@@ -42,3 +42,20 @@ def acquire_resource_transaction_lock(
                 "Another session is changing the same SQL resource.",
             )
         )
+
+
+def acquire_operation_transaction_lock(cursor, operation_id: str) -> None:
+    cursor.execute(
+        "DECLARE @result int; EXEC @result=sys.sp_getapplock "
+        "@Resource=?, @LockMode=N'Exclusive', @LockOwner=N'Transaction', "
+        "@LockTimeout=10000; SELECT @result",
+        f"OSTV:operation:{operation_id}",
+    )
+    row = cursor.fetchone()
+    if row is None or int(row[0]) < 0:
+        raise SqlInfrastructureError(
+            SqlErrorDetails(
+                SqlErrorCode.LOCKED,
+                "Another session is resolving the same SQL operation.",
+            )
+        )

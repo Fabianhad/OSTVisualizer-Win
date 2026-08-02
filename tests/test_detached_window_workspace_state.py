@@ -1,5 +1,6 @@
 import os
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -10,6 +11,14 @@ from ost_visualizer.application.builders.annotation_view_builder import (
 )
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
+)
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    AuthoritativeMutationResult,
+    EditLeaseHandle,
+    EditLeaseResult,
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+    ResourceLock,
 )
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.application.events.app_events import AppEvents
@@ -418,6 +427,9 @@ class FakeDetachedPlanView:
         self.cancel_place_mode_calls = 0
         self.clipboard_emit_count = 0
         self.intelligent_paste_calls = []
+        self.pending_mutation_uids = set()
+        self.geometry_lease_pending = set()
+        self.geometry_lease_granted = set()
         self.clipboard_changed = SimpleNamespace(emit=self._emit_clipboard_changed)
 
     def restore_flushed_positions(self, takeoff_changes, ann_changes):
@@ -435,11 +447,26 @@ class FakeDetachedPlanView:
     def get_selected_uids(self):
         return sorted(self.selected_uids)
 
+    def set_geometry_edit_lease_pending(self, uids):
+        self.geometry_lease_pending = set(uids)
+        self.geometry_lease_granted = set()
+
+    def set_geometry_edit_lease_granted(self, uids):
+        self.geometry_lease_pending = set()
+        self.geometry_lease_granted = set(uids)
+
+    def disable_geometry_edit_leasing(self):
+        self.geometry_lease_pending = set()
+        self.geometry_lease_granted = set()
+
     def set_selected_uids(self, uids):
         self.selected_uids = set(uids)
 
     def clear_selection(self):
         self.selected_uids = set()
+
+    def set_pending_mutation_uids(self, uids):
+        self.pending_mutation_uids = set(uids)
 
     def find_annotation_keys_by_uid_type(self, uid_type_set):
         return {
@@ -515,6 +542,8 @@ class FakeAnnotationWriteService:
         self.style_calls = []
         self.style_reload_flags = []
         self.delete_calls = []
+        self.edit_lease_requests = []
+        self.ended_edit_leases = []
         self.delete_reload_flags = []
         self.next_uids = ["ann-1"]
         self.next_uid_batches = []
@@ -560,6 +589,46 @@ class FakeAnnotationWriteService:
         self.delete_calls.append((db_path, list(annotation_keys)))
         self.delete_reload_flags.append(publish_database_refreshed_after_write)
         return True
+
+
+class FakeQueuedProjectWriteService:
+    def __init__(self):
+        self.geometry_calls = []
+        self.property_calls = []
+        self.paste_calls = []
+        self.delete_calls = []
+        self.edit_lease_requests = []
+        self.ended_edit_leases = []
+
+    @staticmethod
+    def uses_sql_collaboration_mutations(_database_id):
+        return True
+
+    def queue_plan_geometry(self, *args, **kwargs):
+        self.geometry_calls.append((args, kwargs))
+        return len(self.geometry_calls)
+
+    def queue_plan_properties(self, *args, **kwargs):
+        self.property_calls.append((args, kwargs))
+        return len(self.property_calls)
+
+    def queue_plan_items_paste(self, *args, **kwargs):
+        self.paste_calls.append((args, kwargs))
+        return len(self.paste_calls)
+
+    def queue_plan_items_delete(self, *args, **kwargs):
+        self.delete_calls.append((args, kwargs))
+        return len(self.delete_calls)
+
+    def request_plan_edit_lease(
+        self, database_id, resources, dependencies, callback, **options
+    ):
+        self.edit_lease_requests.append(
+            (database_id, resources, dependencies, options, callback)
+        )
+
+    def end_plan_edit_lease(self, handle):
+        self.ended_edit_leases.append(handle)
 
 
 class FakeAnnotationProjectData:
@@ -665,9 +734,13 @@ class FakeEventBus:
 class FakeUndoService:
     def __init__(self):
         self.pushes = []
+        self.async_pushes = []
+
+    def push_local(self, undo, redo):
+        self.pushes.append((undo, redo))
 
     def push(self, undo, redo):
-        self.pushes.append((undo, redo))
+        self.async_pushes.append((undo, redo))
 
 
 class TrackableSignal:
@@ -703,6 +776,8 @@ class CleanupPlanView:
         self.text_annotation_created = CleanupSignal()
         self.named_view_created = CleanupSignal()
         self.hotlink_placement_requested = CleanupSignal()
+        self.geometry_edit_lease_requested = CleanupSignal()
+        self.plan_item_selection_changed = CleanupSignal()
         self.cursor_mode_change_requested = CleanupSignal()
         self.area_placement_in_progress = CleanupSignal()
         self.text_annotation_edit_mode_changed = CleanupSignal()
@@ -716,6 +791,9 @@ class CleanupPlanView:
 
     def cleanup(self):
         self.cleaned = True
+
+    def disable_geometry_edit_leasing(self):
+        pass
 
 
 class CleanupCombo:
@@ -1792,6 +1870,11 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         plan_view = CleanupPlanView()
         timer_calls = []
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
+        window._geometry_edit_lease_handle = None
+        window._geometry_edit_lease_request_id = ""
+        window._geometry_edit_lease_selection = set()
         window._show_timer = SimpleNamespace(
             stop=lambda: timer_calls.append("show-stop"),
             deleteLater=lambda: timer_calls.append("show-delete"),
@@ -1882,6 +1965,8 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
     cursor_mode_change_requested = QtCore.Signal(str)
     area_placement_in_progress = QtCore.Signal(bool)
     text_annotation_edit_mode_changed = QtCore.Signal(bool)
+    geometry_edit_lease_requested = QtCore.Signal(object)
+    plan_item_selection_changed = QtCore.Signal(object)
     annotation_place_type = ""
 
     def __init__(self, *_args, **_kwargs):
@@ -1896,6 +1981,9 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
 
     def set_editing_enabled(self, enabled):
         self.editing_enabled = bool(enabled)
+
+    def disable_geometry_edit_leasing(self):
+        pass
 
     def set_annotation_only_selection(self, _enabled):
         pass
@@ -2023,6 +2111,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         combo.set_current_page_uid(target_page_uid)
         window = window_cls.__new__(window_cls)
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
+        window._geometry_edit_lease_handle = None
+        window._geometry_edit_lease_request_id = ""
+        window._geometry_edit_lease_selection = set()
         window._pages_with_takeoffs = set(pages_with_takeoffs)
         window._page_combo = combo
         view = AnnotationView(
@@ -2182,6 +2275,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         annotations=None,
         *,
         write_service=None,
+        project_write_service=None,
         undo_service=None,
     ):
         plan_view = FakeDetachedPlanView(annotations)
@@ -2191,6 +2285,13 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service or FakeAnnotationWriteService()
+        window._project_write_svc = project_write_service
+        window._file_path = "bid.mdb"
+        window._pending_annotation_mutation_uids = set()
+        window._completed_sql_mutation_ids = set()
+        window._geometry_edit_lease_handle = None
+        window._geometry_edit_lease_request_id = ""
+        window._geometry_edit_lease_selection = set()
         project_data, event_bus = self._attach_annotation_write_coordinator(
             window, window._ann_write_svc, annotations
         )
@@ -2213,6 +2314,146 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             event_bus,
         )
         return project_data, event_bus
+
+    def test_detached_sql_annotation_creation_uses_shared_queue_and_history(self):
+        queued_write = FakeQueuedProjectWriteService()
+        undo_service = FakeUndoService()
+        window, plan_view, annotation_write = self._make_annotation_clipboard_window(
+            project_write_service=queued_write,
+            undo_service=undo_service,
+        )
+        plan_view.annotation_key_map[("ann-sql", "line")] = "ann-sql_line"
+        window._on_annotation_created("line", [1.0, 2.0, 3.0, 4.0], "p1")
+        self.assertEqual(annotation_write.insert_calls, [])
+        self.assertEqual(len(queued_write.paste_calls), 1)
+        args, kwargs = queued_write.paste_calls[0]
+        self.assertEqual(args[0], "bid.mdb")
+        self.assertEqual(kwargs["owning_surface"], "detached-plan")
+        payload = args[1]
+        source_uid = payload.annotation_source_uids[0]
+        callback = args[2]
+        result = QueuedMutationResult(
+            database_id="bid.mdb",
+            runtime_generation=1,
+            operation_id=str(uuid.uuid4()),
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            authoritative_result=AuthoritativeMutationResult(
+                created_resource_ids=("ann-sql",),
+                created_uid_maps=(("annotations", ((source_uid, "ann-sql"),)),),
+            ),
+        )
+        callback(result)
+        callback(result)
+        self.assertEqual(plan_view.selected_uids, {"ann-sql_line"})
+        self.assertEqual(len(undo_service.async_pushes), 1)
+
+    def test_detached_sql_annotation_move_stays_blocked_until_recovered(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
+        queued_write = FakeQueuedProjectWriteService()
+        undo_service = FakeUndoService()
+        window, plan_view, annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+            undo_service=undo_service,
+        )
+        plan_view.annotation_key_map[("a1", "text")] = "a1_text"
+        changes = [("a1", "text", [1.0, 1.0], [2.0, 2.0])]
+        window._on_positions_flushed([], changes)
+        self.assertEqual(annotation_write.position_calls, [])
+        self.assertEqual(plan_view.pending_mutation_uids, {"a1_text"})
+        args, kwargs = queued_write.geometry_calls[0]
+        self.assertEqual(kwargs["owning_surface"], "detached-plan")
+        callback = args[2]
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, {"a1_text"})
+        self.assertEqual(plan_view.restored_positions, [])
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(len(undo_service.async_pushes), 1)
+
+    def test_detached_sql_annotation_move_consumes_gesture_lease(self):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            page_uid="p1",
+            layer_uid="layer-1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        plan_view.annotation_key_map[("a1", "text")] = "a1"
+        plan_view.selected_uids = {"a1"}
+        window._on_geometry_edit_lease_requested(["a1"])
+        self.assertEqual(plan_view.geometry_lease_pending, {"a1"})
+        database_id, resources, dependencies, options, lease_callback = (
+            queued_write.edit_lease_requests[0]
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-detached",
+            runtime_generation=2,
+            operation_id=options["operation_id"],
+            owning_surface="detached-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+            locks=tuple(
+                ResourceLock(database_id, resource, f"lock-{index}")
+                for index, resource in enumerate(resources)
+            ),
+        )
+        lease_callback(EditLeaseResult(True, handle=handle))
+        self.assertEqual(plan_view.geometry_lease_granted, {"a1"})
+        window._on_positions_flushed(
+            [],
+            [("a1", "text", [1.0, 1.0], [2.0, 2.0])],
+        )
+        geometry_options = queued_write.geometry_calls[0][1]
+        self.assertIs(geometry_options["edit_lease_handle"], handle)
+        self.assertEqual(
+            geometry_options["dependency_resources"],
+            dependencies,
+        )
+        self.assertEqual(queued_write.ended_edit_leases, [])
+
+    def test_detached_sql_annotation_delete_failure_restores_selection(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        plan_view.annotation_key_map[("a1", "text")] = "a1"
+        plan_view.selected_uids = {"a1"}
+        window._on_elements_deleted(["a1"])
+        self.assertEqual(annotation_write.delete_calls, [])
+        self.assertEqual(plan_view.pending_mutation_uids, {"a1"})
+        callback = queued_write.delete_calls[0][0][4]
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(plan_view.selected_uids, {"a1"})
 
     def test_annotation_window_uses_shared_annotation_tool_specs_only(self):
         self.assertEqual(
@@ -2442,6 +2683,19 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         redo()
         self.assertEqual(write_service.insert_reload_flags, [False, False])
         self.assertEqual(plan_view.selected_uids, {"ann-1_text"})
+
+    def test_detached_mdb_paste_skips_dangling_hotlink(self):
+        hotlink = _hotlink_annotation("hl1", "missing-view")
+        write_service = FakeAnnotationWriteService()
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            [hotlink],
+            write_service=write_service,
+            undo_service=FakeUndoService(),
+        )
+        plan_view.set_selected_uids({"hl1"})
+        DetachedPageViewWindow._on_copy_requested(window, ["hl1"])
+        DetachedPageViewWindow._on_paste_requested(window)
+        self.assertEqual(write_service.insert_calls, [])
 
     def test_create_window_defers_first_show_until_after_manager_setup(self):
         calls = []
@@ -3451,10 +3705,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             target_page_uid="page-1",
         )
         write_service = SimpleNamespace(
+            queue_page_setting_if_sql=lambda *_args, **_kwargs: None,
             save_page_scale=lambda db_path, page_uid, sf1, sf2: calls.append(
                 ("save", db_path, page_uid, sf1, sf2)
             )
-            or False
+            or False,
         )
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._write_service = write_service
@@ -3473,6 +3728,49 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._ui_access_manager.state = PlanSurfaceAccessState()
         manager._on_window_scale_changed("page-1", 0.5, 12.0)
         self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
+
+    def test_detached_sql_scale_uses_queued_page_setting_path(self):
+        calls = []
+        bid_ref = BidRef("sql-database", "bid-1")
+        view = SimpleNamespace(
+            file_path="sql-database",
+            bid_ref=bid_ref,
+            target_page_uid="page-1",
+        )
+
+        def queue_page_setting(*args, **kwargs):
+            calls.append(("queue", args, kwargs))
+            return True
+
+        write_service = SimpleNamespace(
+            queue_page_setting_if_sql=queue_page_setting,
+            save_page_scale=lambda *_args: self.fail(
+                "SQL scale changes must not use the synchronous write path"
+            ),
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._write_service = write_service
+        manager._remote_surface_id = "detached-plan:test"
+        manager._ui_access_manager = FakePlanSurfaceAccessManager(
+            PlanSurfaceAccessState(can_edit_page_settings=True)
+        )
+        page_data = PageViewDto(page=Page(uid="page-1", name="Page 1"), bid_ref=bid_ref)
+        manager._window = SimpleNamespace(page_data=page_data)
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
+        manager._refresh_window = lambda: calls.append(("refresh",))
+        manager.logger = SimpleNamespace(exception=lambda *args, **_options: None)
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "queue",
+                    ("sql-database", "page-1", "scale", [0.25, 12.0]),
+                    {"owning_surface": "detached-plan"},
+                )
+            ],
+        )
 
     def test_detached_view_projects_independent_capabilities(self):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
@@ -3592,6 +3890,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = SimpleNamespace(
             save_annotation_positions=lambda *_args, **_kwargs: False
         )
@@ -3613,6 +3913,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = SimpleNamespace(
             save_annotation_text_properties=lambda *_args, **_kwargs: False
         )
@@ -3635,6 +3937,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._project_write_svc = None
         window._ann_write_svc = SimpleNamespace(
             delete_annotations=lambda *_args, **_kwargs: False
         )
@@ -3673,6 +3976,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 window._access_state = _full_plan_surface_access()
                 window.page_data = FakeDetachedPageData()
                 window._is_closing = False
+                window._file_path = None
+                window._project_write_svc = None
                 window._ann_write_svc = write_service
                 project_data, event_bus = self._attach_annotation_write_coordinator(
                     window, write_service
@@ -3714,6 +4019,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         self._attach_annotation_write_coordinator(window, write_service)
         window._undo_svc = undo_service
@@ -3752,6 +4059,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         window._undo_svc = None
         window.plan_view = FakeDetachedPlanView()
@@ -3771,6 +4080,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         window._undo_svc = None
         window.plan_view = plan_view
@@ -3801,6 +4112,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         self._attach_annotation_write_coordinator(window, write_service)
         window._undo_svc = undo_service
@@ -3838,6 +4151,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         self._attach_annotation_write_coordinator(window, write_service)
         window._undo_svc = undo_service
@@ -3877,6 +4192,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         window._undo_svc = None
         window.plan_view = plan_view
@@ -3920,6 +4237,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 window._access_state = _full_plan_surface_access()
                 window.page_data = FakeDetachedPageData()
                 window._is_closing = False
+                window._file_path = None
+                window._project_write_svc = None
                 window._ann_write_svc = write_service
                 window._undo_svc = FakeUndoService()
                 window.plan_view = plan_view
@@ -3963,6 +4282,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         project_data, event_bus = self._attach_annotation_write_coordinator(
             window, write_service, [named_view, hotlink]
@@ -4018,6 +4339,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         project_data, event_bus = self._attach_annotation_write_coordinator(
             window,
@@ -4076,6 +4399,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._access_state = _full_plan_surface_access()
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
         window._ann_write_svc = write_service
         project_data, event_bus = self._attach_annotation_write_coordinator(
             window, write_service, [annotation]

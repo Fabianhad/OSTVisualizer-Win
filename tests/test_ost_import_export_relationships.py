@@ -523,6 +523,60 @@ def _raw_data_with_row(table_name, row):
 
 
 class OstImportExportRelationshipTests(unittest.TestCase):
+    def test_sql_import_mutation_records_every_authoritative_family(self):
+        value = {
+            "project_uids": {"target": "9"},
+            "bid_uids": {"1": "10"},
+            "page_uids": {"2": "20"},
+            "condition_uids": {"3": "30"},
+            "layer_uids": {"4": "40"},
+            "area_uids": {"5": "50"},
+            "takeoff_uids": {"6": "60"},
+            "annotation_uids": {"7": "70"},
+            "table_uid_maps": {},
+            "global_uid_maps": {},
+        }
+        writer = SimpleNamespace(import_ost_data=lambda *_args: value)
+        importer = OstImporter(writer)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "CdnTypes": [{"UID": "1"}],
+                "JobStatuses": [{"UID": "2"}],
+                "Employees": [{"UID": "3"}],
+                "PayClasses": [{"UID": "4"}],
+            },
+        )
+        records = []
+        recorder = SimpleNamespace(
+            record=lambda resource, operation, **_kwargs: records.append(
+                (resource, operation)
+            )
+        )
+        with patch.object(importer, "_validated_raw_data", return_value=raw_data):
+            result = importer.import_ost_mutation(
+                "source.ost", "database", "9", recorder
+            )
+        self.assertIs(result, value)
+        self.assertEqual(
+            {resource.resource_type for resource, _operation in records},
+            {
+                "bid",
+                "project_bids",
+                "conditions_collection",
+                "areas_collection",
+                "pages_collection",
+                "layers_collection",
+                "takeoffs_collection",
+                "annotations_collection",
+                "cover_sheet",
+                "condition_types_collection",
+                "job_statuses_collection",
+                "employees_collection",
+                "pay_classes_collection",
+            },
+        )
+
     def test_ost_import_restores_database_column_name_for_copy_timestamp(self):
         xml = '<XML_ROOT><Bid UID="1" CopyTimestamp="2026 7 19 0 39 2"/></XML_ROOT>'
         with tempfile.TemporaryDirectory() as temp_dir:

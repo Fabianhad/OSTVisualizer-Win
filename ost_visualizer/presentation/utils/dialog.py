@@ -1,5 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional, Set, TypedDict
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ..config import COMPACT_SPACING, RELAXED_MARGINS, RELAXED_SPACING
 from .condition_tree_style import apply_tree_indentation
 from .messagebox import confirm_multi_delete
@@ -44,10 +45,13 @@ class BaseListDialog(QtWidgets.QDialog):
         icon_provider,
         parent: Optional[QtWidgets.QWidget] = None,
         save_fn: Optional[Callable] = None,
+        save_async_fn: Optional[Callable] = None,
     ) -> None:
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._save_fn = save_fn
+        self._save_async_fn = save_async_fn
+        self._operation_pending = False
         self._save_done: bool = False
         self._new_counter: int = 0
 
@@ -61,12 +65,17 @@ class BaseListDialog(QtWidgets.QDialog):
         return True
 
     def done(self, result: int) -> None:
+        if self._operation_pending:
+            return
         if result == QtWidgets.QDialog.DialogCode.Accepted:
             if self._save_pending() is False:
                 return
         super().done(result)
 
     def closeEvent(self, event) -> None:
+        if self._operation_pending:
+            event.ignore()
+            return
         self.setFocus()
         super().closeEvent(event)
 
@@ -77,6 +86,7 @@ class BaseListDialog(QtWidgets.QDialog):
     def cleanup(self) -> None:
         self.icon_provider = None
         self._save_fn = None
+        self._save_async_fn = None
         self._on_cleanup()
 
     def _on_cleanup(self) -> None:
@@ -102,11 +112,12 @@ class BasePickerDialog(BaseListDialog):
         used_uids: Optional[Set[str]] = None,
         initial_name: Optional[str] = None,
         save_fn: Optional[Callable] = None,
+        save_async_fn: Optional[Callable] = None,
         accept_button_text: str = "Select",
         show_cancel_button: bool = True,
         accept_requires_selection: bool = True,
     ) -> None:
-        super().__init__(icon_provider, parent, save_fn)
+        super().__init__(icon_provider, parent, save_fn, save_async_fn)
         self._items: List[ItemRecord] = list(items or [])
         self._selected_uid: Optional[str] = selected_uid or None
         self._interactive: bool = True
@@ -264,12 +275,21 @@ class BasePickerDialog(BaseListDialog):
             if (uid := item.data(self._uid_col, self._UID_ROLE)) in to_delete_uids
             and not str(uid).startswith("new_")
         ]
+        if real_deleted and self._save_async_fn:
+            self._run_async_save(
+                {"new": [], "updated": [], "deleted_uids": real_deleted},
+                lambda _mapping: self._remove_selected_items(selected, to_delete_uids),
+            )
+            return
         if real_deleted and self._save_fn:
             result = self._save_fn(
                 {"new": [], "updated": [], "deleted_uids": real_deleted}
             )
             if not save_result_succeeded(result):
                 return
+        self._remove_selected_items(selected, to_delete_uids)
+
+    def _remove_selected_items(self, selected, to_delete_uids) -> None:
         for item in selected:
             uid = item.data(self._uid_col, self._UID_ROLE)
             if uid not in to_delete_uids:
@@ -316,6 +336,8 @@ class BasePickerDialog(BaseListDialog):
         pass
 
     def _save_pending(self) -> bool:
+        if self._save_async_fn:
+            return True
         if not self._save_fn or self._save_done:
             return True
         self._pre_save()
@@ -336,7 +358,68 @@ class BasePickerDialog(BaseListDialog):
         pass
 
     def _post_save(self, result: Dict[str, Any]) -> None:
-        pass
+        for record in self._items:
+            old_uid = str(record["uid"])
+            if old_uid in result:
+                record["uid"] = str(result[old_uid])
+                record["is_new"] = False
+        selected_uid = str(self._selected_uid or "")
+        if selected_uid in result:
+            self._selected_uid = str(result[selected_uid])
+
+    def _run_async_save(self, changes: dict, on_success) -> None:
+        if self._operation_pending or self._save_async_fn is None:
+            return
+        self._operation_pending = True
+        self.set_interactive(False)
+
+        def completed(success: bool, mapping=None) -> None:
+            if not isValid(self):
+                return
+            self._operation_pending = False
+            self.set_interactive(True)
+            if success:
+                on_success(mapping if isinstance(mapping, dict) else {})
+
+        try:
+            started = self._save_async_fn(changes, completed)
+        except Exception:
+            self._operation_pending = False
+            self.set_interactive(True)
+            raise
+        if not started:
+            self._operation_pending = False
+            self.set_interactive(True)
+
+    def done(self, result: int) -> None:
+        if self._operation_pending:
+            return
+        if (
+            result == QtWidgets.QDialog.DialogCode.Accepted
+            and self._save_async_fn is not None
+            and not self._save_done
+        ):
+            self._pre_save()
+            self._items = [
+                record
+                for record in self._items
+                if not record["is_new"] or record["name"].strip()
+            ]
+            new_items = [record for record in self._items if record["is_new"]]
+            updated = [record for record in self._items if not record["is_new"]]
+            if new_items or updated:
+                self._run_async_save(
+                    {"new": new_items, "updated": updated, "deleted_uids": []},
+                    lambda mapping: self._complete_async_accept(result, mapping),
+                )
+                return
+            self._save_done = True
+        super().done(result)
+
+    def _complete_async_accept(self, result: int, mapping: Dict[str, Any]) -> None:
+        self._post_save(mapping)
+        self._save_done = True
+        super().done(result)
 
     def get_result(self) -> Dict[str, Any]:
         return {"selected_uid": self._selected_uid}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import getpass
+import json
 import logging
 import platform
 import queue
@@ -7,25 +8,32 @@ import random
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..dtos.collaboration_resource_catalog import resource_definition
 from ..dtos.application_info import APPLICATION_VERSION
 from ..dtos.collaboration_dtos import (
+    AuthoritativeMutationResult,
+    CollaborationMutationType,
     CollaborationStatus,
     CollaborationShutdownState,
     CollaborationMetrics,
     CollaborationPollingPolicy,
     COLLABORATION_STALE_SECONDS,
     DatabaseSession,
+    DurableOperationResult,
     EditLeaseHandle,
     EditLeaseLoss,
     EditLeaseRequest,
     EditLeaseResult,
+    MutationOutcomeStatus,
     PresenceMode,
+    PendingMutationState,
+    PendingSqlOperationRecord,
+    QueuedMutationRequest,
     QueuedMutationResult,
-    QueuedMutationWorkResult,
+    MutationExecutionResult,
     ReconciliationFailureKind,
     ReconciliationResult,
     ResourceLock,
@@ -39,9 +47,14 @@ from ..interfaces.i_database_catalog import DatabaseCatalogError
 from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
 from ..interfaces.i_remote_change_reader import IRemoteChangeReader
+from ..interfaces.i_pending_sql_operation_repository import (
+    IPendingSqlOperationRepository,
+)
 from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from .database_capability_service import DatabaseCapabilityService
 from .local_draft_registry import LocalDraftRegistry
+from ..dtos.local_draft_dtos import LocalDraftState
+from .pending_mutation_registry import PendingMutationRegistry
 from .remote_change_reconciliation_service import RemoteChangeReconciliationService
 from .synchronization_conflict_publisher import publish_synchronization_conflict
 
@@ -77,6 +90,10 @@ class _DatabaseRuntime:
     pending_delivery: bool = False
     recovery_requested: bool = False
     recovery_ready: bool = False
+    recovered_operation_ids: set[str] = field(default_factory=set)
+    recovered_operation_results: dict[str, DurableOperationResult] = field(
+        default_factory=dict
+    )
     recovery_attempted: bool = False
     bid_uid: Optional[int] = None
     page_uid: Optional[int] = None
@@ -102,9 +119,11 @@ class _QueuedMutation:
     owning_surface: str
     resources: tuple[ResourceRef, ...]
     dependency_resources: tuple[ResourceRef, ...]
-    expected_created_count: int
-    operation: Callable[[], QueuedMutationWorkResult]
+    operation: Callable[[], MutationExecutionResult]
     callback: Callable[[QueuedMutationResult], None]
+    typed_request: QueuedMutationRequest
+    result_validator: Optional[Callable[[MutationExecutionResult], str]] = None
+    edit_lease_handle: Optional[EditLeaseHandle] = None
 
 
 class SqlCollaborationCoordinator:
@@ -122,6 +141,9 @@ class SqlCollaborationCoordinator:
         event_bus,
         supported_schema_version: int,
         polling_policy: CollaborationPollingPolicy = CollaborationPollingPolicy(),
+        *,
+        pending_mutations: PendingMutationRegistry,
+        operation_journal: IPendingSqlOperationRepository,
     ) -> None:
         self._registry = descriptor_registry
         self._store = store
@@ -132,7 +154,20 @@ class SqlCollaborationCoordinator:
         self._sessions = session_registry
         self._concurrency_tokens = concurrency_tokens
         self._local_drafts = local_drafts
+        if pending_mutations is None:
+            raise ValueError("SqlCollaborationCoordinator requires pending_mutations")
+        if operation_journal is None:
+            raise ValueError("SqlCollaborationCoordinator requires operation_journal")
+        self._pending_mutations = pending_mutations
+        self._operation_journal = operation_journal
         self._event_bus = event_bus
+        self._uncertain_callbacks: dict[
+            str,
+            tuple[
+                QueuedMutationRequest,
+                Callable[[QueuedMutationResult], None],
+            ],
+        ] = {}
         self._supported_schema_version = supported_schema_version
         self._polling_policy = polling_policy
         self._client_instance_id = str(uuid.uuid4())
@@ -147,6 +182,10 @@ class SqlCollaborationCoordinator:
         ] = {}
         self._local_detach_drains: set[tuple[str, int]] = set()
         self._database_cleanup_failures: dict[str, str] = {}
+        self._mutation_drain_callbacks: dict[str, list[Callable[[bool, str], None]]] = (
+            {}
+        )
+        self._mutation_drain_failures: dict[str, list[str]] = {}
         self._shutdown_cleanup_errors: list[str] = []
         self._event_bus.subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
         self._event_bus.subscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
@@ -459,50 +498,137 @@ class SqlCollaborationCoordinator:
             descriptor is not None and descriptor.backend == DatabaseBackend.SQL_SERVER
         )
 
-    def queue_mutation(
+    def queue_request(
         self,
-        database_id: str,
-        resources: tuple[ResourceRef, ...],
-        operation: Callable[[], QueuedMutationWorkResult],
+        request: QueuedMutationRequest,
+        operation: Callable[[], MutationExecutionResult],
         callback: Callable[[QueuedMutationResult], None],
         *,
-        dependency_resources: tuple[ResourceRef, ...] = (),
-        expected_created_count: int,
-        operation_id: str,
-        owning_surface: str,
+        result_validator: Optional[Callable[[MutationExecutionResult], str]] = None,
     ) -> int:
-        normalized_resources = tuple(sorted(set(resources)))
-        normalized_dependencies = tuple(sorted(set(dependency_resources)))
-        runtime = self._runtime(database_id)
-        if not normalized_resources:
-            self._dispatch_mutation_result(
+        runtime = self._runtime(request.database_id)
+        generation = runtime.generation if runtime is not None else 0
+        try:
+            self._pending_mutations.begin(
+                request,
+                runtime_generation=generation,
+            )
+        except ValueError as exc:
+            return self._reject_mutation_submission(
+                request.database_id,
+                request.operation_id,
                 callback,
-                QueuedMutationResult(
-                    database_id=database_id,
-                    runtime_generation=(
-                        runtime.generation if runtime is not None else 0
-                    ),
-                    operation_id=operation_id,
-                    success=False,
-                    message="A queued mutation requires at least one resource.",
+                str(exc),
+            )
+        try:
+            self._save_operation_record(PendingSqlOperationRecord.from_request(request))
+        except (OSError, ValueError):
+            self._pending_mutations.finish(request.operation_id)
+            return self._reject_mutation_submission(
+                request.database_id,
+                request.operation_id,
+                callback,
+                "The SQL operation could not be recorded safely before queueing.",
+            )
+        queued = _QueuedMutation(
+            database_id=request.database_id,
+            runtime_generation=generation,
+            operation_id=request.operation_id,
+            owning_surface=request.owning_surface,
+            resources=request.resources,
+            dependency_resources=request.dependency_resources,
+            operation=operation,
+            callback=callback,
+            typed_request=request,
+            result_validator=result_validator,
+            edit_lease_handle=request.edit_lease_handle,
+        )
+        return self._enqueue_mutation(runtime, queued)
+
+    def drain_database_mutations_async(
+        self,
+        database_id: str,
+        callback: Callable[[bool, str], None],
+    ) -> None:
+        """Stop accepting writes and finish lifecycle-critical mutations.
+        Uncertain and projection-recovery operations are durable in the local
+        operation journal and therefore do not require the UI lifecycle to wait
+        indefinitely.  Queued, executing, and projecting critical mutations do.
+        """
+        with self._lock:
+            callbacks = self._mutation_drain_callbacks.setdefault(database_id, [])
+            callbacks.append(callback)
+            self._mutation_drain_failures.setdefault(database_id, [])
+        self._complete_mutation_drain_if_ready(database_id)
+
+    def drain_all_mutations_async(self, callback: Callable[[bool, str], None]) -> None:
+        with self._lock:
+            database_ids = tuple(self._runtimes)
+        if not database_ids:
+            self._invoke_completion_callback(callback, True, "")
+            return
+        remaining = set(database_ids)
+        failures: list[str] = []
+        completion_lock = threading.Lock()
+
+        def completed(database_id: str, success: bool, message: str) -> None:
+            with completion_lock:
+                if database_id not in remaining:
+                    return
+                remaining.remove(database_id)
+                if not success:
+                    failures.append(message or f"{database_id}: mutation drain failed")
+                finished = not remaining
+            if finished:
+                self._invoke_completion_callback(
+                    callback,
+                    not failures,
+                    "; ".join(failures),
+                )
+
+        for database_id in database_ids:
+            self.drain_database_mutations_async(
+                database_id,
+                lambda success, message, current=database_id: completed(
+                    current, success, message
                 ),
             )
-            return runtime.generation if runtime is not None else 0
-        if expected_created_count <= 0:
-            self._dispatch_mutation_result(
-                callback,
-                QueuedMutationResult(
-                    database_id=database_id,
-                    runtime_generation=(
-                        runtime.generation if runtime is not None else 0
-                    ),
-                    operation_id=operation_id,
-                    success=False,
-                    message="A queued insert requires an expected result count.",
-                ),
-            )
-            return runtime.generation if runtime is not None else 0
+
+    def _complete_mutation_drain_if_ready(self, database_id: str) -> None:
+        with self._lock:
+            callbacks = self._mutation_drain_callbacks.get(database_id)
+            if callbacks is None:
+                return
+        blocking = any(
+            pending.request.lifecycle_critical
+            and pending.state
+            in {
+                PendingMutationState.QUEUED,
+                PendingMutationState.EXECUTING,
+                PendingMutationState.PROJECTING,
+            }
+            for pending in self._pending_mutations.for_database(database_id)
+        )
+        if blocking:
+            return
+        with self._lock:
+            callbacks = tuple(self._mutation_drain_callbacks.pop(database_id, ()))
+            failures = tuple(self._mutation_drain_failures.pop(database_id, ()))
+        message = "; ".join(dict.fromkeys(failures))
+        for callback in callbacks:
+            self._invoke_completion_callback(callback, not failures, message)
+
+    def _enqueue_mutation(
+        self,
+        runtime: Optional[_DatabaseRuntime],
+        request: _QueuedMutation,
+    ) -> int:
+        database_id = request.database_id
+        operation_id = request.operation_id
+        callback = request.callback
         if runtime is None or not self._capabilities.is_editable(database_id):
+            self._pending_mutations.finish(operation_id)
+            self._remove_operation_record(operation_id)
             self._dispatch_mutation_result(
                 callback,
                 QueuedMutationResult(
@@ -511,26 +637,19 @@ class SqlCollaborationCoordinator:
                         runtime.generation if runtime is not None else 0
                     ),
                     operation_id=operation_id,
-                    success=False,
+                    outcome_status=MutationOutcomeStatus.REJECTED,
                     message="SQL collaboration is not ready for editing.",
                 ),
             )
-            return runtime.generation if runtime is not None else 0
-        request = _QueuedMutation(
-            database_id=database_id,
-            runtime_generation=runtime.generation,
-            operation_id=operation_id,
-            owning_surface=owning_surface,
-            resources=normalized_resources,
-            dependency_resources=normalized_dependencies,
-            expected_created_count=expected_created_count,
-            operation=operation,
-            callback=callback,
-        )
+            return -1
         rejection_message = "SQL collaboration stopped before the mutation was queued."
         with self._lock:
             current = self._runtimes.get(database_id)
-            queued = current is runtime and not self._shutting_down
+            queued = (
+                current is runtime
+                and not self._shutting_down
+                and database_id not in self._mutation_drain_callbacks
+            )
             if queued:
                 with runtime.lock:
                     queued = (
@@ -551,18 +670,72 @@ class SqlCollaborationCoordinator:
                 else:
                     runtime.command_event.set()
         if queued:
+            self._dispatch_pending_mutation_state(
+                request.typed_request,
+                PendingMutationState.QUEUED,
+            )
             return runtime.generation
+        self._pending_mutations.finish(operation_id)
+        self._remove_operation_record(operation_id)
         self._dispatch_mutation_result(
             callback,
             QueuedMutationResult(
                 database_id=database_id,
                 runtime_generation=runtime.generation,
                 operation_id=operation_id,
-                success=False,
+                outcome_status=MutationOutcomeStatus.REJECTED,
                 message=rejection_message,
             ),
         )
-        return runtime.generation
+        return -1
+
+    def _reject_mutation_submission(
+        self,
+        database_id: str,
+        operation_id: str,
+        callback: Callable[[QueuedMutationResult], None],
+        message: str,
+    ) -> int:
+        runtime = self._runtime(database_id)
+        generation = runtime.generation if runtime is not None else 0
+        self._dispatch_mutation_result(
+            callback,
+            QueuedMutationResult(
+                database_id=database_id,
+                runtime_generation=generation,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.REJECTED,
+                message=message,
+            ),
+        )
+        return -1
+
+    def _save_operation_record(self, record: PendingSqlOperationRecord) -> None:
+        self._operation_journal.save(record)
+
+    def _transition_operation_record(
+        self, request: QueuedMutationRequest, state: PendingMutationState
+    ) -> bool:
+        try:
+            self._operation_journal.save(
+                PendingSqlOperationRecord.from_request(request, state)
+            )
+        except (OSError, ValueError):
+            logger.exception(
+                "Could not persist SQL operation %s state %s",
+                request.operation_id,
+                state.value,
+            )
+            return False
+        return True
+
+    def _remove_operation_record(self, operation_id: str) -> bool:
+        try:
+            self._operation_journal.remove(operation_id)
+        except (OSError, ValueError):
+            logger.exception("Could not remove SQL operation record %s", operation_id)
+            return False
+        return True
 
     def request_local_edit(
         self,
@@ -874,6 +1047,7 @@ class SqlCollaborationCoordinator:
                         runtime.bid_uid,
                         session.last_acknowledged_version,
                     )
+                    self._recover_journaled_operations(runtime)
                     self._dispatcher.dispatch(
                         self._on_session_started,
                         (
@@ -1016,121 +1190,255 @@ class SqlCollaborationCoordinator:
                         database_id=request.database_id,
                         runtime_generation=request.runtime_generation,
                         operation_id=request.operation_id,
-                        success=False,
+                        outcome_status=(MutationOutcomeStatus.CANCELLED_BEFORE_START),
                         message="SQL collaboration is not ready for editing.",
                     ),
                 )
                 return
-            first_resource = request.resources[0]
-            try:
-                draft = self._local_drafts.begin(
-                    draft_type=(
-                        resource_definition(first_resource.resource_type).family.value
-                        + "_mutation"
-                    ),
-                    database_id=request.database_id,
-                    bid_uid=next(
-                        (
-                            resource.bid_uid
-                            for resource in request.resources
-                            if resource.bid_uid is not None
-                        ),
-                        None,
-                    ),
-                    page_uid=None,
-                    owning_surface=request.owning_surface,
-                    affected_resources=request.resources,
-                    dependency_resources=request.dependency_resources,
-                    operation_id=request.operation_id,
-                )
-            except ValueError as exc:
+            self._pending_mutations.transition(
+                request.operation_id,
+                PendingMutationState.EXECUTING,
+                runtime_generation=runtime.generation,
+            )
+            if not self._transition_operation_record(
+                request.typed_request, PendingMutationState.EXECUTING
+            ):
                 self._dispatch_mutation_result(
                     request.callback,
                     QueuedMutationResult(
                         database_id=request.database_id,
                         runtime_generation=request.runtime_generation,
                         operation_id=request.operation_id,
-                        success=False,
-                        message=str(exc),
+                        outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                        message=(
+                            "The SQL operation journal could not record the "
+                            "mutation before execution."
+                        ),
                     ),
                 )
-                return
-            acquired: list[ResourceLock] = []
+                raise DatabaseCatalogError(
+                    "The SQL operation journal is unavailable.",
+                    read_only_required=True,
+                )
+            self._dispatch_pending_mutation_state(
+                request.typed_request,
+                PendingMutationState.EXECUTING,
+            )
+            first_resource = request.resources[0]
+            lease_handle = request.edit_lease_handle
+            if lease_handle is not None:
+                draft = self._validated_mutation_edit_lease(
+                    runtime,
+                    request,
+                    lease_handle,
+                )
+                if draft is None:
+                    self._dispatch_mutation_result(
+                        request.callback,
+                        QueuedMutationResult(
+                            database_id=request.database_id,
+                            runtime_generation=request.runtime_generation,
+                            operation_id=request.operation_id,
+                            outcome_status=MutationOutcomeStatus.CONFLICT,
+                            message=(
+                                "The geometry edit lease expired before the "
+                                "mutation started."
+                            ),
+                        ),
+                    )
+                    return
+                acquired = list(lease_handle.locks)
+            else:
+                try:
+                    draft = self._local_drafts.begin(
+                        draft_type=(
+                            resource_definition(
+                                first_resource.resource_type
+                            ).family.value
+                            + "_mutation"
+                        ),
+                        database_id=request.database_id,
+                        bid_uid=next(
+                            (
+                                resource.bid_uid
+                                for resource in request.resources
+                                if resource.bid_uid is not None
+                            ),
+                            None,
+                        ),
+                        page_uid=None,
+                        owning_surface=request.owning_surface,
+                        affected_resources=request.resources,
+                        dependency_resources=request.dependency_resources,
+                        operation_id=request.operation_id,
+                    )
+                except ValueError as exc:
+                    self._dispatch_mutation_result(
+                        request.callback,
+                        QueuedMutationResult(
+                            database_id=request.database_id,
+                            runtime_generation=request.runtime_generation,
+                            operation_id=request.operation_id,
+                            outcome_status=MutationOutcomeStatus.REJECTED,
+                            message=str(exc),
+                        ),
+                    )
+                    return
+                acquired = []
             result = QueuedMutationResult(
                 database_id=request.database_id,
                 runtime_generation=request.runtime_generation,
                 operation_id=request.operation_id,
-                success=False,
+                outcome_status=MutationOutcomeStatus.REJECTED,
             )
             failure: DatabaseCatalogError | OSError | None = None
+            local_hydrated = None
             try:
                 all_resources = request.resources + request.dependency_resources
                 self._concurrency_tokens.ensure_resources_loaded(
                     request.database_id, all_resources
                 )
-                self._local_drafts.set_base_tokens(
-                    draft.draft_id,
-                    self._concurrency_tokens.tokens_for_resources(
-                        request.database_id, all_resources
-                    ),
-                )
-                for resource in request.resources:
-                    acquired.append(
-                        self._store.acquire_lock(
-                            request.database_id,
-                            session.session_id,
-                            resource,
-                            request.operation_id,
+                if lease_handle is None:
+                    self._local_drafts.set_base_tokens(
+                        draft.draft_id,
+                        self._concurrency_tokens.tokens_for_resources(
+                            request.database_id, all_resources
+                        ),
+                    )
+                    for resource in request.resources:
+                        acquired.append(
+                            self._store.acquire_lock(
+                                request.database_id,
+                                session.session_id,
+                                resource,
+                                request.operation_id,
+                            )
                         )
+                    self._local_drafts.activate(
+                        draft.draft_id,
+                        tuple(acquired),
+                        runtime_generation=runtime.generation,
                     )
-                self._local_drafts.activate(
-                    draft.draft_id,
-                    tuple(acquired),
-                    runtime_generation=runtime.generation,
-                )
-                for lock in acquired:
-                    self._sessions.register_lock(
-                        request.database_id, lock.resource, lock.lock_token
-                    )
+                    for lock in acquired:
+                        self._sessions.register_lock(
+                            request.database_id, lock.resource, lock.lock_token
+                        )
                 work_result = request.operation()
                 created_resource_ids = work_result.created_resource_ids
-                if not work_result.success:
+                validation_error = (
+                    request.result_validator(work_result)
+                    if request.result_validator is not None
+                    else ""
+                )
+                if work_result.outcome_status != MutationOutcomeStatus.COMMITTED:
                     result = QueuedMutationResult(
                         database_id=request.database_id,
                         runtime_generation=request.runtime_generation,
                         operation_id=request.operation_id,
-                        success=False,
+                        created_resource_ids=created_resource_ids,
+                        authoritative_result=work_result.authoritative_result,
+                        outcome_status=work_result.outcome_status,
                         message=work_result.message,
                         conflict=work_result.conflict,
+                        commit_attempted=work_result.commit_attempted,
                     )
-                elif len(created_resource_ids) != request.expected_created_count:
-                    failure = DatabaseCatalogError(
-                        "The SQL mutation returned an incomplete authoritative "
-                        "identity set.",
-                        read_only_required=True,
-                    )
+                    if (
+                        work_result.outcome_status
+                        == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN
+                    ):
+                        with self._lock:
+                            self._uncertain_callbacks[request.operation_id] = (
+                                request.typed_request,
+                                request.callback,
+                            )
+                        failure = DatabaseCatalogError(
+                            "The SQL mutation's commit status must be resolved "
+                            "after reconnecting.",
+                            retryable=True,
+                        )
+                elif work_result.authoritative_result is None:
                     result = QueuedMutationResult(
                         database_id=request.database_id,
                         runtime_generation=request.runtime_generation,
                         operation_id=request.operation_id,
-                        success=False,
-                        message=str(failure),
+                        created_resource_ids=created_resource_ids,
+                        outcome_status=(
+                            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                        ),
+                        message=(
+                            "The SQL mutation committed without an authoritative "
+                            "projection result."
+                        ),
+                        commit_attempted=True,
+                    )
+                    failure = DatabaseCatalogError(
+                        result.message,
+                        read_only_required=True,
+                    )
+                elif validation_error:
+                    result = QueuedMutationResult(
+                        database_id=request.database_id,
+                        runtime_generation=request.runtime_generation,
+                        operation_id=request.operation_id,
+                        created_resource_ids=created_resource_ids,
+                        authoritative_result=work_result.authoritative_result,
+                        outcome_status=(
+                            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                        ),
+                        message=validation_error,
+                        commit_attempted=True,
+                    )
+                    failure = DatabaseCatalogError(
+                        validation_error,
+                        read_only_required=True,
                     )
                 else:
                     result = QueuedMutationResult(
                         database_id=request.database_id,
                         runtime_generation=request.runtime_generation,
                         operation_id=request.operation_id,
-                        success=True,
+                        outcome_status=MutationOutcomeStatus.COMMITTED,
                         created_resource_ids=created_resource_ids,
+                        authoritative_result=work_result.authoritative_result,
                     )
+                    try:
+                        local_hydrated = self._store.hydrate_operation(
+                            request.database_id,
+                            request.operation_id,
+                        )
+                    except (
+                        DatabaseCatalogError,
+                        OSError,
+                        RuntimeError,
+                        ValueError,
+                    ) as exc:
+                        failure = (
+                            exc
+                            if isinstance(exc, (DatabaseCatalogError, OSError))
+                            else DatabaseCatalogError(str(exc), retryable=True)
+                        )
+                        result = QueuedMutationResult(
+                            database_id=request.database_id,
+                            runtime_generation=request.runtime_generation,
+                            operation_id=request.operation_id,
+                            created_resource_ids=created_resource_ids,
+                            authoritative_result=work_result.authoritative_result,
+                            outcome_status=(
+                                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                            ),
+                            message=(
+                                "The SQL mutation committed, but its "
+                                "authoritative result could not be loaded."
+                            ),
+                            commit_attempted=True,
+                        )
             except (DatabaseCatalogError, OSError) as exc:
                 failure = exc
                 result = QueuedMutationResult(
                     database_id=request.database_id,
                     runtime_generation=request.runtime_generation,
                     operation_id=request.operation_id,
-                    success=False,
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
                     message=str(exc),
                 )
             except (RuntimeError, ValueError) as exc:
@@ -1138,21 +1446,153 @@ class SqlCollaborationCoordinator:
                     database_id=request.database_id,
                     runtime_generation=request.runtime_generation,
                     operation_id=request.operation_id,
-                    success=False,
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
                     message=str(exc),
                 )
-            finally:
-                cleanup_failure = self._release_queued_mutation_resources(
-                    runtime, session, draft.draft_id, tuple(acquired)
+            except Exception as exc:
+                logger.exception(
+                    "SQL mutation %s failed before commit",
+                    request.operation_id,
                 )
+                result = QueuedMutationResult(
+                    database_id=request.database_id,
+                    runtime_generation=request.runtime_generation,
+                    operation_id=request.operation_id,
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                    message=("The SQL mutation failed before it could be committed."),
+                )
+            finally:
+                if lease_handle is not None:
+                    cleanup_failure = self._consume_mutation_edit_lease(
+                        runtime,
+                        session,
+                        lease_handle,
+                    )
+                else:
+                    cleanup_failure = self._release_queued_mutation_resources(
+                        runtime, session, draft.draft_id, tuple(acquired)
+                    )
                 if cleanup_failure is not None:
                     failure = cleanup_failure
-                self._dispatch_mutation_result(request.callback, result)
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    self._pending_mutations.transition(
+                        request.operation_id,
+                        PendingMutationState.PROJECTING,
+                    )
+                    if self._transition_operation_record(
+                        request.typed_request, PendingMutationState.PROJECTING
+                    ):
+                        self._dispatch_pending_mutation_state(
+                            request.typed_request,
+                            PendingMutationState.PROJECTING,
+                        )
+                    else:
+                        result = QueuedMutationResult(
+                            database_id=request.database_id,
+                            runtime_generation=request.runtime_generation,
+                            operation_id=request.operation_id,
+                            created_resource_ids=result.created_resource_ids,
+                            authoritative_result=result.authoritative_result,
+                            outcome_status=(
+                                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                            ),
+                            message=(
+                                "The SQL mutation committed, but its recovery "
+                                "record could not be updated."
+                            ),
+                            commit_attempted=True,
+                        )
+                        failure = DatabaseCatalogError(
+                            result.message,
+                            read_only_required=True,
+                        )
+                if (
+                    local_hydrated is not None
+                    and result.outcome_status == MutationOutcomeStatus.COMMITTED
+                ):
+                    self._dispatch_local_mutation_result(
+                        request.callback,
+                        result,
+                        local_hydrated,
+                    )
+                else:
+                    self._dispatch_mutation_result(request.callback, result)
             if failure is not None:
                 raise failure
         finally:
             if not runtime.mutation_requests.empty():
                 runtime.command_event.set()
+
+    def _validated_mutation_edit_lease(
+        self,
+        runtime: _DatabaseRuntime,
+        request: _QueuedMutation,
+        handle: EditLeaseHandle,
+    ):
+        draft = self._local_drafts.get(handle.draft_id)
+        if (
+            draft is None
+            or draft.state != LocalDraftState.ACTIVE
+            or draft.database_id != request.database_id
+            or draft.runtime_generation != runtime.generation
+            or draft.owning_surface != request.owning_surface
+            or draft.affected_resources != request.resources
+            or draft.dependency_resources != request.dependency_resources
+            or draft.leases != handle.locks
+        ):
+            return None
+        resource_key = frozenset(
+            resource.lease_identity for resource in handle.resources
+        )
+        with runtime.lock:
+            if runtime.draft_ids.get(resource_key) != handle.draft_id:
+                return None
+            owned_tokens = {
+                resource.lease_identity: runtime.owned_locks[
+                    resource.lease_identity
+                ].lock_token
+                for resource in handle.resources
+                if resource.lease_identity in runtime.owned_locks
+            }
+        handle_tokens = {
+            lock.resource.lease_identity: lock.lock_token for lock in handle.locks
+        }
+        return draft if owned_tokens == handle_tokens else None
+
+    def _consume_mutation_edit_lease(
+        self,
+        runtime: _DatabaseRuntime,
+        session: DatabaseSession,
+        handle: EditLeaseHandle,
+    ) -> DatabaseCatalogError | OSError | ValueError | None:
+        resource_key = frozenset(
+            resource.lease_identity for resource in handle.resources
+        )
+        with runtime.lock:
+            if runtime.draft_ids.get(resource_key) == handle.draft_id:
+                runtime.draft_ids.pop(resource_key, None)
+            for resource in handle.resources:
+                stored = runtime.owned_locks.get(resource.lease_identity)
+                expected = next(
+                    (
+                        lock
+                        for lock in handle.locks
+                        if lock.resource.lease_identity == resource.lease_identity
+                    ),
+                    None,
+                )
+                if stored is not None and expected is not None:
+                    if stored.lock_token == expected.lock_token:
+                        runtime.owned_locks.pop(resource.lease_identity, None)
+            runtime.edit_depth = max(0, runtime.edit_depth - 1)
+            if runtime.edit_depth == 0:
+                runtime.mode = PresenceMode.VIEWING
+        return self._release_queued_mutation_resources(
+            runtime,
+            session,
+            handle.draft_id,
+            handle.locks,
+        )
 
     def _release_queued_mutation_resources(
         self,
@@ -1188,7 +1628,7 @@ class SqlCollaborationCoordinator:
                     database_id=request.database_id,
                     runtime_generation=request.runtime_generation,
                     operation_id=request.operation_id,
-                    success=False,
+                    outcome_status=MutationOutcomeStatus.CANCELLED_BEFORE_START,
                     message=message,
                 ),
             )
@@ -1200,6 +1640,115 @@ class SqlCollaborationCoordinator:
     ) -> None:
         self._dispatcher.dispatch(self._complete_mutation_request, (callback, result))
 
+    def _dispatch_pending_mutation_state(
+        self,
+        request: QueuedMutationRequest,
+        state: PendingMutationState,
+        message: str = "",
+    ) -> None:
+        self._dispatcher.dispatch(
+            self._publish_pending_mutation_state,
+            (request, state, message),
+        )
+
+    def _publish_pending_mutation_state(self, payload) -> None:
+        request, state, message = payload
+        pending_count = len(self._pending_mutations.for_database(request.database_id))
+        self._event_bus.publish(
+            AppEvents.COLLABORATION_MUTATION_STATE_CHANGED,
+            database_id=request.database_id,
+            operation_id=request.operation_id,
+            mutation_type=request.mutation_type.value,
+            state=state.value,
+            message=message,
+            pending_count=pending_count,
+        )
+
+    def _dispatch_local_mutation_result(
+        self,
+        callback: Callable[[QueuedMutationResult], None],
+        result: QueuedMutationResult,
+        hydrated,
+    ) -> None:
+        self._dispatcher.dispatch(
+            self._apply_local_mutation_result,
+            (callback, result, hydrated),
+        )
+
+    def _apply_local_mutation_result(self, payload) -> None:
+        callback, result, hydrated = payload
+        if not self.is_runtime_current(
+            result.database_id,
+            result.runtime_generation,
+        ):
+            self._complete_mutation_request(
+                (
+                    callback,
+                    QueuedMutationResult(
+                        database_id=result.database_id,
+                        runtime_generation=result.runtime_generation,
+                        operation_id=result.operation_id,
+                        outcome_status=(
+                            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                        ),
+                        message=(
+                            "The SQL mutation committed after its UI runtime changed."
+                        ),
+                        commit_attempted=True,
+                    ),
+                )
+            )
+            return
+        barrier = RemoteProjectionBarrier(
+            database_id=result.database_id,
+            runtime_generation=result.runtime_generation,
+            is_runtime_current=self.is_runtime_current,
+            on_complete=lambda applied: self._finish_local_mutation_result(
+                callback,
+                result,
+                applied,
+            ),
+        )
+        try:
+            attempt = self._reconciliation.apply(
+                hydrated,
+                projection_barrier=barrier,
+                local_completion=True,
+            )
+        except Exception:
+            logger.exception("SQL local-completion reconciliation failed")
+            attempt = ReconciliationResult(applied=False)
+        if not attempt.applied:
+            barrier.fail()
+        barrier.seal()
+
+    def _finish_local_mutation_result(
+        self,
+        callback: Callable[[QueuedMutationResult], None],
+        result: QueuedMutationResult,
+        applied: bool,
+    ) -> None:
+        if applied:
+            self._complete_mutation_request((callback, result))
+            return
+        self._complete_mutation_request(
+            (
+                callback,
+                QueuedMutationResult(
+                    database_id=result.database_id,
+                    runtime_generation=result.runtime_generation,
+                    operation_id=result.operation_id,
+                    created_resource_ids=result.created_resource_ids,
+                    authoritative_result=result.authoritative_result,
+                    outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                    message=(
+                        "The SQL mutation committed, but its local projection failed."
+                    ),
+                    commit_attempted=True,
+                ),
+            )
+        )
+
     def _complete_mutation_request(self, payload) -> None:
         callback, result = payload
         runtime = self._runtime(result.database_id, result.runtime_generation)
@@ -1210,18 +1759,96 @@ class SqlCollaborationCoordinator:
                     not runtime.recovery_requested and not runtime.stop_event.is_set()
                 )
             trusted = trusted and self._capabilities.is_editable(result.database_id)
-        if result.success and not trusted:
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED and not trusted:
             result = QueuedMutationResult(
                 database_id=result.database_id,
                 runtime_generation=result.runtime_generation,
                 operation_id=result.operation_id,
-                success=False,
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
                 message="The SQL runtime changed before the mutation completed.",
+                commit_attempted=True,
             )
+        callback_failed = False
         try:
             callback(result)
         except Exception:
+            callback_failed = True
             logger.exception("SQL queued-mutation completion callback failed")
+        pending = self._pending_mutations.get(result.operation_id)
+        lifecycle_critical = bool(
+            pending is not None and pending.request.lifecycle_critical
+        )
+        if pending is not None:
+            if result.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN:
+                with self._lock:
+                    self._uncertain_callbacks[result.operation_id] = (
+                        pending.request,
+                        callback,
+                    )
+                self._pending_mutations.transition(
+                    result.operation_id,
+                    PendingMutationState.UNCERTAIN,
+                    message=(
+                        result.message
+                        or "The SQL mutation's commit status is not yet known."
+                    ),
+                )
+                self._transition_operation_record(
+                    pending.request,
+                    PendingMutationState.UNCERTAIN,
+                )
+                state = PendingMutationState.UNCERTAIN
+            elif (
+                result.outcome_status
+                == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                or (
+                    callback_failed
+                    and result.outcome_status == MutationOutcomeStatus.COMMITTED
+                )
+            ):
+                with self._lock:
+                    self._uncertain_callbacks[result.operation_id] = (
+                        pending.request,
+                        callback,
+                    )
+                self._pending_mutations.transition(
+                    result.operation_id,
+                    PendingMutationState.RECOVERING,
+                    message=(
+                        "The SQL mutation committed, but its local projection failed."
+                    ),
+                )
+                self._transition_operation_record(
+                    pending.request,
+                    PendingMutationState.RECOVERING,
+                )
+                state = PendingMutationState.RECOVERING
+                self._event_bus.publish(
+                    AppEvents.FULL_RECONCILIATION_REQUIRED,
+                    database_id=result.database_id,
+                    reason=("A committed SQL mutation could not be projected locally."),
+                )
+            else:
+                self._pending_mutations.finish(result.operation_id)
+                self._remove_operation_record(result.operation_id)
+                state = PendingMutationState.QUEUED
+            self._publish_pending_mutation_state(
+                (pending.request, state, result.message)
+            )
+        if lifecycle_critical and result.outcome_status in {
+            MutationOutcomeStatus.REJECTED,
+            MutationOutcomeStatus.CONFLICT,
+            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            MutationOutcomeStatus.CANCELLED_BEFORE_START,
+        }:
+            with self._lock:
+                failures = self._mutation_drain_failures.get(result.database_id)
+                if failures is not None:
+                    failures.append(
+                        result.message
+                        or "A lifecycle-critical SQL mutation did not complete."
+                    )
+        self._complete_mutation_drain_if_ready(result.database_id)
         if result.conflict is not None and trusted:
             publish_synchronization_conflict(self._event_bus, result.conflict)
 
@@ -1661,6 +2288,54 @@ class SqlCollaborationCoordinator:
         jitter = base * self._polling_policy.jitter_ratio
         return max(0.05, base + random.uniform(-jitter, jitter))
 
+    def _recover_journaled_operations(self, runtime: _DatabaseRuntime) -> None:
+        records = tuple(
+            record
+            for record in self._operation_journal.list_all()
+            if record.database_id == runtime.database_id
+        )
+        for record in records:
+            durable = self._store.query_operation(
+                runtime.database_id,
+                record.operation_id,
+            )
+            if not durable.found:
+                with self._lock:
+                    callback_entry = self._uncertain_callbacks.pop(
+                        record.operation_id, None
+                    )
+                if callback_entry is None:
+                    self._remove_operation_record(record.operation_id)
+                    self._pending_mutations.finish(record.operation_id)
+                else:
+                    _request, callback = callback_entry
+                    self._dispatch_mutation_result(
+                        callback,
+                        QueuedMutationResult(
+                            database_id=record.database_id,
+                            runtime_generation=runtime.generation,
+                            operation_id=record.operation_id,
+                            outcome_status=(MutationOutcomeStatus.FAILED_BEFORE_COMMIT),
+                            message=(
+                                "The SQL operation did not commit before the "
+                                "connection was lost."
+                            ),
+                        ),
+                    )
+                continue
+            if (
+                durable.mutation_type != record.mutation_type.value
+                or durable.request_hash != record.request_hash
+            ):
+                raise DatabaseCatalogError(
+                    "A durable SQL operation does not match its local recovery "
+                    "record.",
+                    read_only_required=True,
+                )
+            with runtime.lock:
+                runtime.recovered_operation_ids.add(record.operation_id)
+                runtime.recovered_operation_results[record.operation_id] = durable
+
     def _reconnect_delay(self, attempt: int) -> float:
         base = self._polling_policy.reconnect_backoff_seconds[attempt]
         jitter = base * self._polling_policy.jitter_ratio
@@ -1688,12 +2363,177 @@ class SqlCollaborationCoordinator:
             runtime.ready_event.set()
             return
         with runtime.lock:
+            recovered_operation_ids = tuple(runtime.recovered_operation_ids)
+            recovered_results = dict(runtime.recovered_operation_results)
+            runtime.recovered_operation_ids.clear()
+            runtime.recovered_operation_results.clear()
+        for operation_id in recovered_operation_ids:
+            with self._lock:
+                callback_entry = self._uncertain_callbacks.pop(operation_id, None)
+            if callback_entry is None:
+                self._pending_mutations.finish(operation_id)
+                self._remove_operation_record(operation_id)
+                continue
+            request, callback = callback_entry
+            recovered_result = self._recovered_authoritative_result(
+                request,
+                recovered_results[operation_id],
+            )
+            if recovered_result is None:
+                self._dispatch_mutation_result(
+                    callback,
+                    QueuedMutationResult(
+                        database_id=database_id,
+                        runtime_generation=generation,
+                        operation_id=operation_id,
+                        outcome_status=(
+                            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                        ),
+                        message=(
+                            "The committed SQL operation has no valid "
+                            "authoritative result."
+                        ),
+                        commit_attempted=True,
+                    ),
+                )
+                self._on_reconciliation_required(
+                    (
+                        database_id,
+                        generation,
+                        "A recovered SQL operation result was malformed.",
+                    )
+                )
+                continue
+            self._pending_mutations.transition(
+                operation_id,
+                PendingMutationState.PROJECTING,
+            )
+            self._transition_operation_record(
+                request,
+                PendingMutationState.PROJECTING,
+            )
+            self._dispatch_pending_mutation_state(
+                request,
+                PendingMutationState.PROJECTING,
+            )
+            self._dispatch_mutation_result(
+                callback,
+                QueuedMutationResult(
+                    database_id=database_id,
+                    runtime_generation=generation,
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                    created_resource_ids=recovered_result.created_resource_ids,
+                    authoritative_result=recovered_result,
+                    commit_attempted=True,
+                ),
+            )
+        with runtime.lock:
             runtime.healthy = False
         self._set_state(
             database_id,
             SynchronizationState.CATCHING_UP,
         )
         runtime.ready_event.set()
+
+    @staticmethod
+    def _recovered_authoritative_result(
+        request: QueuedMutationRequest,
+        result: DurableOperationResult,
+    ) -> Optional[AuthoritativeMutationResult]:
+        try:
+            payload = json.loads(result.result_payload)
+        except (TypeError, ValueError):
+            return None
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"value", "value_available"}
+            or payload["value_available"] is not True
+        ):
+            return None
+        value = payload["value"]
+        created_uid_maps = []
+        created_resource_ids = ()
+        affected_condition_uids = ()
+        affected_page_uids = ()
+        if isinstance(value, list):
+            created_resource_ids = tuple(str(item) for item in value)
+        elif isinstance(value, dict):
+            if not {
+                "takeoff_uids",
+                "annotation_uids",
+                "condition_uids",
+            }.issubset(value):
+                return None
+            required_mappings = (
+                ("takeoff_uids", "takeoffs"),
+                ("annotation_uids", "annotations"),
+                ("condition_uids", "conditions"),
+            )
+            optional_mappings = (
+                ("project_uids", "projects"),
+                ("bid_uids", "bids"),
+                ("page_uids", "pages"),
+                ("layer_uids", "layers"),
+                ("area_uids", "areas"),
+            )
+            for result_name, projection_name in (
+                *required_mappings,
+                *(item for item in optional_mappings if item[0] in value),
+            ):
+                mapping = value[result_name]
+                if not isinstance(mapping, dict):
+                    return None
+                normalized = tuple(
+                    sorted(
+                        (str(source), str(target)) for source, target in mapping.items()
+                    )
+                )
+                created_uid_maps.append((projection_name, normalized))
+            map_values = {
+                name: tuple(target for _source, target in values)
+                for name, values in created_uid_maps
+            }
+            if request.mutation_type == CollaborationMutationType.PROJECT_IMPORT:
+                created_resource_ids = tuple(
+                    target
+                    for name, targets in map_values.items()
+                    if name != "projects"
+                    for target in targets
+                )
+            else:
+                created_resource_ids = (
+                    map_values["takeoffs"] + map_values["annotations"]
+                )
+            affected_condition_uids = map_values["conditions"]
+            affected_page_uids = map_values.get("pages", ())
+        affected_families = tuple(
+            dict.fromkeys(
+                resource_definition(resource.resource_type).family.value
+                for resource in request.resources
+            )
+        )
+        if request.mutation_type == CollaborationMutationType.PROJECT_IMPORT:
+            affected_families = (
+                "hierarchy",
+                "conditions",
+                "areas",
+                "pages",
+                "layers",
+                "takeoffs",
+                "annotations",
+                "cover_sheet",
+                "master_data",
+            )
+        return AuthoritativeMutationResult(
+            created_resource_ids=created_resource_ids,
+            created_uid_maps=tuple(created_uid_maps),
+            affected_page_uids=(
+                affected_page_uids or ((request.page_uid,) if request.page_uid else ())
+            ),
+            affected_condition_uids=affected_condition_uids,
+            affected_families=affected_families,
+        )
 
     def _on_connection_restored(self, payload) -> None:
         database_id, generation = payload

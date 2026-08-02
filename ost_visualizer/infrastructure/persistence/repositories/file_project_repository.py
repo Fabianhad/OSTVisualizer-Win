@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -117,52 +118,58 @@ class FileProjectRepository(IProjectRepository):
         self._active_file_path: Optional[str] = None
         self._current_hierarchy = Hierarchy()
         self._loaded_files: Dict[str, _LoadedFileCache] = {}
+        self._state_lock = threading.RLock()
 
     @property
     def active_file_path(self) -> Optional[str]:
-        return self._active_file_path
+        with self._state_lock:
+            return self._active_file_path
 
     @property
     def current_hierarchy_data(self) -> HierarchyData:
-        return self._current_hierarchy.data
+        with self._state_lock:
+            return self._current_hierarchy.data
 
     def get_cdn_types(self, file_path: Optional[str] = None) -> Dict[str, CdnType]:
-        target_path = file_path or self._active_file_path
-        cache = self._loaded_files.get(target_path) if target_path else None
-        return dict(cache.cdn_types) if cache is not None else {}
+        with self._state_lock:
+            target_path = file_path or self._active_file_path
+            cache = self._loaded_files.get(target_path) if target_path else None
+            return dict(cache.cdn_types) if cache is not None else {}
 
     def register_loaded_hierarchy(
         self,
         file_entry: HierarchyFileEntry,
         cdn_types: Dict[str, CdnType],
     ) -> HierarchyData:
-        file_path = file_entry.file_path
-        cached = self._loaded_files.get(file_path)
-        if cached is None:
-            self._loaded_files[file_path] = _LoadedFileCache(
-                file_path=file_path,
-                created_at=file_entry.created_at or time.time(),
-                parsed_hierarchy=file_entry,
-                cdn_types=dict(cdn_types),
-            )
-        else:
-            cached.parsed_hierarchy = file_entry
-            cached.cdn_types = dict(cdn_types)
-        if self._active_file_path is None:
-            self._active_file_path = file_path
-        self._rebuild_merged_hierarchy()
-        return self._current_hierarchy.data
+        with self._state_lock:
+            file_path = file_entry.file_path
+            cached = self._loaded_files.get(file_path)
+            if cached is None:
+                self._loaded_files[file_path] = _LoadedFileCache(
+                    file_path=file_path,
+                    created_at=file_entry.created_at or time.time(),
+                    parsed_hierarchy=file_entry,
+                    cdn_types=dict(cdn_types),
+                )
+            else:
+                cached.parsed_hierarchy = file_entry
+                cached.cdn_types = dict(cdn_types)
+            if self._active_file_path is None:
+                self._active_file_path = file_path
+            self._rebuild_merged_hierarchy()
+            return self._current_hierarchy.data
 
     def load_file(self, file_path: str) -> FileLoadResult:
-        if file_path in self._loaded_files:
-            self._active_file_path = file_path
-            cache = self._loaded_files[file_path]
-            return FileLoadResult(
-                success=True,
-                hierarchy=self._current_hierarchy.data,
-                cdn_types=dict(cache.cdn_types),
-                pages=dict(cache.pages),
-            )
+        with self._state_lock:
+            cache = self._loaded_files.get(file_path)
+            if cache is not None:
+                self._active_file_path = file_path
+                return FileLoadResult(
+                    success=True,
+                    hierarchy=self._current_hierarchy.data,
+                    cdn_types=dict(cache.cdn_types),
+                    pages=dict(cache.pages),
+                )
         try:
             result = self.parser.parse(file_path)
         except UnsupportedMdbSchemaError as exc:
@@ -176,22 +183,30 @@ class FileProjectRepository(IProjectRepository):
             self.logger.exception("Load failed for %s: %s", file_path, error_message)
             return FileLoadResult(success=False, error_message=error_message)
         if result.success:
-            created_at = (
-                os.path.getctime(file_path)
-                if Path(file_path).suffix.casefold() == ".mdb"
-                and os.path.exists(file_path)
-                else time.time()
-            )
-            self._loaded_files[file_path] = _LoadedFileCache(
-                file_path=file_path,
-                created_at=created_at,
-                parsed_hierarchy=result.parsed_hierarchy,
-                cdn_types=result.cdn_types,
-                pages=result.pages,
-            )
-            self._active_file_path = file_path
-            self._rebuild_merged_hierarchy()
-            result.hierarchy = self._current_hierarchy.data
+            with self._state_lock:
+                existing = self._loaded_files.get(file_path)
+                if existing is not None:
+                    self._active_file_path = file_path
+                    result.hierarchy = self._current_hierarchy.data
+                    result.cdn_types = dict(existing.cdn_types)
+                    result.pages = dict(existing.pages)
+                    return result
+                created_at = (
+                    os.path.getctime(file_path)
+                    if Path(file_path).suffix.casefold() == ".mdb"
+                    and os.path.exists(file_path)
+                    else time.time()
+                )
+                self._loaded_files[file_path] = _LoadedFileCache(
+                    file_path=file_path,
+                    created_at=created_at,
+                    parsed_hierarchy=result.parsed_hierarchy,
+                    cdn_types=result.cdn_types,
+                    pages=result.pages,
+                )
+                self._active_file_path = file_path
+                self._rebuild_merged_hierarchy()
+                result.hierarchy = self._current_hierarchy.data
         return result
 
     def _rebuild_merged_hierarchy(self) -> None:
@@ -219,22 +234,23 @@ class FileProjectRepository(IProjectRepository):
         self._current_hierarchy.set(HierarchyData(loaded_files=file_entries))
 
     def unload_file(self, file_path: Optional[str] = None) -> bool:
-        target_path = file_path or self._active_file_path
-        if not target_path or target_path not in self._loaded_files:
-            return False
-        _clear_position_caches()
-        self.parser.close_connection(target_path)
-        del self._loaded_files[target_path]
-        if target_path == self._active_file_path:
+        with self._state_lock:
+            target_path = file_path or self._active_file_path
+            if not target_path or target_path not in self._loaded_files:
+                return False
+            _clear_position_caches()
+            self.parser.close_connection(target_path)
+            del self._loaded_files[target_path]
+            if target_path == self._active_file_path:
+                if self._loaded_files:
+                    self._active_file_path = next(iter(self._loaded_files.keys()))
+                else:
+                    self._active_file_path = None
             if self._loaded_files:
-                self._active_file_path = next(iter(self._loaded_files.keys()))
+                self._rebuild_merged_hierarchy()
             else:
-                self._active_file_path = None
-        if self._loaded_files:
-            self._rebuild_merged_hierarchy()
-        else:
-            self._current_hierarchy = Hierarchy()
-        return True
+                self._current_hierarchy = Hierarchy()
+            return True
 
     def load_bid(self, bid_uid: str, file_path: Optional[str] = None) -> BidLoadResult:
         if not file_path:
@@ -242,18 +258,34 @@ class FileProjectRepository(IProjectRepository):
                 "file_path is required for load_bid (bid_uid=%s)", bid_uid
             )
             return BidLoadResult()
-        if file_path not in self._loaded_files:
+        result = self.prepare_bid_load(bid_uid, file_path)
+        self.apply_bid_load(file_path)
+        return result
+
+    def prepare_bid_load(self, bid_uid: str, file_path: str) -> BidLoadResult:
+        with self._state_lock:
+            loaded = file_path in self._loaded_files
+        if not loaded:
             self.logger.warning("File not loaded: %s (bid_uid=%s)", file_path, bid_uid)
             return BidLoadResult()
-        self._active_file_path = file_path
         return self.parser.load_bid_data(file_path, bid_uid)
+
+    def apply_bid_load(self, file_path: str) -> None:
+        with self._state_lock:
+            if file_path not in self._loaded_files:
+                raise RuntimeError(
+                    "The navigation database was unloaded while reading."
+                )
+            self._active_file_path = file_path
 
     def reload_database(self, file_path: Optional[str] = None) -> FileLoadResult:
         if not file_path:
             error_message = "file_path is required for reload_database"
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
-        if file_path not in self._loaded_files:
+        with self._state_lock:
+            loaded = file_path in self._loaded_files
+        if not loaded:
             error_message = f"File not found in loaded files: {file_path}"
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
@@ -266,9 +298,17 @@ class FileProjectRepository(IProjectRepository):
             self.logger.exception("Error refreshing database %s: %s", file_path, exc)
             return FileLoadResult(success=False, error_message=error_message)
         if result.success:
-            cache = self._loaded_files[file_path]
-            cache.parsed_hierarchy = result.parsed_hierarchy
-            cache.cdn_types = dict(result.cdn_types)
-            self._rebuild_merged_hierarchy()
-            result.hierarchy = self._current_hierarchy.data
+            with self._state_lock:
+                if file_path not in self._loaded_files:
+                    return FileLoadResult(
+                        success=False,
+                        error_message=(
+                            "The navigation database was unloaded while refreshing."
+                        ),
+                    )
+                cache = self._loaded_files[file_path]
+                cache.parsed_hierarchy = result.parsed_hierarchy
+                cache.cdn_types = dict(result.cdn_types)
+                self._rebuild_merged_hierarchy()
+                result.hierarchy = self._current_hierarchy.data
         return result

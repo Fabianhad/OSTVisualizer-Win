@@ -1,4 +1,8 @@
 from PySide6 import QtWidgets
+from ...application.dtos.collaboration_dtos import (
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+)
 from ..dialogs.cover_sheet.context import CoverSheetContext
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..managers.ui_access_manager import Feature
@@ -32,6 +36,10 @@ class CoverSheetHandler:
         self._event_bus = event_bus
         self._deferred_persistence = deferred_persistence_manager
         self._workspace_state_model = workspace_state_model
+        self._ui_event_coordinator = None
+
+    def set_ui_event_coordinator(self, coordinator) -> None:
+        self._ui_event_coordinator = coordinator
 
     def open_cover_sheet(self) -> None:
         if not self._ui_access_manager.is_allowed(Feature.COVER_SHEET):
@@ -41,7 +49,12 @@ class CoverSheetHandler:
             return
         bid_uid = bid_ref.bid_uid
         file_path = bid_ref.file_path
-        data = self._read_service.get_cover_sheet_data(file_path, bid_uid)
+        uses_sql_queue = self._write_service.uses_sql_collaboration_mutations(file_path)
+        data = (
+            self._project_data.get_cover_sheet_snapshot(file_path, bid_uid)
+            if uses_sql_queue
+            else self._read_service.get_cover_sheet_data(file_path, bid_uid)
+        )
         if data is None:
             show_critical(
                 self.window,
@@ -49,13 +62,37 @@ class CoverSheetHandler:
                 f"Failed to load cover sheet data. {DB_LOCKED_HINT}",
             )
             return
-        used_employee_uids = self._read_service.get_estimator_uids_in_use(file_path)
-        pages_with_takeoffs = self._read_service.get_pages_with_takeoffs(
-            file_path, bid_uid
+        if uses_sql_queue:
+            data.job_statuses = self._project_data.get_job_status_snapshot(file_path)
+            data.employees = self._project_data.get_employee_snapshot(file_path)
+            data.pay_classes = self._project_data.get_pay_class_snapshot(file_path)
+            data.used_job_status_uids = self._project_data.get_used_job_status_uids(
+                file_path
+            )
+            used_employee_uids = self._project_data.get_used_employee_uids(file_path)
+        else:
+            used_employee_uids = self._read_service.get_estimator_uids_in_use(file_path)
+        pages_with_takeoffs = (
+            {
+                page.uid
+                for page in self._project_data.get_all_pages()
+                if self._project_data.get_page_takeoffs(page.uid)
+            }
+            if uses_sql_queue
+            else self._read_service.get_pages_with_takeoffs(file_path, bid_uid)
         )
         pages_requiring_delete_confirmation = (
-            self._read_service.get_pages_with_delete_content(file_path, bid_uid)
+            self._project_data.get_page_delete_content_snapshot(file_path, bid_uid)
+            if uses_sql_queue
+            else self._read_service.get_pages_with_delete_content(file_path, bid_uid)
         )
+        if uses_sql_queue:
+            pages_requiring_delete_confirmation.update(pages_with_takeoffs)
+            pages_requiring_delete_confirmation.update(
+                page.uid
+                for page in self._project_data.get_all_pages()
+                if self._project_data.get_page_annotations(page.uid)
+            )
         if pages_requiring_delete_confirmation is None:
             show_critical(
                 self.window,
@@ -69,6 +106,7 @@ class CoverSheetHandler:
             bid_ref=bid_ref,
             deferred_persistence_manager=self._deferred_persistence,
         )
+        locked_at_open = self._project_data.is_current_bid_locked()
         dialog = CoverSheetDialog(
             self.icon_provider,
             self.window,
@@ -76,6 +114,93 @@ class CoverSheetHandler:
             used_employee_uids=used_employee_uids,
             has_license=self._ui_access_manager.has_license(),
             context=context,
+            save_job_statuses_async_fn=(
+                lambda changes, completed: (
+                    self._save_master_data_async(
+                        file_path,
+                        "Job Statuses",
+                        self._write_service.queue_job_statuses_save,
+                        changes,
+                        completed,
+                        "job_statuses",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            reload_job_statuses_fn=(
+                (lambda: self._project_data.get_job_status_snapshot(file_path))
+                if uses_sql_queue
+                else None
+            ),
+            save_employees_async_fn=(
+                lambda changes, completed: (
+                    self._save_master_data_async(
+                        file_path,
+                        "Employees",
+                        self._write_service.queue_employees_save,
+                        changes,
+                        completed,
+                        "employees",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            save_pay_classes_async_fn=(
+                lambda changes, completed: (
+                    self._save_master_data_async(
+                        file_path,
+                        "Payroll Classes",
+                        self._write_service.queue_pay_classes_save,
+                        changes,
+                        completed,
+                        "pay_classes",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            reload_employees_fn=(
+                (
+                    lambda: (
+                        self._project_data.get_employee_snapshot(file_path),
+                        self._project_data.get_pay_class_snapshot(file_path),
+                    )
+                )
+                if uses_sql_queue
+                else None
+            ),
+            save_bid_areas_async_fn=(
+                lambda changes, completed: (
+                    self._save_bid_areas_async(bid_ref, changes, completed)
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            reload_bid_areas_fn=(
+                (lambda: self._project_data.get_bid_area_snapshot())
+                if uses_sql_queue
+                else None
+            ),
+            save_cover_sheet_async_fn=(
+                (
+                    lambda updates, completed: (
+                        self._save_locked_bid_status_async(
+                            bid_ref,
+                            data.job_status_uid,
+                            updates,
+                            completed,
+                        )
+                        if locked_at_open
+                        else lambda updates, completed: self._save_cover_sheet_async(
+                            bid_ref, updates, completed
+                        )
+                    )
+                )
+                if uses_sql_queue
+                else None
+            ),
             get_used_area_uids_fn=(
                 self._project_data.get_assigned_area_uids_with_stored_takeoff
             ),
@@ -85,9 +210,10 @@ class CoverSheetHandler:
             workspace_state_model=self._workspace_state_model,
         )
         try:
-            locked_at_open = self._project_data.is_current_bid_locked()
             result = exec_with_ost_blocking(dialog, self._event_bus)
             if result == QtWidgets.QDialog.DialogCode.Accepted:
+                if uses_sql_queue:
+                    return
                 updates = dialog.get_updates()
                 if locked_at_open:
                     self._save_locked_bid_status_change(
@@ -103,6 +229,122 @@ class CoverSheetHandler:
         finally:
             dialog.deleteLater()
 
+    def _save_master_data_async(
+        self, file_path, title, queue_fn, changes, completed, result_family
+    ) -> bool:
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                authoritative = result.authoritative_result
+                maps = dict(authoritative.created_uid_maps) if authoritative else {}
+                completed(True, dict(maps.get(result_family, ())))
+                return
+            self._present_mutation_error(file_path, title, result)
+            completed(False, None)
+
+        try:
+            queue_fn(file_path, changes, finish)
+        except (RuntimeError, ValueError) as exc:
+            show_critical(self.window, title, str(exc))
+            return False
+        return True
+
+    def save_master_data_async(
+        self, file_path, title, queue_fn, changes, completed, result_family
+    ) -> bool:
+        return self._save_master_data_async(
+            file_path,
+            title,
+            queue_fn,
+            changes,
+            completed,
+            result_family,
+        )
+
+    def create_bid_async(self, file_path, project_uid, updates, completed) -> bool:
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                completed(True)
+                return
+            self._present_mutation_error(file_path, "New Project", result)
+            completed(False)
+
+        try:
+            self._write_service.queue_bid_create(
+                file_path, project_uid, updates, finish
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_critical(self.window, "New Project", str(exc))
+            return False
+        return True
+
+    def _save_bid_areas_async(self, bid_ref, changes, completed) -> bool:
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                authoritative = result.authoritative_result
+                maps = dict(authoritative.created_uid_maps) if authoritative else {}
+                completed(True, dict(maps.get("areas", ())))
+                return
+            self._present_mutation_error(bid_ref.file_path, "Bid Areas", result)
+            completed(False, None)
+
+        try:
+            self._write_service.queue_bid_areas_save(
+                bid_ref.file_path, bid_ref.bid_uid, changes, finish
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_critical(self.window, "Bid Areas", str(exc))
+            return False
+        return True
+
+    def _save_cover_sheet_async(self, bid_ref, updates, completed) -> bool:
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                completed(True)
+                return
+            self._present_mutation_error(bid_ref.file_path, "Cover Sheet", result)
+            completed(False)
+
+        try:
+            self._write_service.queue_cover_sheet_save(
+                bid_ref.file_path, bid_ref.bid_uid, updates, finish
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_critical(self.window, "Cover Sheet", str(exc))
+            return False
+        return True
+
+    def _save_locked_bid_status_async(
+        self, bid_ref, current_status_uid, updates, completed
+    ) -> bool:
+        new_status_uid = str(updates.get("job_status_uid") or "")
+        if str(current_status_uid or "") == new_status_uid:
+            completed(True)
+            return True
+
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                completed(True)
+                return
+            self._present_mutation_error(bid_ref.file_path, "Cover Sheet", result)
+            completed(False)
+
+        try:
+            self._write_service.queue_bid_job_status_update(
+                bid_ref.file_path, bid_ref.bid_uid, new_status_uid, finish
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_critical(self.window, "Cover Sheet", str(exc))
+            return False
+        return True
+
+    def _present_mutation_error(self, file_path, title, result) -> None:
+        if self._ui_event_coordinator is not None:
+            self._ui_event_coordinator.present_queued_mutation_error(
+                file_path, title, result
+            )
+            return
+        show_critical(self.window, title, result.message or "The update failed.")
+
     def add_blank_page_from_takeoff_tab(self) -> bool:
         if not self._ui_access_manager.is_allowed(Feature.COVER_SHEET):
             return False
@@ -111,8 +353,17 @@ class CoverSheetHandler:
             return False
         if not confirm(self.window, "Add Page", "Do you want to add a new page?"):
             return False
-        data = self._read_service.get_cover_sheet_data(
-            bid_ref.file_path, bid_ref.bid_uid
+        uses_sql_queue = self._write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
+        data = (
+            self._project_data.get_cover_sheet_snapshot(
+                bid_ref.file_path, bid_ref.bid_uid
+            )
+            if uses_sql_queue
+            else self._read_service.get_cover_sheet_data(
+                bid_ref.file_path, bid_ref.bid_uid
+            )
         )
         if data is None:
             show_critical(
@@ -162,6 +413,8 @@ class CoverSheetHandler:
             bid_ref=bid_ref,
             deferred_persistence_manager=self._deferred_persistence,
         )
+        if uses_sql_queue:
+            return self._save_cover_sheet_async(bid_ref, updates, lambda _success: None)
         if context.save_cover_sheet(updates):
             return True
         show_critical(

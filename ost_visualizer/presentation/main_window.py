@@ -1,10 +1,14 @@
 import logging
 import threading
 from types import SimpleNamespace
+from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from shiboken6 import isValid
-from ..application.dtos.collaboration_dtos import CollaborationShutdownState
+from ..application.dtos.collaboration_dtos import (
+    CollaborationShutdownState,
+    MutationOutcomeStatus,
+)
 from ..application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ..application.dtos.file_import_args import ProjectFileArgs
 from ..application.events.app_events import AppEvents
@@ -649,6 +653,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._infrastructure_provider.get_thread_callback_bridge()
             ),
         )
+        handlers.delete.set_ui_event_coordinator(handlers.ui_event)
+        handlers.cover_sheet.set_ui_event_coordinator(handlers.ui_event)
         return handlers
 
     def _load_files_from_config(self) -> None:
@@ -687,6 +693,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._schedule_pending_project_file_imports()
             return
         self._project_file_import_running = True
+        async_pending = False
         try:
             pending = self._pending_project_file_args
             self._pending_project_file_args = []
@@ -695,15 +702,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 rejected=[rejected for item in pending for rejected in item.rejected],
             )
             result = self._import_project_files_with_progress(args)
+            if result is None:
+                async_pending = True
+                return
             self._select_project_file_import_result(result)
             self._show_project_file_import_result(result)
         finally:
-            self._project_file_import_running = False
-            self._schedule_pending_project_file_imports()
+            if not async_pending:
+                self._project_file_import_running = False
+                self._schedule_pending_project_file_imports()
 
     def _import_project_files_with_progress(
         self, args: ProjectFileArgs
-    ) -> ProjectFileImportBatchResult:
+    ) -> Optional[ProjectFileImportBatchResult]:
         if not args.files:
             return ProjectFileImportBatchResult(rejected=list(args.rejected))
         if not self.ui_access_manager.is_allowed(Feature.IMPORT):
@@ -726,6 +737,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._import_project_files_from_args.build_flush_failure_result(
                 args, target
             )
+        if self._import_project_files_from_args.uses_async_import(target):
+            self._import_project_files_from_args.queue_imports(
+                args,
+                target,
+                self._complete_async_project_file_imports,
+            )
+            return None
         progress = ProgressDialog(
             self._project_file_import_progress_label(args),
             lambda: self._import_project_files_from_args.execute_imports(
@@ -753,6 +771,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             return self._project_file_import_progress_failure(args, target)
         return self._import_project_files_from_args.refresh_import_result(result)
+
+    def _complete_async_project_file_imports(
+        self, result: ProjectFileImportBatchResult
+    ) -> None:
+        if not isValid(self):
+            return
+        try:
+            self._select_project_file_import_result(result)
+            self._show_project_file_import_result(result)
+        finally:
+            self._project_file_import_running = False
+            self._schedule_pending_project_file_imports()
 
     @staticmethod
     def _project_file_import_progress_label(args: ProjectFileArgs) -> str:
@@ -830,7 +860,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not result.results and not result.rejected:
             return
         details = self._format_project_file_import_details(result)
-        if result.failed and result.succeeded:
+        projection_recovery = any(
+            item.outcome_status == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+            for item in result.results
+        )
+        if projection_recovery or (result.failed and result.succeeded):
             show_warning(self, "Import Complete", details)
         elif result.failed:
             show_critical(self, "Import Error", details)
@@ -861,6 +895,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
         for item in result.results:
             if not item.success:
+                lines.append(f"{item.source_path}: {item.message}")
+            elif (
+                item.outcome_status == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+            ):
                 lines.append(f"{item.source_path}: {item.message}")
         for item in result.rejected:
             lines.append(f"{item.value}: {item.reason}")
@@ -1145,6 +1183,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return self.menu_controller.get_export_formats()
 
     def _get_project_tree_job_statuses(self, file_path: str) -> list:
+        if self._project_write_service.uses_sql_collaboration_mutations(file_path):
+            return self._project_data_service.get_job_status_snapshot(file_path)
         return self._project_read_service.get_job_statuses(file_path)
 
     def _update_project_tree_bid_job_status(self, bid_ref, job_status_uid: str) -> None:
@@ -2031,6 +2071,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.show()
             return
         collaboration = self.app_controller.get_service("sql_collaboration_coordinator")
+        collaboration.drain_all_mutations_async(
+            self._on_shutdown_mutation_drain_complete
+        )
+
+    def _on_shutdown_mutation_drain_complete(self, success: bool, message: str) -> None:
+        if not self._collaboration_shutdown_pending:
+            return
+        if not success:
+            self._collaboration_shutdown_pending = False
+            self.show()
+            show_critical(
+                self,
+                "Shutdown Incomplete",
+                message
+                or "A critical database setting could not be saved before shutdown.",
+            )
+            return
+        collaboration = self.app_controller.get_service("sql_collaboration_coordinator")
         if collaboration.shutdown_state == CollaborationShutdownState.CLOSED:
             self._on_collaboration_shutdown_complete(True, "")
             return
@@ -2051,7 +2109,6 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(0, self.close)
 
     def _flush_deferred_persistence_before_close(self) -> bool:
-        if not self.handlers.ui_event.flush_current_page_state():
-            return False
+        self.handlers.ui_event.capture_current_page_state_for_shutdown()
         self._deferred_persistence_manager.begin_shutdown()
         return bool(self._deferred_persistence_manager.cleanup())

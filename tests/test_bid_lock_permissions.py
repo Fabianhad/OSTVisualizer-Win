@@ -8,6 +8,7 @@ from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
+    MutationOutcomeStatus,
     ResourceRef,
     SynchronizationConflict,
     SynchronizationConflictKind,
@@ -98,9 +99,11 @@ class _MutationRecorder:
 
 
 class _MutationExecutor:
-    def execute(self, _request, operation):
+    def execute(self, request, operation):
         return DatabaseMutationResult(
-            success=True, value=operation(_MutationRecorder())
+            operation_id=request.operation_id,
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            value=operation(_MutationRecorder()),
         )
 
 
@@ -330,6 +333,10 @@ class _ConditionStructureWriteService:
         self.condition_update_options = []
         self.reloads = []
 
+    @staticmethod
+    def uses_sql_collaboration_mutations(_database_id):
+        return False
+
     def delete_condition_folders(self, file_path, folder_uids):
         self.deleted_folders.append((file_path, list(folder_uids)))
         return True
@@ -358,6 +365,10 @@ class _ConditionDuplicateRefreshFailedWriteService:
     def __init__(self):
         self.calls = []
 
+    @staticmethod
+    def uses_sql_collaboration_mutations(_database_id):
+        return False
+
     def duplicate_conditions_result(self, file_path, bid_uid, condition_uids):
         self.calls.append((file_path, bid_uid, list(condition_uids)))
         return WriteReloadResult(
@@ -371,6 +382,10 @@ class _PartialPasteWriteService:
         self.duplicate_calls = []
         self.reloads = []
         self.notifications = []
+
+    @staticmethod
+    def uses_sql_collaboration_mutations(_database_id):
+        return False
 
     def duplicate_bid(self, file_path, bid_uid, reload=False):
         self.duplicate_calls.append((file_path, bid_uid, reload))
@@ -398,6 +413,10 @@ class _MoveToDeletedWriteService:
         self.notifications = []
         self.selected_bid_during_reload = []
         self.selected_bid_during_notify = []
+
+    @staticmethod
+    def uses_sql_collaboration_mutations(_database_id):
+        return False
 
     def move_bids(
         self,
@@ -569,6 +588,11 @@ def _write_service(
         swap_layer_sequence=forbidden,
         save_bid_selected_page=forbidden,
         save_page_view_state=forbidden,
+        delete_annotations=forbidden,
+        insert_annotations=forbidden,
+        save_annotation_positions=forbidden,
+        save_annotation_text_properties=forbidden,
+        save_annotation_styles=forbidden,
         reload_database=lambda _file_path: reload_success,
         event_bus=_EventBus(),
         logger=logger,
@@ -580,7 +604,6 @@ def _write_service(
         database_capability_service=database_capability or _DatabaseCapability(),
         sql_collaboration_provider=lambda: SimpleNamespace(
             uses_sql_collaboration=lambda _database_id: False,
-            queue_mutation=lambda *_args, **_kwargs: 0,
         ),
     )
     return service, update_bid_job_status, delete_bids, duplicate_bid
@@ -1331,8 +1354,9 @@ class BidLockPermissionTests(unittest.TestCase):
         service, _, _, _ = _write_service(project_data)
         resource = ResourceRef("condition", "12", int(project_data.bid_ref.bid_uid))
         service._mutation_executor = SimpleNamespace(
-            execute=lambda _request, _operation: DatabaseMutationResult(
-                success=False,
+            execute=lambda request, _operation: DatabaseMutationResult(
+                operation_id=request.operation_id,
+                outcome_status=MutationOutcomeStatus.CONFLICT,
                 conflict=SynchronizationConflict(
                     database_id=project_data.bid_ref.file_path,
                     resource=resource,
@@ -1561,10 +1585,11 @@ class BidLockPermissionTests(unittest.TestCase):
             window=None,
             project_data_service=project_data,
             project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
                 delete_projects=lambda file_path, project_uids: delete_calls.append(
                     (file_path, list(project_uids))
                 )
-                or True
+                or True,
             ),
             ui_state_manager=SimpleNamespace(),
             deferred_persistence_manager=_FakeDeferredPersistence(),
@@ -1662,10 +1687,11 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         delete_calls = []
         write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
             delete_projects=lambda file_path, uids: delete_calls.append(
                 (file_path, list(uids))
             )
-            or True
+            or True,
         )
         deferred = _DeferredPersistenceRequiringSelectedPageFileCancel(
             "C:/jobs/test.mdb"
@@ -2233,6 +2259,10 @@ class BidLockPermissionTests(unittest.TestCase):
         delete_calls = []
 
         class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return False
+
             def validate_condition_folder_delete(self, file_path, bid_uid, folder_uids):
                 validate_calls.append((file_path, bid_uid, list(folder_uids)))
                 return DeleteValidationResult(
@@ -2281,9 +2311,10 @@ class BidLockPermissionTests(unittest.TestCase):
             flush_deferred_for_file=lambda _file_path: True,
         )
         write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
             insert_layer_result=lambda _file_path, _bid_uid, _name, _sequence: (
                 WriteReloadResult("layer-new", write_success=True, reload_success=False)
-            )
+            ),
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,
@@ -2366,9 +2397,10 @@ class BidLockPermissionTests(unittest.TestCase):
         controller.project_data = SimpleNamespace()
         controller._deferred_persistence = _FakeDeferredPersistence()
         controller._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
             create_project_result=lambda _path, _name: WriteReloadResult(
                 "project-new", write_success=True, reload_success=False
-            )
+            ),
         )
         from ost_visualizer.presentation.controllers import menu_controller
 
@@ -2406,9 +2438,10 @@ class BidLockPermissionTests(unittest.TestCase):
         controller.project_data = SimpleNamespace()
         controller._deferred_persistence = _FakeDeferredPersistence()
         controller._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
             create_project_result=lambda _path, _name: WriteReloadResult(
                 "project-new", write_success=True, reload_success=True
-            )
+            ),
         )
         MenuController._new_folder(controller)
         self.assertEqual(renames, [("project-new", "db.mdb")])

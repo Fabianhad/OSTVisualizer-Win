@@ -386,37 +386,9 @@ class BidDataReaderMixin:
     def get_pages_with_delete_content(
         self, file_path: str, bid_uid: str
     ) -> Optional[set]:
-        result = set()
-        content_tables = PAGE_DELETE_CONFIRMATION_TABLES
         try:
             with self._connection(file_path) as connection:
-                schema = self._schema(connection)
-                if schema.optional_table_missing("BidPages"):
-                    return result
-                schema.require_column("BidPages", "UID")
-                schema.require_column("BidPages", "BidUID")
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT [UID] FROM [BidPages] WHERE [BidUID] = ?", bid_uid
-                    )
-                    bid_page_uids = {
-                        str(row[0]) for row in cursor.fetchall() if row[0] is not None
-                    }
-                    if not bid_page_uids:
-                        return result
-                    for table in content_tables:
-                        if schema.optional_table_missing(
-                            table
-                        ) or not schema.column_exists(table, "BidPageUID"):
-                            continue
-                        cursor.execute(
-                            f"SELECT DISTINCT [BidPageUID] FROM [{table}] "
-                            "WHERE [BidPageUID] IS NOT NULL"
-                        )
-                        for row in cursor.fetchall():
-                            page_uid = str(row[0])
-                            if page_uid in bid_page_uids:
-                                result.add(page_uid)
+                return self._parse_pages_with_delete_content(connection, bid_uid)
         except Exception as exc:
             if self._record_caught_read_error(exc, file_path):
                 raise
@@ -426,6 +398,34 @@ class BidDataReaderMixin:
                 exc_info=True,
             )
             return None
+
+    def _parse_pages_with_delete_content(self, connection, bid_uid: str) -> set:
+        result = set()
+        schema = self._schema(connection)
+        if schema.optional_table_missing("BidPages"):
+            return result
+        schema.require_column("BidPages", "UID")
+        schema.require_column("BidPages", "BidUID")
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT [UID] FROM [BidPages] WHERE [BidUID] = ?", bid_uid)
+            bid_page_uids = {
+                str(row[0]) for row in cursor.fetchall() if row[0] is not None
+            }
+            if not bid_page_uids:
+                return result
+            for table in PAGE_DELETE_CONFIRMATION_TABLES:
+                if schema.optional_table_missing(table) or not schema.column_exists(
+                    table, "BidPageUID"
+                ):
+                    continue
+                cursor.execute(
+                    f"SELECT DISTINCT [BidPageUID] FROM [{table}] "
+                    "WHERE [BidPageUID] IS NOT NULL"
+                )
+                for row in cursor.fetchall():
+                    page_uid = str(row[0])
+                    if page_uid in bid_page_uids:
+                        result.add(page_uid)
         return result
 
     def get_bid_layers_for_sidebar(
@@ -470,39 +470,40 @@ class BidDataReaderMixin:
 
     def get_default_layers(self, file_path: str) -> List[BidLayer]:
         with self._connection(file_path) as connection:
-            schema = self._schema(connection)
-            if schema.optional_table_missing("BidLayers"):
-                return []
-            schema.require_column("BidLayers", "UID")
-            schema.require_column("BidLayers", "Name")
-            if not schema.column_exists("BidLayers", "IsTemplate"):
-                return []
-            layer_select = ", ".join(
-                [
-                    "[UID]",
-                    schema.optional_column("BidLayers", "BidUID", "NULL"),
-                    "[IsTemplate]",
-                    "[Name]",
-                    schema.optional_column("BidLayers", "Show", "-1"),
-                    schema.optional_column("BidLayers", "IsLocked", "0"),
-                    schema.optional_column("BidLayers", "Sequence", "0"),
-                ]
+            return self._parse_default_layers(connection)
+
+    def _parse_default_layers(self, connection) -> List[BidLayer]:
+        schema = self._schema(connection)
+        if schema.optional_table_missing("BidLayers"):
+            return []
+        schema.require_column("BidLayers", "UID")
+        schema.require_column("BidLayers", "Name")
+        if not schema.column_exists("BidLayers", "IsTemplate"):
+            return []
+        layer_select = ", ".join(
+            [
+                "[UID]",
+                schema.optional_column("BidLayers", "BidUID", "NULL"),
+                "[IsTemplate]",
+                "[Name]",
+                schema.optional_column("BidLayers", "Show", "-1"),
+                schema.optional_column("BidLayers", "IsLocked", "0"),
+                schema.optional_column("BidLayers", "Sequence", "0"),
+            ]
+        )
+        order_expr = (
+            "[Sequence]" if schema.column_exists("BidLayers", "Sequence") else "[UID]"
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT {layer_select}
+                FROM [BidLayers]
+                WHERE [IsTemplate] <> 0
+                ORDER BY {order_expr}
+                """
             )
-            order_expr = (
-                "[Sequence]"
-                if schema.column_exists("BidLayers", "Sequence")
-                else "[UID]"
-            )
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"""
-                    SELECT {layer_select}
-                    FROM [BidLayers]
-                    WHERE [IsTemplate] <> 0
-                    ORDER BY {order_expr}
-                    """
-                )
-                return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
+            return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
 
     @staticmethod
     def _bid_layer_from_row(row) -> BidLayer:

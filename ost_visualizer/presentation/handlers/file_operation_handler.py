@@ -116,87 +116,198 @@ class FileOperationHandler:
         finally:
             dialog.cleanup()
             dialog.deleteLater()
-        if file_entries is not None:
-            self._register_entries(file_entries)
-            new_checked_entries = {
-                entry.database_id: entry for entry in file_entries if entry.is_checked
-            }
-            files_to_unload = old_checked_files.keys() - new_checked_entries.keys()
-            final_entries = list(file_entries)
-            restored_entries = False
-            for database_id in files_to_unload:
-                original_entry = old_checked_files[database_id]
-                raw = original_entry.runtime_locator
-                is_sql = original_entry.backend == DatabaseBackend.SQL_SERVER
-                if not is_sql and not self._deferred_persistence.flush_for_file(raw):
-                    self._restore_entry(final_entries, original_entry)
-                    restored_entries = True
-                    continue
-                if is_sql and not self._file_loading_service.is_loaded(raw):
-                    self._deferred_persistence.cancel_for_file(raw)
-                    if any(entry.database_id == database_id for entry in final_entries):
-                        self._sql_collaboration.stop_database_async(
-                            database_id,
-                            "unchecked",
-                        )
-                    if self._database_capability_service is not None:
-                        self._database_capability_service.mark_disconnected(database_id)
-                    continue
-                if not self._unload_file_fn(raw):
-                    self._restore_entry(final_entries, original_entry)
-                    restored_entries = True
-                    show_warning(
-                        self.window,
-                        "Unload File",
-                        f"Failed to unload {raw}.",
+        if file_entries is None:
+            return
+        self._prepare_open_files_changes(
+            file_entries,
+            old_checked_files,
+            original_entries,
+            reconfigured_database_ids,
+        )
+
+    def _prepare_open_files_changes(
+        self,
+        file_entries: list[FileEntry],
+        old_checked_files: dict[str, FileEntry],
+        original_entries: list[FileEntry],
+        reconfigured_database_ids: set[str],
+    ) -> None:
+        new_checked_ids = {
+            entry.database_id for entry in file_entries if entry.is_checked
+        }
+        sql_unloads = {
+            database_id: entry
+            for database_id, entry in old_checked_files.items()
+            if database_id not in new_checked_ids
+            and entry.backend == DatabaseBackend.SQL_SERVER
+            and self._file_loading_service.is_loaded(entry.runtime_locator)
+        }
+        if not sql_unloads:
+            self._apply_open_files_changes(
+                file_entries,
+                old_checked_files,
+                original_entries,
+                reconfigured_database_ids,
+                {},
+            )
+            return
+        interim_entries = list(file_entries)
+        for entry in sql_unloads.values():
+            self._restore_entry(interim_entries, entry)
+        try:
+            self._file_state_model.update_entries(interim_entries)
+        except OSError:
+            show_warning(
+                self.window,
+                "Open Files",
+                "The checked SQL state could not be preserved while critical "
+                "writes drain, so no databases were unloaded.",
+            )
+            return
+        failures: dict[str, str] = {}
+        pending = set(sql_unloads)
+        for database_id, entry in sql_unloads.items():
+            if not self._deferred_persistence.flush_for_file(entry.runtime_locator):
+                failures[database_id] = (
+                    "A critical database setting could not be submitted before "
+                    "unload."
+                )
+                pending.discard(database_id)
+        applied = False
+
+        def complete(database_id: str, success: bool, message: str) -> None:
+            nonlocal applied
+            if not success:
+                failures[database_id] = message or (
+                    "A critical database setting could not be saved before unload."
+                )
+            pending.discard(database_id)
+            if pending or applied:
+                return
+            applied = True
+            self._apply_open_files_changes(
+                file_entries,
+                old_checked_files,
+                original_entries,
+                reconfigured_database_ids,
+                failures,
+            )
+
+        drain_ids = set(pending)
+        if not drain_ids:
+            complete("", True, "")
+            return
+        for database_id in drain_ids:
+            self._sql_collaboration.drain_database_mutations_async(
+                database_id,
+                lambda success, message, current=database_id: complete(
+                    current, success, message
+                ),
+            )
+
+    def _apply_open_files_changes(
+        self,
+        file_entries: list[FileEntry],
+        old_checked_files: dict[str, FileEntry],
+        original_entries: list[FileEntry],
+        reconfigured_database_ids: set[str],
+        sql_drain_failures: dict[str, str],
+    ) -> None:
+        self._register_entries(file_entries)
+        new_checked_entries = {
+            entry.database_id: entry for entry in file_entries if entry.is_checked
+        }
+        files_to_unload = old_checked_files.keys() - new_checked_entries.keys()
+        final_entries = list(file_entries)
+        state_needs_update = any(
+            old_checked_files[database_id].backend == DatabaseBackend.SQL_SERVER
+            and self._file_loading_service.is_loaded(
+                old_checked_files[database_id].runtime_locator
+            )
+            for database_id in files_to_unload
+        )
+        for database_id in files_to_unload:
+            original_entry = old_checked_files[database_id]
+            raw = original_entry.runtime_locator
+            is_sql = original_entry.backend == DatabaseBackend.SQL_SERVER
+            if database_id in sql_drain_failures:
+                self._restore_entry(final_entries, original_entry)
+                state_needs_update = True
+                show_warning(
+                    self.window,
+                    "Unload File",
+                    sql_drain_failures[database_id],
+                )
+                continue
+            if not is_sql and not self._deferred_persistence.flush_for_file(raw):
+                self._restore_entry(final_entries, original_entry)
+                state_needs_update = True
+                continue
+            if is_sql and not self._file_loading_service.is_loaded(raw):
+                self._deferred_persistence.cancel_for_file(raw)
+                if any(entry.database_id == database_id for entry in final_entries):
+                    self._sql_collaboration.stop_database_async(
+                        database_id,
+                        "unchecked",
                     )
-                else:
-                    self._deferred_persistence.cancel_for_file(raw)
-                    if self._database_capability_service is not None:
-                        self._database_capability_service.mark_disconnected(database_id)
-            if restored_entries:
+                if self._database_capability_service is not None:
+                    self._database_capability_service.mark_disconnected(database_id)
+                continue
+            if not self._unload_file_fn(raw):
+                self._restore_entry(final_entries, original_entry)
+                state_needs_update = True
+                show_warning(
+                    self.window,
+                    "Unload File",
+                    f"Failed to unload {raw}.",
+                )
+            else:
+                self._deferred_persistence.cancel_for_file(raw)
+                if self._database_capability_service is not None:
+                    self._database_capability_service.mark_disconnected(database_id)
+        if state_needs_update:
+            try:
+                self._file_state_model.update_entries(final_entries)
+            except OSError:
+                show_warning(
+                    self.window,
+                    "Open Files",
+                    "The final checked database state could not be saved after "
+                    "applying Open Files changes.",
+                )
+                return
+        database_ids_to_load = new_checked_entries.keys() - old_checked_files
+        if database_ids_to_load:
+            loaded_database_ids = self._load_specific_entries(
+                [new_checked_entries[key] for key in database_ids_to_load]
+            )
+            failed_database_ids = database_ids_to_load - loaded_database_ids
+            for database_id in failed_database_ids:
+                for entry in final_entries:
+                    if entry.database_id == database_id:
+                        entry.is_checked = False
+                        break
+            if failed_database_ids:
                 try:
                     self._file_state_model.update_entries(final_entries)
                 except OSError:
                     show_warning(
                         self.window,
                         "Open Files",
-                        "A database could not be unloaded and its checked state "
-                        "could not be restored.",
+                        "A database could not be loaded and its checked state "
+                        "could not be cleared.",
                     )
-                    return
-            database_ids_to_load = new_checked_entries.keys() - old_checked_files
-            if database_ids_to_load:
-                loaded_database_ids = self._load_specific_entries(
-                    [new_checked_entries[key] for key in database_ids_to_load]
-                )
-                failed_database_ids = database_ids_to_load - loaded_database_ids
-                for database_id in failed_database_ids:
-                    for entry in final_entries:
-                        if entry.database_id == database_id:
-                            entry.is_checked = False
-                            break
-                if failed_database_ids:
-                    try:
-                        self._file_state_model.update_entries(final_entries)
-                    except OSError:
-                        show_warning(
-                            self.window,
-                            "Open Files",
-                            "A database could not be loaded and its checked state "
-                            "could not be cleared.",
-                        )
-            for database_id in old_checked_files.keys() & new_checked_entries.keys():
-                entry = new_checked_entries[database_id]
-                descriptor_changed = (
-                    old_checked_files[database_id].descriptor != entry.descriptor
-                )
-                if entry.backend == DatabaseBackend.SQL_SERVER and (
-                    descriptor_changed or database_id in reconfigured_database_ids
-                ):
-                    self._restart_sql_connection(database_id)
-            retained_ids = {entry.database_id for entry in final_entries}
-            self._cleanup_removed_entries(original_entries, retained_ids)
+        for database_id in old_checked_files.keys() & new_checked_entries.keys():
+            entry = new_checked_entries[database_id]
+            descriptor_changed = (
+                old_checked_files[database_id].descriptor != entry.descriptor
+            )
+            if entry.backend == DatabaseBackend.SQL_SERVER and (
+                descriptor_changed or database_id in reconfigured_database_ids
+            ):
+                self._restart_sql_connection(database_id)
+        retained_ids = {entry.database_id for entry in final_entries}
+        self._cleanup_removed_entries(original_entries, retained_ids)
 
     def create_sql_database(self) -> bool:
         if not self._ui_access_manager.is_allowed(Feature.CREATE_DATABASE):
@@ -323,9 +434,9 @@ class FileOperationHandler:
 
     @staticmethod
     def _restore_entry(entries, original_entry) -> None:
-        for entry in entries:
+        for index, entry in enumerate(entries):
             if entry.database_id == original_entry.database_id:
-                entry.is_checked = True
+                entries[index] = entry.with_checked(True)
                 return
         entries.append(original_entry.with_checked(True))
 
@@ -346,6 +457,53 @@ class FileOperationHandler:
             )
 
     def _restart_sql_connection(self, database_id: str) -> None:
+        entry = next(
+            (
+                candidate
+                for candidate in self._file_state_model.file_entries
+                if candidate.database_id == database_id
+            ),
+            None,
+        )
+        if entry is not None and self._file_loading_service.is_loaded(
+            entry.runtime_locator
+        ):
+            if not self._deferred_persistence.flush_for_file(entry.runtime_locator):
+                show_warning(
+                    self.window,
+                    "Reconnect SQL Server Database",
+                    "A critical database setting could not be submitted before "
+                    "reconnecting.",
+                )
+                return
+            self._sql_collaboration.drain_database_mutations_async(
+                database_id,
+                lambda success, message: self._restart_sql_connection_after_drain(
+                    database_id,
+                    success,
+                    message,
+                ),
+            )
+            return
+        self._stop_sql_connection_for_restart(database_id)
+
+    def _restart_sql_connection_after_drain(
+        self,
+        database_id: str,
+        success: bool,
+        message: str,
+    ) -> None:
+        if not success:
+            show_warning(
+                self.window,
+                "Reconnect SQL Server Database",
+                message
+                or "A critical database setting could not be saved before reconnecting.",
+            )
+            return
+        self._stop_sql_connection_for_restart(database_id)
+
+    def _stop_sql_connection_for_restart(self, database_id: str) -> None:
         self._sql_collaboration.stop_database_async(
             database_id,
             "reconfigured",
@@ -431,8 +589,54 @@ class FileOperationHandler:
                 selected_entry is not None
                 and selected_entry.backend == DatabaseBackend.SQL_SERVER
             )
-            if not is_sql and not self._deferred_persistence.flush_for_file(file_path):
+            if is_sql and not self._file_loading_service.is_loaded(file_path):
+                self._complete_file_unload(file_path, selected_entry, original_entries)
                 return
+            if not self._deferred_persistence.flush_for_file(file_path):
+                return
+            if is_sql:
+                self._sql_collaboration.drain_database_mutations_async(
+                    selected_entry.database_id,
+                    lambda success, message: self._complete_sql_file_unload(
+                        file_path,
+                        selected_entry,
+                        original_entries,
+                        success,
+                        message,
+                    ),
+                )
+                return
+        self._complete_file_unload(file_path, selected_entry, original_entries)
+
+    def _complete_sql_file_unload(
+        self,
+        file_path: str,
+        selected_entry: FileEntry,
+        original_entries: list[FileEntry],
+        success: bool,
+        message: str,
+    ) -> None:
+        if not success:
+            show_warning(
+                self.window,
+                "Unload File",
+                message
+                or "A critical database setting could not be saved before unload.",
+            )
+            return
+        self._complete_file_unload(file_path, selected_entry, original_entries)
+
+    def _complete_file_unload(
+        self,
+        file_path,
+        selected_entry,
+        original_entries: list[FileEntry],
+    ) -> None:
+        is_sql = (
+            selected_entry is not None
+            and selected_entry.backend == DatabaseBackend.SQL_SERVER
+        )
+        if file_path:
             entries = [
                 (
                     entry.with_checked(False)

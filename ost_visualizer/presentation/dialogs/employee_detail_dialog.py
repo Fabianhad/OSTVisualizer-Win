@@ -25,12 +25,14 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         parent: Optional[QtWidgets.QWidget] = None,
         pay_classes: Optional[List[PayClass]] = None,
         pay_classes_save_fn=None,
+        pay_classes_save_async_fn=None,
     ):
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._employees = list(employees)
         self._current_index = current_index
         self._pay_classes_save_fn = pay_classes_save_fn
+        self._pay_classes_save_async_fn = pay_classes_save_async_fn
         self._pay_classes: List[PayClassRecord] = [
             PayClassRecord.from_pay_class(pc) for pc in (pay_classes or [])
         ]
@@ -277,6 +279,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
             used_pay_class_uids=used_uids,
             initial_name=initial_name,
             save_fn=self._pay_classes_save_fn,
+            save_async_fn=self._pay_classes_save_async_fn,
         )
         self._active_payroll_dialog = dialog
         try:
@@ -327,6 +330,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
     def cleanup(self) -> None:
         self.icon_provider = None
         self._pay_classes_save_fn = None
+        self._pay_classes_save_async_fn = None
         self._active_payroll_dialog = None
         self._employees.clear()
         self._pay_classes.clear()

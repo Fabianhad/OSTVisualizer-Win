@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Optional
@@ -174,33 +175,11 @@ class OspImporter:
         target_db_path: str,
         target_project_uid: Optional[str] = None,
     ) -> bool:
-        tmp_path: Optional[Path] = None
         try:
-            package = _inspect_package(ost_cab.list_cab(osp_file_path))
-            tmp_path = _create_extract_temp_dir(package.member_names)
-            for name in package.member_names:
-                _create_cab_member_parent_dir(tmp_path, name)
-            if not ost_cab.extract_cab(
-                osp_file_path, _cab_extract_output_dir(tmp_path)
-            ):
-                logger.error("Failed to extract .osp archive: %s", osp_file_path)
-                return False
-            ost_path = _cab_member_path(tmp_path, package.ost_member_name)
-            if not ost_path.is_file():
-                raise _OspFormatError(
-                    f"embedded OST member was not extracted: {package.ost_member_name}"
+            with self._extracted_ost(osp_file_path) as ost_path:
+                return self._ost_importer.import_ost(
+                    str(ost_path), target_db_path, target_project_uid
                 )
-            bid_name = ost_path.stem
-            dest_dir = get_default_working_dir() / bid_name
-            self._extract_images(
-                tmp_path,
-                ost_path,
-                dest_dir,
-                package.image_members_by_path,
-            )
-            return self._ost_importer.import_ost(
-                str(ost_path), target_db_path, target_project_uid
-            )
         except _OspFormatError as exc:
             logger.error("Cannot import OSP %s: %s", osp_file_path, exc)
             return False
@@ -214,9 +193,49 @@ class OspImporter:
         except Exception:
             logger.exception("Unexpected OSP import failure: %s", osp_file_path)
             return False
+
+    def import_osp_mutation(
+        self,
+        osp_file_path: str,
+        target_db_path: str,
+        target_project_uid: Optional[str],
+        recorder,
+    ) -> dict[str, object]:
+        with self._extracted_ost(osp_file_path) as ost_path:
+            return self._ost_importer.import_ost_mutation(
+                str(ost_path),
+                target_db_path,
+                target_project_uid,
+                recorder,
+            )
+
+    @contextmanager
+    def _extracted_ost(self, osp_file_path: str):
+        package = _inspect_package(ost_cab.list_cab(osp_file_path))
+        tmp_path = _create_extract_temp_dir(package.member_names)
+        try:
+            for name in package.member_names:
+                _create_cab_member_parent_dir(tmp_path, name)
+            if not ost_cab.extract_cab(
+                osp_file_path, _cab_extract_output_dir(tmp_path)
+            ):
+                raise _OspFormatError("the OSP archive could not be extracted")
+            ost_path = _cab_member_path(tmp_path, package.ost_member_name)
+            if not ost_path.is_file():
+                raise _OspFormatError(
+                    f"embedded OST member was not extracted: {package.ost_member_name}"
+                )
+            bid_name = ost_path.stem
+            dest_dir = get_default_working_dir() / bid_name
+            self._extract_images(
+                tmp_path,
+                ost_path,
+                dest_dir,
+                package.image_members_by_path,
+            )
+            yield ost_path
         finally:
-            if tmp_path is not None:
-                _remove_temp_tree(tmp_path)
+            _remove_temp_tree(tmp_path)
 
     def _extract_images(
         self,

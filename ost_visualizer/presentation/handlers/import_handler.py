@@ -1,6 +1,8 @@
 import logging
 from typing import Optional
 from PySide6 import QtWidgets
+from shiboken6 import isValid
+from ...application.dtos.collaboration_dtos import MutationOutcomeStatus
 from ..managers.ui_access_manager import Feature
 from ..components.progress_dialog import ProgressDialog
 from ..utils.messagebox import show_critical, show_info, show_warning
@@ -61,6 +63,25 @@ class ImportHandler:
         if not self._deferred_persistence.flush_for_file(target_db):
             return
         target_project_uid = self._resolve_target_project_uid()
+        if self._import_service.uses_sql_collaboration_import(target_db):
+            try:
+                self._import_service.queue_project_import(
+                    filename,
+                    extension,
+                    target_db,
+                    target_project_uid,
+                    lambda result: self._on_sql_import_complete(
+                        format_name, filename, result
+                    ),
+                )
+            except Exception:
+                logger.exception("Error queueing %s import", format_name)
+                show_critical(
+                    self.window,
+                    "Import Error",
+                    f"The {format_name} import could not be queued.",
+                )
+            return
         try:
             dialog = ProgressDialog(
                 filename,
@@ -115,6 +136,40 @@ class ImportHandler:
                 f"An unexpected error occurred while importing the {format_name} file. "
                 "Please verify the file is valid and try again.",
             )
+
+    def _on_sql_import_complete(self, format_name, filename, result) -> None:
+        if not isValid(self.window):
+            return
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+            show_info(
+                self.window,
+                "Import Complete",
+                f"Successfully imported '{filename}' into the database.",
+            )
+            return
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED:
+            show_warning(
+                self.window,
+                "Import Synchronization",
+                f"'{filename}' was committed, but its local projection is being "
+                "recovered. Do not import the file again.",
+            )
+            return
+        if result.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN:
+            show_warning(
+                self.window,
+                "Import Status Unknown",
+                f"The commit status for '{filename}' is being recovered. Do not "
+                "import the file again until recovery completes.",
+            )
+            return
+        show_critical(
+            self.window,
+            "Import Error",
+            result.message
+            or f"Failed to import {format_name} file. The file may be corrupted "
+            "or in an unsupported format.",
+        )
 
     def _resolve_target_project_uid(self) -> Optional[str]:
         if self.ui_state_manager.selected_project_uid:

@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
+from ...dtos.collaboration_dtos import MutationOutcomeStatus, QueuedMutationResult
 from ....domain.entities.database_descriptor import DatabaseBackend
 from ....domain.entities.file_state import normalize_path
 from ....domain.entities.project_constants import is_deleted_bids_project_uid
@@ -37,6 +38,7 @@ class ProjectFileImportResult:
     success: bool
     message: str
     project_name: Optional[str] = None
+    outcome_status: Optional[MutationOutcomeStatus] = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,123 @@ class ImportProjectFilesFromArgsUseCase:
         if refresh_after_import and success_count:
             return self.refresh_import_result(batch)
         return batch
+
+    def uses_async_import(self, target: ProjectImportTarget) -> bool:
+        return self._import_service.uses_sql_collaboration_import(target.file_path)
+
+    def queue_imports(
+        self,
+        args: ProjectFileArgs,
+        target: ProjectImportTarget,
+        callback: Callable[[ProjectFileImportBatchResult], None],
+    ) -> None:
+        results: list[Optional[ProjectFileImportResult]] = [None] * len(args.files)
+        remaining = len(args.files)
+        if not remaining:
+            callback(
+                ProjectFileImportBatchResult(
+                    rejected=list(args.rejected),
+                    target_db_path=target.file_path,
+                    selected_project_uid=target.project_uid,
+                )
+            )
+            return
+
+        def complete(index: int, result: ProjectFileImportResult) -> None:
+            nonlocal remaining
+            if results[index] is not None:
+                return
+            results[index] = result
+            remaining -= 1
+            if remaining:
+                return
+            callback(
+                ProjectFileImportBatchResult(
+                    results=[item for item in results if item is not None],
+                    rejected=list(args.rejected),
+                    target_db_path=target.file_path,
+                    selected_project_uid=target.project_uid,
+                    import_as_orphaned_due_to_deleted_target=(
+                        target.import_as_orphaned_due_to_deleted_target
+                    ),
+                )
+            )
+
+        for index, item in enumerate(args.files):
+            source = Path(item.path)
+            if not source.is_file():
+                complete(
+                    index,
+                    ProjectFileImportResult(
+                        source_path=item.path,
+                        success=False,
+                        message="File does not exist.",
+                        outcome_status=MutationOutcomeStatus.REJECTED,
+                    ),
+                )
+                continue
+
+            def on_result(
+                queued: QueuedMutationResult,
+                *,
+                result_index: int = index,
+                source_path: str = item.path,
+            ) -> None:
+                committed = queued.outcome_status in {
+                    MutationOutcomeStatus.COMMITTED,
+                    MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                }
+                if queued.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    message = "Imported successfully."
+                elif (
+                    queued.outcome_status
+                    == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                ):
+                    message = (
+                        "Imported successfully, but authoritative projection is "
+                        "being recovered."
+                    )
+                elif (
+                    queued.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN
+                ):
+                    message = (
+                        "The import commit status is unknown. Do not retry until "
+                        "recovery completes."
+                    )
+                else:
+                    message = queued.message or "The file could not be imported."
+                complete(
+                    result_index,
+                    ProjectFileImportResult(
+                        source_path=source_path,
+                        success=committed,
+                        message=message,
+                        project_name=(Path(source_path).stem if committed else None),
+                        outcome_status=queued.outcome_status,
+                    ),
+                )
+
+            try:
+                self._import_service.queue_project_import(
+                    item.path,
+                    item.extension.lstrip("."),
+                    target.file_path,
+                    target.project_uid,
+                    on_result,
+                )
+            except Exception as exc:
+                self._logger.exception(
+                    "Project file import could not be queued for %s", item.path
+                )
+                complete(
+                    index,
+                    ProjectFileImportResult(
+                        source_path=item.path,
+                        success=False,
+                        message=str(exc) or "The file could not be queued.",
+                        outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                    ),
+                )
 
     def refresh_import_result(
         self, result: ProjectFileImportBatchResult

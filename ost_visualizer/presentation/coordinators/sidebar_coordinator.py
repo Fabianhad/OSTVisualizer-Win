@@ -174,7 +174,8 @@ class SidebarCoordinator:
     def set_condition_summary_grouping(
         self, grouping: ConditionSummaryGrouping
     ) -> None:
-        self.load_condition_summary(grouping)
+        del grouping
+        self.load_condition_summary_from_memory()
 
     def load_bid_layers_sidebar(self) -> None:
         if not self.bid_layers_sidebar:
@@ -194,6 +195,21 @@ class SidebarCoordinator:
             bid_ref.file_path, bid_ref.bid_uid
         )
         self.bid_layers_sidebar.load_layers(merged, used_uids=used_uids)
+
+    def load_bid_layers_sidebar_from_memory(self) -> None:
+        if not self.bid_layers_sidebar:
+            return
+        if not self._ui_state.get_selected_bid_ref():
+            self.bid_layers_sidebar.clear()
+            return
+        layers = self._project_data.get_bid_layer_snapshot()
+        if not layers:
+            self.bid_layers_sidebar.clear()
+            return
+        self.bid_layers_sidebar.load_layers(
+            layers,
+            used_uids=self._project_data.get_layer_uids_in_use(),
+        )
 
     def clear_sidebars(self) -> None:
         if self.takeoff_sidebar:

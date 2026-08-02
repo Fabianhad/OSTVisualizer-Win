@@ -95,6 +95,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._right_button_dragged = False
         self._suppress_next_context_menu = False
         self._selected_takeoff_uids: list = []
+        self._pending_mutation_uids: set[str] = set()
         self._pick_enabled: bool = True
         self._editing_enabled: bool = False
         self._negative_check_fn = lambda _uids: False
@@ -409,6 +410,8 @@ class OpenGLViewer(QtWidgets.QWidget):
             return
         cond_uid = scene.get_condition_uid(mesh_idx)
         tk_uid = scene.get_takeoff_uid(mesh_idx)
+        if tk_uid in self._pending_mutation_uids:
+            return
         if ctrl and tk_uid:
             if tk_uid in self._selected_takeoff_uids:
                 self._selected_takeoff_uids.remove(tk_uid)
@@ -440,6 +443,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         self.update()
 
     def set_selected_takeoffs(self, takeoff_uids: list) -> None:
+        takeoff_uids = [
+            uid for uid in takeoff_uids if uid not in self._pending_mutation_uids
+        ]
         self._selected_takeoff_uids = list(takeoff_uids)
         if not self._renderer:
             return
@@ -456,6 +462,13 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def get_selected_takeoff_uids(self) -> list:
         return list(self._selected_takeoff_uids)
+
+    def set_pending_mutation_uids(self, takeoff_uids: set[str]) -> None:
+        self._pending_mutation_uids = {str(uid) for uid in takeoff_uids if uid}
+        self.set_selected_takeoffs(self._selected_takeoff_uids)
+
+    def get_pending_mutation_uids(self) -> set[str]:
+        return set(self._pending_mutation_uids)
 
     def _reconcile_selected_takeoffs_with_scene(self) -> None:
         if not self._renderer:

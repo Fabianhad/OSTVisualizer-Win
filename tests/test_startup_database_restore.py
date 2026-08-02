@@ -373,6 +373,82 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(stopped, [(sql_descriptor.database_id, "unchecked")])
         self.assertEqual(cancelled, [sql_descriptor.database_id])
 
+    def test_open_files_uncheck_of_loaded_sql_waits_for_critical_drain(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="LOADED_SQL"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        original = FileEntry.for_descriptor(descriptor, is_checked=True)
+        unchecked = original.with_checked(False)
+        flushed = []
+        cancelled = []
+        unloads = []
+        drain_callbacks = []
+
+        class _State:
+            file_entries = [original]
+
+            def reload(self):
+                return None
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        class _Dialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_file_entries(self):
+                return [unchecked]
+
+            def commit_credential_changes(self):
+                return set()
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=_State(),
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=SimpleNamespace(
+                is_loaded=lambda locator: locator == descriptor.database_id
+            ),
+            working_directory_service=None,
+            unload_file_fn=lambda locator: unloads.append(locator) or True,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda locator: flushed.append(locator) or True,
+                cancel_for_file=cancelled.append,
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                drain_database_mutations_async=lambda database_id, callback: (
+                    drain_callbacks.append((database_id, callback))
+                )
+            ),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.OpenFilesDialog",
+            _Dialog,
+        ):
+            handler.open_files()
+        self.assertEqual(flushed, [descriptor.database_id])
+        self.assertEqual(unloads, [])
+        self.assertEqual(len(drain_callbacks), 1)
+        drain_callbacks[0][1](True, "")
+        self.assertEqual(unloads, [descriptor.database_id])
+        self.assertEqual(cancelled, [descriptor.database_id])
+
     def test_explicit_unload_of_offline_sql_detaches_local_state(self):
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OFFLINE_SQL"),
@@ -433,6 +509,8 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         cancelled = []
         stopped = []
         unloaded = []
+        flushed = []
+        drains = []
 
         class _State:
             file_entries = [original]
@@ -446,24 +524,22 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
             file_state_model=_State(),
             cleanup_deleted_files_use_case=SimpleNamespace(),
-            file_loading_service=SimpleNamespace(
-                is_loaded=lambda _locator: self.fail(
-                    "Runtime inspection must follow persisted state"
-                )
-            ),
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: True),
             working_directory_service=None,
             unload_file_fn=lambda locator: unloaded.append(locator) or True,
             deferred_persistence_manager=SimpleNamespace(
-                flush_for_file=lambda _locator: self.fail(
-                    "SQL unload must not flush deferred writes"
-                ),
+                flush_for_file=lambda locator: flushed.append(locator) or True,
                 cancel_for_file=cancelled.append,
             ),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             sql_collaboration_coordinator=SimpleNamespace(
+                drain_database_mutations_async=lambda database_id, callback: (
+                    drains.append(database_id),
+                    callback(True, ""),
+                ),
                 stop_database_async=lambda database_id, reason: stopped.append(
                     (database_id, reason)
-                )
+                ),
             ),
             ui_state_manager=SimpleNamespace(selected_file_path=descriptor.database_id),
         )
@@ -474,6 +550,8 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(cancelled, [])
         self.assertEqual(stopped, [])
         self.assertEqual(unloaded, [])
+        self.assertEqual(flushed, [descriptor.database_id])
+        self.assertEqual(drains, [descriptor.database_id])
         self.assertTrue(_State.file_entries[0].is_checked)
         warning.assert_called_once()
 
@@ -492,6 +570,8 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 self.file_entries = list(entries)
 
         state = _State()
+        flushed = []
+        drains = []
         handler = FileOperationHandler(
             window=None,
             icon_provider=None,
@@ -502,13 +582,16 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             working_directory_service=None,
             unload_file_fn=lambda _locator: False,
             deferred_persistence_manager=SimpleNamespace(
-                flush_for_file=lambda _locator: self.fail(
-                    "SQL unload must not flush deferred writes"
-                ),
+                flush_for_file=lambda locator: flushed.append(locator) or True,
                 cancel_for_file=cancelled.append,
             ),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
-            sql_collaboration_coordinator=SimpleNamespace(),
+            sql_collaboration_coordinator=SimpleNamespace(
+                drain_database_mutations_async=lambda database_id, callback: (
+                    drains.append(database_id),
+                    callback(True, ""),
+                )
+            ),
             ui_state_manager=SimpleNamespace(selected_file_path=descriptor.database_id),
         )
         with patch(
@@ -517,6 +600,8 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             handler.unload_file()
         self.assertEqual(state.file_entries, [original])
         self.assertEqual(cancelled, [])
+        self.assertEqual(flushed, [descriptor.database_id])
+        self.assertEqual(drains, [descriptor.database_id])
 
     def test_open_files_save_failure_does_not_unload_the_active_database(self):
         original = FileEntry("C:/projects/active.mdb", is_checked=True)
@@ -763,9 +848,10 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         handler._file_state_model = SimpleNamespace(file_entries=[entry])
         handler.event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
         handler._file_loading_service = SimpleNamespace(
+            is_loaded=lambda _locator: False,
             load_file=lambda _locator: self.fail(
                 "SQL retry must not use the synchronous UI-thread loader"
-            )
+            ),
         )
         handler._database_capability_service = SimpleNamespace(
             mark_disconnected=lambda _database_id: None
@@ -833,7 +919,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             cleanup_deleted_files_use_case=SimpleNamespace(
                 execute_and_save=lambda: None
             ),
-            file_loading_service=SimpleNamespace(),
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: False),
             working_directory_service=None,
             unload_file_fn=lambda _locator: True,
             deferred_persistence_manager=SimpleNamespace(),

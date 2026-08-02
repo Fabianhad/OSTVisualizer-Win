@@ -1,9 +1,13 @@
 import logging
+import uuid
 from typing import Callable, Optional
 from ..dtos.collaboration_dtos import (
+    CollaborationMutationType,
     DatabaseMutationRequest,
     DatabaseMutationResult,
+    MutationOutcomeStatus,
     ResourceRef,
+    canonical_mutation_request_hash,
 )
 from ..events.app_events import AppEvents
 from ..interfaces.i_database_mutation_executor import (
@@ -67,16 +71,31 @@ class DatabaseMutationWriteService(BaseWriteService):
         resources: tuple[ResourceRef, ...],
         operation: Callable[[IMutationRecorder], object],
         *,
+        operation_id: str = "",
+        mutation_type: str = CollaborationMutationType.PROJECT_WRITE.value,
+        request_hash: str = "",
+        result_format_version: int = 1,
         block_bid_child_locks: bool = False,
         block_bid_active_editors: bool = False,
         publish_conflict_event: bool = True,
     ) -> DatabaseMutationResult:
+        operation_id = operation_id or str(uuid.uuid4())
+        request_hash = request_hash or canonical_mutation_request_hash(
+            {
+                "mutation_type": mutation_type,
+                "resources": resources,
+                "result_format_version": result_format_version,
+            }
+        )
         with self._concurrency_tokens.mutation_scope(database_id):
             if not self._database_capability_service.is_editable(database_id):
                 self.logger.warning(
                     "Database mutation rejected because editing is unavailable."
                 )
-                return DatabaseMutationResult(success=False)
+                return DatabaseMutationResult(
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.REJECTED,
+                )
             for resource in resources:
                 if not self._database_capability_service.is_editable(
                     database_id, resource
@@ -84,7 +103,10 @@ class DatabaseMutationWriteService(BaseWriteService):
                     self.logger.warning(
                         "Database mutation rejected because its resource is unavailable."
                     )
-                    return DatabaseMutationResult(success=False)
+                    return DatabaseMutationResult(
+                        operation_id=operation_id,
+                        outcome_status=MutationOutcomeStatus.REJECTED,
+                    )
             session_id = self._session_registry.get(database_id)
             self._concurrency_tokens.ensure_resources_loaded(database_id, resources)
             expected_versions = self._concurrency_tokens.expected_versions(
@@ -94,6 +116,10 @@ class DatabaseMutationWriteService(BaseWriteService):
                 DatabaseMutationRequest(
                     database_id=database_id,
                     session_id=session_id,
+                    operation_id=operation_id,
+                    mutation_type=mutation_type,
+                    request_hash=request_hash,
+                    result_format_version=result_format_version,
                     resources=resources,
                     expected_versions=expected_versions,
                     required_lock_tokens=self._session_registry.lock_tokens(
@@ -104,7 +130,7 @@ class DatabaseMutationWriteService(BaseWriteService):
                 ),
                 operation,
             )
-            if result.success:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 self._concurrency_tokens.apply_result(
                     database_id, result.resulting_versions
                 )

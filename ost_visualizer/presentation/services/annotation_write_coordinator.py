@@ -89,6 +89,7 @@ class AnnotationWriteCoordinator:
         )
         if not new_uids:
             return []
+        new_uids = self._require_complete_identity_batch(new_uids, len(specs))
         inserted_specs = specs[: len(new_uids)]
         self._add_inserted_annotations_to_model(
             new_uids, inserted_specs, ref_remap=ref_remap
@@ -192,10 +193,13 @@ class AnnotationWriteCoordinator:
             int, tuple[BidAnnotation, InsertAnnotationSpec, str]
         ] = {}
         if named_pairs:
-            named_uids = insert(
-                bid_ref,
-                [spec for _index, _annotation, spec in named_pairs],
-                remap,
+            named_uids = self._require_complete_identity_batch(
+                insert(
+                    bid_ref,
+                    [spec for _index, _annotation, spec in named_pairs],
+                    remap,
+                ),
+                len(named_pairs),
             )
             for (index, annotation, spec), new_uid in zip(named_pairs, named_uids):
                 remap.namedview_uids[str(annotation.uid)] = str(new_uid)
@@ -234,10 +238,13 @@ class AnnotationWriteCoordinator:
             )
         ]
         if insertable_others:
-            other_uids = insert(
-                bid_ref,
-                [spec for _index, _annotation, spec in insertable_others],
-                remap,
+            other_uids = self._require_complete_identity_batch(
+                insert(
+                    bid_ref,
+                    [spec for _index, _annotation, spec in insertable_others],
+                    remap,
+                ),
+                len(insertable_others),
             )
             for (index, annotation, spec), new_uid in zip(
                 insertable_others, other_uids
@@ -249,6 +256,58 @@ class AnnotationWriteCoordinator:
             specs=tuple(spec for _annotation, spec, _uid in inserted),
             uids=tuple(uid for _annotation, _spec, uid in inserted),
             ref_remap=remap,
+        )
+
+    @staticmethod
+    def _require_complete_identity_batch(
+        inserted_uids: List[str], expected_count: int
+    ) -> List[str]:
+        result = list(inserted_uids)
+        if not result:
+            return []
+        if len(result) != expected_count:
+            raise ValueError(
+                "Annotation insert returned "
+                f"{len(result)} identities for {expected_count} requested annotations"
+            )
+        return result
+
+    def filter_copyable_annotations(
+        self,
+        source_annotations: List[BidAnnotation],
+        specs: List[InsertAnnotationSpec],
+    ) -> tuple[List[BidAnnotation], List[InsertAnnotationSpec]]:
+        if len(source_annotations) != len(specs):
+            raise ValueError("Copied annotation sources and specs must stay aligned")
+        source_named_view_uids = {
+            str(annotation.uid)
+            for annotation in source_annotations
+            if annotation.is_namedview
+        }
+        external_targets = {
+            str(annotation.properties.get("BidPageViewUID") or "")
+            for annotation in source_annotations
+            if annotation.annotation_type == ANNOTATION_TYPE_HOTLINK
+            and str(annotation.properties.get("BidPageViewUID") or "")
+            not in source_named_view_uids
+        }
+        existing_named_view_uids = {
+            str(annotation.uid)
+            for annotation in self._data_svc.get_all_annotations()
+            if annotation.is_namedview and str(annotation.uid) in external_targets
+        }
+        pairs = [
+            (annotation, spec)
+            for annotation, spec in zip(source_annotations, specs)
+            if annotation.annotation_type != ANNOTATION_TYPE_HOTLINK
+            or (
+                str(annotation.properties.get("BidPageViewUID") or "")
+                in source_named_view_uids.union(existing_named_view_uids)
+            )
+        ]
+        return (
+            [annotation for annotation, _spec in pairs],
+            [spec for _annotation, spec in pairs],
         )
 
     @staticmethod
@@ -280,6 +339,44 @@ class AnnotationWriteCoordinator:
     def apply_default_annotation_layer(self, specs: List[InsertAnnotationSpec]) -> None:
         factory = AnnotationCreationFactory(self._data_svc.get_annotation_layer_uid())
         factory.assign_default_layer_to_specs(specs)
+
+    def project_inserted_annotations(
+        self,
+        new_uids: List[str],
+        specs: List[InsertAnnotationSpec],
+        *,
+        ref_remap: Optional[PasteRefRemap] = None,
+    ) -> None:
+        if not new_uids:
+            return
+        complete_uids = self._require_complete_identity_batch(new_uids, len(specs))
+        self._add_inserted_annotations_to_model(
+            complete_uids,
+            specs,
+            ref_remap=ref_remap,
+        )
+        self.publish_annotations_changed_for_pages(
+            self._annotation_page_uids_for_specs(specs),
+            complete_uids,
+            self._annotation_types_from_specs(specs),
+        )
+
+    def project_deleted_annotations(
+        self,
+        annotation_keys: List[tuple[str, str]],
+        *,
+        page_uids: Optional[List[str]] = None,
+    ) -> None:
+        if not annotation_keys:
+            return
+        affected_pages = self._data_svc.remove_annotations_by_keys(annotation_keys)
+        if page_uids:
+            affected_pages = self._unique_ordered((*affected_pages, *page_uids))
+        self.publish_annotations_changed_for_pages(
+            affected_pages,
+            [uid for uid, _annotation_type in annotation_keys],
+            [annotation_type for _uid, annotation_type in annotation_keys],
+        )
 
     def _add_inserted_annotations_to_model(
         self,

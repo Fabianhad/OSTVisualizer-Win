@@ -249,11 +249,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IOstImporter:
         writer = self.get_mdb_writer(conn_manager=conn_manager)
-        return OstImporter(
-            writer,
-            mutation_executor=writer,
-            session_registry=self._database_session_registry,
-        )
+        return OstImporter(writer)
 
     def get_osp_importer(
         self, conn_manager: Optional[IMdbConnectionManager] = None

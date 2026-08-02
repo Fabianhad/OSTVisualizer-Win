@@ -6,6 +6,7 @@ from ..application.services.database_capability_service import (
 )
 from ..application.services.database_session_registry import DatabaseSessionRegistry
 from ..application.services.local_draft_registry import LocalDraftRegistry
+from ..application.services.pending_mutation_registry import PendingMutationRegistry
 from ..application.services.conflict_resolution_service import (
     ConflictResolutionService,
 )
@@ -34,6 +35,9 @@ from ..infrastructure.database.entity_version_reader import (
 from ..infrastructure.persistence.repositories.memory_annotation_view_repository import (
     MemoryAnnotationViewRepository,
 )
+from ..infrastructure.persistence.repositories.json_pending_sql_operation_repository import (
+    JsonPendingSqlOperationRepository,
+)
 from ..infrastructure.providers import (
     ApiClientProvider,
     InfrastructureServiceProvider,
@@ -59,6 +63,7 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     credential_store = WindowsCredentialStore()
     session_registry = DatabaseSessionRegistry()
     local_drafts = LocalDraftRegistry()
+    pending_mutations = PendingMutationRegistry()
     conflict_resolution = ConflictResolutionService()
     sql_connections = SqlConnectionManager()
     concurrency_tokens = DatabaseConcurrencyTokenService(
@@ -70,6 +75,7 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     container.register_instance("database_session_registry", session_registry)
     container.register_instance("database_concurrency_tokens", concurrency_tokens)
     container.register_instance("local_draft_registry", local_drafts)
+    container.register_instance("pending_mutation_registry", pending_mutations)
     icon_provider = QtWindowIconProvider()
     message_notifier = QtMessageNotifier(icon_provider=icon_provider)
     infrastructure_provider = InfrastructureServiceProvider(
@@ -182,6 +188,8 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         local_drafts=local_drafts,
         event_bus=event_bus,
         supported_schema_version=SQL_SCHEMA_V1.version,
+        pending_mutations=pending_mutations,
+        operation_journal=JsonPendingSqlOperationRepository(logger=logger),
     )
     container.register_instance("sql_collaboration_coordinator", collaboration)
     return container

@@ -28,6 +28,11 @@ class DeferredDialogSaveController(QtCore.QObject):
         self._pending = True
         self._timer.start()
 
+    def mark_pending(self) -> None:
+        """Retain unsaved input for an explicit retry without auto-retrying it."""
+        self._timer.stop()
+        self._pending = True
+
     def flush(self) -> bool:
         if self._flushing:
             return True

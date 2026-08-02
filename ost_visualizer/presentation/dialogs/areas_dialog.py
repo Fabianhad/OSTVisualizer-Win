@@ -1,5 +1,6 @@
 from typing import Callable, Dict, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...domain.entities.area import BidArea, BidAreaChangeset
 from ...domain.entities.identity_refs import BidRef
 from ..config import (
@@ -31,6 +32,7 @@ class BidAreasDialog(BaseListDialog):
         parent: Optional[QtWidgets.QWidget] = None,
         bid_areas: Optional[List[BidArea]] = None,
         save_fn: Optional[Callable[[dict], Optional[dict]]] = None,
+        save_async_fn=None,
         used_uids: Optional[Set[str]] = None,
         on_saved_fn: Optional[Callable] = None,
         has_license: bool = True,
@@ -47,6 +49,9 @@ class BidAreasDialog(BaseListDialog):
         self._is_interactive: bool = has_license
         self._saved_area_state: Dict[str, Tuple[str, str, int]] = {}
         self._has_saved_changes = False
+        self._save_async_fn = save_async_fn
+        self._save_in_progress = False
+        self._requested_done_result: Optional[int] = None
         self._save_controller = DeferredDialogSaveController(
             self._live_save, parent=self
         )
@@ -391,12 +396,19 @@ class BidAreasDialog(BaseListDialog):
         return self.flush_pending_save()
 
     def done(self, result: int) -> None:
-        if result != QtWidgets.QDialog.DialogCode.Accepted:
-            self.flush_pending_save()
-        super().done(result)
+        if self._save_in_progress:
+            self._requested_done_result = result
+            return
+        if not self.flush_pending_save():
+            return
+        if self._save_in_progress:
+            self._requested_done_result = result
+            return
+        QtWidgets.QDialog.done(self, result)
 
     def cleanup(self) -> None:
-        self.flush_pending_save()
+        if not self._save_in_progress:
+            self.flush_pending_save()
         super().cleanup()
 
     def _on_new(self) -> None:
@@ -495,7 +507,7 @@ class BidAreasDialog(BaseListDialog):
     def _live_save(self) -> bool:
         if not self._is_interactive:
             return False
-        if not self._save_fn:
+        if self._save_fn is None and self._save_async_fn is None:
             return True
         if not self._validate_changed_area_names_for_save():
             return False
@@ -532,28 +544,78 @@ class BidAreasDialog(BaseListDialog):
                 updated=updated_areas,
                 deleted_uids=list(self._deleted_uids),
             )
+            if self._save_async_fn is not None:
+                self._save_in_progress = True
+                self.set_interactive(False)
+
+                def completed(success: bool, uid_map=None) -> None:
+                    if not isValid(self):
+                        return
+                    self._save_in_progress = False
+                    if success and self._apply_saved_result(
+                        new_areas,
+                        uid_map if isinstance(uid_map, dict) else {},
+                        refresh_failed=False,
+                    ):
+                        requested_result = self._requested_done_result
+                        self._requested_done_result = None
+                        self.set_interactive(True)
+                        if requested_result is not None:
+                            QtWidgets.QDialog.done(self, requested_result)
+                        return
+                    self._requested_done_result = None
+                    self.set_interactive(True)
+                    self._save_controller.mark_pending()
+
+                try:
+                    started = self._save_async_fn(changeset, completed)
+                except Exception as exc:
+                    self._save_in_progress = False
+                    self.set_interactive(True)
+                    self._save_controller.mark_pending()
+                    show_warning(self, "Bid Areas", str(exc))
+                    return False
+                if not started:
+                    self._save_in_progress = False
+                    self.set_interactive(True)
+                    self._save_controller.mark_pending()
+                    return False
+                return True
             result = self._save_fn(changeset)
             if not save_result_succeeded(result):
                 return False
             uid_map = save_result_mapping(result)
-            missing_new_uids = [
-                area.uid for area in new_areas if area.uid not in uid_map
-            ]
-            if missing_new_uids:
+            if not self._apply_saved_result(
+                new_areas,
+                uid_map,
+                refresh_failed=save_result_refresh_failed(result),
+            ):
                 return False
-            self._deleted_uids.clear()
-            if uid_map:
-                self.tree.blockSignals(True)
-                try:
-                    self._apply_uid_map(self.tree.invisibleRootItem(), uid_map)
-                finally:
-                    self.tree.blockSignals(False)
-                self._on_uid_map_applied(uid_map)
-            if self._on_saved_fn and not save_result_refresh_failed(result):
-                self._on_saved_fn()
-            self._mark_saved_names()
-            self._mark_saved_state()
-            self._has_saved_changes = True
+        return True
+
+    def _apply_saved_result(
+        self,
+        new_areas: List[BidArea],
+        uid_map: Dict[str, str],
+        *,
+        refresh_failed: bool,
+    ) -> bool:
+        missing_new_uids = [area.uid for area in new_areas if area.uid not in uid_map]
+        if missing_new_uids:
+            return False
+        self._deleted_uids.clear()
+        if uid_map:
+            self.tree.blockSignals(True)
+            try:
+                self._apply_uid_map(self.tree.invisibleRootItem(), uid_map)
+            finally:
+                self.tree.blockSignals(False)
+            self._on_uid_map_applied(uid_map)
+        if self._on_saved_fn and not refresh_failed:
+            self._on_saved_fn()
+        self._mark_saved_names()
+        self._mark_saved_state()
+        self._has_saved_changes = True
         return True
 
     def _on_uid_map_applied(self, _uid_map: Dict[str, str]) -> None:
@@ -575,6 +637,7 @@ class BidAreasDialog(BaseListDialog):
         self._initial_areas.clear()
         self._new_uids.clear()
         self._saved_area_state.clear()
+        self._save_async_fn = None
 
 
 class BidAreaPickerDialog(BidAreasDialog):

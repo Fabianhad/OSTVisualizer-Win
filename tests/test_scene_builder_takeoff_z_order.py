@@ -108,6 +108,7 @@ class _SelectionHarness(SelectionManagerMixin):
         self._hidden_layer_uids = set()
         self._annotation_only_selection = False
         self._uid_to_items = {}
+        self._pending_mutation_uids = set()
 
     def transform(self):
         return SimpleNamespace(m11=lambda: 1.0)

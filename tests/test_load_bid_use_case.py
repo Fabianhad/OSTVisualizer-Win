@@ -12,9 +12,12 @@ class LoadBidUseCaseTests(unittest.TestCase):
         calls = []
 
         class FileManager:
-            def load_bid(self, bid_uid, file_path):
+            def prepare_bid_load(self, bid_uid, file_path):
                 calls.append(("state", file_path, bid_uid))
                 return BidLoadResult()
+
+            def apply_bid_load(self, file_path):
+                calls.append(("apply", file_path))
 
         class ConcurrencyTokens:
             def load_bid(self, file_path, bid_uid):
@@ -33,6 +36,7 @@ class LoadBidUseCaseTests(unittest.TestCase):
             [
                 ("tokens", "database-id", "42"),
                 ("state", "database-id", "42"),
+                ("apply", "database-id"),
             ],
         )
 

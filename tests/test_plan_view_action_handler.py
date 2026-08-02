@@ -1,12 +1,23 @@
 import unittest
+import uuid
 import weakref
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
-from ost_visualizer.application.dtos.collaboration_dtos import QueuedMutationResult
+from ost_visualizer.application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    AuthoritativeMutationResult,
+    EditLeaseHandle,
+    EditLeaseResult,
+    MutationExecutionResult,
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+    ResourceLock,
+)
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
@@ -29,6 +40,8 @@ from ost_visualizer.presentation.handlers.plan_view_action_handler import (
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
+    DeleteAnnotationsCommand,
+    InsertAnnotationsCommand,
     InsertTakeoffsCommand,
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
@@ -82,6 +95,67 @@ class SelectionCommandIdentityTests(unittest.TestCase):
             command.redo()
         self.assertEqual(command._current_uids, ["old-1", "old-2"])
 
+    def test_annotation_restore_rejects_incomplete_authoritative_result(self):
+        saved = [_rect_annotation("old-1"), _rect_annotation("old-2")]
+        plan_view = SimpleNamespace(
+            find_annotation_keys_by_uid_type=lambda _uids: self.fail(
+                "Incomplete results must not be projected"
+            ),
+            set_selected_uids=lambda _uids: self.fail(
+                "Incomplete results must not be selected"
+            ),
+        )
+        command = DeleteAnnotationsCommand(
+            saved_annotations=saved,
+            bid_ref=BidRef("bid.mdb", "7"),
+            plan_view=plan_view,
+            insert_saved_annotations_fn=lambda _bid_ref, _saved: [saved[0]],
+            delete_saved_annotations_fn=lambda _db_path, _saved: True,
+        )
+        with self.assertRaisesRegex(
+            ValueError, "returned 1 annotations for 2 requested"
+        ):
+            command.undo()
+
+    def test_annotation_redo_rejects_incomplete_authoritative_identity_result(self):
+        plan_view = SimpleNamespace(
+            find_annotation_keys_by_uid_type=lambda _uids: self.fail(
+                "Incomplete results must not be projected"
+            ),
+            set_selected_uids=lambda _uids: self.fail(
+                "Incomplete results must not be selected"
+            ),
+        )
+        command = InsertAnnotationsCommand(
+            uids=["old-1", "old-2"],
+            bid_ref=BidRef("bid.mdb", "7"),
+            specs=[
+                InsertAnnotationSpec(
+                    page_uid="p1",
+                    annotation_type="rect",
+                    position=[0.0, 0.0, 1.0, 1.0],
+                    color="#000000",
+                    width=1.0,
+                ),
+                InsertAnnotationSpec(
+                    page_uid="p1",
+                    annotation_type="rect",
+                    position=[2.0, 2.0, 3.0, 3.0],
+                    color="#000000",
+                    width=1.0,
+                ),
+            ],
+            write_svc=None,
+            plan_view=plan_view,
+            insert_annotations_fn=lambda _bid_ref, _specs, _remap: ["new-1"],
+            delete_annotations_fn=lambda _db_path, _uids, _specs: True,
+        )
+        with self.assertRaisesRegex(
+            ValueError, "returned 1 identities for 2 requested"
+        ):
+            command.redo()
+        self.assertEqual(command._current_uids, ["old-1", "old-2"])
+
 
 def _rect_annotation(uid: str) -> BidAnnotation:
     return BidAnnotation(
@@ -114,10 +188,16 @@ class FakePlanView:
         self.activated_annotations = []
         self.named_view_name_validator = None
         self.placement_flow = []
+        self.pending_mutation_uids = set()
+        self.geometry_lease_pending = set()
+        self.geometry_lease_granted = set()
         self.clipboard_changed = SimpleNamespace(emit=lambda: None)
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
+
+    def get_selected_uids(self):
+        return set(self.selected)
 
     def clear_selection(self):
         self.clears += 1
@@ -177,6 +257,21 @@ class FakePlanView:
 
     def get_coordinate_system(self):
         return SimpleNamespace(parse_position=lambda position: list(position))
+
+    def set_pending_mutation_uids(self, uids):
+        self.pending_mutation_uids = set(uids)
+
+    def set_geometry_edit_lease_pending(self, uids):
+        self.geometry_lease_pending = set(uids)
+        self.geometry_lease_granted = set()
+
+    def set_geometry_edit_lease_granted(self, uids):
+        self.geometry_lease_pending = set()
+        self.geometry_lease_granted = set(uids)
+
+    def disable_geometry_edit_leasing(self):
+        self.geometry_lease_pending = set()
+        self.geometry_lease_granted = set()
 
 
 class FakeUiState:
@@ -461,14 +556,25 @@ class FakeWriteService:
         self.next_uids = ["100"]
         self.uid_batches = []
         self._next_uid_index = 0
-        self.queued_takeoff_mutations = False
+        self.sql_collaboration_mutations = False
         self.queued_takeoff_callbacks = []
         self.queued_runtime_generation = 3
+        self.queued_geometry = []
+        self.queued_properties = []
+        self.queued_deletes = []
+        self.queued_pastes = []
+        self.local_deletes = []
+        self.local_pastes = []
+        self.local_annotation_delete_calls = []
+        self.next_annotation_uids = ["ann-1"]
+        self.annotation_write_service = None
+        self.edit_lease_requests = []
+        self.ended_edit_leases = []
 
-    def uses_queued_takeoff_mutations(self, _database_id):
-        return self.queued_takeoff_mutations
+    def uses_sql_collaboration_mutations(self, _database_id):
+        return self.sql_collaboration_mutations
 
-    def queue_takeoff_insert(
+    def queue_takeoff_placement(
         self,
         database_id,
         bid_uid,
@@ -479,6 +585,240 @@ class FakeWriteService:
         self.calls.append((database_id, bid_uid, specs, "queued"))
         self.queued_takeoff_callbacks.append((operation_id, callback))
         return self.queued_runtime_generation
+
+    def queue_plan_geometry(self, database_id, bid_uid, callback, **updates):
+        self.queued_geometry.append((database_id, bid_uid, updates, callback))
+        return len(self.queued_geometry)
+
+    def request_plan_edit_lease(
+        self,
+        database_id,
+        resources,
+        dependency_resources,
+        callback,
+        **options,
+    ):
+        self.edit_lease_requests.append(
+            (database_id, resources, dependency_resources, options, callback)
+        )
+
+    def end_plan_edit_lease(self, handle):
+        self.ended_edit_leases.append(handle)
+
+    def queue_plan_properties(
+        self,
+        database_id,
+        bid_uid,
+        property_kind,
+        updates,
+        callback,
+        **options,
+    ):
+        self.queued_properties.append(
+            (database_id, bid_uid, property_kind, updates, options, callback)
+        )
+        return len(self.queued_properties)
+
+    def queue_plan_items_delete(
+        self,
+        database_id,
+        bid_uid,
+        takeoff_uids,
+        annotations,
+        callback,
+        **options,
+    ):
+        self.queued_deletes.append(
+            (database_id, bid_uid, takeoff_uids, annotations, options, callback)
+        )
+        return len(self.queued_deletes)
+
+    def queue_plan_items_paste(
+        self,
+        database_id,
+        payload,
+        callback,
+        **options,
+    ):
+        self.queued_pastes.append((database_id, payload, options, callback))
+        return len(self.queued_pastes)
+
+    def execute_plan_items_delete_local(
+        self,
+        database_id,
+        bid_uid,
+        takeoff_uids,
+        annotations,
+        **options,
+    ):
+        self.local_deletes.append(
+            (database_id, bid_uid, list(takeoff_uids), list(annotations), options)
+        )
+        if takeoff_uids:
+            self.delete_takeoffs(
+                database_id,
+                list(takeoff_uids),
+                publish_database_refreshed_after_write=False,
+            )
+        if annotations:
+            self.local_annotation_delete_calls.append(
+                (database_id, list(annotations), False)
+            )
+        if options.get("publish_database_refreshed_after_write", True):
+            self.reload_and_notify(database_id)
+        return MutationExecutionResult(
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            authoritative_result=AuthoritativeMutationResult(
+                affected_page_uids=tuple(options.get("page_uids", ())),
+                affected_families=tuple(
+                    family
+                    for family, present in (
+                        ("takeoffs", bool(takeoff_uids)),
+                        ("annotations", bool(annotations)),
+                    )
+                    if present
+                ),
+            ),
+        )
+
+    def execute_plan_items_paste_local(self, database_id, payload, **options):
+        self.local_pastes.append((database_id, payload, options))
+        condition_map = {}
+        if payload.source_bid_uid != payload.destination_bid_uid:
+            source_condition_uids = list(
+                dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
+            )
+            condition_map = self.duplicate_conditions_to_bid(
+                database_id,
+                payload.source_bid_uid,
+                payload.destination_bid_uid,
+                source_condition_uids,
+                publish_database_refreshed_after_write=False,
+            )
+        specs = tuple(
+            replace(
+                spec,
+                condition_uid=condition_map.get(spec.condition_uid, spec.condition_uid),
+            )
+            for spec in payload.takeoff_specs
+        )
+        regular_indexes = tuple(
+            index
+            for index, spec in enumerate(specs)
+            if str(spec.parent_uid or "0") in {"", "0", "None"}
+        )
+        hole_indexes = tuple(
+            index for index in range(len(specs)) if index not in regular_indexes
+        )
+        regular_uids = (
+            self.insert_takeoffs(
+                database_id,
+                payload.destination_bid_uid,
+                [specs[index] for index in regular_indexes],
+                publish_database_refreshed_after_write=False,
+            )
+            if regular_indexes
+            else []
+        )
+        if len(regular_uids) != len(regular_indexes):
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                message="Incomplete parent identity map",
+            )
+        takeoff_map = {
+            payload.takeoff_source_uids[index]: uid
+            for index, uid in zip(regular_indexes, regular_uids)
+        }
+        hole_specs = []
+        for index in hole_indexes:
+            parent_uid = takeoff_map.get(str(specs[index].parent_uid))
+            if parent_uid is None:
+                return MutationExecutionResult(
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                    message="Missing authoritative parent",
+                )
+            hole_specs.append(replace(specs[index], parent_uid=parent_uid))
+        hole_uids = (
+            self.insert_takeoffs(
+                database_id,
+                payload.destination_bid_uid,
+                hole_specs,
+                publish_database_refreshed_after_write=False,
+            )
+            if hole_specs
+            else []
+        )
+        if len(hole_uids) != len(hole_indexes):
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                message="Incomplete hole identity map",
+            )
+        takeoff_map.update(
+            {
+                payload.takeoff_source_uids[index]: uid
+                for index, uid in zip(hole_indexes, hole_uids)
+            }
+        )
+        annotation_uids = []
+        if payload.annotation_specs and self.annotation_write_service is not None:
+            remap = PasteRefRemap(takeoff_uids=dict(takeoff_map))
+            named_indexes = tuple(
+                index
+                for index, spec in enumerate(payload.annotation_specs)
+                if spec.annotation_type == "namedview"
+            )
+            other_indexes = tuple(
+                index
+                for index in range(len(payload.annotation_specs))
+                if index not in named_indexes
+            )
+            by_index = {}
+            if named_indexes:
+                named_uids = self.annotation_write_service.insert_annotations(
+                    database_id,
+                    payload.destination_bid_uid,
+                    [payload.annotation_specs[index] for index in named_indexes],
+                    remap,
+                    False,
+                )
+                for index, uid in zip(named_indexes, named_uids):
+                    by_index[index] = uid
+                    remap.namedview_uids[payload.annotation_source_uids[index]] = uid
+            if other_indexes:
+                other_uids = self.annotation_write_service.insert_annotations(
+                    database_id,
+                    payload.destination_bid_uid,
+                    [payload.annotation_specs[index] for index in other_indexes],
+                    remap,
+                    False,
+                )
+                by_index.update(dict(zip(other_indexes, other_uids)))
+            annotation_uids = [
+                by_index[index] for index in range(len(payload.annotation_specs))
+            ]
+        elif payload.annotation_specs:
+            annotation_uids = self.next_annotation_uids[: len(payload.annotation_specs)]
+        if len(annotation_uids) != len(payload.annotation_specs):
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                message="Incomplete annotation identity map",
+            )
+        annotation_map = dict(zip(payload.annotation_source_uids, annotation_uids))
+        if options.get("publish_database_refreshed_after_write", True):
+            self.reload_and_notify(database_id)
+        created_ids = tuple((*takeoff_map.values(), *annotation_map.values()))
+        return MutationExecutionResult(
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            created_resource_ids=created_ids,
+            authoritative_result=AuthoritativeMutationResult(
+                created_resource_ids=created_ids,
+                created_uid_maps=(
+                    ("takeoffs", tuple(takeoff_map.items())),
+                    ("annotations", tuple(annotation_map.items())),
+                    ("conditions", tuple(condition_map.items())),
+                ),
+            ),
+        )
 
     def insert_takeoffs(
         self, db_path, bid_uid, specs, publish_database_refreshed_after_write=True
@@ -703,10 +1043,15 @@ class FakeUndoService:
         self.undo = None
         self.redo = None
 
-    def push(self, undo, redo):
+    def push_local(self, undo, redo):
         self.count += 1
         self.undo = undo
         self.redo = redo
+
+    def push(self, undo_submit, redo_submit):
+        self.count += 1
+        self.undo = lambda: undo_submit(lambda _success: None)
+        self.redo = lambda: redo_submit(lambda _success: None)
 
 
 class FakeClipboard:
@@ -1018,15 +1363,18 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         write=None,
         ann_write=None,
         allowed_features=None,
+        data=None,
     ):
+        plan_view = FakePlanView() if plan_view is None else plan_view
+        write = FakeWriteService() if write is None else write
+        ann_write = FakeAnnotationWriteService() if ann_write is None else ann_write
+        write.annotation_write_service = ann_write
         return PlanViewActionHandler(
-            plan_view=FakePlanView() if plan_view is None else plan_view,
+            plan_view=plan_view,
             ui_state_manager=FakeUiState(),
-            project_data_svc=FakeProjectData(),
-            project_write_svc=FakeWriteService() if write is None else write,
-            annotation_write_svc=(
-                FakeAnnotationWriteService() if ann_write is None else ann_write
-            ),
+            project_data_svc=FakeProjectData() if data is None else data,
+            project_write_svc=write,
+            annotation_write_svc=ann_write,
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
@@ -1344,6 +1692,18 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.added_annotations[0].position, [1.0, 2.0, 5.0, 6.0])
         self.assertEqual(data.added_annotations[0].layer_uid, "annotation-layer")
         self.assertEqual(ann_write.insert_calls[0][2][0].layer_uid, "annotation-layer")
+
+    def test_sql_annotation_creation_uses_atomic_paste_queue(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
+        self.assertEqual(len(write.queued_pastes), 1)
+        payload = write.queued_pastes[0][1]
+        self.assertEqual(len(payload.annotation_specs), 1)
+        self.assertEqual(payload.annotation_specs[0].annotation_type, "rect")
 
     def test_in_memory_annotation_add_replaces_existing_uid(self):
         service = PageSelectionService()
@@ -2121,9 +2481,10 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_sql_takeoff_placement_projects_pending_then_committed_identity(self):
         plan_view = FakePlanView()
+        plan_view.current_page_uid = "9"
         data = FakeProjectData()
         write = FakeWriteService()
-        write.queued_takeoff_mutations = True
+        write.sql_collaboration_mutations = True
         undo = FakeUndoService()
         events = FakeEventBus()
         handler = PlanViewActionHandler(
@@ -2146,23 +2507,136 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertTrue(pending_uids[0].startswith("pending:takeoff-placement:"))
         self.assertEqual(undo.count, 0)
         self.assertEqual(plan_view.selected, set())
+        data.add_takeoffs(
+            [
+                Takeoff(
+                    uid="501",
+                    condition_uid="42",
+                    page_uid="9",
+                    position=[1.0, 2.0],
+                )
+            ]
+        )
         callback(
             QueuedMutationResult(
                 database_id="bid.mdb",
                 runtime_generation=3,
                 operation_id=operation_id,
-                success=True,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
                 created_resource_ids=("501",),
             )
         )
         self.assertNotIn(pending_uids[0], data.takeoffs)
         self.assertIn("501", data.takeoffs)
         self.assertEqual(plan_view.selected, {"501"})
-        self.assertEqual(undo.count, 0)
+        self.assertEqual(undo.count, 1)
         self.assertEqual(
             [event[1]["takeoff_uids"] for event in events.events],
-            [[pending_uids[0]], ["501"]],
+            [[pending_uids[0]]],
         )
+
+    def test_sql_placement_completion_does_not_select_on_another_page(self):
+        plan_view = FakePlanView()
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        plan_view.current_page_uid = "10"
+        data.add_takeoffs(
+            [
+                Takeoff(
+                    uid="501",
+                    condition_uid="42",
+                    page_uid="9",
+                    position=[1.0, 2.0],
+                )
+            ]
+        )
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertEqual(plan_view.selected, set())
+        self.assertEqual(undo.count, 1)
+
+    def test_committed_placement_projection_failure_waits_for_recovery(self):
+        plan_view = FakePlanView()
+        plan_view.current_page_uid = "9"
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        pending_uid = next(iter(data.takeoffs))
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED),
+                created_resource_ids=("501",),
+                commit_attempted=True,
+            )
+        )
+        self.assertIn(pending_uid, data.takeoffs)
+        self.assertEqual(undo.count, 0)
+        data.remove_takeoffs([pending_uid])
+        data.add_takeoffs(
+            [
+                Takeoff(
+                    uid="501",
+                    condition_uid="42",
+                    page_uid="9",
+                    position=[1.0, 2.0],
+                )
+            ]
+        )
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+                commit_attempted=True,
+            )
+        )
+        self.assertNotIn(pending_uid, data.takeoffs)
+        self.assertIn("501", data.takeoffs)
+        self.assertEqual(plan_view.selected, {"501"})
+        self.assertEqual(undo.count, 1)
 
     def test_failed_pending_projection_removes_preview_before_queueing_sql(self):
         class FailingEventBus:
@@ -2171,7 +2645,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         data = FakeProjectData()
         write = FakeWriteService()
-        write.queued_takeoff_mutations = True
+        write.sql_collaboration_mutations = True
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
             ui_state_manager=FakeUiState(),
@@ -2195,7 +2669,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     ):
         data = FakeProjectData()
         write = FakeWriteService()
-        write.queued_takeoff_mutations = True
+        write.sql_collaboration_mutations = True
         events = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
@@ -2217,7 +2691,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 database_id="bid.mdb",
                 runtime_generation=3,
                 operation_id=operation_id,
-                success=True,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
                 created_resource_ids=("501",),
             )
         )
@@ -2229,7 +2703,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 database_id="bid.mdb",
                 runtime_generation=3,
                 operation_id=operation_id,
-                success=False,
+                outcome_status=MutationOutcomeStatus.REJECTED,
                 message="conflict",
             )
         )
@@ -2238,7 +2712,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_stale_runtime_completion_removes_preview_without_projecting_commit(self):
         data = FakeProjectData()
         write = FakeWriteService()
-        write.queued_takeoff_mutations = True
+        write.sql_collaboration_mutations = True
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
             ui_state_manager=FakeUiState(),
@@ -2259,7 +2733,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 database_id="bid.mdb",
                 runtime_generation=write.queued_runtime_generation + 1,
                 operation_id=operation_id,
-                success=True,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
                 created_resource_ids=("501",),
             )
         )
@@ -2269,7 +2743,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_mismatched_database_completion_cannot_orphan_pending_preview(self):
         data = FakeProjectData()
         write = FakeWriteService()
-        write.queued_takeoff_mutations = True
+        write.sql_collaboration_mutations = True
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
             ui_state_manager=FakeUiState(),
@@ -2290,7 +2764,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 database_id="another-database",
                 runtime_generation=write.queued_runtime_generation,
                 operation_id=operation_id,
-                success=True,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
                 created_resource_ids=("501",),
             )
         )
@@ -2300,7 +2774,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_pending_invalidation_preserves_condition_summary_dependencies(self):
         data = FakeProjectData()
         write = FakeWriteService()
-        write.queued_takeoff_mutations = True
+        write.sql_collaboration_mutations = True
         events = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
@@ -2322,7 +2796,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_pending_queue_callback_does_not_retain_closed_plan_handler(self):
         write = FakeWriteService()
-        write.queued_takeoff_mutations = True
+        write.sql_collaboration_mutations = True
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
             ui_state_manager=FakeUiState(),
@@ -2499,6 +2973,53 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(
             [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
+    def test_sql_paste_backout_uses_atomic_queue_without_sync_condition_clone(self):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler._clipboard_svc = FakeClipboard(
+            [], source_bid_uid="6", source_file_path="bid.mdb"
+        )
+        handler.on_paste_backouts_placed(
+            [
+                {
+                    "condition_uid": "source-condition",
+                    "page_uid": "p1",
+                    "position": [2.0, 2.0, 4.0, 4.0],
+                    "parent_uid": "existing-parent",
+                    "rotation": 0.0,
+                    "is_negative": True,
+                    "extras": {},
+                }
+            ],
+            "6",
+        )
+        self.assertEqual(write.calls, [])
+        self.assertEqual(write.condition_duplicate_calls, [])
+        self.assertEqual(len(write.queued_pastes), 1)
+        _database_id, payload, options, _callback = write.queued_pastes[0]
+        self.assertEqual(payload.source_bid_uid, "6")
+        self.assertEqual(payload.takeoff_specs[0].parent_uid, "existing-parent")
+        self.assertEqual(
+            {
+                (resource.resource_type, resource.resource_id)
+                for resource in options["dependency_resources"]
+            },
+            {("condition", "source-condition")},
         )
 
     def test_unchecked_3d_page_fast_place_keeps_new_takeoff_selected(self):
@@ -2892,6 +3413,157 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_sql_position_edit_is_queued_and_history_waits_for_commit(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        handler.on_positions_flushed(changes, [])
+        self.assertEqual(write.position_calls, [])
+        self.assertEqual(len(write.queued_geometry), 1)
+        self.assertEqual(plan_view.pending_mutation_uids, {"t1"})
+        self.assertEqual(undo.count, 0)
+        callback = write.queued_geometry[0][-1]
+        result = QueuedMutationResult(
+            database_id="bid.mdb",
+            runtime_generation=1,
+            operation_id=str(uuid.uuid4()),
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+        )
+        callback(result)
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(undo.count, 1)
+        callback(result)
+        self.assertEqual(undo.count, 1)
+
+    def test_sql_geometry_lease_is_acquired_before_preview_and_consumed_by_write(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_geometry_edit_lease_requested(["t1"])
+        self.assertEqual(plan_view.geometry_lease_pending, {"t1"})
+        self.assertEqual(len(write.edit_lease_requests), 1)
+        database_id, resources, dependencies, options, lease_callback = (
+            write.edit_lease_requests[0]
+        )
+        locks = tuple(
+            ResourceLock(database_id, resource, f"lock-{index}")
+            for index, resource in enumerate(resources)
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-1",
+            runtime_generation=3,
+            operation_id=options["operation_id"],
+            owning_surface="main-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+            locks=locks,
+        )
+        lease_callback(EditLeaseResult(True, handle=handle))
+        self.assertEqual(plan_view.geometry_lease_granted, {"t1"})
+        changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        handler.on_positions_flushed(changes, [])
+        self.assertEqual(len(write.queued_geometry), 1)
+        queued_options = write.queued_geometry[0][2]
+        self.assertIs(queued_options["edit_lease_handle"], handle)
+        self.assertEqual(queued_options["dependency_resources"], dependencies)
+        self.assertEqual(write.ended_edit_leases, [])
+
+    def test_sql_geometry_lease_is_released_when_selection_changes(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_geometry_edit_lease_requested(["t1"])
+        database_id, resources, dependencies, options, lease_callback = (
+            write.edit_lease_requests[0]
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-1",
+            runtime_generation=3,
+            operation_id=options["operation_id"],
+            owning_surface="main-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+            locks=tuple(
+                ResourceLock(database_id, resource, f"lock-{index}")
+                for index, resource in enumerate(resources)
+            ),
+        )
+        lease_callback(EditLeaseResult(True, handle=handle))
+        handler.on_plan_item_selection_changed([])
+        self.assertEqual(write.ended_edit_leases, [handle])
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+
+    def test_sql_position_failure_restores_preview_after_confirmed_failure(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        handler.on_positions_flushed(changes, [])
+        write.queued_geometry[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.restored_positions, [(changes, [])])
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+
+    def test_sql_takeoff_property_edit_uses_queue_not_qt_thread_writer(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", is_negative=False
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_set_negative(["t1"], True)
+        self.assertEqual(write.negative_calls, [])
+        self.assertEqual(len(write.queued_properties), 1)
+        queued = write.queued_properties[0]
+        self.assertEqual(queued[2], "takeoff_negative")
+        self.assertEqual(queued[3], [("t1", True)])
+        self.assertEqual(plan_view.pending_mutation_uids, {"t1"})
 
     def test_takeoff_position_undo_redo_uses_targeted_path(self):
         data = FakeProjectData()
@@ -3736,6 +4408,58 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertNotIn("t1", data.takeoffs)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
 
+    def test_committed_delete_projection_failure_does_not_restore_deleted_intent(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_elements_deleted(["t1"])
+        callback = write.queued_deletes[0][-1]
+        operation_id = str(uuid.uuid4())
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=operation_id,
+                outcome_status=(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED),
+                commit_attempted=True,
+            )
+        )
+        self.assertIn("t1", data.takeoffs)
+        self.assertEqual(plan_view.selected, set())
+        self.assertEqual(plan_view.pending_mutation_uids, {"t1"})
+        self.assertEqual(undo.count, 0)
+        data.remove_takeoffs(["t1"])
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertNotIn("t1", data.takeoffs)
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(undo.count, 1)
+
     def test_count_takeoff_delete_with_known_extras_uses_targeted_path(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -3827,7 +4551,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
-    def test_parent_takeoff_with_backout_delete_keeps_full_reload_for_parent_remap(
+    def test_parent_takeoff_with_backout_delete_uses_targeted_projection(
         self,
     ):
         data = FakeProjectData()
@@ -3865,10 +4589,14 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.delete_calls[0][0], "bid.mdb")
         self.assertEqual(set(write.delete_calls[0][1]), {"parent", "hole"})
         self.assertFalse(write.delete_calls[0][2])
-        self.assertEqual(write.reloads, ["bid.mdb"])
-        self.assertEqual(event_bus.events, [])
+        self.assertEqual(write.reloads, [])
+        self.assertEqual(set(data.takeoffs), set())
+        self.assertEqual(
+            [event for event, _payload in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED],
+        )
 
-    def test_takeoff_delete_with_unknown_extras_keeps_full_reload(self):
+    def test_takeoff_delete_with_unknown_extras_uses_targeted_removal(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
             uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
@@ -3890,9 +4618,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler.on_elements_deleted(["t1"])
         self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], False)])
-        self.assertEqual(write.reloads, ["bid.mdb"])
-        self.assertIn("t1", data.takeoffs)
-        self.assertEqual(event_bus.events, [])
+        self.assertEqual(write.reloads, [])
+        self.assertNotIn("t1", data.takeoffs)
+        self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
 
     def test_failed_simple_takeoff_delete_reselects_original_uids(self):
         class FailingDeleteWriteService(FakeWriteService):
@@ -3933,6 +4661,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         write = FakeWriteService()
         write.next_uids = ["t2"]
+        write.next_annotation_uids = ["ann-2"]
         undo = FakeUndoService()
         event_bus = FakeEventBus()
         plan_view = FakePlanView(data)
@@ -4048,6 +4777,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view.annotation_key_map[("ann-2", ANNOTATION_TYPE_RECT)] = "rect-item"
         write = FakeWriteService()
         write.next_uids = ["t2"]
+        write.next_annotation_uids = ["ann-2"]
         annotation_write = FakeAnnotationWriteService()
         annotation_write.next_uids = ["ann-2"]
         undo = FakeUndoService()
@@ -4066,23 +4796,30 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler.on_elements_deleted(["t1", "rect-item"])
         self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], False)])
-        self.assertEqual(annotation_write.delete_calls[0][2], False)
-        self.assertEqual(write.reloads, ["bid.mdb"])
+        self.assertEqual(write.local_annotation_delete_calls[0][2], False)
+        self.assertEqual(write.reloads, [])
         data.annotations = []
         undo.undo()
         self.assertEqual(
             [(item.uid, item.annotation_type) for item in data.annotations],
             [("ann-2", ANNOTATION_TYPE_RECT)],
         )
-        self.assertEqual(plan_view.selected, {"rect-item"})
+        self.assertEqual(plan_view.selected, {"t2", "rect-item"})
         undo.redo()
         self.assertEqual(data.annotations, [])
         self.assertEqual(
             [event for event, _payload in event_bus.events],
-            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.ANNOTATIONS_CHANGED],
+            [
+                AppEvents.TAKEOFFS_CHANGED,
+                AppEvents.ANNOTATIONS_CHANGED,
+                AppEvents.TAKEOFFS_CHANGED,
+                AppEvents.ANNOTATIONS_CHANGED,
+                AppEvents.TAKEOFFS_CHANGED,
+                AppEvents.ANNOTATIONS_CHANGED,
+            ],
         )
         self.assertEqual(
-            [call[2] for call in annotation_write.delete_calls],
+            [call[2] for call in write.local_annotation_delete_calls],
             [False, False],
         )
 
@@ -4538,7 +5275,50 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.calls[-1][2][0].raw_extras, {"Raw": "kept"})
         self.assertEqual(plan_view.selected, {"redo-parent", "redo-hole"})
 
-    def test_paste_parent_child_with_known_extras_keeps_full_reload(self):
+    def test_parent_child_paste_stops_after_incomplete_authoritative_id_batch(self):
+        parent = Takeoff(
+            uid="old-parent",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[0.0, 0.0, 2.0, 0.0, 2.0, 2.0],
+            parent_uid="0",
+        )
+        hole = Takeoff(
+            uid="old-hole",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[0.5, 0.5, 1.0, 0.5, 1.0, 1.0],
+            parent_uid="old-parent",
+        )
+        for uid_batches, expected_insert_count in (
+            ([[], ["must-not-be-used"]], 1),
+            ([["new-parent"], []], 2),
+        ):
+            with self.subTest(uid_batches=uid_batches):
+                plan_view = FakePlanView()
+                write = FakeWriteService()
+                write.uid_batches = uid_batches
+                undo = FakeUndoService()
+                handler = PlanViewActionHandler(
+                    plan_view=plan_view,
+                    ui_state_manager=FakeUiState(),
+                    project_data_svc=FakeProjectData(),
+                    project_write_svc=write,
+                    annotation_write_svc=None,
+                    page_settings_bar=FakePageSettingsBar(),
+                    undo_svc=undo,
+                    event_bus=FakeEventBus(),
+                    deferred_persistence_manager=FakeDeferredPersistence(),
+                    ui_access_manager=FakeAccess(set(Feature)),
+                )
+                handler._clipboard_svc = FakeClipboard([parent, hole])
+                handler.on_paste_requested()
+                self.assertEqual(len(write.calls), expected_insert_count)
+                self.assertEqual(write.reloads, [])
+                self.assertEqual(plan_view.selected, set())
+                self.assertEqual(undo.count, 0)
+
+    def test_paste_parent_child_with_known_extras_uses_targeted_projection(self):
         parent = Takeoff(
             uid="old-parent",
             condition_uid="c1",
@@ -4573,9 +5353,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             extras={"old-parent": {"GUID": "{P}"}, "old-hole": {"GUID": "{H}"}},
         )
         handler.on_paste_requested()
-        self.assertEqual([call[3] for call in write.calls], [True, True])
-        self.assertEqual(data.added_takeoffs, [])
-        self.assertEqual(event_bus.events, [])
+        self.assertEqual([call[3] for call in write.calls], [False, False])
+        self.assertEqual(write.reloads, [])
+        self.assertEqual(
+            [takeoff.uid for takeoff in data.added_takeoffs],
+            ["100", "101"],
+        )
+        self.assertEqual(
+            [event for event, _payload in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED],
+        )
 
     def test_intelligent_paste_enabled_pastes_regular_takeoff_at_mouse(self):
         source = Takeoff(
@@ -4725,7 +5512,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [source], extras={"source": {"UnsupportedColumn": "value"}}
         )
         handler.on_paste_requested()
-        self.assertEqual(write.calls[0][3], True)
+        self.assertEqual(write.calls[0][3], False)
+        self.assertEqual(write.reloads, ["bid.mdb"])
         self.assertEqual(data.added_takeoffs, [])
         self.assertEqual(event_bus.events, [])
 
@@ -4748,16 +5536,17 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler._clipboard_svc = FakeClipboard(
             [source],
-            source_bid_uid="source-bid",
+            source_bid_uid="6",
             source_file_path="bid.mdb",
         )
         handler.on_paste_requested()
         self.assertEqual(
             write.condition_duplicate_calls,
-            [("bid.mdb", "source-bid", "7", ["c1"], False)],
+            [("bid.mdb", "6", "7", ["c1"], False)],
         )
         self.assertEqual(write.calls[0][2][0].condition_uid, "new-c1")
-        self.assertEqual(write.calls[0][3], True)
+        self.assertEqual(write.calls[0][3], False)
+        self.assertEqual(write.reloads, ["bid.mdb"])
         self.assertEqual(data.added_takeoffs, [])
         self.assertEqual(event_bus.events, [])
 

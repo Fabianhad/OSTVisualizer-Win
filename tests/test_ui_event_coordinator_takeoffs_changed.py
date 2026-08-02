@@ -6,6 +6,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseLoss,
     EditLeaseResult,
+    MutationOutcomeStatus,
     ResourceRef,
     SynchronizationState,
 )
@@ -19,6 +20,9 @@ from ost_visualizer.application.dtos.remote_projection_dtos import (
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
+)
+from ost_visualizer.application.dtos.conflict_resolution_dtos import (
+    ConflictResolutionAction,
 )
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.application.interfaces.i_database_catalog import (
@@ -219,9 +223,17 @@ class FakeSignal:
 class _CollaborationStatusPanel:
     def __init__(self):
         self.states = []
+        self.mutation_states = []
+        self.presence_states = []
 
     def set_collaboration_state(self, state, message=""):
         self.states.append((state, message))
+
+    def set_collaboration_mutation_state(self, state, pending_count, message=""):
+        self.mutation_states.append((state, pending_count, message))
+
+    def set_collaboration_presence(self, users):
+        self.presence_states.append(list(users))
 
 
 class FakeConstructedMeshWindow:
@@ -659,6 +671,23 @@ class FakeRefreshNav:
         return True
 
 
+class ImmediateNavigationOperations:
+    def navigation_load_in_progress(self):
+        return False
+
+    def cancel_navigation_load(self, _database_id=""):
+        pass
+
+    def request_load_bid(self, bid_ref, completion):
+        try:
+            success = self.load_bid(bid_ref)
+        except Exception as exc:
+            completion(False, str(exc))
+            return False
+        completion(bool(success), "")
+        return False
+
+
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     def test_native_page_visibility_rebuilds_the_canonical_selected_page_texture(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -743,6 +772,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         bid_ref = BidRef("sql-database", "bid-1")
         mesh_refreshes = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
             active_page_uid="page-1",
             get_selected_bid_ref=lambda: bid_ref,
@@ -788,12 +818,15 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         project_data = ProjectData()
 
-        class ProjectOperations:
+        class ProjectOperations(ImmediateNavigationOperations):
             def load_bid(self, requested):
+                project_data.current_file = requested.file_path
                 project_data.current_bid = requested
                 return True
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator._status_panel = None
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.main_window.project_view.selected_node = {
             "kind": "bid",
@@ -857,6 +890,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             get_selected_bid_ref=lambda: None,
         )
         coordinator._cache_bid_data = lambda _loaded_files: None
+        coordinator._sidebar = SimpleNamespace(
+            refresh_conditions_from_memory=lambda: None
+        )
         coordinator._on_remote_hierarchy_changed(database_id)
         self.assertEqual(project_view.builds, 1)
         self.assertEqual(
@@ -873,6 +909,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.main_window = SimpleNamespace(project_view=project_view)
         coordinator.project_data = SimpleNamespace(
             get_current_bid_ref=lambda: access_bid,
+            get_current_file_path=lambda: access_bid.file_path,
             get_bid=lambda _bid_ref: object(),
         )
         coordinator.ui_state_manager = SimpleNamespace(
@@ -889,6 +926,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     def test_stale_sql_failure_does_not_replace_active_access_selection(self):
         panel = _CollaborationStatusPanel()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
             selected_file_path="C:/projects/active.mdb"
         )
@@ -908,6 +946,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     def test_selected_sql_failure_projects_disconnected_state(self):
         panel = _CollaborationStatusPanel()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
             selected_file_path="sql-database-id"
         )
@@ -927,12 +966,35 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(invalidations, [True])
 
+    def test_selected_sql_mutation_projects_pending_count(self):
+        panel = _CollaborationStatusPanel()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path="sql-database-id"
+        )
+        coordinator._status_panel = panel
+        coordinator._on_collaboration_mutation_state_changed(
+            database_id="sql-database-id",
+            operation_id="operation-id",
+            mutation_type="plan_items_delete",
+            state="uncertain",
+            message="Commit status is unknown.",
+            pending_count=1,
+        )
+        self.assertEqual(
+            panel.mutation_states,
+            [("uncertain", 1, "Commit status is unknown.")],
+        )
+
     def test_denied_collaboration_lease_reports_the_store_message(self):
-        warnings = []
+        sequence = []
         callbacks = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._is_cleaning_up = False
         coordinator.main_window = object()
+        coordinator._prepare_for_modal_mutation_error = (
+            lambda database_id: sequence.append(("prepare", database_id))
+        )
         coordinator._sql_collaboration = type(
             "SqlCollaboration",
             (),
@@ -945,20 +1007,24 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
 
         old_warning = ui_event_coordinator.show_warning
-        ui_event_coordinator.show_warning = lambda *args: warnings.append(args)
+        ui_event_coordinator.show_warning = lambda *args: sequence.append(
+            ("warning", args)
+        )
         try:
             coordinator.request_collaboration_edit(
                 "database",
                 (),
                 callbacks.append,
+                owning_surface="main-plan",
             )
         finally:
             ui_event_coordinator.show_warning = old_warning
         self.assertEqual(
             callbacks, [EditLeaseResult(False, "The resource is already being edited.")]
         )
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("already being edited", warnings[0][2])
+        self.assertEqual(sequence[0], ("prepare", "database"))
+        self.assertEqual(sequence[1][0], "warning")
+        self.assertIn("already being edited", sequence[1][1][2])
 
     def test_late_collaboration_lease_grant_is_denied_during_cleanup(self):
         callbacks = []
@@ -1110,6 +1176,84 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_full_reconciliation_required("database", "gap")
         self.assertEqual(cancelled, ["database"])
         self.assertEqual(resumed, ["database"])
+
+    def test_plan_conflict_restores_select_mode_before_modal_dialog(self):
+        sequence = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._sql_collaboration = type(
+            "Collaboration",
+            (),
+            {
+                "enter_resource_conflict": lambda _self, *_args: sequence.append(
+                    "conflict"
+                )
+            },
+        )()
+        coordinator._icon_provider = object()
+        coordinator.main_window = object()
+        coordinator.event_bus = object()
+        coordinator.project_data = type(
+            "ProjectData",
+            (),
+            {"get_current_file_path": lambda _self: "database"},
+        )()
+        coordinator._placement = SimpleNamespace(
+            force_exit=lambda: sequence.append("placement-exit")
+        )
+        coordinator._set_plan_select_mode = lambda: sequence.append("select")
+        coordinator._toolbar = SimpleNamespace(
+            refresh=lambda: sequence.append("toolbar")
+        )
+        coordinator._plan_view_handler = SimpleNamespace(
+            prepare_for_modal_mutation_error=lambda: sequence.append("pointer")
+        )
+        coordinator.plan_view = None
+
+        class Dialog:
+            @staticmethod
+            def selected_action():
+                return ConflictResolutionAction.CANCEL_READ_ONLY
+
+            @staticmethod
+            def deleteLater():
+                sequence.append("delete")
+
+        dialog = Dialog()
+
+        def execute(_dialog, _event_bus):
+            self.assertEqual(
+                sequence,
+                ["conflict", "placement-exit", "select", "toolbar", "pointer"],
+            )
+            sequence.append("dialog")
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.SynchronizationConflictDialog",
+            return_value=dialog,
+        ), patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.exec_with_ost_blocking",
+            side_effect=execute,
+        ):
+            coordinator._on_synchronization_conflict(
+                database_id="database",
+                resource_type="takeoff",
+                resource_id="t1",
+                bid_uid="8",
+                message="A takeoff changed or was deleted before this operation started.",
+                blocks_database=False,
+            )
+        self.assertEqual(
+            sequence,
+            [
+                "conflict",
+                "placement-exit",
+                "select",
+                "toolbar",
+                "pointer",
+                "dialog",
+                "delete",
+            ],
+        )
 
     def test_inactive_database_lease_loss_cancels_only_its_deferred_writes(self):
         cancelled = []
@@ -1552,6 +1696,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._viewer = FakeViewer()
         coordinator._sidebar = FakeSidebar()
         coordinator._toolbar = FakeToolbar()
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
+        )
         coordinator.main_window = FakeMainWindow()
         configure_mesh_state(coordinator)
         coordinator._pending_hotlink_page_uid = None
@@ -1751,7 +1898,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         selected_pages = []
         mesh_refreshes = []
         terminal_clears = []
+        restored_navigation = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
             selected_page_uids=["page-a", "deleted-page"],
             active_page_uid="deleted-page",
@@ -1769,6 +1918,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             bid_layers_sidebar=None,
         )
         coordinator._bid_data_cache = {}
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            restore_selection=lambda pages, active: restored_navigation.append(
+                (list(pages), active)
+            )
+        )
         coordinator._update_page_settings_bar = lambda _page_uid: None
         coordinator._update_plan_view = lambda _page_uid: None
         coordinator._viewer = SimpleNamespace(clear_plan_view=lambda: None)
@@ -1787,8 +1941,62 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(selected_pages, [["page-a"]])
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "page-a")
+        self.assertEqual(restored_navigation, [(["page-a"], "page-a")])
         self.assertEqual(mesh_refreshes, [["page-a"]])
         self.assertEqual(terminal_clears, [])
+
+    def test_stale_page_family_completion_reprojects_latest_navigation(self):
+        bid_ref = BidRef("sql-db", "bid-1")
+        pages = {
+            "page-a": Page(uid="page-a", name="Page A", sequence=1),
+            "page-b": Page(uid="page-b", name="Page B", sequence=2),
+        }
+        restored_navigation = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._pending_takeoff_page_uids = None
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_page_uids=["page-b"],
+            active_page_uid="page-b",
+            get_selected_bid_ref=lambda: bid_ref,
+            set_page_selection=lambda selected: setattr(
+                coordinator.ui_state_manager,
+                "selected_page_uids",
+                list(selected),
+            ),
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=pages.get,
+            get_all_pages=lambda: list(pages.values()),
+            select_pages=lambda selected: list(selected),
+        )
+        coordinator._undo_service = None
+        coordinator._sidebar = SimpleNamespace(
+            load_takeoff_sidebar_from_memory=lambda *_args: None,
+            bid_layers_sidebar=None,
+        )
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            restore_selection=lambda selected, active: restored_navigation.append(
+                (list(selected), active)
+            )
+        )
+        coordinator._bid_data_cache = {}
+        coordinator._update_page_settings_bar = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._viewer = SimpleNamespace(clear_plan_view=lambda: None)
+        coordinator._request_or_defer_mesh_refresh = lambda _pages: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+        coordinator._on_remote_bid_content_changed(
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            families=[CollaborationResourceFamily.PAGES.value],
+            resource_uids_by_family={
+                CollaborationResourceFamily.PAGES.value: ["page-a"]
+            },
+            local_completion=True,
+        )
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "page-b")
+        self.assertEqual(restored_navigation, [(["page-b"], "page-b")])
 
     def test_remote_removal_of_all_checked_pages_publishes_recoverable_empty_scene(
         self,
@@ -1796,7 +2004,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         bid_ref = BidRef("sql-db", "bid-1")
         mesh_refreshes = []
         terminal_clears = []
+        restored_navigation = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
             selected_page_uids=["deleted-page"],
             active_page_uid="deleted-page",
@@ -1814,6 +2024,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             bid_layers_sidebar=None,
         )
         coordinator._bid_data_cache = {}
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            restore_selection=lambda pages, active: restored_navigation.append(
+                (list(pages), active)
+            )
+        )
         coordinator._viewer = SimpleNamespace(clear_plan_view=lambda: None)
         coordinator._request_or_defer_mesh_refresh = (
             lambda pages: mesh_refreshes.append(list(pages))
@@ -1830,6 +2045,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(mesh_refreshes, [[]])
         self.assertEqual(terminal_clears, [])
+        self.assertEqual(restored_navigation, [([], None)])
 
     def test_remote_projection_request_failure_releases_registered_surface(self):
         database_id = "sql-db"
@@ -1880,6 +2096,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
     def test_takeoffs_changed_loads_summary_when_summary_tab_is_active(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
+        )
         coordinator.ui_state_manager = FakeUiState()
         coordinator.project_data = FakeProjectData()
         coordinator.takeoff_sidebar = FakeTakeoffSidebar()
@@ -2881,6 +3100,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.project_data = ProjectData()
         coordinator.takeoff_sidebar = TakeoffSidebar()
         coordinator._sidebar = Sidebar()
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
+        )
         coordinator.main_window = MainWindow()
         coordinator._page_settings_bar = None
         coordinator._takeoff_workspace_bid_ref = None
@@ -2898,6 +3120,47 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         coordinator._activate_takeoff_workspace()
         self.assertEqual(reveal_args, [False])
+
+    def test_sql_layer_rename_flush_failure_restores_hydrated_sidebar(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        calls = []
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("sql-database", "8")
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: True
+        )
+        coordinator._flush_deferred_for_file = lambda _database_id: False
+        coordinator._sidebar = SimpleNamespace(
+            load_bid_layers_sidebar=lambda: calls.append("database"),
+            load_bid_layers_sidebar_from_memory=lambda: calls.append("memory"),
+        )
+        coordinator._on_layer_renamed("layer-1", "Updated")
+        self.assertEqual(calls, ["memory"])
+
+    def test_queued_layer_failure_uses_canonical_error_boundary(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        calls = []
+        result = SimpleNamespace(
+            database_id="sql-database",
+            outcome_status=MutationOutcomeStatus.CONFLICT,
+            message="conflict",
+        )
+        coordinator._is_cleaning_up = False
+        coordinator._sidebar = SimpleNamespace(
+            load_bid_layers_sidebar_from_memory=lambda: calls.append("memory")
+        )
+        coordinator.present_queued_mutation_error = (
+            lambda database_id, title, presented: calls.append(
+                (database_id, title, presented)
+            )
+        )
+        coordinator._on_queued_layer_write_complete(result)
+        self.assertEqual(calls[0], "memory")
+        self.assertEqual(calls[1], ("sql-database", "Layer Update", result))
 
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -2936,7 +3199,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.ui_state_manager = None
         coordinator.ui_access_manager = None
         coordinator.project_data = None
-        coordinator.project_operations = None
+        coordinator.project_operations = ImmediateNavigationOperations()
         coordinator._color_service = None
         coordinator._icon_provider = None
         coordinator._project_write_service = None
@@ -3066,7 +3329,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             def deselect_pages(self):
                 self.deselects += 1
 
-        class ProjectOperations:
+        class ProjectOperations(ImmediateNavigationOperations):
             def load_bid(self, bid_ref):
                 self.requested = bid_ref
                 return False
@@ -3079,6 +3342,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 self.active.append(bid_ref)
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator._sql_collaboration = FakeSqlCollaboration()
         coordinator._plan_view_handler = None
@@ -3109,7 +3373,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._undo_service.active, [])
         self.assertIs(coordinator.main_window.project_view.restored_bid, old_ref)
 
-        class FailingSqlProjectOperations:
+        class FailingSqlProjectOperations(ImmediateNavigationOperations):
             @staticmethod
             def load_bid(_bid_ref):
                 raise DatabaseCatalogError("SQL bid read failed")
@@ -3155,6 +3419,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeMainWindow()
+        coordinator.project_operations = ImmediateNavigationOperations()
         coordinator._sql_collaboration = FakeSqlCollaboration()
         coordinator._plan_view_handler = None
         coordinator._status_panel = None
@@ -3208,6 +3473,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeMainWindow()
+        coordinator.project_operations = ImmediateNavigationOperations()
         coordinator._sql_collaboration = FakeSqlCollaboration()
         coordinator._plan_view_handler = None
         coordinator._status_panel = None
@@ -3307,6 +3573,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                     return set()
 
             class WriteService:
+                def uses_sql_collaboration_mutations(self, _file_path):
+                    return False
+
                 def delete_pages(self, _file_path, _page_uids):
                     return False
 
@@ -3342,10 +3611,73 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         finally:
             ui_event_coordinator.show_critical = old_show_critical
 
+    def test_sql_page_delete_queues_without_calling_synchronous_writer(self):
+        bid_ref = BidRef("sql-database", "7")
+
+        class UiState:
+            active_page_uid = "p1"
+
+            def get_selected_bid_ref(self):
+                return bid_ref
+
+        class ProjectData:
+            def get_page(self, uid):
+                return Page(uid=uid, name=uid) if uid in {"p1", "p2"} else None
+
+            def get_page_takeoffs(self, _uid):
+                return []
+
+            def get_page_annotations(self, _uid):
+                return []
+
+            def get_page_delete_content_snapshot(self, *_args):
+                return set()
+
+        class WriteService:
+            queued = []
+
+            def uses_sql_collaboration_mutations(self, _file_path):
+                return True
+
+            def queue_pages_delete(self, file_path, bid_uid, page_uids, callback):
+                self.queued.append((file_path, bid_uid, list(page_uids), callback))
+                return 9
+
+            def delete_pages(self, *_args):
+                raise AssertionError("SQL page deletion must not run synchronously")
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator._project_read_service = SimpleNamespace(
+            get_pages_with_delete_content=lambda *_args: set()
+        )
+        coordinator._project_write_service = WriteService()
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["p1", "p2"]
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.main_window = SimpleNamespace(is_takeoff_tab_active=lambda: True)
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._pending_takeoff_active_page_uid = None
+        coordinator._pending_takeoff_selected_area_uid = ""
+        coordinator._pending_takeoff_place_condition_uid = None
+        coordinator._pending_takeoff_place_condition_uids = []
+        coordinator._deferred_persistence = FakeDeferredPersistence()
+        coordinator.delete_current_page()
+        self.assertEqual(
+            coordinator._project_write_service.queued[0][:3],
+            ("sql-database", "7", ["p1"]),
+        )
+        self.assertEqual(coordinator._pending_takeoff_page_uids, ["p2"])
+
     def _make_unload_coordinator(
         self, selected_file="active.mdb", current_file="active.mdb"
     ):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_operations = ImmediateNavigationOperations()
         coordinator._sql_collaboration = FakeSqlCollaboration()
         coordinator._status_panel = None
         coordinator.ui_state_manager = FakeUnloadUiState(selected_file)
@@ -3425,6 +3757,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
     def test_database_refresh_restores_database_root_selection_and_hides_takeoff(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = FakeUnloadProjectData("active.mdb")
         coordinator._sql_collaboration = FakeSqlCollaboration()
@@ -3467,6 +3800,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 )
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = ProjectData()
         coordinator._sql_collaboration = FakeSqlCollaboration()
@@ -3727,7 +4061,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             def deselect_pages(self):
                 self.deselect_count += 1
 
-        class ProjectOperations:
+        class ProjectOperations(ImmediateNavigationOperations):
             def __init__(self, project_data):
                 self.project_data = project_data
                 self.loaded = []
@@ -3738,6 +4072,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 return True
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.ui_state_manager = UiState()
         coordinator._sql_collaboration = FakeSqlCollaboration()

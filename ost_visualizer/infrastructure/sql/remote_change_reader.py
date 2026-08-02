@@ -6,6 +6,7 @@ from ...application.dtos.collaboration_resource_catalog import (
     BID_CONTENT_RESOURCE_TYPES,
     CONDITION_RESOURCE_TYPES,
     HIERARCHY_RESOURCE_TYPES,
+    MASTER_DATA_RESOURCE_TYPES,
     BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
     CollaborationResourceFamily,
     CollaborationResourceType,
@@ -50,6 +51,15 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         self, database_id: str, bid_uid: int | None, checkpoint: int
     ) -> HydratedDatabaseChangeBatch:
         resources = [ResourceRef(CollaborationResourceType.DATABASE.value, database_id)]
+        resources.extend(
+            ResourceRef(resource_type, "database")
+            for resource_type in (
+                CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value,
+                CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+                CollaborationResourceType.EMPLOYEES_COLLECTION.value,
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+            )
+        )
         if bid_uid is not None:
             resources.extend(
                 ResourceRef(resource_type, str(bid_uid), bid_uid)
@@ -60,6 +70,13 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
                     CollaborationResourceType.ANNOTATIONS_COLLECTION.value,
                     CollaborationResourceType.PAGES_COLLECTION.value,
                     CollaborationResourceType.LAYERS_COLLECTION.value,
+                )
+            )
+            resources.append(
+                ResourceRef(
+                    CollaborationResourceType.COVER_SHEET.value,
+                    str(bid_uid),
+                    bid_uid,
                 )
             )
         request = self._requests.request(database_id, read_only=True)
@@ -135,11 +152,42 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             change.resource.resource_type in HIERARCHY_RESOURCE_TYPES
             for change in batch.changes
         )
+        cover_sheet_bids = {
+            change.resource.bid_uid
+            for change in batch.changes
+            if change.resource.bid_uid is not None
+            and change.resource.resource_type
+            == CollaborationResourceType.COVER_SHEET.value
+        }
+        delete_content_bids = set(cover_sheet_bids)
+        delete_content_bids.update(
+            change.resource.bid_uid
+            for change in batch.changes
+            if change.resource.bid_uid is not None
+            and change.resource.resource_type
+            in {
+                CollaborationResourceType.PAGE.value,
+                CollaborationResourceType.PAGES_COLLECTION.value,
+            }
+        )
+        needs_default_layers = any(
+            change.resource.resource_type
+            == CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value
+            for change in batch.changes
+        )
+        master_resource_types = {
+            change.resource.resource_type
+            for change in batch.changes
+            if change.resource.resource_type in MASTER_DATA_RESOURCE_TYPES
+        }
         if (
             not condition_bids
             and not area_bids
             and not bid_data_bids
             and not needs_hierarchy
+            and not needs_default_layers
+            and not master_resource_types
+            and not cover_sheet_bids
         ):
             return HydratedDatabaseChangeBatch(batch=batch)
         conditions_by_bid = {}
@@ -148,9 +196,71 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         bid_data_by_bid = {}
         hierarchy_file = None
         hierarchy_cdn_types = {}
+        default_layers = None
+        job_statuses = None
+        employees = None
+        pay_classes = None
+        used_job_status_uids = None
+        used_employee_uids = None
+        cover_sheet_by_bid = {}
+        page_delete_content_uids_by_bid = {}
+        settings_defaults = None
         if needs_hierarchy:
             hierarchy_file, hierarchy_cdn_types = self._reader.parse_file_connection(
                 batch.database_id, connection
+            )
+            settings_defaults = self._reader._parse_settings_defaults(connection)
+        if needs_default_layers:
+            default_layers = tuple(self._reader._parse_default_layers(connection))
+        if master_resource_types:
+            if master_resource_types.intersection(
+                {
+                    CollaborationResourceType.JOB_STATUS.value,
+                    CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+                }
+            ):
+                job_statuses = tuple(self._reader._parse_job_statuses(connection))
+                used_job_status_uids = frozenset(
+                    self._reader._parse_used_job_status_uids(connection)
+                )
+            needs_people = bool(
+                master_resource_types.intersection(
+                    {
+                        CollaborationResourceType.EMPLOYEE.value,
+                        CollaborationResourceType.EMPLOYEES_COLLECTION.value,
+                        CollaborationResourceType.PAY_CLASS.value,
+                        CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+                    }
+                )
+            )
+            if needs_people:
+                parsed_employees, parsed_pay_classes = (
+                    self._reader._parse_employees_and_pay_classes(connection)
+                )
+                if master_resource_types.intersection(
+                    {
+                        CollaborationResourceType.EMPLOYEE.value,
+                        CollaborationResourceType.EMPLOYEES_COLLECTION.value,
+                    }
+                ):
+                    employees = tuple(parsed_employees)
+                    used_employee_uids = frozenset(
+                        self._reader._parse_used_employee_uids(connection)
+                    )
+                if master_resource_types.intersection(
+                    {
+                        CollaborationResourceType.PAY_CLASS.value,
+                        CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+                    }
+                ):
+                    pay_classes = tuple(parsed_pay_classes)
+        for bid_uid in sorted(cover_sheet_bids):
+            cover_sheet = self._reader._parse_cover_sheet_data(connection, str(bid_uid))
+            if cover_sheet is not None:
+                cover_sheet_by_bid[bid_uid] = cover_sheet
+        for bid_uid in sorted(delete_content_bids):
+            page_delete_content_uids_by_bid[bid_uid] = frozenset(
+                self._reader._parse_pages_with_delete_content(connection, str(bid_uid))
             )
         if condition_bids or area_bids:
             schema = self._reader._schema(connection)
@@ -258,6 +368,15 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             bid_data_by_bid=bid_data_by_bid,
             hierarchy_file=hierarchy_file,
             cdn_types=hierarchy_cdn_types,
+            default_layers=default_layers,
+            job_statuses=job_statuses,
+            employees=employees,
+            pay_classes=pay_classes,
+            used_job_status_uids=used_job_status_uids,
+            used_employee_uids=used_employee_uids,
+            cover_sheet_by_bid=cover_sheet_by_bid,
+            page_delete_content_uids_by_bid=page_delete_content_uids_by_bid,
+            settings_defaults=settings_defaults,
         )
 
 

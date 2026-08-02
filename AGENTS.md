@@ -95,15 +95,17 @@ Database backends:
   threads or escape a transaction. Never retry an uncertain SQL write.
 - The only SQL schema is checksummed version 1 in `SQL_SCHEMA_V1`. New databases
   are initialized directly with that complete schema under the canonical
-  `sp_getapplock` schema lock. There are no SQL schema migrations, historical
-  schema definitions, compatibility aliases, or runtime upgrade paths. A
-  database that does not validate as canonical v1 must be recreated.
+  `sp_getapplock` schema lock. The client contains no previous SQL schema
+  definitions, alternate checksums, compatibility aliases, or runtime upgrade
+  paths. A database that does not validate exactly as canonical v1 is rejected.
   `SchemaRegistry` remains product data and is not the SQL schema ledger.
 - External unversioned and older OST Visualizer SQL databases are not adopted or
   upgraded by the desktop client.
 - Presence is informational and separate from locks. SQL write authorization
   must be enforced at the mutation boundary; toolbar/menu state is only a
-  projection of the shared capability service.
+  projection of the shared capability service. The current bid/page is
+  session-local SQL presence; navigation must not overwrite shared bid settings
+  or create a durable mutation transaction.
 - Normal SQL client/editor users must be explicit members of the built-in
   `db_datareader` and `db_datawriter` database roles. Schema visibility and
   collaboration permissions use the canonical definition in
@@ -121,6 +123,15 @@ Database backends:
   descriptors, uses server UTC, drains workers outside the Qt thread on
   unload/shutdown, and crosses `QtCallbackBridge` before EventBus publication or
   UI changes. Cleanup failure is explicit and must not be reported as closed.
+- SQL database/session bootstrap remains on the collaboration worker, while
+  explicit bid/page navigation reads use `NavigationLoadService`: prepare an
+  immutable result off the Qt thread, reject stale database/bid generations,
+  and project only the accepted result through `QtCallbackBridge`. Do not route
+  reads through the mutation queue or expose a synchronous SQL bid-load API.
+- Deferred page-view and selected-page persistence is noncritical UI state. It
+  may be coalesced or abandoned once during shutdown, must never prevent the
+  application from closing, and must not own or clear live UID-based page
+  navigation. Other deferred project settings retain strict failure handling.
 - Long-lived SQL edit leases are requested and released through the coordinator's
   worker command queue; presentation code must not call the collaboration store
   or wait for SQL on the Qt thread. Access receives an immediate local grant.
@@ -133,11 +144,25 @@ Database backends:
   order only. Each poll validates the feed epoch and minimum valid version,
   captures its high-water version, enumerates markers, and hydrates their complete
   payloads in one SQL `SNAPSHOT` transaction. Checkpoints advance only after a
-  successful main-thread reconciliation. Latency-sensitive SQL takeoff placement
-  uses the coordinator's bounded mutation queue; only provisional presentation
-  state exists before the worker commits and returns authoritative identities
-  through the Qt callback bridge. Access mutation execution preserves the existing
+  successful main-thread reconciliation. All presentation-triggered SQL project,
+  plan, annotation, hierarchy, settings, and master-data mutations use the
+  coordinator's bounded, per-database FIFO mutation queue. Modal editors submit
+  asynchronously, prevent duplicate submission, and do not treat queue
+  acceptance as persistence success. Each request has a
+  UUID operation ID and canonical request hash; `ChangeTransactions` stores the
+  operation type and recoverable authoritative result. Never retry DML after
+  commit begins: query the operation marker under its operation application lock
+  and reconcile the committed transaction instead. Pending presentation state is
+  non-authoritative, affected resources remain non-editable until projection, and
+  undo/redo history advances only after confirmed commit and successful
+  main-thread projection. Geometry previews hold coordinator-owned edit leases
+  through gesture completion. Access mutation execution preserves the existing
   MDB behavior and creates no collaboration session.
+- SQL OST/OSP imports use one typed `PROJECT_IMPORT` mutation per file through
+  the same bounded FIFO. File inspection/extraction, SQL DML, authoritative
+  identity-map creation, and hydration stay off the Qt thread. Multi-file
+  selection has explicit ordered per-file outcomes: an earlier committed file
+  remains committed if a later file fails. Access keeps its synchronous importer.
 - Remote application merges are targeted by entity family. Do not publish
   EventBus events from polling workers, add remote commands to local undo
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread

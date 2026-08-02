@@ -7,6 +7,9 @@ from ..dtos.collaboration_resource_catalog import (
     BID_CONTENT_ENTITY_RESOURCE_TYPES,
     BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
     CONDITION_RESOURCE_TYPES,
+    HIERARCHY_RESOURCE_TYPES,
+    CollaborationResourceType,
+    MASTER_DATA_RESOURCE_TYPES,
     SUPPORTED_REMOTE_RESOURCE_TYPES,
 )
 from ..dtos.collaboration_dtos import (
@@ -40,6 +43,8 @@ class RemoteChangeReconciliationService:
         self,
         hydrated: HydratedDatabaseChangeBatch,
         projection_barrier: RemoteProjectionBarrier | None = None,
+        *,
+        local_completion: bool = False,
     ) -> ReconciliationResult:
         batch = hydrated.batch
         conflicts = self._drafts.conflicts_for_changes(batch.database_id, batch.changes)
@@ -76,12 +81,14 @@ class RemoteChangeReconciliationService:
                 applied=False,
                 failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD,
             )
+        self._replace_database_snapshots(hydrated)
         if active_ref is None or active_ref.file_path != batch.database_id:
             if hydrated.hierarchy_file is not None:
                 self._project_data.replace_database_hierarchy(
                     hydrated.hierarchy_file,
                     hydrated.cdn_types,
                 )
+            self._replace_database_settings(hydrated)
             self._concurrency_tokens.apply_remote_changes(
                 batch.database_id, batch.changes
             )
@@ -91,6 +98,7 @@ class RemoteChangeReconciliationService:
                     database_id=batch.database_id,
                     defer_plan_projection=projection_barrier is not None,
                 )
+            self._publish_database_settings_changed(hydrated)
             return ReconciliationResult(applied=True)
         bid_uid = int(active_ref.bid_uid)
         active_changes = tuple(
@@ -128,6 +136,7 @@ class RemoteChangeReconciliationService:
                 hydrated.hierarchy_file,
                 hydrated.cdn_types,
             )
+        self._replace_database_settings(hydrated)
         self._concurrency_tokens.apply_remote_changes(batch.database_id, batch.changes)
         if hydrated.hierarchy_file is not None:
             self._event_bus.publish(
@@ -135,6 +144,7 @@ class RemoteChangeReconciliationService:
                 database_id=batch.database_id,
                 defer_plan_projection=projection_barrier is not None,
             )
+        self._publish_database_settings_changed(hydrated)
         if conditions is not None and folders is not None:
             self._event_bus.publish(
                 AppEvents.REMOTE_CONDITIONS_CHANGED,
@@ -173,6 +183,7 @@ class RemoteChangeReconciliationService:
                     for family in families
                 },
                 defer_plan_projection=projection_barrier is not None,
+                local_completion=local_completion,
             )
         plan_projection_required = (
             (conditions is not None and folders is not None)
@@ -210,7 +221,143 @@ class RemoteChangeReconciliationService:
             )
         return ReconciliationResult(applied=True)
 
+    def _replace_database_settings(self, hydrated) -> None:
+        if all(
+            value is None
+            for value in (
+                hydrated.default_layers,
+                hydrated.job_statuses,
+                hydrated.employees,
+                hydrated.pay_classes,
+                hydrated.used_job_status_uids,
+                hydrated.used_employee_uids,
+            )
+        ):
+            return
+        self._project_data.replace_database_settings(
+            hydrated.batch.database_id,
+            default_layers=hydrated.default_layers,
+            job_statuses=hydrated.job_statuses,
+            employees=hydrated.employees,
+            pay_classes=hydrated.pay_classes,
+            used_job_status_uids=hydrated.used_job_status_uids,
+            used_employee_uids=hydrated.used_employee_uids,
+        )
+
+    def _replace_database_snapshots(self, hydrated) -> None:
+        database_id = hydrated.batch.database_id
+        for bid_uid, cover_sheet in hydrated.cover_sheet_by_bid.items():
+            self._project_data.replace_cover_sheet_data(
+                database_id, str(bid_uid), cover_sheet
+            )
+        for bid_uid, page_uids in hydrated.page_delete_content_uids_by_bid.items():
+            self._project_data.replace_page_delete_content_uids(
+                database_id, str(bid_uid), page_uids
+            )
+        if hydrated.settings_defaults is not None:
+            self._project_data.replace_settings_defaults(
+                database_id, hydrated.settings_defaults
+            )
+
+    def _publish_database_settings_changed(self, hydrated) -> None:
+        families = []
+        if hydrated.default_layers is not None:
+            families.append("default_layers")
+        if hydrated.job_statuses is not None:
+            families.append("job_statuses")
+        if hydrated.employees is not None:
+            families.append("employees")
+        if hydrated.pay_classes is not None:
+            families.append("pay_classes")
+        if families:
+            self._event_bus.publish(
+                AppEvents.REMOTE_MASTER_DATA_CHANGED,
+                database_id=hydrated.batch.database_id,
+                families=families,
+            )
+
     def _is_complete_for_active_bid(self, hydrated, active_ref) -> bool:
+        database_changes = tuple(hydrated.batch.changes)
+        database_resource_types = {
+            change.resource.resource_type for change in database_changes
+        }
+        cover_sheet_bids = {
+            change.resource.bid_uid
+            for change in database_changes
+            if change.resource.resource_type
+            == CollaborationResourceType.COVER_SHEET.value
+            and change.resource.bid_uid is not None
+        }
+        delete_content_bids = {
+            change.resource.bid_uid
+            for change in database_changes
+            if change.resource.bid_uid is not None
+            and (
+                change.resource.resource_type
+                == CollaborationResourceType.COVER_SHEET.value
+                or change.resource.resource_type
+                in {
+                    CollaborationResourceType.PAGE.value,
+                    CollaborationResourceType.PAGES_COLLECTION.value,
+                }
+            )
+        }
+        if any(
+            bid_uid not in hydrated.cover_sheet_by_bid for bid_uid in cover_sheet_bids
+        ):
+            return False
+        if any(
+            bid_uid not in hydrated.page_delete_content_uids_by_bid
+            for bid_uid in delete_content_bids
+        ):
+            return False
+        if (
+            database_resource_types.intersection(HIERARCHY_RESOURCE_TYPES)
+            and hydrated.settings_defaults is None
+        ):
+            return False
+        if (
+            CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value
+            in database_resource_types
+            and hydrated.default_layers is None
+        ):
+            return False
+        if database_resource_types.intersection(MASTER_DATA_RESOURCE_TYPES):
+            required_master_data = {
+                CollaborationResourceType.JOB_STATUS.value: hydrated.job_statuses,
+                CollaborationResourceType.JOB_STATUSES_COLLECTION.value: hydrated.job_statuses,
+                CollaborationResourceType.EMPLOYEE.value: hydrated.employees,
+                CollaborationResourceType.EMPLOYEES_COLLECTION.value: hydrated.employees,
+                CollaborationResourceType.PAY_CLASS.value: hydrated.pay_classes,
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value: hydrated.pay_classes,
+            }
+            if any(
+                required_master_data[resource_type] is None
+                for resource_type in database_resource_types.intersection(
+                    required_master_data
+                )
+            ):
+                return False
+            if (
+                database_resource_types.intersection(
+                    {
+                        CollaborationResourceType.JOB_STATUS.value,
+                        CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+                    }
+                )
+                and hydrated.used_job_status_uids is None
+            ):
+                return False
+            if (
+                database_resource_types.intersection(
+                    {
+                        CollaborationResourceType.EMPLOYEE.value,
+                        CollaborationResourceType.EMPLOYEES_COLLECTION.value,
+                    }
+                )
+                and hydrated.used_employee_uids is None
+            ):
+                return False
         if active_ref is None or active_ref.file_path != hydrated.batch.database_id:
             return True
         bid_uid = int(active_ref.bid_uid)

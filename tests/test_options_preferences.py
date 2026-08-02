@@ -4626,6 +4626,127 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(combo.get_selected_page_uids(), ["page-a"])
         combo.close()
 
+    def test_page_combo_same_bid_reload_preserves_navigation_state_by_uid(self):
+        combo = PageComboBox()
+        bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            pages_without_folder=[
+                Page(uid="page-a", name="Duplicate"),
+                Page(uid="page-b", name="Duplicate"),
+                Page(uid="page-c", name="A103"),
+            ],
+        )
+        combo.load_bid(bid)
+        combo.restore_selection(["page-b"], active_uid="page-b")
+        combo.load_bid(bid)
+        order = combo.get_page_order()
+        active_index = order.index(combo.get_active_page_uid())
+        self.assertEqual(combo.get_selected_page_uids(), ["page-b"])
+        self.assertEqual(combo.get_active_page_uid(), "page-b")
+        self.assertEqual(combo.lineEdit().text(), "Duplicate")
+        self.assertTrue(active_index > 0)
+        self.assertTrue(active_index < len(order) - 1)
+        combo.go_next()
+        self.assertEqual(combo.get_active_page_uid(), "page-c")
+        combo.go_prev()
+        self.assertEqual(combo.get_active_page_uid(), "page-b")
+        combo.close()
+
+    def test_page_combo_model_refresh_notifies_navigation_without_reselecting(self):
+        combo = PageComboBox()
+        bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            pages_without_folder=[Page(uid="page-a", name="A101")],
+        )
+        combo.load_bid(bid)
+        combo.restore_selection(["page-a"], active_uid="page-a")
+        active_changes = []
+        model_changes = []
+        combo.active_page_changed.connect(active_changes.append)
+        combo.navigation_state_changed.connect(lambda: model_changes.append(True))
+        combo.load_bid(bid)
+        self.assertEqual(active_changes, [])
+        self.assertEqual(model_changes, [True])
+        self.assertEqual(combo.lineEdit().text(), "A101")
+        combo.close()
+
+    def test_page_combo_model_refresh_keeps_arrow_actions_projected(self):
+        combo = PageComboBox()
+        previous_action = QtGui.QAction(combo)
+        next_action = QtGui.QAction(combo)
+
+        def update_actions(*_args):
+            order = combo.get_page_order()
+            active_uid = combo.get_active_page_uid()
+            index = order.index(active_uid) if active_uid in order else -1
+            previous_action.setEnabled(index > 0)
+            next_action.setEnabled(index >= 0 and index < len(order) - 1)
+
+        combo.active_page_changed.connect(update_actions)
+        combo.navigation_state_changed.connect(update_actions)
+        bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            pages_without_folder=[
+                Page(uid="page-a", name="A101"),
+                Page(uid="page-b", name="A102"),
+                Page(uid="page-c", name="A103"),
+            ],
+        )
+        combo.load_bid(bid)
+        combo.restore_selection(["page-b"], active_uid="page-b")
+        self.assertTrue(previous_action.isEnabled())
+        self.assertTrue(next_action.isEnabled())
+        combo.load_bid(bid)
+        self.assertEqual(combo.lineEdit().text(), "A102")
+        self.assertTrue(previous_action.isEnabled())
+        self.assertTrue(next_action.isEnabled())
+        combo.clear()
+        self.assertFalse(previous_action.isEnabled())
+        self.assertFalse(next_action.isEnabled())
+        combo.close()
+
+    def test_page_combo_different_bid_reload_does_not_reuse_colliding_page_uid(self):
+        combo = PageComboBox()
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="First",
+                pages_without_folder=[Page(uid="1", name="First page")],
+            )
+        )
+        combo.restore_selection(["1"], active_uid="1")
+        combo.load_bid(
+            Bid(
+                uid="bid-2",
+                name="Second",
+                pages_without_folder=[Page(uid="1", name="Second page")],
+            )
+        )
+        self.assertEqual(combo.get_selected_page_uids(), [])
+        self.assertIsNone(combo.get_active_page_uid())
+        self.assertEqual(combo.lineEdit().text(), "")
+        combo.close()
+
+    def test_page_combo_one_page_refresh_keeps_text_with_no_navigation(self):
+        combo = PageComboBox()
+        bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            pages_without_folder=[Page(uid="page-a", name="A101")],
+        )
+        combo.load_bid(bid)
+        combo.restore_selection(["page-a"], active_uid="page-a")
+        combo.load_bid(bid)
+        order = combo.get_page_order()
+        active_index = order.index(combo.get_active_page_uid())
+        self.assertEqual(combo.lineEdit().text(), "A101")
+        self.assertFalse(active_index > 0)
+        self.assertFalse(active_index < len(order) - 1)
+        combo.close()
+
     def test_page_label_index_uses_sequence_not_pdf_page_index(self):
         combo = PageComboBox()
         bid = Bid(
@@ -4947,8 +5068,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         coordinator._app_config_presentation = FakeAppConfigPresentation()
         coordinator._sidebar = SimpleNamespace(
-            load_conditions_sidebar=lambda: calls.append("conditions"),
-            load_condition_summary=lambda: calls.append("summary"),
+            refresh_conditions_from_memory=lambda: calls.extend(
+                ("conditions", "summary")
+            ),
         )
         coordinator.conditions_sidebar = SimpleNamespace(
             highlight_conditions=lambda uids: calls.append(("highlight", list(uids)))
@@ -4992,9 +5114,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = SimpleNamespace(highlighted_condition_uids=[])
         coordinator._sidebar = SimpleNamespace(
-            load_conditions_sidebar=lambda: calls.append("conditions")
+            refresh_conditions_from_memory=lambda: calls.extend(
+                ("conditions", "summary")
+            )
         )
-        coordinator._load_condition_summary = lambda: calls.append("summary")
         coordinator.conditions_sidebar = None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda feature: feature == Feature.VIEW_2D

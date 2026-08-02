@@ -3,6 +3,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,10 @@ from ost_visualizer.application.dtos.file_import_args import (
     PROJECT_IMPORT_EXTENSION_OSP,
     PROJECT_IMPORT_EXTENSION_OST,
     parse_project_file_args,
+)
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    MutationOutcomeStatus,
+    QueuedMutationResult,
 )
 from ost_visualizer.application.use_cases.project import (
     import_project_files_from_args_use_case as import_args_use_case,
@@ -67,6 +72,8 @@ class FakeImportService:
         self.project_data = project_data
         self.new_project_uid = new_project_uid
         self.reload_result = reload_result
+        self.sql_collaboration = False
+        self.queued_imports = []
 
     def import_ost(self, source, target_db, project_uid, refresh=True):
         self.calls.append(("ost", source, target_db, project_uid, refresh))
@@ -81,6 +88,17 @@ class FakeImportService:
     def reload_and_notify(self, target_db):
         self.reloads.append(target_db)
         return self.reload_result
+
+    def uses_sql_collaboration_import(self, _target_db):
+        return self.sql_collaboration
+
+    def queue_project_import(
+        self, source, source_kind, target_db, project_uid, callback
+    ):
+        self.queued_imports.append(
+            (source, source_kind, target_db, project_uid, callback)
+        )
+        return len(self.queued_imports)
 
     def _add_project(self, target_db):
         if self.project_data is None or self.new_project_uid is None:
@@ -261,6 +279,55 @@ def _startup_import_window():
 
 
 class FileAssociationStartupImportTests(unittest.TestCase):
+    def test_sql_multi_file_import_uses_independent_ordered_durable_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.ost"
+            second = Path(tmp) / "second.osp"
+            first.write_text("ost")
+            second.write_text("osp")
+            service = FakeImportService()
+            service.sql_collaboration = True
+            target = import_args_use_case.ProjectImportTarget("sql-database")
+            use_case = import_args_use_case.ImportProjectFilesFromArgsUseCase(
+                service,
+                FakeProjectData("sql-database"),
+                SimpleNamespace(file_entries=[]),
+                SimpleNamespace(),
+            )
+            completed = []
+            use_case.queue_imports(
+                _project_file_args(first, second), target, completed.append
+            )
+            self.assertEqual(len(service.queued_imports), 2)
+            self.assertEqual(
+                [call[1] for call in service.queued_imports], ["ost", "osp"]
+            )
+            service.queued_imports[0][4](
+                QueuedMutationResult(
+                    database_id="sql-database",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                )
+            )
+            self.assertEqual(completed, [])
+            service.queued_imports[1][4](
+                QueuedMutationResult(
+                    database_id="sql-database",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.CONFLICT,
+                    message="conflicting import",
+                )
+            )
+            self.assertEqual(len(completed), 1)
+            self.assertEqual(completed[0].succeeded, 1)
+            self.assertEqual(completed[0].failed, 1)
+            self.assertEqual(
+                [result.outcome_status for result in completed[0].results],
+                [MutationOutcomeStatus.COMMITTED, MutationOutcomeStatus.CONFLICT],
+            )
+
     def test_current_project_import_target_uses_selected_database_for_duplicate_uid(
         self,
     ):
@@ -394,6 +461,7 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             target = import_args_use_case.ProjectImportTarget("target.mdb")
             window._import_project_files_from_args = SimpleNamespace(
                 resolve_target=lambda _current_target: target,
+                uses_async_import=lambda _target: False,
                 execute_imports=lambda args, target, refresh_after_import=True: (
                     execute_calls.append((args, target, refresh_after_import))
                     or import_args_use_case.ProjectFileImportBatchResult(

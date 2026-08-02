@@ -17,6 +17,7 @@ class SqlErrorCode(str, Enum):
     LOCKED = "locked"
     SESSION_EXPIRED = "session_expired"
     CONFLICT = "conflict"
+    CONSTRAINT_FAILED = "constraint_failed"
     UNKNOWN = "unknown"
 
 
@@ -112,6 +113,13 @@ def classify_pyodbc_error(exc: BaseException) -> SqlErrorDetails:
             SqlErrorCode.CONNECTION_FAILED,
             "The SQL Server could not be reached. Check the server name, network, "
             "and SQL Server service.",
+            sql_state,
+            native_code,
+        )
+    if sql_state.startswith("23"):
+        return SqlErrorDetails(
+            SqlErrorCode.CONSTRAINT_FAILED,
+            "The requested change violates a SQL data-integrity rule.",
             sql_state,
             native_code,
         )

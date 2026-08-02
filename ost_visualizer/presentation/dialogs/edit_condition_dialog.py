@@ -1,6 +1,7 @@
 from math import isfinite
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ...application.dtos.update_condition_dto import UpdateConditionDto
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
@@ -218,8 +219,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         layers: Dict[str, Layer],
         has_takeoffs_fn: Callable[[str], bool],
         save_fn: Callable[[str, UpdateConditionDto], object],
+        save_async_fn=None,
         has_license: bool = True,
         condition_type_save_fn=None,
+        condition_type_save_async_fn=None,
         condition_type_reload_fn=None,
         condition_type_blocked_delete_uids_fn=None,
         condition_type_delete_fn=None,
@@ -259,8 +262,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._layers = layers
         self._has_takeoffs_fn = has_takeoffs_fn
         self._save_fn = save_fn
+        self._save_async_fn = save_async_fn
         self._has_license: bool = has_license
         self._condition_type_save_fn = condition_type_save_fn
+        self._condition_type_save_async_fn = condition_type_save_async_fn
         self._condition_type_reload_fn = condition_type_reload_fn
         self._condition_type_blocked_delete_uids_fn = (
             condition_type_blocked_delete_uids_fn
@@ -278,6 +283,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._dirty = False
         self._building = False
         self._interactive_enabled = True
+        self._save_pending = False
         self._allow_apply = True
         self._saved_form_state = ()
         self._active_sub_dialog: Optional[QtWidgets.QDialog] = None
@@ -998,6 +1004,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             condition_types=list(self._cdn_types.values()),
             current_name=current_name,
             save_fn=self._condition_type_save_fn,
+            save_async_fn=self._condition_type_save_async_fn,
             blocked_delete_uids_fn=self._condition_type_blocked_delete_uids_fn,
             delete_fn=self._condition_type_delete_fn,
             reload_fn=self._reload_condition_types,
@@ -1620,7 +1627,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             dto.set("round_up", round_up)
         return True
 
-    def _apply_changes(self) -> bool:
+    def _apply_changes(self, after_success=None) -> bool:
         if not self._dirty:
             return True
         dto = self._validate_and_build_dto()
@@ -1633,6 +1640,42 @@ class EditConditionDialog(QtWidgets.QDialog):
             return True
         cond = self._current_condition()
         if not cond:
+            return False
+        if self._save_async_fn is not None:
+            self._save_pending = True
+            self.set_interactive(False)
+
+            def completed(result) -> None:
+                if not isValid(self):
+                    return
+                self._save_pending = False
+                if not result.success:
+                    self.set_interactive(True)
+                    if not result.error_presented:
+                        show_warning(
+                            self,
+                            "Save Failed",
+                            result.error or "Failed to save condition.",
+                        )
+                    return
+                self._dirty = False
+                self._saved_form_state = self._current_form_state()
+                self.set_interactive(True)
+                self._update_apply_button()
+                if after_success is not None:
+                    after_success()
+
+            try:
+                started = self._save_async_fn(cond.uid, dto, completed)
+            except Exception as exc:
+                self._save_pending = False
+                self.set_interactive(True)
+                show_warning(self, "Save Failed", str(exc))
+                return False
+            if not started:
+                self._save_pending = False
+                self.set_interactive(True)
+                return False
             return False
         result = self._save_fn(cond.uid, dto)
         if not result.success:
@@ -1649,7 +1692,7 @@ class EditConditionDialog(QtWidgets.QDialog):
 
     def _on_ok(self) -> None:
         if self._dirty:
-            if not self._apply_changes():
+            if not self._apply_changes(after_success=self.accept):
                 return
         self.accept()
 
@@ -1659,7 +1702,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self, "Unsaved Changes", "Do you want to save your changes?"
             )
             if reply is True:
-                if not self._apply_changes():
+                if not self._apply_changes(after_success=self.reject):
                     return
             elif reply is None:
                 return
@@ -1668,14 +1711,14 @@ class EditConditionDialog(QtWidgets.QDialog):
     def _on_apply(self) -> None:
         self._apply_changes()
 
-    def _prompt_save_and_navigate(self) -> bool:
+    def _prompt_save_and_navigate(self, after_success=None) -> bool:
         if not self._dirty:
             return True
         reply = confirm_save_discard_cancel(
             self, "Unsaved Changes", "Do you want to save your changes?"
         )
         if reply is True:
-            return self._apply_changes()
+            return self._apply_changes(after_success=after_success)
         if reply is False:
             self._dirty = False
             self._saved_form_state = self._current_form_state()
@@ -1687,21 +1730,25 @@ class EditConditionDialog(QtWidgets.QDialog):
         idx = self._get_current_index()
         if idx <= 0:
             return
-        if not self._prompt_save_and_navigate():
-            return
         new_uid = self._condition_uids[idx - 1]
-        cond = self._conditions_map.get(new_uid)
-        if cond:
-            self._load_condition(cond)
-            self.condition_navigated.emit(new_uid)
+        if not self._prompt_save_and_navigate(
+            after_success=lambda: self._navigate_to(new_uid)
+        ):
+            return
+        self._navigate_to(new_uid)
 
     def _on_next(self) -> None:
         idx = self._get_current_index()
         if idx >= len(self._condition_uids) - 1:
             return
-        if not self._prompt_save_and_navigate():
-            return
         new_uid = self._condition_uids[idx + 1]
+        if not self._prompt_save_and_navigate(
+            after_success=lambda: self._navigate_to(new_uid)
+        ):
+            return
+        self._navigate_to(new_uid)
+
+    def _navigate_to(self, new_uid: str) -> None:
         cond = self._conditions_map.get(new_uid)
         if cond:
             self._load_condition(cond)
@@ -1727,6 +1774,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._ok_btn,
         ):
             widget.setEnabled(editable)
+        self._cancel_btn.setEnabled(bool(enabled))
         self._update_style_combo_state()
         self._update_apply_button()
         can_navigate = (bool(enabled) and self._has_license) or self._read_only
@@ -1740,12 +1788,15 @@ class EditConditionDialog(QtWidgets.QDialog):
             active_sub_dialog.set_interactive(editable)
 
     def closeEvent(self, event) -> None:
+        if self._save_pending:
+            event.ignore()
+            return
         if self._dirty:
             reply = confirm_save_discard_cancel(
                 self, "Unsaved Changes", "Do you want to save your changes?"
             )
             if reply is True:
-                if not self._apply_changes():
+                if not self._apply_changes(after_success=self.close):
                     event.ignore()
                     return
             elif reply is None:

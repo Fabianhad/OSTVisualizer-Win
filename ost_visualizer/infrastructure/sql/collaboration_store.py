@@ -13,6 +13,7 @@ from ...application.dtos.collaboration_dtos import (
     DatabaseChangeBatch,
     DatabaseChangePollResult,
     DatabaseSession,
+    DurableOperationResult,
     HydratedDatabaseChangeBatch,
     PresenceMode,
     PresenceSnapshot,
@@ -28,10 +29,17 @@ from ...application.interfaces.i_database_descriptor_registry import (
 from .connection_manager import SqlConnectionManager, begin_snapshot_transaction
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
-from .schema_lock import acquire_resource_transaction_lock
+from .schema_lock import (
+    acquire_operation_transaction_lock,
+    acquire_resource_transaction_lock,
+)
 from .remote_change_reader import SqlRemoteChangeReader
 
 _MAX_CHANGE_BATCH = 500
+
+
+def _canonical_uuid_text(value) -> str:
+    return str(uuid.UUID(str(value)))
 
 
 class SqlCollaborationStore(ICollaborationStore):
@@ -460,7 +468,8 @@ class SqlCollaborationStore(ICollaborationStore):
                                 "invalid change."
                             )
                         markers = tuple(
-                            (str(row[2]), int(row[0])) for row in marker_rows
+                            (_canonical_uuid_text(row[2]), int(row[0]))
+                            for row in marker_rows
                         )
                         if len({marker[0] for marker in markers}) != len(markers):
                             raise ValueError(
@@ -512,6 +521,97 @@ class SqlCollaborationStore(ICollaborationStore):
             remote_batch=hydrated,
         )
 
+    def query_operation(
+        self, database_id: str, operation_id: str
+    ) -> DurableOperationResult:
+        operation_id = str(uuid.UUID(str(operation_id)))
+        request = self._requests.request(database_id, read_only=False)
+        with self._connections.connection(request, autocommit=False) as lease:
+            transaction_finished = False
+            try:
+                with lease.cursor() as cursor:
+                    acquire_operation_transaction_lock(cursor, operation_id)
+                    cursor.execute(
+                        "SELECT [OperationType], [RequestHash], "
+                        "[ResultFormatVersion], [ResultPayload] FROM "
+                        "[ostv].[ChangeTransactions] WHERE [TransactionId]=?",
+                        operation_id,
+                    )
+                    row = cursor.fetchone()
+                lease.rollback()
+                transaction_finished = True
+            finally:
+                if not transaction_finished:
+                    _rollback(lease)
+        if row is None:
+            return DurableOperationResult(
+                database_id=database_id,
+                operation_id=operation_id,
+                found=False,
+            )
+        return DurableOperationResult(
+            database_id=database_id,
+            operation_id=operation_id,
+            found=True,
+            mutation_type=str(row[0]),
+            request_hash=str(row[1]),
+            result_format_version=int(row[2]),
+            result_payload=str(row[3]),
+        )
+
+    def hydrate_operation(
+        self, database_id: str, operation_id: str
+    ) -> HydratedDatabaseChangeBatch:
+        operation_id = str(uuid.UUID(str(operation_id)))
+        request = self._requests.request(database_id, read_only=True)
+        with self._connections.connection(request, autocommit=False) as lease:
+            transaction_finished = False
+            try:
+                begin_snapshot_transaction(lease)
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT CONVERT(nvarchar(36), [TransactionId]) FROM "
+                        "[ostv].[ChangeTransactions] WHERE [TransactionId]=?",
+                        operation_id,
+                    )
+                    if cursor.fetchone() is None:
+                        raise ValueError(
+                            "The committed SQL operation marker is missing."
+                        )
+                    cursor.execute(
+                        "SELECT CONVERT(nvarchar(36), [FeedEpoch]) FROM "
+                        "[ostv].[ChangeFeedState] WHERE [SingletonId]=1"
+                    )
+                    feed_row = cursor.fetchone()
+                    cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
+                    version_row = cursor.fetchone()
+                    if (
+                        feed_row is None
+                        or version_row is None
+                        or version_row[0] is None
+                    ):
+                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                    version = int(version_row[0])
+                    rows = self._load_transaction_changes(
+                        cursor,
+                        ((operation_id, version),),
+                    )
+                batch = DatabaseChangeBatch(
+                    database_id=database_id,
+                    feed_epoch=str(feed_row[0]),
+                    minimum_valid_version=version,
+                    high_water_version=version,
+                    delivered_through_version=version,
+                    changes=tuple(_change_from_row(row) for row in rows),
+                )
+                hydrated = self._remote_reader.hydrate_connection(batch, lease)
+                lease.commit()
+                transaction_finished = True
+            finally:
+                if not transaction_finished:
+                    _rollback(lease)
+        return hydrated
+
     @staticmethod
     def _load_transaction_changes(cursor, markers: tuple[tuple[str, int], ...]):
         if not markers:
@@ -535,16 +635,18 @@ class SqlCollaborationStore(ICollaborationStore):
             *parameters,
         )
         rows = tuple(cursor.fetchall())
-        transaction_ids = {str(row[2]) for row in rows if row[0] is not None}
-        missing = {transaction_id for transaction_id, _version in markers}.difference(
-            transaction_ids
-        )
+        transaction_ids = {
+            _canonical_uuid_text(row[2]) for row in rows if row[0] is not None
+        }
+        missing = {
+            _canonical_uuid_text(transaction_id) for transaction_id, _version in markers
+        }.difference(transaction_ids)
         if missing:
             raise ValueError(
                 "A committed SQL transaction marker has no ChangeLog records."
             )
         payload_identities = tuple(
-            (str(row[2]), str(row[5]), str(row[6]))
+            (_canonical_uuid_text(row[2]), str(row[5]), str(row[6]))
             for row in rows
             if row[0] is not None
         )
@@ -597,7 +699,7 @@ def _change_from_row(row) -> DatabaseChange:
     return DatabaseChange(
         sequence=int(row[0]),
         commit_version=int(row[1]),
-        transaction_id=str(row[2]),
+        transaction_id=_canonical_uuid_text(row[2]),
         source_session_id=str(row[3]) if row[3] else None,
         resource=ResourceRef(
             resource_type=str(row[5]),

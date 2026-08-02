@@ -5,6 +5,7 @@ from ....domain.entities.identity_refs import BidRef
 from ....domain.entities.layer import normalize_layer_name
 from ....domain.entities.page import build_pages_from_bid_data
 from ....domain.entities.project_factory import build_bid
+from ....domain.entities.file_results import BidLoadResult
 from ....domain.services.file_manager_service import FileManager
 
 
@@ -25,8 +26,15 @@ class LoadBidUseCase:
         if not bid_ref.bid_uid:
             self.logger.warning("Cannot load bid: empty bid UID")
             return False
+        bid_data = self.prepare(bid_ref)
+        return self.apply_prepared(bid_ref, bid_data)
+
+    def prepare(self, bid_ref: BidRef) -> BidLoadResult:
         self._concurrency_tokens.load_bid(bid_ref.file_path, bid_ref.bid_uid)
-        bid_data = self.file_manager.load_bid(bid_ref.bid_uid, bid_ref.file_path)
+        return self.file_manager.prepare_bid_load(bid_ref.bid_uid, bid_ref.file_path)
+
+    def apply_prepared(self, bid_ref: BidRef, bid_data: BidLoadResult) -> bool:
+        self.file_manager.apply_bid_load(bid_ref.file_path)
         self.model.bid_conditions = bid_data.bid_conditions
         self.model.bid_takeoffs = bid_data.bid_takeoffs
         self.model.bid_areas = dict(bid_data.bid_areas or {})

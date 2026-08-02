@@ -16,7 +16,10 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
-from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationResult
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    DatabaseMutationResult,
+    MutationOutcomeStatus,
+)
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from ost_visualizer.domain.entities.cover_sheet import (
     CoverSheetData,
@@ -598,7 +601,28 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             "test.mdb",
             {"new": [], "updated": [], "deleted_uids": []},
         )
-        self.assertIs(result, True)
+        self.assertEqual(result, {})
+
+    def test_new_master_data_returns_authoritative_uid_maps(self):
+        operations = _CoverSheetSettingsOps()
+        job_statuses = operations.save_job_statuses(
+            "test.mdb",
+            {
+                "new": [{"uid": "new_status", "name": "Open"}],
+                "updated": [],
+                "deleted_uids": [],
+            },
+        )
+        pay_classes = operations.save_pay_classes(
+            "test.mdb",
+            {
+                "new": [{"uid": "new_pay", "name": "Field"}],
+                "updated": [],
+                "deleted_uids": [],
+            },
+        )
+        self.assertEqual(job_statuses, {"new_status": "99"})
+        self.assertEqual(pay_classes, {"new_pay": "99"})
 
     def test_existing_bid_area_can_move_under_new_area(self):
         operations = _CoverSheetSettingsOps()
@@ -2408,6 +2432,29 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_cover_sheet_duplicate_reuses_external_reference_without_copying(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "drawing.pdf"
+            original = b"%PDF-1.4\nuser-owned drawing\n"
+            source.write_bytes(original)
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=str(source)),
+            )
+            try:
+                dialog.plan_tree.setCurrentItem(dialog._page_items["p1"])
+                dialog._duplicate_page()
+                self.assertEqual(
+                    [page["image_path"] for page in dialog.get_updates()["pages"]],
+                    [str(source), str(source)],
+                )
+                self.assertEqual(tuple(Path(tmp).iterdir()), (source,))
+                self.assertEqual(source.read_bytes(), original)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
     def test_cover_sheet_multiple_selection_inserts_after_explicit_current_page(self):
         dialog = CoverSheetDialog(
             _FakeIconProvider(), None, _cover_sheet_data_with_pages()
@@ -2639,6 +2686,48 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_async_cover_sheet_bid_areas_uses_authoritative_projection(self):
+        refresh_calls = []
+
+        class SavedAreasDialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+            def has_saved_changes(self):
+                return True
+
+            def deleteLater(self):
+                pass
+
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            reload_bid_areas_fn=lambda: [],
+            save_bid_areas_async_fn=lambda _changes, _completed: True,
+            get_used_area_uids_fn=lambda: set(),
+            refresh_fn=lambda: refresh_calls.append("refresh") or True,
+        )
+        try:
+            from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+            old_dialog = module.BidAreasDialog
+            module.BidAreasDialog = SavedAreasDialog
+            try:
+                dialog._open_bid_areas_dialog()
+            finally:
+                module.BidAreasDialog = old_dialog
+            self.assertEqual(refresh_calls, [])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_cover_sheet_page_scale_combo_includes_known_non_architectural_scales(self):
         dialog = CoverSheetDialog(
             _FakeIconProvider(),
@@ -2711,6 +2800,53 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         finally:
             dialog.close()
             dialog.deleteLater()
+
+    def test_cover_sheet_page_delete_never_deletes_external_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "drawing.pdf"
+            original = b"%PDF-1.4\nuser-owned drawing\n"
+            source.write_bytes(original)
+            data = _cover_sheet_data_with_pages(2)
+            for page in data.pages_without_folder:
+                page.image_path = str(source)
+            dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+            try:
+                dialog.plan_tree.setCurrentItem(dialog._page_items["p1"])
+                dialog._delete_selected()
+                self.assertEqual(dialog._deleted_page_uids, ["p1"])
+                self.assertTrue(source.is_file())
+                self.assertEqual(source.read_bytes(), original)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_database_failure_does_not_compensate_external_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "drawing.pdf"
+            original = b"%PDF-1.4\nuser-owned drawing\n"
+            source.write_bytes(original)
+            submissions = []
+
+            def fail_save(updates, completed):
+                submissions.append(updates)
+                completed(False)
+                return True
+
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=str(source)),
+                save_cover_sheet_async_fn=fail_save,
+            )
+            try:
+                dialog.accept()
+                self.assertEqual(len(submissions), 1)
+                self.assertFalse(dialog._operation_pending)
+                self.assertTrue(source.is_file())
+                self.assertEqual(source.read_bytes(), original)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
 
     def test_cover_sheet_bulk_delete_closes_without_modal_or_input_residue(self):
         data = _cover_sheet_data()
@@ -2862,6 +2998,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
 
         event_bus = EventBus()
         write_service = ProjectWriteService.__new__(ProjectWriteService)
+        write_service.uses_sql_collaboration_mutations = lambda _database_id: False
         write_service._bid_write_guard = WriteGuard()
         write_service._save_cover_sheet = SaveCoverSheet()
         write_service._reload_database = (
@@ -2870,8 +3007,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         write_service._event_bus = event_bus
         write_service.logger = mock.Mock()
         write_service._mutation_executor = SimpleNamespace(
-            execute=lambda _request, operation: DatabaseMutationResult(
-                success=True,
+            execute=lambda request, operation: DatabaseMutationResult(
+                operation_id=request.operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
                 value=operation(SimpleNamespace(record=lambda *_args, **_kwargs: None)),
             )
         )
@@ -2938,6 +3076,58 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         finally:
             dialog.close()
             dialog.deleteLater()
+
+    def test_sql_add_blank_page_uses_hydrated_cover_sheet_without_qt_thread_read(self):
+        queued = []
+        data = _cover_sheet_data()
+
+        class ProjectData:
+            @staticmethod
+            def is_current_bid_locked():
+                return False
+
+            @staticmethod
+            def get_cover_sheet_snapshot(database_id, bid_uid):
+                self.assertEqual((database_id, bid_uid), ("sql-database", "7"))
+                return data
+
+        class ReadService:
+            @staticmethod
+            def get_cover_sheet_data(*_args):
+                raise AssertionError("SQL cover-sheet reads must use hydrated state")
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_cover_sheet_save(database_id, bid_uid, updates, callback):
+                queued.append((database_id, bid_uid, updates, callback))
+                return 1
+
+        handler = CoverSheetHandler(
+            window=object(),
+            icon_provider=_FakeIconProvider(),
+            project_data_service=ProjectData(),
+            project_read_service=ReadService(),
+            project_write_service=WriteService(),
+            infrastructure_provider=SimpleNamespace(),
+            event_bus=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("sql-database", "7")
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            deferred_persistence_manager=SimpleNamespace(),
+            workspace_state_model=None,
+        )
+        from ost_visualizer.presentation.handlers import cover_sheet_handler as module
+
+        with mock.patch.object(module, "confirm", return_value=True):
+            self.assertTrue(handler.add_blank_page_from_takeoff_tab())
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0][:2], ("sql-database", "7"))
+        self.assertEqual(len(queued[0][2]["pages"]), 1)
 
     def test_cover_sheet_image_path_cell_accepts_pasted_file_path(self):
         with tempfile.TemporaryDirectory() as tmp:

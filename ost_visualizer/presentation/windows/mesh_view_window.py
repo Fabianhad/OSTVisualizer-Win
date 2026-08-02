@@ -362,6 +362,13 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def get_selected_takeoff_uids(self) -> list:
         return self.viewer.get_selected_takeoff_uids() if self.viewer else []
 
+    def set_pending_mutation_uids(self, takeoff_uids: set[str]) -> None:
+        if self.viewer:
+            self.viewer.set_pending_mutation_uids(takeoff_uids)
+
+    def get_pending_mutation_uids(self) -> set[str]:
+        return self.viewer.get_pending_mutation_uids() if self.viewer else set()
+
     def set_pick_enabled(self, enabled: bool) -> None:
         if self.viewer:
             self.viewer.set_pick_enabled(enabled)

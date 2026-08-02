@@ -6625,6 +6625,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._hotlink_items = []
         view._uid_to_items = {}
         view._selected_uids = set()
+        view._pending_mutation_uids = set()
         view._selected_text_annotation_uid = None
         view._selection_items = []
         view._pdf_text_highlight_items = []

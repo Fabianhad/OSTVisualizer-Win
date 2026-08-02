@@ -479,6 +479,11 @@ class UseCaseBuilder:
                         "sql_collaboration_coordinator"
                     )
                 ),
+                delete_annotations=delete_annotations_uc,
+                insert_annotations=insert_annotations_uc,
+                save_annotation_positions=save_annotation_positions_uc,
+                save_annotation_text_properties=(save_annotation_text_properties_uc),
+                save_annotation_styles=save_annotation_styles_uc,
             ),
         )
         self.container.register_instance(

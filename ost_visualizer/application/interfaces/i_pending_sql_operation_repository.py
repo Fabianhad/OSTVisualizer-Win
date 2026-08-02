@@ -1,0 +1,9 @@
+from __future__ import annotations
+from typing import Protocol
+from ..dtos.collaboration_dtos import PendingSqlOperationRecord
+
+
+class IPendingSqlOperationRepository(Protocol):
+    def list_all(self) -> tuple[PendingSqlOperationRecord, ...]: ...
+    def save(self, record: PendingSqlOperationRecord) -> None: ...
+    def remove(self, operation_id: str) -> None: ...

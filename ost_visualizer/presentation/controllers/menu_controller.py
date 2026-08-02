@@ -754,11 +754,23 @@ class MenuController:
         ):
             return
         target_project_uid = self._resolve_target_project_uid()
-        defaults = self._project_read_service.get_settings_defaults(file_path)
-        job_statuses = self._project_read_service.get_job_statuses(file_path)
-        employees, pay_classes = (
-            self._project_read_service.get_employees_and_pay_classes(file_path)
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            file_path
         )
+        defaults = (
+            self.project_data.get_settings_defaults_snapshot(file_path)
+            if uses_sql_queue
+            else self._project_read_service.get_settings_defaults(file_path)
+        )
+        if uses_sql_queue:
+            job_statuses = self.project_data.get_job_status_snapshot(file_path)
+            employees = self.project_data.get_employee_snapshot(file_path)
+            pay_classes = self.project_data.get_pay_class_snapshot(file_path)
+        else:
+            job_statuses = self._project_read_service.get_job_statuses(file_path)
+            employees, pay_classes = (
+                self._project_read_service.get_employees_and_pay_classes(file_path)
+            )
         sf1 = defaults.get("scale_factor1", 0.125)
         sf2 = defaults.get("scale_factor2", 12.0)
         pw = defaults.get("page_width", 42.0)
@@ -811,8 +823,24 @@ class MenuController:
                 and self._flush_deferred_for_file(file_path)
                 and self._project_write_service.save_job_statuses(file_path, ch)
             ),
-            reload_job_statuses_fn=lambda: self._project_read_service.get_job_statuses(
-                file_path
+            save_job_statuses_async_fn=(
+                lambda changes, completed: (
+                    self.handlers.cover_sheet.save_master_data_async(
+                        file_path,
+                        "Job Statuses",
+                        self._project_write_service.queue_job_statuses_save,
+                        changes,
+                        completed,
+                        "job_statuses",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            reload_job_statuses_fn=(
+                (lambda: self.project_data.get_job_status_snapshot(file_path))
+                if uses_sql_queue
+                else (lambda: self._project_read_service.get_job_statuses(file_path))
             ),
             save_employees_fn=lambda ch: (
                 self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA)
@@ -824,8 +852,57 @@ class MenuController:
                 and self._flush_deferred_for_file(file_path)
                 and self._project_write_service.save_pay_classes(file_path, ch)
             ),
-            reload_employees_fn=lambda: self._project_read_service.get_employees_and_pay_classes(
-                file_path
+            save_employees_async_fn=(
+                lambda changes, completed: (
+                    self.handlers.cover_sheet.save_master_data_async(
+                        file_path,
+                        "Employees",
+                        self._project_write_service.queue_employees_save,
+                        changes,
+                        completed,
+                        "employees",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            save_pay_classes_async_fn=(
+                lambda changes, completed: (
+                    self.handlers.cover_sheet.save_master_data_async(
+                        file_path,
+                        "Payroll Classes",
+                        self._project_write_service.queue_pay_classes_save,
+                        changes,
+                        completed,
+                        "pay_classes",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            reload_employees_fn=(
+                (
+                    lambda: (
+                        self.project_data.get_employee_snapshot(file_path),
+                        self.project_data.get_pay_class_snapshot(file_path),
+                    )
+                )
+                if uses_sql_queue
+                else lambda: self._project_read_service.get_employees_and_pay_classes(
+                    file_path
+                )
+            ),
+            save_cover_sheet_async_fn=(
+                lambda updates, completed: (
+                    self.handlers.cover_sheet.create_bid_async(
+                        file_path,
+                        target_project_uid,
+                        updates,
+                        completed,
+                    )
+                    if uses_sql_queue
+                    else None
+                )
             ),
             pdf_page_sizes_fn=self._infrastructure_provider.get_pdf_page_sizes,
             create_mode=True,
@@ -834,6 +911,8 @@ class MenuController:
         try:
             result = exec_with_ost_blocking(dialog, self._event_bus)
             if result != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            if uses_sql_queue:
                 return
             if not self.ui_access_manager.can_create_project_tree_items(
                 file_path is not None
@@ -886,6 +965,15 @@ class MenuController:
         ):
             return
         if not self._flush_deferred_for_file(file_path):
+            return
+        if self._project_write_service.uses_sql_collaboration_mutations(file_path):
+            self.handlers.delete.create_project(
+                file_path,
+                "New Project",
+                lambda new_uid: self.window.project_view.schedule_rename(
+                    new_uid, file_path
+                ),
+            )
             return
         create_result = self._project_write_service.create_project_result(
             file_path, "New Project"

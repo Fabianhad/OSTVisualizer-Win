@@ -2,6 +2,7 @@ import contextlib
 import logging
 import os
 import unittest
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,7 +60,9 @@ from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
-    DatabaseMutationRequest,
+    CollaborationMutationType,
+    DatabaseMutationRequest as _DatabaseMutationRequest,
+    MutationOutcomeStatus,
     ResourceRef,
 )
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
@@ -87,6 +90,14 @@ from ost_visualizer.presentation.dialogs.sql_connection_dialog import (
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
+
+
+def DatabaseMutationRequest(*args, **kwargs):
+    """Build an explicitly identified canonical request for writer tests."""
+    kwargs.setdefault("operation_id", str(uuid.uuid4()))
+    kwargs.setdefault("mutation_type", CollaborationMutationType.PROJECT_WRITE.value)
+    kwargs.setdefault("request_hash", "a" * 64)
+    return _DatabaseMutationRequest(*args, **kwargs)
 
 
 class _CredentialStore:
@@ -122,6 +133,34 @@ class _RawConnection:
 
     def close(self):
         self.close_count += 1
+
+
+class _AccessTransactionConnection:
+    def __init__(self):
+        self.commits = 0
+        self.rollbacks = 0
+
+    @staticmethod
+    def cursor():
+        return _RawCursor()
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+class _AccessTransactionConnections:
+    def __init__(self):
+        self.connection_value = _AccessTransactionConnection()
+        self.lease_count = 0
+
+    @contextlib.contextmanager
+    def connection(self, _database_id, *, autocommit=False):
+        self.lease_count += 1
+        self.asserted_autocommit = autocommit
+        yield ConnectionWrapper(self.connection_value)
 
 
 class _InspectionCursor:
@@ -1387,7 +1426,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 True,
             )[1],
         )
-        self.assertTrue(result.success)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertEqual(manager.lease.commits, 1)
         self.assertEqual(manager.lease.rollbacks, 0)
 
@@ -1532,8 +1571,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertFalse(writer.delete_takeoffs("example.mdb", ["not-a-uid"]))
 
     def test_access_router_scopes_preconnection_validation_as_access(self):
+        connections = _AccessTransactionConnections()
         writer = DatabaseProjectWriter(
-            object(),
+            connections,
             DatabaseDescriptorRegistry(),
             _CredentialStore(),
             DatabaseSessionRegistry(),
@@ -1542,8 +1582,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             DatabaseMutationRequest(database_id="example.mdb", session_id=None),
             lambda _recorder: writer.delete_takeoffs("example.mdb", ["not-a-uid"]),
         )
-        self.assertTrue(result.success)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertFalse(result.value)
+        self.assertEqual(connections.connection_value.commits, 1)
 
     def test_sql_router_scopes_preconnection_validation_as_sql(self):
         registry = DatabaseDescriptorRegistry()
@@ -1601,8 +1642,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.rollbacks, 1)
 
     def test_access_shared_master_data_conversion_retains_false_result(self):
+        connections = _AccessTransactionConnections()
         writer = DatabaseProjectWriter(
-            object(),
+            connections,
             DatabaseDescriptorRegistry(),
             _CredentialStore(),
             DatabaseSessionRegistry(),
@@ -1613,8 +1655,56 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 "example.mdb", "not-a-bid", None
             ),
         )
-        self.assertTrue(result.success)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertFalse(result.value)
+        self.assertEqual(connections.connection_value.commits, 1)
+
+    def test_access_router_nested_writes_commit_once_for_one_mutation(self):
+        connections = _AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+
+        def operation(_recorder):
+            with writer._connection("example.mdb"):
+                pass
+            with writer._connection("example.mdb"):
+                pass
+            return "complete"
+
+        result = writer.execute(
+            DatabaseMutationRequest(database_id="example.mdb", session_id=None),
+            operation,
+        )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(result.value, "complete")
+        self.assertEqual(connections.lease_count, 3)
+        self.assertEqual(connections.connection_value.commits, 1)
+        self.assertEqual(connections.connection_value.rollbacks, 0)
+
+    def test_access_router_nested_failure_rolls_back_once(self):
+        connections = _AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+
+        def operation(_recorder):
+            with writer._connection("example.mdb"):
+                raise RuntimeError("forced composite failure")
+
+        with self.assertRaisesRegex(RuntimeError, "forced composite failure"):
+            writer.execute(
+                DatabaseMutationRequest(database_id="example.mdb", session_id=None),
+                operation,
+            )
+        self.assertEqual(connections.connection_value.commits, 0)
+        self.assertEqual(connections.connection_value.rollbacks, 1)
 
     def test_sql_mutation_preserves_row_error_swallowed_inside_shared_mdb_operation(
         self,
@@ -1904,7 +1994,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         statements = [
             sql for cursor in manager.lease.cursors for sql in cursor.executed
         ]
-        self.assertTrue(result.success)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertEqual(
             sum("INSERT INTO [ostv].[ChangeLog]" in sql for sql in statements),
             1,
@@ -1913,6 +2003,49 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             sum("INSERT INTO [ostv].[ChangeTransactions]" in sql for sql in statements),
             1,
         )
+        self.assertEqual(manager.lease.commits, 1)
+        self.assertEqual(manager.lease.rollbacks, 0)
+
+    def test_sql_commit_exception_is_classified_as_unknown_without_write_retry(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+
+        def fail_commit():
+            manager.lease.commits += 1
+            raise pyodbc.Error("08S01", "connection lost during commit")
+
+        manager.lease.commit = fail_commit
+        result = writer.execute(
+            DatabaseMutationRequest(
+                database_id=descriptor.database_id,
+                session_id="session-1",
+            ),
+            lambda recorder: (
+                recorder.record(
+                    ResourceRef("database", descriptor.database_id),
+                    ChangeOperation.UPDATE,
+                )
+                or True
+            ),
+        )
+        self.assertEqual(
+            result.outcome_status,
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+        )
+        self.assertTrue(result.commit_attempted)
         self.assertEqual(manager.lease.commits, 1)
         self.assertEqual(manager.lease.rollbacks, 0)
 
@@ -2039,9 +2172,18 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             ),
             patch.object(writer, "_insert_identity_raw", side_effect=insert),
         ):
-            writer._write_remapped_identity_graph(_Connection(), raw_data)
+            identity_maps = writer._write_remapped_identity_graph(
+                _Connection(), raw_data
+            )
         self.assertEqual(inserted[1][0], "BidLayers")
         self.assertEqual(inserted[1][1]["BidUID"], 101)
+        self.assertEqual(
+            identity_maps,
+            {
+                "Bids": {"source-bid": "101"},
+                "BidLayers": {"source-layer": "202"},
+            },
+        )
 
     def test_sql_import_does_not_remap_resolved_global_identity(self):
         class _Connection:
@@ -2662,9 +2804,12 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             ),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             sql_collaboration_coordinator=SimpleNamespace(
+                drain_database_mutations_async=lambda _database_id, callback: callback(
+                    True, ""
+                ),
                 stop_database_async=lambda _database_id, _reason, callback: callbacks.append(
                     callback
-                )
+                ),
             ),
             credential_store=credentials,
             database_descriptor_registry=registry,
@@ -2743,6 +2888,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             ),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             sql_collaboration_coordinator=SimpleNamespace(
+                drain_database_mutations_async=lambda _database_id, callback: callback(
+                    True, ""
+                ),
                 stop_database_async=lambda _database_id, _reason, callback: callbacks.append(
                     callback
                 ),
@@ -2858,7 +3006,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             cleanup_deleted_files_use_case=SimpleNamespace(
                 execute_and_save=lambda: None
             ),
-            file_loading_service=None,
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: False),
             working_directory_service=None,
             unload_file_fn=lambda _locator: True,
             deferred_persistence_manager=SimpleNamespace(),

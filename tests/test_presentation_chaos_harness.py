@@ -803,6 +803,7 @@ class PlanViewActionHandlerChaosHarness:
         self.write.next_uids = [str(uid) for uid in range(1000, 1100)]
         self.ann_write = HandlerChaosAnnotationWriteService()
         self.ann_write.next_uids = [f"ann-{uid}" for uid in range(1000, 1100)]
+        self.write.annotation_write_service = self.ann_write
         self.undo = FakeUndoService()
         self.event_bus = FakeEventBus()
         self.access = FakeAccess(

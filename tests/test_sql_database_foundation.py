@@ -430,7 +430,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
         self.assertEqual(SQL_SCHEMA_V1.version, 1)
         self.assertEqual(
             SQL_SCHEMA_V1.checksum,
-            "7cfdad7021aff013be40f439c11ea9aa6686861d324e30359ed71c55e7f49f72",
+            "27460ffeedd5dfa47dc532968c1db7445bee3423c718aa4ef2aca2b063297dd7",
         )
         self.assertIn(
             "ALLOW_SNAPSHOT_ISOLATION=ON",
@@ -466,12 +466,13 @@ class DatabaseDescriptorTests(unittest.TestCase):
             any("\nGO\n" in statement.upper() for statement in SQL_SCHEMA_V1.statements)
         )
 
-    def test_canonical_schema_record_rejects_legacy_coercible_values(self):
+    def test_canonical_schema_record_rejects_noncanonical_values(self):
         self.assertTrue(
             schema_record_is_canonical(SQL_SCHEMA_V1.version, SQL_SCHEMA_V1.checksum)
         )
         self.assertFalse(schema_record_is_canonical("1", SQL_SCHEMA_V1.checksum))
         self.assertFalse(schema_record_is_canonical(1.0, SQL_SCHEMA_V1.checksum))
+        self.assertFalse(schema_record_is_canonical(1, "0" * 64))
 
     def test_schema_validator_rejects_noncanonical_ostv_tables_and_columns(self):
         inventory = SqlSchemaInventory(
@@ -1483,9 +1484,10 @@ class SqlDialogTests(unittest.TestCase):
             file_state_model=state,
             cleanup_deleted_files_use_case=None,
             file_loading_service=SimpleNamespace(
+                is_loaded=lambda _locator: False,
                 load_file=lambda _locator: SimpleNamespace(
                     success=True, file_path=location.database_guid
-                )
+                ),
             ),
             working_directory_service=None,
             unload_file_fn=lambda _locator: False,

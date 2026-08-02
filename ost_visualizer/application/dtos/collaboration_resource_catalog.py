@@ -162,7 +162,6 @@ _DEFINITIONS = (
         CollaborationResourceType.DEFAULT_LAYERS_COLLECTION,
         CollaborationResourceFamily.LAYERS,
         collection=True,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.TAKEOFF,
@@ -196,59 +195,50 @@ _DEFINITIONS = (
         bid_scoped=True,
         entity_table="Bids",
         entity_bid_column="UID",
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.JOB_STATUS,
         CollaborationResourceFamily.MASTER_DATA,
         entity_table="JobStatuses",
         coalesce_type=CollaborationResourceType.JOB_STATUSES_COLLECTION,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.JOB_STATUSES_COLLECTION,
         CollaborationResourceFamily.MASTER_DATA,
         collection=True,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.EMPLOYEE,
         CollaborationResourceFamily.MASTER_DATA,
         entity_table="Employees",
         coalesce_type=CollaborationResourceType.EMPLOYEES_COLLECTION,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.EMPLOYEES_COLLECTION,
         CollaborationResourceFamily.MASTER_DATA,
         collection=True,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.PAY_CLASS,
         CollaborationResourceFamily.MASTER_DATA,
         entity_table="PayClasses",
         coalesce_type=CollaborationResourceType.PAY_CLASSES_COLLECTION,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.PAY_CLASSES_COLLECTION,
         CollaborationResourceFamily.MASTER_DATA,
         collection=True,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.CONDITION_TYPE,
-        CollaborationResourceFamily.MASTER_DATA,
+        CollaborationResourceFamily.HIERARCHY,
         entity_table="CdnTypes",
         coalesce_type=CollaborationResourceType.CONDITION_TYPES_COLLECTION,
-        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.CONDITION_TYPES_COLLECTION,
-        CollaborationResourceFamily.MASTER_DATA,
+        CollaborationResourceFamily.HIERARCHY,
         collection=True,
-        reconciliation_supported=False,
     ),
 )
 COLLABORATION_RESOURCE_CATALOG = MappingProxyType(
@@ -299,11 +289,15 @@ AREA_RESOURCE_TYPES = resource_types_for_family(CollaborationResourceFamily.AREA
 HIERARCHY_RESOURCE_TYPES = resource_types_for_family(
     CollaborationResourceFamily.HIERARCHY
 )
+MASTER_DATA_RESOURCE_TYPES = resource_types_for_family(
+    CollaborationResourceFamily.MASTER_DATA
+)
 BID_CONTENT_FAMILY_BY_RESOURCE_TYPE = MappingProxyType(
     {
         name: definition.family.value
         for name, definition in COLLABORATION_RESOURCE_CATALOG.items()
-        if definition.family
+        if definition.bid_scoped
+        and definition.family
         in {
             CollaborationResourceFamily.TAKEOFFS,
             CollaborationResourceFamily.ANNOTATIONS,

@@ -212,6 +212,8 @@ class TakeoffPlanView(
     hole_created = Signal(str, list, str, str)
     elements_deleted = Signal(list)
     takeoff_selection_changed = Signal(list)
+    plan_item_selection_changed = Signal(list)
+    geometry_edit_lease_requested = Signal(list)
     cursor_mode_change_requested = Signal(str)
     undo_requested = Signal()
     redo_requested = Signal()
@@ -376,6 +378,9 @@ class TakeoffPlanView(
         self._annotation_only_selection: bool = False
         self._paste_allowed_fn = None
         self._selected_uids: Set[str] = set()
+        self._pending_mutation_uids: Set[str] = set()
+        self._geometry_edit_lease_required = False
+        self._geometry_edit_lease_uids: Set[str] = set()
         self._selection_items: List = []
         self._handle_infos: List[HandleInfo] = []
         self._current_takeoffs: Dict[str, Takeoff] = {}
@@ -2297,6 +2302,7 @@ class TakeoffPlanView(
         uid_key = str(uid)
         self._uid_to_items[uid_key] = list(items)
         self._apply_uid_items_visibility(uid_key)
+        self._apply_pending_mutation_visual(uid_key)
 
     def apply_layer_visibility(
         self,
@@ -3322,6 +3328,26 @@ class TakeoffPlanView(
     @property
     def intelligent_paste_enabled(self) -> bool:
         return self._intelligent_paste_enabled
+
+    def set_geometry_edit_lease_pending(self, _uids: set[str]) -> None:
+        self._geometry_edit_lease_required = True
+        self._geometry_edit_lease_uids = set()
+
+    def set_geometry_edit_lease_granted(self, uids: set[str]) -> None:
+        self._geometry_edit_lease_required = True
+        self._geometry_edit_lease_uids = {str(uid) for uid in uids if uid}
+
+    def disable_geometry_edit_leasing(self) -> None:
+        self._geometry_edit_lease_required = False
+        self._geometry_edit_lease_uids.clear()
+
+    def request_geometry_edit_lease(self, uids: set[str]) -> bool:
+        requested = {str(uid) for uid in uids if uid}
+        self.geometry_edit_lease_requested.emit(sorted(requested))
+        return bool(
+            not self._geometry_edit_lease_required
+            or requested.issubset(self._geometry_edit_lease_uids)
+        )
 
     def _on_selection_changed(self) -> None:
         pending_uids = set(self._intelligent_paste_pending_uids)

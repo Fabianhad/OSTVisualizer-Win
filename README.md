@@ -116,18 +116,24 @@ runtime connection while keeping it available for reconnect.
 
 OST Visualizer uses one checksummed SQL schema, version 1. New databases are
 created directly with the complete current table, index, Change Tracking, and
-collaboration structure. There are no historical SQL schema definitions,
-migrations, upgrade routes, or external-database adoption paths. A database that
-does not validate as canonical v1 must be recreated. Schema initialization
+collaboration structure. The client ships no previous SQL schema definitions,
+alternate checksum acceptance, upgrade route, or external-database adoption
+path. A database that does not validate exactly as canonical v1 is rejected.
+Schema initialization
 requires additional database permissions; ordinary readers and editors do not
 need server-administrator rights.
 
 Canonical schema-v1 SQL databases use one desktop session per loaded database,
 server-timestamped heartbeats and bid presence, expiring resource edit locks,
-and optimistic row-version checks. Long-running condition, area, layer, and
-master-data editors acquire their SQL leases asynchronously without waiting on
-the Qt thread. Writes record affected resources and one
-transaction marker in the same SQL transaction. SQL Server Change Tracking assigns
+and optimistic row-version checks. Long-running editors and geometry gestures
+acquire SQL leases asynchronously without waiting on the Qt thread. Interactive
+plan, annotation, page-setting, condition, layer, hierarchy, area, cover-sheet,
+and master-data writes run through one bounded FIFO worker per database and keep
+the interface responsive while their affected resources are pending. One paste or
+duplicate gesture commits its conditions, parent takeoffs, holes, annotations,
+and reference mappings in one transaction. Writes record affected resources and
+one queryable operation marker, including authoritative identity mappings, in
+the same SQL transaction. SQL Server Change Tracking assigns
 the marker's commit version, which is the only durable feed checkpoint; identity
 values are used only to order rows within a committed transaction. Snapshot
 isolation is mandatory. A poll reads its feed epoch, retention boundary, high-water
@@ -142,16 +148,21 @@ prevents a failed or conflicting merge from advancing the draft's row-version
 baseline. Conflicting resources become read-only until their authoritative SQL
 state is deliberately reloaded.
 If the session or feed becomes unhealthy, SQL editing is disabled while cached
-data remains viewable.
-Database unload and application close invalidate callback generations immediately,
-deny new edits, cancel deferred SQL persistence, and drain collaboration workers
-outside the Qt thread. The window closes only after session and lock cleanup
-finishes; cleanup failure remains visible instead of being reported as success.
+data remains viewable. A connection loss during commit is recovered by querying
+the operation marker; OST Visualizer never blindly repeats an uncertain write.
+Database unload and application close deny new deferred state, abandon
+noncritical page-view persistence, drain accepted critical writes and collaboration
+workers outside the Qt thread, and invalidate stale callback generations. The
+window closes only after required session and lock cleanup finishes; cleanup
+failure remains visible instead of being reported as success.
 
-The current collaboration slice holds expiring edit locks for condition, area,
-master-data, and default-layer dialogs. Other integrated writes use
-transaction-scoped resource locks and row-version checks; richer in-place
-conflict choices and long-lived locks for geometry gestures remain Phase 4 work.
+Pending deletions remain visible but disabled until commit. Geometry preview is
+local while its lease is held and produces one SQL write when the gesture ends.
+Confirmed local commits use the same authoritative hydration and projection
+machinery as remote commits, and undo history is registered or advanced only
+after the local projection succeeds.
+Each SQL session's current bid and page are presence only; navigating does not
+write another user's shared selected-page state or enter mutation history.
 
 Collaboration covers OST Visualizer clients writing through this schema. Schema
 version 1 retains an explicit writer-mode gate: mixed-application editing remains

@@ -3,6 +3,8 @@ from typing import Optional, Protocol
 from ..dtos.collaboration_dtos import (
     DatabaseChangePollResult,
     DatabaseSession,
+    DurableOperationResult,
+    HydratedDatabaseChangeBatch,
     PresenceMode,
     PresenceSnapshot,
     ResourceLock,
@@ -59,3 +61,9 @@ class ICollaborationStore(Protocol):
         limit: int,
         excluding_session_id: str,
     ) -> DatabaseChangePollResult: ...
+    def query_operation(
+        self, database_id: str, operation_id: str
+    ) -> DurableOperationResult: ...
+    def hydrate_operation(
+        self, database_id: str, operation_id: str
+    ) -> HydratedDatabaseChangeBatch: ...

@@ -43,6 +43,7 @@ from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialo
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
+from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.deferred_dialog_save import (
     DeferredDialogSaveController,
 )
@@ -54,6 +55,31 @@ def _app():
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+class ProjectTreeMasterDataReadTests(unittest.TestCase):
+    def test_sql_job_status_menu_uses_authoritative_model_snapshot(self):
+        expected = [JobStatus(uid="status-1", name="Open")]
+
+        class ReadService:
+            def get_job_statuses(self, _file_path):
+                raise AssertionError(
+                    "SQL job statuses must not be read on the Qt thread"
+                )
+
+        owner = SimpleNamespace(
+            _project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _file_path: True
+            ),
+            _project_data_service=SimpleNamespace(
+                get_job_status_snapshot=lambda _file_path: expected
+            ),
+            _project_read_service=ReadService(),
+        )
+        self.assertEqual(
+            MainWindow._get_project_tree_job_statuses(owner, "sql-database"),
+            expected,
+        )
 
 
 class FakeIconProvider:
@@ -1016,6 +1042,75 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         finally:
             bar.deleteLater()
 
+    def test_page_settings_area_picker_uses_async_save_without_sync_refresh(self):
+        async_calls = []
+        sync_calls = []
+        refresh_calls = []
+
+        class CapturingPicker:
+            def __init__(self, **kwargs):
+                self._save_async_fn = kwargs["save_async_fn"]
+                self._on_saved_fn = kwargs["on_saved_fn"]
+
+            def get_selected_uid(self):
+                return "area-2"
+
+            def has_saved_changes(self):
+                return True
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        def save_async(bid_ref, changes, completed):
+            async_calls.append((bid_ref, changes))
+            completed(True, {"new-0": "area-2"})
+            return True
+
+        def exec_picker(picker, _event_bus):
+            self.assertTrue(
+                picker._save_async_fn(
+                    {"new": [{"uid": "new-0", "name": "Area 2"}]},
+                    lambda _success, _uid_map: None,
+                )
+            )
+            picker._on_saved_fn()
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        area = BidArea("area-2", "bid-1", "", "Area 2", 1)
+        bar = PageSettingsBar(
+            FakeIconProvider(),
+            event_bus=object(),
+            load_areas_fn=lambda _file_path, _bid_uid: [area],
+            save_areas_fn=lambda *args, **kwargs: sync_calls.append((args, kwargs)),
+            save_areas_async_fn=save_async,
+            refresh_areas_fn=refresh_calls.append,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+        )
+        bar.load_bid_areas(BidRef("sql-database", "bid-1"))
+        bar.load_page("page-1", 1.0, 1.0, "")
+        bar.set_interactive(True)
+        try:
+            from ost_visualizer.presentation.components import page_settings_bar
+
+            old_dialog = page_settings_bar.BidAreaPickerDialog
+            old_exec = page_settings_bar.exec_with_ost_blocking
+            page_settings_bar.BidAreaPickerDialog = CapturingPicker
+            page_settings_bar.exec_with_ost_blocking = exec_picker
+            try:
+                bar._on_area_browse()
+            finally:
+                page_settings_bar.BidAreaPickerDialog = old_dialog
+                page_settings_bar.exec_with_ost_blocking = old_exec
+            self.assertEqual(len(async_calls), 1)
+            self.assertEqual(async_calls[0][0], BidRef("sql-database", "bid-1"))
+            self.assertEqual(sync_calls, [])
+            self.assertEqual(refresh_calls, [])
+        finally:
+            bar.deleteLater()
+
     def test_open_areas_dialog_refreshes_once_after_saved_changes(self):
         reload_calls = []
         bid_ref = BidRef("db.mdb", "bid-1")
@@ -1039,6 +1134,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 return [BidArea("area-1", bid_uid, "", "Area 1", 1)]
 
         class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_file_path):
+                return False
+
             def reload_and_notify(self, file_path):
                 reload_calls.append(file_path)
                 return True
@@ -1259,6 +1358,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 parent=None,
                 pay_classes=None,
                 pay_classes_save_fn=None,
+                pay_classes_save_async_fn=None,
             ):
                 self._employees = list(employees)
                 self._current_index = current_index
@@ -1651,6 +1751,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 raise AssertionError("Default Layers should not load bid layers")
 
         class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_file_path):
+                return False
+
             def insert_default_layer_result(self, db_path, name, after_sequence):
                 observed["insert"] = (db_path, name, after_sequence)
                 return WriteReloadResult("default-new", True, True)

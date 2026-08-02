@@ -15,6 +15,8 @@ from single_action import SingleCallRecorder
 from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseResult,
+    MutationOutcomeStatus,
+    QueuedMutationResult,
 )
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
@@ -580,6 +582,10 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 return feature == Feature.DELETE_CONDITION
 
         class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return False
+
             def delete_conditions(self, _file_path, _bid_uid, condition_uids):
                 for uid in condition_uids:
                     conditions.pop(uid, None)
@@ -645,6 +651,86 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             handler.on_delete_requested(["c3", "c4"])
         finally:
             condition_action_handler.confirm_delete_conditions = original_confirm
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+
+    def test_sql_condition_delete_queues_and_selects_after_authoritative_completion(
+        self,
+    ):
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(4)
+        sidebar.load_conditions(conditions, {}, "Project")
+        queued = {}
+
+        class Access:
+            @staticmethod
+            def is_allowed(feature):
+                return feature == Feature.DELETE_CONDITION
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def delete_conditions(*_args):
+                raise AssertionError(
+                    "SQL condition deletion must not run synchronously"
+                )
+
+            @staticmethod
+            def queue_conditions_delete(database_id, bid_uid, condition_uids, callback):
+                queued.update(
+                    database_id=database_id,
+                    bid_uid=bid_uid,
+                    condition_uids=list(condition_uids),
+                    callback=callback,
+                )
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=sidebar,
+            placement=SimpleNamespace(force_exit=lambda: None),
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda uids, reveal=True: sidebar.highlight_conditions(
+                set(uids), reveal=reveal
+            ),
+            ensure_select_mode=lambda: None,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("database", "7")
+            ),
+        )
+        original_confirm = condition_action_handler.confirm_delete_conditions
+        condition_action_handler.confirm_delete_conditions = lambda _parent, names: [
+            uid for uid, _name in names
+        ]
+        try:
+            handler.on_delete_requested(["c3"])
+        finally:
+            condition_action_handler.confirm_delete_conditions = original_confirm
+        self.assertEqual(queued["condition_uids"], ["c3"])
+        self.assertEqual(sidebar.get_selected_condition_uids(), [])
+        conditions.pop("c3")
+        sidebar.load_conditions(conditions, {}, "Project")
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000001",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
 
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
@@ -1228,7 +1314,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,
-            project_write_service=SimpleNamespace(),
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False
+            ),
             project_read_service=ReadService(),
             project_data=ProjectData(),
             ui_state_manager=SimpleNamespace(

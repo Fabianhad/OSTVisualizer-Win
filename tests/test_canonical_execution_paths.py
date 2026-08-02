@@ -180,14 +180,24 @@ class CanonicalExecutionPathTests(unittest.TestCase):
             "_clear_plan_view",
             "build_for_bounds",
             "on_page_selection",
+            "push_async",
+            "queue_mutation",
+            "queue_takeoff_insert",
+            "reconcile_local_commit",
             "update_named_view_name",
             "set_plan_texture_visibility",
         }
-        forbidden_definitions = {"build_for_bounds"}
+        forbidden_definitions = {
+            "build_for_bounds",
+            "push_async",
+            "queue_mutation",
+            "queue_takeoff_insert",
+        }
         forbidden_event_names = {
             "NamedViewCreatedEvent",
             "NamedViewRenamedEvent",
             "NamedViewDeletedEvent",
+            "QueuedMutationWorkResult",
         }
         found_attributes: set[str] = set()
         found_names: set[str] = set()
@@ -214,6 +224,16 @@ class CanonicalExecutionPathTests(unittest.TestCase):
         self.assertEqual(found_names, set())
         self.assertEqual(found_definitions, set())
         self.assertEqual(mesh_identity_create_calls, 0)
+
+    def test_no_sql_schema_migration_utility_is_shipped(self):
+        forbidden_names = {
+            "_temporary_migrate_local_sql_collaboration.py",
+            "migrate_sql_collaboration.py",
+        }
+        shipped = {
+            path.name for path in (_ROOT / "tools").rglob("*.py") if path.is_file()
+        }
+        self.assertTrue(forbidden_names.isdisjoint(shipped))
 
     def test_removed_event_and_refresh_routes_remain_absent(self):
         detached_source = (

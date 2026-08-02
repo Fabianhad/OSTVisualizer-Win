@@ -462,6 +462,10 @@ SQL_SCHEMA_V1 = SqlSchemaDefinition(
                 _column("DatabaseGuid", "uniqueidentifier"),
                 _column("CommittedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
                 _column("ResourceFamilySummary", "nvarchar(1024)", nullable=True),
+                _column("OperationType", "nvarchar(64)"),
+                _column("RequestHash", "char(64)"),
+                _column("ResultFormatVersion", "smallint"),
+                _column("ResultPayload", "nvarchar(max)"),
             ),
             ("TransactionId",),
             foreign_keys=(
@@ -481,6 +485,12 @@ SQL_SCHEMA_V1 = SqlSchemaDefinition(
                 SqlIndexDefinition(
                     "IX_ostv_ChangeTransactions_CommittedAt",
                     ("CommittedAt",),
+                ),
+            ),
+            check_constraints=(
+                (
+                    "CK_ostv_ChangeTransactions_ResultPayloadJson",
+                    "ISJSON([ResultPayload])=(1)",
                 ),
             ),
         ),

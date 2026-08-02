@@ -1,8 +1,13 @@
 import logging
+import weakref
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6 import QtWidgets
+from ...application.dtos.collaboration_dtos import (
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+)
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
@@ -42,6 +47,59 @@ class ProjectWriteHandler:
         self._duplicate_action = None
         self._duplicate_action_was_enabled = False
         self._duplicate_in_progress = False
+        self._ui_event_coordinator = None
+        self._pending_sql_operations: set[tuple[str, ...]] = set()
+
+    def set_ui_event_coordinator(self, coordinator) -> None:
+        self._ui_event_coordinator = coordinator
+
+    def _uses_sql_queue(self, database_id: str) -> bool:
+        return self._write_service.uses_sql_collaboration_mutations(database_id)
+
+    def _submit_sql_hierarchy_operation(
+        self,
+        database_id: str,
+        operation_key: tuple[str, ...],
+        title: str,
+        submit,
+        on_committed=None,
+        on_failed=None,
+    ) -> bool:
+        if self._ui_event_coordinator is None:
+            raise RuntimeError("ProjectWriteHandler is not fully initialized")
+        key = tuple(str(value) for value in operation_key)
+        if key in self._pending_sql_operations:
+            return False
+        self._pending_sql_operations.add(key)
+        handler_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_ref()
+            if handler is None:
+                return
+            handler._pending_sql_operations.discard(key)
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                if on_committed is not None:
+                    on_committed(result)
+                return
+            handler._ui_event_coordinator.refresh_hierarchy_projection()
+            handler._ui_event_coordinator.present_queued_mutation_error(
+                database_id,
+                title,
+                result,
+            )
+            if on_failed is not None:
+                on_failed(result)
+
+        try:
+            submit(complete)
+        except (RuntimeError, ValueError) as exc:
+            self._pending_sql_operations.discard(key)
+            if on_failed is not None:
+                on_failed(None)
+            show_warning(self.window, title, str(exc))
+            return False
+        return True
 
     def set_duplicate_action(self, action) -> None:
         self._duplicate_action = action
@@ -67,6 +125,25 @@ class ProjectWriteHandler:
             return
         bid_name = self._duplicate_bid_name(bid_ref)
         if not self._flush_deferred_for_file(bid_ref.file_path):
+            return
+        if self._uses_sql_queue(bid_ref.file_path):
+            self._set_duplicate_busy(True)
+            target_project_uid = self.project_data.find_project_uid_for_bid(bid_ref)
+            submitted = self._submit_sql_hierarchy_operation(
+                bid_ref.file_path,
+                ("duplicate_bid", bid_ref.bid_uid),
+                "Duplicate Bid",
+                lambda callback: self._write_service.queue_bids_duplicate(
+                    bid_ref.file_path,
+                    [bid_ref.bid_uid],
+                    target_project_uid,
+                    callback,
+                ),
+                lambda _result: self._set_duplicate_busy(False),
+                lambda _result: self._set_duplicate_busy(False),
+            )
+            if not submitted:
+                self._set_duplicate_busy(False)
             return
         reporter = ProgressReporter()
         self._set_duplicate_busy(True)
@@ -165,6 +242,18 @@ class ProjectWriteHandler:
             return False
         if not self._flush_deferred_for_file(resolved_path):
             return False
+        if self._uses_sql_queue(resolved_path):
+            return self._submit_sql_hierarchy_operation(
+                resolved_path,
+                ("rename_project", str(project_uid)),
+                "Rename Project",
+                lambda callback: self._write_service.queue_project_rename(
+                    resolved_path,
+                    project_uid,
+                    new_name.strip(),
+                    callback,
+                ),
+            )
         if not self._write_service.rename_project(
             resolved_path, project_uid, new_name.strip()
         ):
@@ -176,10 +265,52 @@ class ProjectWriteHandler:
             return False
         return True
 
+    def create_project(
+        self,
+        file_path: str,
+        name: str,
+        on_created: Callable[[str], None],
+    ) -> bool:
+        if not self._uses_sql_queue(file_path):
+            raise ValueError("Queued project creation is only available for SQL")
+
+        def committed(result: QueuedMutationResult) -> None:
+            authoritative = result.authoritative_result
+            created = (
+                authoritative.created_resource_ids if authoritative is not None else ()
+            )
+            if len(created) == 1:
+                on_created(str(created[0]))
+
+        return self._submit_sql_hierarchy_operation(
+            file_path,
+            ("create_project", name),
+            "New Project",
+            lambda callback: self._write_service.queue_project_create(
+                file_path,
+                name,
+                callback,
+            ),
+            committed,
+        )
+
     def update_bid_job_status(self, bid_ref: BidRef, job_status_uid: str) -> None:
         if not bid_ref or not bid_ref.file_path or not bid_ref.bid_uid:
             return
         if not self._flush_deferred_for_file(bid_ref.file_path):
+            return
+        if self._uses_sql_queue(bid_ref.file_path):
+            self._submit_sql_hierarchy_operation(
+                bid_ref.file_path,
+                ("bid_job_status", bid_ref.bid_uid),
+                "Job Status",
+                lambda callback: self._write_service.queue_bid_job_status_update(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    job_status_uid,
+                    callback,
+                ),
+            )
             return
         if not self._write_service.update_bid_job_status(
             bid_ref.file_path, bid_ref.bid_uid, job_status_uid
@@ -198,6 +329,22 @@ class ProjectWriteHandler:
         for file_path, uids in self._group_bids_by_file(bid_refs).items():
             if not self._flush_deferred_for_file(file_path):
                 return False
+            if self._uses_sql_queue(file_path):
+                if not self._submit_sql_hierarchy_operation(
+                    file_path,
+                    ("move_bids", *uids),
+                    "Move Bids",
+                    lambda callback, fp=file_path, values=uids: (
+                        self._write_service.queue_bids_move(
+                            fp,
+                            values,
+                            target_project_uid,
+                            callback,
+                        )
+                    ),
+                ):
+                    return False
+                continue
             if not self._write_service.move_bids(file_path, uids, target_project_uid):
                 show_critical(
                     self.window,
@@ -228,6 +375,31 @@ class ProjectWriteHandler:
         file_path = bid_refs[0].file_path
         if not self._flush_deferred_for_file(file_path):
             return False
+        if self._uses_sql_queue(file_path):
+            bid_uids = [ref.bid_uid for ref in bid_refs]
+            if is_cut:
+                return self._submit_sql_hierarchy_operation(
+                    file_path,
+                    ("paste_move_bids", *bid_uids),
+                    "Move Bids",
+                    lambda callback: self._write_service.queue_bids_move(
+                        file_path,
+                        bid_uids,
+                        target_project_uid,
+                        callback,
+                    ),
+                )
+            return self._submit_sql_hierarchy_operation(
+                file_path,
+                ("paste_duplicate_bids", *bid_uids),
+                "Paste Bids",
+                lambda callback: self._write_service.queue_bids_duplicate(
+                    file_path,
+                    bid_uids,
+                    target_project_uid,
+                    callback,
+                ),
+            )
         label = self._paste_bid_label(bid_refs)
         reporter = ProgressReporter()
         rc, result, worker_error = self._run_progress_dialog(
@@ -387,6 +559,22 @@ class ProjectWriteHandler:
         for (file_path, orig_project_uid), uids in groups.items():
             if not self._flush_deferred_for_file(file_path):
                 return
+            if self._uses_sql_queue(file_path):
+                self._submit_sql_hierarchy_operation(
+                    file_path,
+                    ("restore_bids", *uids),
+                    "Restore Bids",
+                    lambda callback, fp=file_path, values=uids, target=orig_project_uid: (
+                        self._write_service.queue_bids_move(
+                            fp,
+                            values,
+                            target,
+                            callback,
+                            original_project_uid=_DELETED_BIDS_PROJECT_UID,
+                        )
+                    ),
+                )
+                continue
             if not self._write_service.move_bids(file_path, uids, orig_project_uid):
                 show_critical(
                     self.window,
@@ -442,6 +630,27 @@ class ProjectWriteHandler:
                     and selected_bid.file_path == file_path
                     and selected_bid.bid_uid in uids
                 )
+                if self._uses_sql_queue(file_path):
+                    self._submit_sql_hierarchy_operation(
+                        file_path,
+                        ("delete_bids", *uids),
+                        "Delete Bids",
+                        lambda callback, fp=file_path, values=uids: (
+                            self._write_service.queue_bids_delete(
+                                fp,
+                                values,
+                                callback,
+                            )
+                        ),
+                        lambda _result, fp=file_path, clears=clears_active_bid: (
+                            self._finish_sql_bid_removal(
+                                fp,
+                                selection_after_delete,
+                                clears,
+                            )
+                        ),
+                    )
+                    continue
                 if not self._write_service.delete_bids(
                     file_path,
                     uids,
@@ -492,6 +701,29 @@ class ProjectWriteHandler:
                         and selected_bid.file_path == file_path
                         and selected_bid.bid_uid in uids
                     )
+                    if self._uses_sql_queue(file_path):
+                        self._submit_sql_hierarchy_operation(
+                            file_path,
+                            ("trash_bids", *uids),
+                            "Move Bids",
+                            lambda callback, fp=file_path, values=uids, orig=(
+                                orig_project_uid or None
+                            ): self._write_service.queue_bids_move(
+                                fp,
+                                values,
+                                _DELETED_BIDS_PROJECT_UID,
+                                callback,
+                                original_project_uid=orig,
+                            ),
+                            lambda _result, fp=file_path, clears=clears_active_bid: (
+                                self._finish_sql_bid_removal(
+                                    fp,
+                                    selection_after_delete,
+                                    clears,
+                                )
+                            ),
+                        )
+                        continue
                     if not self._write_service.move_bids(
                         file_path,
                         uids,
@@ -521,6 +753,19 @@ class ProjectWriteHandler:
                             file_path, selection_after_delete
                         )
                     self._write_service.notify_database_refreshed(file_path)
+
+    def _finish_sql_bid_removal(
+        self,
+        file_path: str,
+        selection_after_delete: Optional[dict],
+        clears_active_bid: bool,
+    ) -> None:
+        if clears_active_bid:
+            self.ui_state_manager.set_bid_selection(None)
+            if self.project_data.get_current_file_path() == file_path:
+                self.project_data.clear_bid()
+        if clears_active_bid or selection_after_delete:
+            self._apply_delete_selection_state(file_path, selection_after_delete)
 
     def _apply_delete_selection_state(
         self, file_path: str, selection_state: Optional[dict]
@@ -633,6 +878,19 @@ class ProjectWriteHandler:
             return
         self._discard_project_delete_selected_page_writes(file_path)
         if not self._flush_deferred_for_file(file_path):
+            return
+        if self._uses_sql_queue(file_path):
+            self._submit_sql_hierarchy_operation(
+                file_path,
+                ("delete_projects", *deletable),
+                "Delete Projects",
+                lambda callback: self._write_service.queue_projects_delete(
+                    file_path,
+                    deletable,
+                    callback,
+                ),
+                lambda _result: self._apply_delete_selection_state(file_path, None),
+            )
             return
         if not self._write_service.delete_projects(file_path, deletable):
             show_critical(

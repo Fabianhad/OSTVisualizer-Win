@@ -225,6 +225,20 @@ class _FoundationRepository:
     active_file_path = None
 
 
+class _PendingOperationJournal:
+    def __init__(self):
+        self.records = {}
+
+    def list_all(self):
+        return tuple(self.records.values())
+
+    def save(self, record):
+        self.records[record.operation_id] = record
+
+    def remove(self, operation_id):
+        self.records.pop(operation_id, None)
+
+
 def _construct_independent_application_stack() -> None:
     from PySide6.QtCore import QCoreApplication
     from ost_visualizer.application.services.conflict_resolution_service import (
@@ -241,6 +255,9 @@ def _construct_independent_application_stack() -> None:
     )
     from ost_visualizer.application.services.local_draft_registry import (
         LocalDraftRegistry,
+    )
+    from ost_visualizer.application.services.pending_mutation_registry import (
+        PendingMutationRegistry,
     )
     from ost_visualizer.application.services.remote_change_reconciliation_service import (
         RemoteChangeReconciliationService,
@@ -324,6 +341,8 @@ def _construct_independent_application_stack() -> None:
         drafts,
         event_bus,
         SQL_SCHEMA_V1.version,
+        pending_mutations=PendingMutationRegistry(),
+        operation_journal=_PendingOperationJournal(),
     )
     shutdown_results = []
     coordinator.request_shutdown(

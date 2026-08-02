@@ -20,6 +20,7 @@ from .interfaces.i_repository_provider import IRepositoryProvider
 from .interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from .service_container import ServiceContainer
 from .services.project_operations_service import ProjectOperationsService
+from .services.navigation_load_service import NavigationLoadService
 from .services.project_read_service import ProjectReadService
 from .use_cases.project.import_project_files_from_args_use_case import (
     ImportProjectFilesFromArgsUseCase,
@@ -277,6 +278,7 @@ class AppControllerBuilder:
         visualization_service = self.container.get("visualization_service")
         orchestrators.visualization.set_visualization_service(visualization_service)
         cleanup_hooks: List[Callable[[], None]] = []
+        cleanup_hooks.append(self.container.get("navigation_load_service").cleanup)
         if shared_conn_manager is not None:
             cleanup_hooks.append(shared_conn_manager.close)
         controller = AppController(
@@ -344,8 +346,15 @@ class AppControllerBuilder:
     ) -> None:
         project_data_service = self.container.get("project_data_service")
         operations_logger = self.logger.getChild("ProjectOperationsService")
+        navigation_loader = NavigationLoadService(
+            self.infrastructure_provider.get_database_descriptor_registry(),
+            self.infrastructure_provider.get_thread_callback_bridge(),
+            logger=operations_logger.getChild("NavigationLoad"),
+        )
+        self.container.register_instance("navigation_load_service", navigation_loader)
         project_operations_service = ProjectOperationsService(
             project_data_service,
+            navigation_loader,
             logger=operations_logger,
         )
         self.container.register_instance(
@@ -358,7 +367,7 @@ class AppControllerBuilder:
         project_operations_service.configure_use_cases(
             load_file_use_case,
             unload_file_use_case.execute,
-            load_bid_use_case.execute,
+            load_bid_use_case,
             reload_database_use_case.execute,
         )
         license_api_client = self.container.get("license_api_client")

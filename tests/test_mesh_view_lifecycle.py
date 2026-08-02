@@ -1182,6 +1182,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._renderer = FakePickingMeshRenderer(scene, 0)
         viewer._pick_enabled = True
         viewer._selected_takeoff_uids = []
+        viewer._pending_mutation_uids = set()
         viewer.mesh_clicked = FakeMeshSignal()
         viewer.width = lambda: 100
         viewer.height = lambda: 100
@@ -1198,6 +1199,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._renderer = renderer
         viewer._pick_enabled = True
         viewer._selected_takeoff_uids = []
+        viewer._pending_mutation_uids = set()
         viewer.mesh_clicked = FakeMeshSignal()
         viewer.width = lambda: 801
         viewer.height = lambda: 603

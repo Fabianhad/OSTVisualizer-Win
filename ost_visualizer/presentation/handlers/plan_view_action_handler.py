@@ -7,7 +7,12 @@ from PySide6 import QtWidgets
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.collaboration_dtos import (
+    EditLeaseHandle,
+    MutationExecutionResult,
+    MutationOutcomeStatus,
+    PlanItemsPastePayload,
     QueuedMutationResult,
+    ResourceRef,
     is_queued_takeoff_preview_uid,
     queued_takeoff_preview_uid,
 )
@@ -31,11 +36,7 @@ from ..managers.ui_access_manager import Feature
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.selection_commands import (
-    DeleteAnnotationsCommand,
-    DeleteTakeoffsCommand,
     InsertTakeoffsCommand,
-    PasteAnnotationsCommand,
-    PasteTakeoffsCommand,
 )
 from ..utils.annotation_defaults import build_placed_annotation_spec
 from ..utils.annotation_delete import (
@@ -129,9 +130,61 @@ class PlanViewActionHandler:
             annotation_write_svc, project_data_svc, event_bus
         )
         self._pending_takeoff_placements: dict[str, _PendingTakeoffPlacement] = {}
+        self._pending_plan_mutation_uids: set[str] = set()
+        self._completed_sql_mutation_ids: set[str] = set()
+        self._geometry_edit_lease_handle: Optional[EditLeaseHandle] = None
+        self._geometry_edit_lease_request_id = ""
+        self._geometry_edit_lease_selection: set[str] = set()
 
     def _is_allowed(self, feature: Feature) -> bool:
         return self._ui_access_manager.is_allowed(feature)
+
+    def _uses_sql_mutation_queue(self, database_id: str) -> bool:
+        return bool(self._write_svc.uses_sql_collaboration_mutations(database_id))
+
+    def _sql_completion_was_applied(self, result: QueuedMutationResult) -> bool:
+        return bool(
+            result.outcome_status == MutationOutcomeStatus.COMMITTED
+            and result.operation_id in self._completed_sql_mutation_ids
+        )
+
+    def _mark_sql_completion_applied(self, result: QueuedMutationResult) -> None:
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+            self._completed_sql_mutation_ids.add(result.operation_id)
+
+    def _set_plan_items_pending(
+        self,
+        database_id: str,
+        plan_uids: set[str],
+        takeoff_uids: set[str],
+        pending: bool,
+    ) -> None:
+        if pending:
+            self._pending_plan_mutation_uids.update(plan_uids)
+        else:
+            self._pending_plan_mutation_uids.difference_update(plan_uids)
+        self._plan_view.set_pending_mutation_uids(set(self._pending_plan_mutation_uids))
+        self._event_bus.publish(
+            AppEvents.PENDING_PLAN_MUTATIONS_CHANGED,
+            database_id=database_id,
+            takeoff_uids=sorted(takeoff_uids),
+            pending=pending,
+        )
+
+    def _restore_plan_selection_if_current(
+        self,
+        bid_ref,
+        page_uids: tuple[str, ...],
+        plan_uids: set[str],
+    ) -> None:
+        if not plan_uids or self._ui_state.get_selected_bid_ref() != bid_ref:
+            return
+        current_page_uid = str(
+            self._plan_view.current_page_uid or self._ui_state.active_page_uid or ""
+        )
+        if page_uids and current_page_uid not in page_uids:
+            return
+        self._plan_view.set_selected_uids(set(plan_uids))
 
     def connect_signals(self) -> None:
         pv = self._plan_view
@@ -163,6 +216,154 @@ class PlanViewActionHandler:
         pv.copy_requested.connect(self.on_copy_requested)
         pv.paste_requested.connect(self.on_paste_requested)
         pv.paste_backouts_placed.connect(self.on_paste_backouts_placed)
+        pv.geometry_edit_lease_requested.connect(self.on_geometry_edit_lease_requested)
+        pv.plan_item_selection_changed.connect(self.on_plan_item_selection_changed)
+
+    def _release_geometry_edit_lease(self) -> None:
+        handle = self._geometry_edit_lease_handle
+        self._geometry_edit_lease_handle = None
+        self._geometry_edit_lease_selection.clear()
+        self._geometry_edit_lease_request_id = ""
+        self._plan_view.disable_geometry_edit_leasing()
+        if handle is not None:
+            self._write_svc.end_plan_edit_lease(handle)
+
+    def prepare_for_modal_mutation_error(self) -> None:
+        self._release_geometry_edit_lease()
+        self._plan_view.prepare_for_modal_mutation_error()
+
+    def on_plan_item_selection_changed(self, selected_uids: list) -> None:
+        selection = {str(uid) for uid in selected_uids if uid}
+        if (
+            self._geometry_edit_lease_selection
+            and selection != self._geometry_edit_lease_selection
+        ):
+            self._release_geometry_edit_lease()
+
+    def _geometry_resources_for_selection(
+        self,
+        bid_ref,
+        selected_uids: set[str],
+    ) -> tuple[tuple[ResourceRef, ...], tuple[ResourceRef, ...]]:
+        bid_value = int(bid_ref.bid_uid)
+        selected_takeoffs = {
+            str(uid): self._command_takeoff(str(uid)) for uid in selected_uids
+        }
+        selected_takeoffs = {
+            uid: takeoff
+            for uid, takeoff in selected_takeoffs.items()
+            if takeoff is not None
+        }
+        selected_parent_uids = set(selected_takeoffs)
+        for takeoff in self._data_svc.get_all_takeoffs():
+            if str(takeoff.parent_uid or "") in selected_parent_uids:
+                selected_takeoffs.setdefault(str(takeoff.uid), takeoff)
+        annotations = []
+        for key in sorted(selected_uids):
+            annotation = self._plan_view.get_annotation(key)
+            if annotation is not None:
+                annotations.append(annotation)
+        resources = {
+            *(
+                ResourceRef("takeoff", str(takeoff.uid), bid_value)
+                for takeoff in selected_takeoffs.values()
+            ),
+            *(
+                ResourceRef(
+                    "annotation",
+                    f"{annotation.annotation_type}/{annotation.uid}",
+                    bid_value,
+                )
+                for annotation in annotations
+            ),
+        }
+        dependencies = {
+            *(
+                ResourceRef("page", str(item.page_uid), bid_value)
+                for item in (*selected_takeoffs.values(), *annotations)
+                if item.page_uid
+            ),
+            *(
+                ResourceRef("condition", str(item.condition_uid), bid_value)
+                for item in selected_takeoffs.values()
+                if item.condition_uid
+            ),
+            *(
+                ResourceRef("layer", str(item.layer_uid), bid_value)
+                for item in annotations
+                if item.layer_uid
+            ),
+        }
+        return tuple(sorted(resources)), tuple(sorted(dependencies))
+
+    def on_geometry_edit_lease_requested(self, selected_uids: list) -> None:
+        selection = {str(uid) for uid in selected_uids if uid}
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if (
+            not selection
+            or bid_ref is None
+            or not self._uses_sql_mutation_queue(bid_ref.file_path)
+        ):
+            self._release_geometry_edit_lease()
+            return
+        resources, dependencies = self._geometry_resources_for_selection(
+            bid_ref,
+            selection,
+        )
+        if not resources:
+            self._release_geometry_edit_lease()
+            return
+        handle = self._geometry_edit_lease_handle
+        if (
+            handle is not None
+            and handle.resources == resources
+            and handle.dependency_resources == dependencies
+        ):
+            self._geometry_edit_lease_selection = selection
+            self._plan_view.set_geometry_edit_lease_granted(selection)
+            return
+        if (
+            self._geometry_edit_lease_request_id
+            and self._geometry_edit_lease_selection == selection
+        ):
+            return
+        self._release_geometry_edit_lease()
+        request_id = str(uuid.uuid4())
+        self._geometry_edit_lease_request_id = request_id
+        self._geometry_edit_lease_selection = selection
+        self._plan_view.set_geometry_edit_lease_pending(selection)
+        handler_ref = weakref.ref(self)
+        write_service = self._write_svc
+
+        def resolved(result) -> None:
+            handler = handler_ref()
+            if handler is None:
+                if result.handle is not None:
+                    write_service.end_plan_edit_lease(result.handle)
+                return
+            if handler._geometry_edit_lease_request_id != request_id:
+                if result.handle is not None:
+                    handler._write_svc.end_plan_edit_lease(result.handle)
+                return
+            handler._geometry_edit_lease_request_id = ""
+            current_selection = set(handler._plan_view.get_selected_uids())
+            if not result.granted or current_selection != selection:
+                if result.handle is not None:
+                    handler._write_svc.end_plan_edit_lease(result.handle)
+                handler._geometry_edit_lease_selection.clear()
+                handler._plan_view.set_geometry_edit_lease_pending(set())
+                return
+            handler._geometry_edit_lease_handle = result.handle
+            handler._plan_view.set_geometry_edit_lease_granted(selection)
+
+        self._write_svc.request_plan_edit_lease(
+            bid_ref.file_path,
+            resources,
+            dependencies,
+            resolved,
+            operation_id=request_id,
+            owning_surface="main-plan",
+        )
 
     def save_current_page_overlay_rect(
         self, overlay_rect: tuple[float, float, float, float]
@@ -220,6 +421,32 @@ class PlanViewActionHandler:
             (takeoff_uid, dict(new_props))
             for takeoff_uid, _label_kind, _old_props, new_props in changes
         ]
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
+            old_updates = [
+                (takeoff_uid, dict(old_props))
+                for takeoff_uid, _label_kind, old_props, _new_props in changes
+            ]
+            takeoff_uids = {str(uid) for uid, _properties in new_updates}
+            page_uids = tuple(
+                dict.fromkeys(
+                    str(takeoff.page_uid)
+                    for takeoff in (self._command_takeoff(uid) for uid in takeoff_uids)
+                    if takeoff is not None and takeoff.page_uid
+                )
+            )
+            self._queue_sql_plan_properties(
+                bid_ref,
+                "takeoff_text",
+                new_updates,
+                old_updates=old_updates,
+                plan_uids=set(takeoff_uids),
+                takeoff_uids=set(takeoff_uids),
+                page_uids=page_uids,
+                restore=lambda: self._plan_view.restore_condition_text_properties(
+                    changes
+                ),
+            )
+            return
         if not self._write_svc.save_takeoff_text_properties(
             bid_ref.file_path, new_updates, publish_database_refreshed_after_write=False
         ):
@@ -341,6 +568,288 @@ class PlanViewActionHandler:
 
     def _save_annotation_styles_fast(self, db_path: str, updates: List[tuple]) -> bool:
         return self._annotation_writes.save_styles(db_path, updates)
+
+    def _queue_sql_plan_geometry(
+        self,
+        bid_ref,
+        *,
+        takeoff_changes: list = (),
+        annotation_changes: list = (),
+        rotation_changes: list = (),
+    ) -> None:
+        takeoff_old = [
+            (str(uid), list(old))
+            for uid, old, _new in takeoff_changes
+            if old is not None
+        ]
+        takeoff_new = [(str(uid), list(new)) for uid, _old, new in takeoff_changes]
+        annotation_old = [
+            (str(uid), str(annotation_type), list(old))
+            for uid, annotation_type, old, _new in annotation_changes
+            if old is not None
+        ]
+        annotation_new = [
+            (str(uid), str(annotation_type), list(new))
+            for uid, annotation_type, _old, new in annotation_changes
+        ]
+        rotation_old = [
+            (str(uid), float(old))
+            for uid, old, _new in rotation_changes
+            if old is not None
+        ]
+        rotation_new = [(str(uid), float(new)) for uid, _old, new in rotation_changes]
+        takeoff_uids = {uid for uid, _position in takeoff_new}.union(
+            uid for uid, _rotation in rotation_new
+        )
+        annotation_identities = {
+            (uid, annotation_type) for uid, annotation_type, _position in annotation_new
+        }
+        annotation_keys = set(
+            self._plan_view.find_annotation_keys_by_uid_type(annotation_identities)
+        )
+        plan_uids = set(takeoff_uids).union(annotation_keys)
+        page_uids = tuple(
+            dict.fromkeys(
+                str(item.page_uid)
+                for item in (
+                    *(self._command_takeoff(uid) for uid in sorted(takeoff_uids)),
+                    *(
+                        self._plan_view.get_annotation(key)
+                        for key in sorted(annotation_keys)
+                    ),
+                )
+                if item is not None and item.page_uid
+            )
+        )
+        resources, dependencies = self._geometry_resources_for_selection(
+            bid_ref,
+            plan_uids,
+        )
+        edit_lease_handle = self._geometry_edit_lease_handle
+        if edit_lease_handle is not None and (
+            edit_lease_handle.resources != resources
+            or edit_lease_handle.dependency_resources != dependencies
+        ):
+            self._release_geometry_edit_lease()
+            edit_lease_handle = None
+        elif edit_lease_handle is not None:
+            self._geometry_edit_lease_handle = None
+            self._geometry_edit_lease_selection.clear()
+            self._geometry_edit_lease_request_id = ""
+            self._plan_view.disable_geometry_edit_leasing()
+        self._set_plan_items_pending(
+            bid_ref.file_path,
+            plan_uids,
+            takeoff_uids,
+            True,
+        )
+        handler_ref = weakref.ref(self)
+
+        def restore_preview(handler) -> None:
+            if takeoff_changes or annotation_changes:
+                handler._plan_view.restore_flushed_positions(
+                    takeoff_changes,
+                    annotation_changes,
+                )
+            if rotation_changes:
+                handler._plan_view.restore_flushed_rotations(rotation_changes)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_ref()
+            if handler is None:
+                return
+            if handler._sql_completion_was_applied(result):
+                return
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            handler._set_plan_items_pending(
+                bid_ref.file_path,
+                plan_uids,
+                takeoff_uids,
+                False,
+            )
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                restore_preview(handler)
+                handler._restore_plan_selection_if_current(
+                    bid_ref,
+                    page_uids,
+                    plan_uids,
+                )
+                return
+            handler._restore_plan_selection_if_current(
+                bid_ref,
+                page_uids,
+                plan_uids,
+            )
+            handler._push_sql_geometry_history(
+                bid_ref,
+                takeoff_old,
+                takeoff_new,
+                annotation_old,
+                annotation_new,
+                rotation_old,
+                rotation_new,
+                page_uids,
+            )
+            handler._mark_sql_completion_applied(result)
+
+        self._write_svc.queue_plan_geometry(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            complete,
+            takeoff_positions=takeoff_new,
+            takeoff_rotations=rotation_new,
+            annotation_positions=annotation_new,
+            page_uids=page_uids,
+            dependency_resources=dependencies,
+            edit_lease_handle=edit_lease_handle,
+        )
+
+    def _push_sql_geometry_history(
+        self,
+        bid_ref,
+        takeoff_old: list,
+        takeoff_new: list,
+        annotation_old: list,
+        annotation_new: list,
+        rotation_old: list,
+        rotation_new: list,
+        page_uids: tuple[str, ...],
+    ) -> None:
+        def submit(
+            done,
+            takeoff_positions: list,
+            annotation_positions: list,
+            takeoff_rotations: list,
+        ) -> None:
+            self._write_svc.queue_plan_geometry(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                lambda result: done(result),
+                takeoff_positions=takeoff_positions,
+                annotation_positions=annotation_positions,
+                takeoff_rotations=takeoff_rotations,
+                page_uids=page_uids,
+            )
+
+        self._undo_svc.push(
+            lambda done: submit(
+                done,
+                takeoff_old,
+                annotation_old,
+                rotation_old,
+            ),
+            lambda done: submit(
+                done,
+                takeoff_new,
+                annotation_new,
+                rotation_new,
+            ),
+        )
+
+    def _queue_sql_plan_properties(
+        self,
+        bid_ref,
+        property_kind: str,
+        new_updates: list,
+        *,
+        old_updates: list = (),
+        plan_uids: set[str],
+        takeoff_uids: set[str] = frozenset(),
+        page_uids: tuple[str, ...] = (),
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        restore=None,
+    ) -> None:
+        # A property mutation owns a fresh, short-lived queue lease.  Do not
+        # leave a geometry-preview lease active for the same selected objects.
+        self._release_geometry_edit_lease()
+        self._set_plan_items_pending(
+            bid_ref.file_path,
+            plan_uids,
+            takeoff_uids,
+            True,
+        )
+        handler_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_ref()
+            if handler is None:
+                return
+            if handler._sql_completion_was_applied(result):
+                return
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            handler._set_plan_items_pending(
+                bid_ref.file_path,
+                plan_uids,
+                takeoff_uids,
+                False,
+            )
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if restore is not None:
+                    restore()
+                handler._restore_plan_selection_if_current(
+                    bid_ref,
+                    page_uids,
+                    plan_uids,
+                )
+                return
+            handler._restore_plan_selection_if_current(
+                bid_ref,
+                page_uids,
+                plan_uids,
+            )
+            if old_updates:
+                handler._push_sql_property_history(
+                    bid_ref,
+                    property_kind,
+                    list(old_updates),
+                    list(new_updates),
+                    page_uids,
+                    dependency_resources,
+                )
+            handler._mark_sql_completion_applied(result)
+
+        self._write_svc.queue_plan_properties(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            property_kind,
+            list(new_updates),
+            complete,
+            page_uids=page_uids,
+            dependency_resources=dependency_resources,
+        )
+
+    def _push_sql_property_history(
+        self,
+        bid_ref,
+        property_kind: str,
+        old_updates: list,
+        new_updates: list,
+        page_uids: tuple[str, ...],
+        dependency_resources: tuple[ResourceRef, ...],
+    ) -> None:
+        def submit(done, updates: list) -> None:
+            self._write_svc.queue_plan_properties(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                property_kind,
+                updates,
+                lambda result: done(result),
+                page_uids=page_uids,
+                dependency_resources=dependency_resources,
+            )
+
+        self._undo_svc.push(
+            lambda done: submit(done, old_updates),
+            lambda done: submit(done, new_updates),
+        )
 
     def _page_scale_for_page_uid(self, page_uid: str) -> PageScale:
         page = self._data_svc.get_page(str(page_uid))
@@ -533,22 +1042,22 @@ class PlanViewActionHandler:
         takeoff_scales = self._capture_takeoff_scales(t_old or t_new)
         annotation_scales = self._capture_annotation_scales(a_old or a_new)
 
-        def _save_positions(takeoff_positions, annotation_positions) -> None:
+        def _save_positions(takeoff_positions, annotation_positions) -> bool:
             if not self._save_takeoff_positions_for_current_scales(
                 db_path, takeoff_positions, takeoff_scales
             ):
-                return
-            self._save_annotation_positions_for_current_scales(
+                return False
+            return self._save_annotation_positions_for_current_scales(
                 db_path, annotation_positions, annotation_scales
             )
 
         def _undo_partial():
-            _save_positions(t_old, a_old)
+            return _save_positions(t_old, a_old)
 
         def _redo_partial():
-            _save_positions(t_new, a_new)
+            return _save_positions(t_new, a_new)
 
-        self._undo_svc.push(_undo_partial, _redo_partial)
+        self._undo_svc.push_local(_undo_partial, _redo_partial)
 
     def _delete_takeoffs_fast(self, db_path: str, takeoff_uids: List[str]) -> bool:
         if not takeoff_uids:
@@ -610,6 +1119,47 @@ class PlanViewActionHandler:
         if not db_path or not takeoff_uids:
             return
         area_uid = self._page_settings_bar.get_current_area_uid()
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            takeoffs = [self._command_takeoff(uid) for uid in takeoff_uids]
+            page_uids = tuple(
+                dict.fromkeys(
+                    str(takeoff.page_uid)
+                    for takeoff in takeoffs
+                    if takeoff is not None and takeoff.page_uid
+                )
+            )
+            dependencies = tuple(
+                sorted(
+                    {
+                        ResourceRef("area", str(value), int(bid_ref.bid_uid))
+                        for value in {
+                            area_uid,
+                            *(
+                                takeoff.area_uid
+                                for takeoff in takeoffs
+                                if takeoff is not None
+                            ),
+                        }
+                        if value
+                    }
+                )
+            )
+            self._queue_sql_plan_properties(
+                bid_ref,
+                "takeoff_area",
+                [(uid, area_uid) for uid in takeoff_uids],
+                old_updates=[
+                    (str(takeoff.uid), str(takeoff.area_uid or ""))
+                    for takeoff in takeoffs
+                    if takeoff is not None
+                ],
+                plan_uids=set(takeoff_uids),
+                takeoff_uids=set(takeoff_uids),
+                page_uids=page_uids,
+                dependency_resources=dependencies,
+            )
+            return
         if not self._write_svc.save_takeoffs_area(
             db_path,
             takeoff_uids,
@@ -643,6 +1193,39 @@ class PlanViewActionHandler:
             )
         ):
             return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            page_uids = tuple(
+                dict.fromkeys(
+                    str(takeoff.page_uid) for takeoff in takeoffs if takeoff.page_uid
+                )
+            )
+            condition_dependencies = tuple(
+                sorted(
+                    {
+                        self._condition_resource(bid_ref, value)
+                        for value in {
+                            str(condition_uid),
+                            *(str(takeoff.condition_uid) for takeoff in takeoffs),
+                        }
+                        if value
+                    }
+                )
+            )
+            self._queue_sql_plan_properties(
+                bid_ref,
+                "takeoff_condition",
+                [(uid, str(condition_uid)) for uid in takeoff_uids],
+                old_updates=[
+                    (str(takeoff.uid), str(takeoff.condition_uid))
+                    for takeoff in takeoffs
+                ],
+                plan_uids=set(takeoff_uids),
+                takeoff_uids=set(takeoff_uids),
+                page_uids=page_uids,
+                dependency_resources=condition_dependencies,
+            )
+            return
         old_condition_uids = self._data_svc.get_condition_uids_for_takeoffs(
             takeoff_uids
         )
@@ -672,6 +1255,30 @@ class PlanViewActionHandler:
         takeoff_uids = self._takeoff_uids_only(uids)
         if not db_path or not takeoff_uids:
             return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            takeoffs = [self._command_takeoff(uid) for uid in takeoff_uids]
+            page_uids = tuple(
+                dict.fromkeys(
+                    str(takeoff.page_uid)
+                    for takeoff in takeoffs
+                    if takeoff is not None and takeoff.page_uid
+                )
+            )
+            self._queue_sql_plan_properties(
+                bid_ref,
+                "takeoff_negative",
+                [(uid, bool(is_negative)) for uid in takeoff_uids],
+                old_updates=[
+                    (str(takeoff.uid), bool(takeoff.is_negative))
+                    for takeoff in takeoffs
+                    if takeoff is not None
+                ],
+                plan_uids=set(takeoff_uids),
+                takeoff_uids=set(takeoff_uids),
+                page_uids=page_uids,
+            )
+            return
         condition_uids = self._data_svc.get_condition_uids_for_takeoffs(takeoff_uids)
         if not self._write_svc.set_takeoffs_negative(
             db_path,
@@ -693,6 +1300,42 @@ class PlanViewActionHandler:
         if not db_path or not takeoff_uids:
             return
         cs = self._plan_view.get_coordinate_system()
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            new_updates = []
+            old_updates = []
+            page_uids = []
+            for uid in takeoff_uids:
+                takeoff = self._command_takeoff(uid)
+                if not takeoff:
+                    continue
+                pos = cs.parse_position(takeoff.position)
+                if not pos or len(pos) < 4:
+                    continue
+                old_updates.append((str(uid), list(pos), int(takeoff.curve)))
+                if make_curved:
+                    x1, y1, x2, y2 = pos[:4]
+                    cx = (x1 + x2) / 2.0
+                    cy = (y1 + y2) / 2.0
+                    next_position = [x1, y1, x2, y2, cx, cy, 0.0]
+                    next_curve = Takeoff.CURVE_ENABLED
+                else:
+                    next_position = list(pos[:4])
+                    next_curve = Takeoff.CURVE_DISABLED
+                new_updates.append((str(uid), next_position, next_curve))
+                if takeoff.page_uid not in page_uids:
+                    page_uids.append(str(takeoff.page_uid))
+            if new_updates:
+                self._queue_sql_plan_properties(
+                    bid_ref,
+                    "takeoff_curve",
+                    new_updates,
+                    old_updates=old_updates,
+                    plan_uids={str(update[0]) for update in new_updates},
+                    takeoff_uids={str(update[0]) for update in new_updates},
+                    page_uids=tuple(page_uids),
+                )
+            return
         changed_uids = []
         page_uids = []
         condition_uids = []
@@ -743,6 +1386,14 @@ class PlanViewActionHandler:
         ):
             self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
             return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            self._queue_sql_plan_geometry(
+                bid_ref,
+                takeoff_changes=takeoff_changes,
+                annotation_changes=ann_changes,
+            )
+            return
         t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
         t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
         a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
@@ -772,22 +1423,24 @@ class PlanViewActionHandler:
             return
 
         def _undo_move():
-            self._save_takeoff_positions_for_current_scales(
+            if not self._save_takeoff_positions_for_current_scales(
                 db_path, t_old, takeoff_scales
-            )
-            self._save_annotation_positions_for_current_scales(
+            ):
+                return False
+            return self._save_annotation_positions_for_current_scales(
                 db_path, a_old, annotation_scales
             )
 
         def _redo_move():
-            self._save_takeoff_positions_for_current_scales(
+            if not self._save_takeoff_positions_for_current_scales(
                 db_path, t_new, takeoff_scales
-            )
-            self._save_annotation_positions_for_current_scales(
+            ):
+                return False
+            return self._save_annotation_positions_for_current_scales(
                 db_path, a_new, annotation_scales
             )
 
-        self._undo_svc.push(_undo_move, _redo_move)
+        self._undo_svc.push_local(_undo_move, _redo_move)
 
     def on_annotation_text_properties_flushed(self, changes: list) -> None:
         if not self._is_allowed(Feature.EDIT_ANNOTATION_TEXT):
@@ -799,6 +1452,41 @@ class PlanViewActionHandler:
             (uid, ann_type, dict(new_props))
             for uid, ann_type, _old_props, new_props in changes
         ]
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            identities = {
+                (str(uid), str(annotation_type))
+                for uid, annotation_type, _properties in new_updates
+            }
+            plan_uids = set(
+                self._plan_view.find_annotation_keys_by_uid_type(identities)
+            )
+            annotations = [
+                self._plan_view.get_annotation(uid) for uid in sorted(plan_uids)
+            ]
+            page_uids = tuple(
+                dict.fromkeys(
+                    str(annotation.page_uid)
+                    for annotation in annotations
+                    if annotation is not None and annotation.page_uid
+                )
+            )
+            self._queue_sql_plan_properties(
+                bid_ref,
+                "annotation_text",
+                new_updates,
+                old_updates=[
+                    (uid, ann_type, dict(old_props))
+                    for uid, ann_type, old_props, _new_props in changes
+                    if old_props is not None
+                ],
+                plan_uids=plan_uids,
+                page_uids=page_uids,
+                restore=lambda: self._plan_view.restore_annotation_text_properties(
+                    changes
+                ),
+            )
+            return
         success = self._save_annotation_text_properties_fast(db_path, new_updates)
         if not success:
             self._plan_view.restore_annotation_text_properties(changes)
@@ -812,12 +1500,12 @@ class PlanViewActionHandler:
             return
 
         def _undo_text_properties():
-            self._save_annotation_text_properties_fast(db_path, old_updates)
+            return self._save_annotation_text_properties_fast(db_path, old_updates)
 
         def _redo_text_properties():
-            self._save_annotation_text_properties_fast(db_path, new_updates)
+            return self._save_annotation_text_properties_fast(db_path, new_updates)
 
-        self._undo_svc.push(_undo_text_properties, _redo_text_properties)
+        self._undo_svc.push_local(_undo_text_properties, _redo_text_properties)
 
     def on_annotation_styles_flushed(self, changes: list) -> None:
         if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
@@ -829,6 +1517,39 @@ class PlanViewActionHandler:
             (uid, ann_type, dict(new_style))
             for uid, ann_type, _old_style, new_style in changes
         ]
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            identities = {
+                (str(uid), str(annotation_type))
+                for uid, annotation_type, _properties in new_updates
+            }
+            plan_uids = set(
+                self._plan_view.find_annotation_keys_by_uid_type(identities)
+            )
+            annotations = [
+                self._plan_view.get_annotation(uid) for uid in sorted(plan_uids)
+            ]
+            page_uids = tuple(
+                dict.fromkeys(
+                    str(annotation.page_uid)
+                    for annotation in annotations
+                    if annotation is not None and annotation.page_uid
+                )
+            )
+            self._queue_sql_plan_properties(
+                bid_ref,
+                "annotation_style",
+                new_updates,
+                old_updates=[
+                    (uid, ann_type, dict(old_style))
+                    for uid, ann_type, old_style, _new_style in changes
+                    if old_style is not None
+                ],
+                plan_uids=plan_uids,
+                page_uids=page_uids,
+                restore=lambda: self._plan_view.restore_annotation_styles(changes),
+            )
+            return
         success = self._save_annotation_styles_fast(db_path, new_updates)
         if not success:
             self._plan_view.restore_annotation_styles(changes)
@@ -842,12 +1563,12 @@ class PlanViewActionHandler:
             return
 
         def _undo_styles():
-            self._save_annotation_styles_fast(db_path, old_updates)
+            return self._save_annotation_styles_fast(db_path, old_updates)
 
         def _redo_styles():
-            self._save_annotation_styles_fast(db_path, new_updates)
+            return self._save_annotation_styles_fast(db_path, new_updates)
 
-        self._undo_svc.push(_undo_styles, _redo_styles)
+        self._undo_svc.push_local(_undo_styles, _redo_styles)
 
     def on_rotations_flushed(self, rotation_changes: list) -> None:
         if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
@@ -861,6 +1582,13 @@ class PlanViewActionHandler:
         ):
             self._plan_view.restore_flushed_rotations(rotation_changes)
             return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            self._queue_sql_plan_geometry(
+                bid_ref,
+                rotation_changes=rotation_changes,
+            )
+            return
         new_rotations = [(uid, new_rot) for uid, _old, new_rot in rotation_changes]
         if not self._save_takeoff_rotations_fast(db_path, new_rotations):
             self._plan_view.restore_flushed_rotations(rotation_changes)
@@ -871,12 +1599,12 @@ class PlanViewActionHandler:
             return
 
         def _undo_rotate():
-            self._save_takeoff_rotations_fast(db_path, r_old)
+            return self._save_takeoff_rotations_fast(db_path, r_old)
 
         def _redo_rotate():
-            self._save_takeoff_rotations_fast(db_path, r_new)
+            return self._save_takeoff_rotations_fast(db_path, r_new)
 
-        self._undo_svc.push(_undo_rotate, _redo_rotate)
+        self._undo_svc.push_local(_undo_rotate, _redo_rotate)
 
     def on_group_rotation_flushed(
         self, takeoff_changes: list, ann_changes: list, rotation_changes: list
@@ -897,6 +1625,15 @@ class PlanViewActionHandler:
         ):
             self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
             self._plan_view.restore_flushed_rotations(rotation_changes)
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if bid_ref and self._uses_sql_mutation_queue(db_path):
+            self._queue_sql_plan_geometry(
+                bid_ref,
+                takeoff_changes=takeoff_changes,
+                annotation_changes=ann_changes,
+                rotation_changes=rotation_changes,
+            )
             return
         t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
         r_new = [(uid, new) for uid, _, new in rotation_changes]
@@ -955,41 +1692,41 @@ class PlanViewActionHandler:
                 if not self._save_takeoff_positions_for_current_scales(
                     db_path, t_old, takeoff_scales
                 ):
-                    return
+                    return False
                 if not self._save_annotation_positions_for_current_scales(
                     db_path, a_old, annotation_scales
                 ):
-                    return
+                    return False
                 if r_old:
-                    self._save_takeoff_rotations_fast(db_path, r_old)
-            else:
-                self._save_takeoff_position_rotation_fast(
-                    db_path,
-                    self._positions_for_current_takeoff_scales(t_old, takeoff_scales),
-                    r_old,
-                )
+                    return self._save_takeoff_rotations_fast(db_path, r_old)
+                return True
+            return self._save_takeoff_position_rotation_fast(
+                db_path,
+                self._positions_for_current_takeoff_scales(t_old, takeoff_scales),
+                r_old,
+            )
 
         def _redo_group():
             if a_new:
                 if not self._save_takeoff_positions_for_current_scales(
                     db_path, t_new, takeoff_scales
                 ):
-                    return
+                    return False
                 if not self._save_annotation_positions_for_current_scales(
                     db_path, a_new, annotation_scales
                 ):
-                    return
+                    return False
                 if r_new:
-                    self._save_takeoff_rotations_fast(db_path, r_new)
-            else:
-                self._save_takeoff_position_rotation_fast(
-                    db_path,
-                    self._positions_for_current_takeoff_scales(t_new, takeoff_scales),
-                    r_new,
-                )
+                    return self._save_takeoff_rotations_fast(db_path, r_new)
+                return True
+            return self._save_takeoff_position_rotation_fast(
+                db_path,
+                self._positions_for_current_takeoff_scales(t_new, takeoff_scales),
+                r_new,
+            )
 
         if t_old or a_old or r_old:
-            self._undo_svc.push(_undo_group, _redo_group)
+            self._undo_svc.push_local(_undo_group, _redo_group)
 
     def on_takeoff_created(
         self, condition_uid: str, position: list, page_uid: str
@@ -1033,13 +1770,13 @@ class PlanViewActionHandler:
                     curve=curve,
                 )
             ]
-        if self._write_svc.uses_queued_takeoff_mutations(bid_ref.file_path) is True:
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
             self._queue_takeoff_placement(bid_ref, specs)
             return
         self._insert_takeoffs_with_undo(bid_ref, specs, fast_refresh=True)
 
     def _queue_takeoff_placement(self, bid_ref, specs: List[InsertTakeoffSpec]) -> None:
-        operation_id = f"takeoff-placement:{uuid.uuid4()}"
+        operation_id = str(uuid.uuid4())
         pending_uids = tuple(
             queued_takeoff_preview_uid(operation_id, index)
             for index in range(len(specs))
@@ -1066,7 +1803,7 @@ class PlanViewActionHandler:
                 list(pending_uids),
                 [str(spec.condition_uid) for spec in specs],
             )
-            runtime_generation = self._write_svc.queue_takeoff_insert(
+            runtime_generation = self._write_svc.queue_takeoff_placement(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 specs,
@@ -1087,9 +1824,17 @@ class PlanViewActionHandler:
             )
 
     def _complete_queued_takeoff_placement(self, result: QueuedMutationResult) -> None:
-        pending = self._pending_takeoff_placements.pop(result.operation_id, None)
+        if self._sql_completion_was_applied(result):
+            return
+        pending = self._pending_takeoff_placements.get(result.operation_id)
         if pending is None:
             return
+        if result.outcome_status in {
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        }:
+            return
+        self._pending_takeoff_placements.pop(result.operation_id, None)
         self._data_svc.remove_takeoffs(pending.pending_uids)
         bid_ref = self._ui_state.get_selected_bid_ref()
         if (
@@ -1104,7 +1849,10 @@ class PlanViewActionHandler:
             result.database_id == pending.database_id
             and result.runtime_generation == pending.runtime_generation
         )
-        if not result.success or not completion_matches:
+        if (
+            result.outcome_status != MutationOutcomeStatus.COMMITTED
+            or not completion_matches
+        ):
             self._publish_takeoffs_changed_for_pages(
                 page_uids,
                 list(pending.pending_uids),
@@ -1129,13 +1877,67 @@ class PlanViewActionHandler:
             )
             return
         specs = list(pending.specs)
-        self._add_inserted_takeoffs_to_model(new_uids, specs)
-        self._publish_takeoffs_changed_for_pages(
-            page_uids,
-            new_uids,
-            condition_uids,
+        missing_uids = [
+            uid for uid in new_uids if self._data_svc.get_takeoff(uid) is None
+        ]
+        if missing_uids:
+            raise RuntimeError(
+                "Committed takeoff placement completed before authoritative "
+                "takeoff projection"
+            )
+        current_page_uid = str(
+            self._plan_view.current_page_uid or self._ui_state.active_page_uid or ""
         )
-        self._plan_view.set_selected_uids(set(new_uids))
+        selected_uids = {
+            uid
+            for uid, spec in zip(new_uids, specs)
+            if str(spec.page_uid) == current_page_uid
+        }
+        if selected_uids:
+            self._plan_view.set_selected_uids(selected_uids)
+        self._push_sql_takeoff_placement_history(
+            bid_ref,
+            specs,
+            new_uids,
+        )
+        self._mark_sql_completion_applied(result)
+
+    def _push_sql_takeoff_placement_history(
+        self,
+        bid_ref,
+        specs: List[InsertTakeoffSpec],
+        created_uids: List[str],
+    ) -> None:
+        current_uids = list(created_uids)
+        page_uids = tuple(self._takeoff_spec_page_uids(specs))
+
+        def undo_submit(done) -> None:
+            self._write_svc.queue_plan_items_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                list(current_uids),
+                [],
+                lambda result: done(result),
+                page_uids=page_uids,
+            )
+
+        def redo_submit(done) -> None:
+            operation_id = str(uuid.uuid4())
+
+            def completed(result: QueuedMutationResult) -> None:
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    current_uids[:] = list(result.created_resource_ids)
+                done(result)
+
+            self._write_svc.queue_takeoff_placement(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                specs,
+                operation_id,
+                completed,
+            )
+
+        self._undo_svc.push(undo_submit, redo_submit)
 
     def invalidate_pending_takeoff_placements(self) -> None:
         current_bid = self._ui_state.get_selected_bid_ref()
@@ -1184,6 +1986,9 @@ class PlanViewActionHandler:
         spec = build_placed_annotation_spec(annotation_type, page_uid, list(position))
         if spec is None:
             return
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
+            self._queue_sql_annotation_insert(bid_ref, [spec])
+            return
         self._insert_annotations_with_undo(bid_ref, [spec])
 
     def on_text_annotation_created(
@@ -1203,6 +2008,15 @@ class PlanViewActionHandler:
         font_color = spec.properties.get("FontColor")
         if isinstance(font_color, int):
             spec.color = int_color_to_hex(font_color)
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
+            self._queue_sql_annotation_insert(
+                bid_ref,
+                [spec],
+                lambda: self._plan_view.activate_annotation_placement(
+                    ANNOTATION_TYPE_TEXT
+                ),
+            )
+            return
         new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
         if new_uids:
             self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_TEXT)
@@ -1227,6 +2041,15 @@ class PlanViewActionHandler:
         color = properties.get("Color")
         if isinstance(color, str) and color:
             spec.color = color
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
+            self._queue_sql_annotation_insert(
+                bid_ref,
+                [spec],
+                lambda: self._plan_view.activate_annotation_placement(
+                    ANNOTATION_TYPE_NAMED_VIEW
+                ),
+            )
+            return
         new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
         if new_uids:
             self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
@@ -1256,6 +2079,15 @@ class PlanViewActionHandler:
         if spec is None:
             return
         spec.properties = {"BidPageViewUID": result.named_view_uid}
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
+            self._queue_sql_annotation_insert(
+                bid_ref,
+                [spec],
+                lambda: self._plan_view.activate_annotation_placement(
+                    ANNOTATION_TYPE_HOTLINK
+                ),
+            )
+            return
         new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
         if new_uids:
             self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_HOTLINK)
@@ -1307,7 +2139,78 @@ class PlanViewActionHandler:
             position=position,
             parent_uid=parent_uid,
         )
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
+            self._queue_takeoff_placement(bid_ref, [spec])
+            return
         self._insert_takeoffs_with_undo(bid_ref, [spec], fast_refresh=True)
+
+    def _queue_sql_annotation_insert(
+        self,
+        bid_ref,
+        specs: List[InsertAnnotationSpec],
+        after_success=None,
+    ) -> None:
+        self._annotation_writes.apply_default_annotation_layer(specs)
+        source_uids = tuple(str(uuid.uuid4()) for _spec in specs)
+        payload = PlanItemsPastePayload(
+            source_bid_uid=str(bid_ref.bid_uid),
+            destination_bid_uid=str(bid_ref.bid_uid),
+            annotation_source_uids=source_uids,
+            annotation_specs=tuple(specs),
+        )
+        dependencies = {
+            *(
+                self._layer_resource(bid_ref, spec.layer_uid)
+                for spec in specs
+                if spec.layer_uid
+            ),
+            *(
+                ResourceRef(
+                    "annotation",
+                    f"namedview/{str(spec.properties.get('BidPageViewUID'))}",
+                    int(bid_ref.bid_uid),
+                )
+                for spec in specs
+                if spec.properties.get("BidPageViewUID")
+            ),
+        }
+        handler_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_ref()
+            if (
+                handler is None
+                or result.outcome_status != MutationOutcomeStatus.COMMITTED
+            ):
+                return
+            if handler._sql_completion_was_applied(result):
+                return
+            _takeoff_map, annotation_map = handler._created_uid_maps(result)
+            uid_type_set = {
+                (annotation_map[source_uid], spec.annotation_type)
+                for source_uid, spec in zip(source_uids, specs)
+                if source_uid in annotation_map
+            }
+            keys = handler._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+            active_bid = handler._ui_state.get_selected_bid_ref()
+            if active_bid == bid_ref and keys:
+                handler._plan_view.set_selected_uids(keys)
+            handler._push_sql_paste_history(
+                bid_ref,
+                payload,
+                {},
+                annotation_map,
+            )
+            if after_success is not None and active_bid == bid_ref:
+                after_success()
+            handler._mark_sql_completion_applied(result)
+
+        self._write_svc.queue_plan_items_paste(
+            bid_ref.file_path,
+            payload,
+            complete,
+            dependency_resources=tuple(sorted(dependencies)),
+        )
 
     def _insert_annotations_with_undo(
         self, bid_ref, specs: List[InsertAnnotationSpec]
@@ -1326,16 +2229,20 @@ class PlanViewActionHandler:
         current_specs_scales = self._capture_annotation_spec_scales(current_specs)
 
         def _undo_insert():
-            if self._delete_annotations_fast(
+            success = self._delete_annotations_fast(
                 bid_ref.file_path, list(current_uids), current_specs
-            ):
+            )
+            if success:
                 self._plan_view.clear_selection()
+            return success
 
         def _redo_insert():
             redone_specs = self._annotation_specs_for_current_scales(
                 current_specs, current_specs_scales
             )
             redone_uids = self._insert_annotations_fast(bid_ref, redone_specs)
+            if len(redone_uids) != len(current_specs):
+                return False
             current_uids[:] = list(redone_uids)
             if redone_uids:
                 uid_type_set = {
@@ -1344,8 +2251,9 @@ class PlanViewActionHandler:
                 }
                 keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
                 self._plan_view.set_selected_uids(keys)
+            return True
 
-        self._undo_svc.push(_undo_insert, _redo_insert)
+        self._undo_svc.push_local(_undo_insert, _redo_insert)
         return list(new_uids)
 
     def _insert_annotations_fast(
@@ -1391,11 +2299,14 @@ class PlanViewActionHandler:
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not placements:
             return
-        condition_uid_map = self._condition_uid_map_for_paste(
-            bid_ref, [p["condition_uid"] for p in placements]
-        )
-        if condition_uid_map is None:
-            return
+        uses_sql_queue = self._uses_sql_mutation_queue(bid_ref.file_path)
+        condition_uid_map = {}
+        if not uses_sql_queue:
+            condition_uid_map = self._condition_uid_map_for_paste(
+                bid_ref, [p["condition_uid"] for p in placements]
+            )
+            if condition_uid_map is None:
+                return
         area_uid = self._page_settings_bar.get_current_area_uid()
         specs = [
             InsertTakeoffSpec(
@@ -1417,6 +2328,36 @@ class PlanViewActionHandler:
             source_bid_uid == bid_ref.bid_uid
             and self._clipboard_svc.source_file_path == bid_ref.file_path
         )
+        if uses_sql_queue:
+            source_bid_key = str(source_bid_uid or bid_ref.bid_uid)
+            payload = PlanItemsPastePayload(
+                source_bid_uid=source_bid_key,
+                destination_bid_uid=str(bid_ref.bid_uid),
+                takeoff_source_uids=tuple(
+                    str(uuid.uuid4()) for _placement in placements
+                ),
+                takeoff_specs=tuple(specs),
+            )
+            dependencies = tuple(
+                sorted(
+                    {
+                        ResourceRef(
+                            "condition",
+                            str(spec.condition_uid),
+                            int(source_bid_key),
+                        )
+                        for spec in specs
+                        if source_bid_key != str(bid_ref.bid_uid)
+                    }
+                )
+            )
+            self._queue_sql_plan_items_paste_payload(
+                bid_ref,
+                str(placements[0]["page_uid"]),
+                payload,
+                dependencies,
+            )
+            return
         self._insert_takeoffs_with_undo(bid_ref, specs, fast_refresh=same_bid_paste)
 
     def _insert_takeoffs_with_undo(
@@ -1456,7 +2397,7 @@ class PlanViewActionHandler:
                 )
             ),
         )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        self._undo_svc.push_local(cmd.undo, cmd.redo)
         return True
 
     def _push_fast_takeoff_insert_undo(
@@ -1467,21 +2408,26 @@ class PlanViewActionHandler:
         current_specs_scales = self._capture_takeoff_spec_scales(current_specs)
 
         def _undo_insert():
-            if self._delete_takeoffs_fast(bid_ref.file_path, list(current_uids)):
+            success = self._delete_takeoffs_fast(bid_ref.file_path, list(current_uids))
+            if success:
                 self._plan_view.clear_selection()
+            return success
 
         def _redo_insert():
             redone_specs = self._takeoff_specs_for_current_scales(
                 current_specs, current_specs_scales
             )
             redone_uids = self._insert_takeoffs_fast(bid_ref, redone_specs)
+            if len(redone_uids) != len(current_specs):
+                return False
             for index, uid in enumerate(redone_uids):
                 if index < len(current_uids):
                     current_uids[index] = uid
             if redone_uids:
                 self._plan_view.set_selected_uids(set(redone_uids))
+            return True
 
-        self._undo_svc.push(_undo_insert, _redo_insert)
+        self._undo_svc.push_local(_undo_insert, _redo_insert)
 
     def _add_inserted_takeoffs_to_model(
         self, new_uids: List[str], specs: List[InsertTakeoffSpec]
@@ -1579,14 +2525,27 @@ class PlanViewActionHandler:
         skipped_selection_keys = skipped_named_view_selection_keys(
             annotation_selection_keys, skipped_namedview_uids
         )
+        if not saved_takeoffs and not saved_annotations:
+            self._select_skipped_named_views(skipped_selection_keys)
+            return
         takeoff_uids = list(takeoff_uids)
-        takeoffs_deleted = False
-        annotations_deleted = False
         simple_takeoff_delete = bool(saved_takeoffs) and not saved_annotations
         saved_takeoff_extras = {
             t.uid: dict(self._data_svc.get_takeoff_extras(t.uid))
             for t in saved_takeoffs
         }
+        if self._uses_sql_mutation_queue(db_path) and (
+            saved_takeoffs or saved_annotations
+        ):
+            self._queue_sql_plan_items_delete(
+                bid_ref,
+                set(uids),
+                saved_takeoffs,
+                saved_annotations,
+                saved_takeoff_extras,
+                skipped_selection_keys,
+            )
+            return
         if simple_takeoff_delete:
             simple_takeoff_delete = self._takeoffs_allow_fast_delete(
                 saved_takeoffs, saved_takeoff_extras
@@ -1617,17 +2576,22 @@ class PlanViewActionHandler:
                     specs, specs_scales
                 )
                 new_uids = self._insert_takeoffs_fast(bid_ref, restore_specs)
+                if len(new_uids) != len(specs):
+                    return False
                 for i, uid in enumerate(new_uids):
                     if i < len(current_uids):
                         current_uids[i] = uid
                 if new_uids:
                     self._plan_view.set_selected_uids(set(new_uids))
+                return True
 
             def _redo_delete():
-                if self._delete_takeoffs_fast(db_path, list(current_uids)):
+                success = self._delete_takeoffs_fast(db_path, list(current_uids))
+                if success:
                     self._plan_view.clear_selection()
+                return success
 
-            self._undo_svc.push(_undo_delete, _redo_delete)
+            self._undo_svc.push_local(_undo_delete, _redo_delete)
             self._select_skipped_named_views(skipped_selection_keys)
             return
         if saved_annotations and not takeoff_uids:
@@ -1647,103 +2611,390 @@ class PlanViewActionHandler:
                 restored = self._insert_saved_annotations_fast(
                     bid_ref, restore_annotations
                 )
-                if restored:
-                    current_annotations = restored
-                    current_annotation_scales = self._capture_saved_annotation_scales(
-                        current_annotations
-                    )
-                    uid_type_set = {
-                        (annotation.uid, annotation.annotation_type)
-                        for annotation in current_annotations
-                    }
-                    keys = self._plan_view.find_annotation_keys_by_uid_type(
-                        uid_type_set
-                    )
-                    self._plan_view.set_selected_uids(keys)
+                if len(restored) != len(restore_annotations):
+                    return False
+                current_annotations = restored
+                current_annotation_scales = self._capture_saved_annotation_scales(
+                    current_annotations
+                )
+                uid_type_set = {
+                    (annotation.uid, annotation.annotation_type)
+                    for annotation in current_annotations
+                }
+                keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+                self._plan_view.set_selected_uids(keys)
+                return True
 
             def _redo_annotation_delete():
-                if self._delete_saved_annotations_fast(db_path, current_annotations):
+                success = self._delete_saved_annotations_fast(
+                    db_path, current_annotations
+                )
+                if success:
                     self._plan_view.clear_selection()
+                return success
 
-            self._undo_svc.push(_undo_annotation_delete, _redo_annotation_delete)
+            self._undo_svc.push_local(
+                _undo_annotation_delete,
+                _redo_annotation_delete,
+            )
             self._select_skipped_named_views(skipped_selection_keys)
             return
-        if takeoff_uids:
-            takeoffs_deleted = self._write_svc.delete_takeoffs(
-                db_path,
-                takeoff_uids,
-                publish_database_refreshed_after_write=False,
+        deleted_annotations = [
+            (str(item.uid), str(item.annotation_type)) for item in saved_annotations
+        ]
+        page_uids = tuple(
+            dict.fromkeys(
+                str(item.page_uid)
+                for item in (*saved_takeoffs, *saved_annotations)
+                if item.page_uid
             )
-        if saved_annotations:
-            annotations_deleted = self._ann_write_svc.delete_annotations(
-                db_path,
-                [(a.uid, a.annotation_type) for a in saved_annotations],
-                publish_database_refreshed_after_write=False,
-            )
-        if takeoffs_deleted or annotations_deleted:
-            self._write_svc.reload_and_notify(db_path)
-        delete_cmds = []
-        if saved_takeoffs and takeoffs_deleted:
-            saved_takeoff_scales = self._capture_item_page_scales(saved_takeoffs)
-            delete_cmds.append(
-                DeleteTakeoffsCommand(
-                    saved_takeoffs=saved_takeoffs,
-                    bid_ref=bid_ref,
-                    write_svc=self._write_svc,
-                    plan_view=self._plan_view,
-                    takeoff_extras=saved_takeoff_extras,
-                    prepare_specs_fn=lambda current_specs: (
-                        self._takeoff_specs_for_current_scales(
-                            current_specs,
-                            saved_takeoff_scales,
-                        )
+        )
+        dependencies = tuple(
+            sorted(
+                {
+                    *(
+                        self._condition_resource(bid_ref, item.condition_uid)
+                        for item in saved_takeoffs
                     ),
-                )
+                    *(
+                        self._layer_resource(bid_ref, item.layer_uid)
+                        for item in saved_annotations
+                        if item.layer_uid
+                    ),
+                }
             )
-        if saved_annotations and annotations_deleted:
-            saved_annotation_scales = self._capture_saved_annotation_scales(
-                saved_annotations
-            )
-
-            def _restore_mixed_delete_annotations(current_bid_ref, current_annotations):
-                restore_annotations = self._saved_annotations_for_current_scales(
-                    current_annotations,
-                    saved_annotation_scales,
-                )
-                restored = self._insert_saved_annotations_fast(
-                    current_bid_ref,
-                    restore_annotations,
-                )
-                if restored:
-                    saved_annotation_scales.clear()
-                    saved_annotation_scales.update(
-                        self._capture_saved_annotation_scales(restored)
-                    )
-                return restored
-
-            delete_cmds.append(
-                DeleteAnnotationsCommand(
-                    saved_annotations=saved_annotations,
-                    bid_ref=bid_ref,
-                    plan_view=self._plan_view,
-                    insert_saved_annotations_fn=_restore_mixed_delete_annotations,
-                    delete_saved_annotations_fn=self._delete_saved_annotations_fast,
-                )
-            )
-        if not delete_cmds:
-            self._plan_view.set_selected_uids(set(uids))
+        )
+        result = self._write_svc.execute_plan_items_delete_local(
+            db_path,
+            bid_ref.bid_uid,
+            takeoff_uids,
+            deleted_annotations,
+            page_uids=page_uids,
+            dependency_resources=dependencies,
+            publish_database_refreshed_after_write=False,
+        )
+        if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+            if (
+                result.outcome_status
+                != MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+            ):
+                self._plan_view.set_selected_uids(set(uids))
             return
-
-        def _undo():
-            for cmd in delete_cmds:
-                cmd.undo()
-
-        def _redo():
-            for cmd in delete_cmds:
-                cmd.redo()
-
-        self._undo_svc.push(_undo, _redo)
+        self._project_mdb_plan_items_deleted(
+            takeoff_uids,
+            deleted_annotations,
+            page_uids=page_uids,
+            condition_uids=tuple(
+                dict.fromkeys(str(item.condition_uid) for item in saved_takeoffs)
+            ),
+        )
+        self._push_mdb_delete_history(
+            bid_ref,
+            saved_takeoffs,
+            saved_annotations,
+            saved_takeoff_extras,
+            takeoff_uids,
+            deleted_annotations,
+            dependencies,
+        )
         self._select_skipped_named_views(skipped_selection_keys)
+
+    def _queue_sql_plan_items_delete(
+        self,
+        bid_ref,
+        requested_selection_uids: set[str],
+        saved_takeoffs: list,
+        saved_annotations: list,
+        saved_takeoff_extras: dict,
+        skipped_selection_keys: set[str],
+    ) -> None:
+        takeoff_uids = [str(item.uid) for item in saved_takeoffs]
+        annotations = [
+            (str(item.uid), str(item.annotation_type)) for item in saved_annotations
+        ]
+        page_uids = tuple(
+            dict.fromkeys(
+                str(item.page_uid)
+                for item in (*saved_takeoffs, *saved_annotations)
+                if item.page_uid
+            )
+        )
+        dependencies = {
+            *(
+                self._condition_resource(bid_ref, item.condition_uid)
+                for item in saved_takeoffs
+            ),
+            *(
+                self._layer_resource(bid_ref, item.layer_uid)
+                for item in saved_annotations
+                if item.layer_uid
+            ),
+        }
+        plan_uids = set(requested_selection_uids).difference(skipped_selection_keys)
+        takeoff_uid_set = set(takeoff_uids)
+        self._set_plan_items_pending(
+            bid_ref.file_path,
+            plan_uids,
+            takeoff_uid_set,
+            True,
+        )
+        self._plan_view.set_selected_uids(set(skipped_selection_keys))
+        handler_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_ref()
+            if handler is None:
+                return
+            if handler._sql_completion_was_applied(result):
+                return
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            handler._set_plan_items_pending(
+                bid_ref.file_path,
+                plan_uids,
+                takeoff_uid_set,
+                False,
+            )
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                handler._plan_view.set_selected_uids(
+                    set(requested_selection_uids).union(skipped_selection_keys)
+                )
+                return
+            handler._select_skipped_named_views(skipped_selection_keys)
+            handler._push_sql_delete_history(
+                bid_ref,
+                saved_takeoffs,
+                saved_annotations,
+                saved_takeoff_extras,
+                takeoff_uids,
+                annotations,
+            )
+            handler._mark_sql_completion_applied(result)
+
+        self._write_svc.queue_plan_items_delete(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            takeoff_uids,
+            annotations,
+            complete,
+            page_uids=page_uids,
+            dependency_resources=tuple(sorted(dependencies)),
+        )
+
+    @staticmethod
+    def _condition_resource(bid_ref, condition_uid):
+        return ResourceRef("condition", str(condition_uid), int(bid_ref.bid_uid))
+
+    @staticmethod
+    def _layer_resource(bid_ref, layer_uid):
+        return ResourceRef("layer", str(layer_uid), int(bid_ref.bid_uid))
+
+    def _delete_restore_payload(
+        self,
+        bid_ref,
+        saved_takeoffs: list,
+        saved_annotations: list,
+        saved_takeoff_extras: dict,
+    ) -> PlanItemsPastePayload:
+        return PlanItemsPastePayload(
+            source_bid_uid=str(bid_ref.bid_uid),
+            destination_bid_uid=str(bid_ref.bid_uid),
+            takeoff_source_uids=tuple(str(item.uid) for item in saved_takeoffs),
+            takeoff_specs=tuple(
+                InsertTakeoffSpec(
+                    condition_uid=item.condition_uid,
+                    page_uid=item.page_uid,
+                    area_uid=item.area_uid,
+                    position=list(item.position),
+                    parent_uid=item.parent_uid,
+                    curve=item.curve,
+                    rotation=item.rotation,
+                    is_negative=item.is_negative,
+                    raw_extras=dict(saved_takeoff_extras.get(item.uid, {})),
+                )
+                for item in saved_takeoffs
+            ),
+            annotation_source_uids=tuple(str(item.uid) for item in saved_annotations),
+            annotation_specs=tuple(
+                self._annotation_writes.annotation_specs_from_saved(saved_annotations)
+            ),
+        )
+
+    def _push_mdb_delete_history(
+        self,
+        bid_ref,
+        saved_takeoffs: list,
+        saved_annotations: list,
+        saved_takeoff_extras: dict,
+        deleted_takeoff_uids: list[str],
+        deleted_annotations: list[tuple[str, str]],
+        dependency_resources: tuple[ResourceRef, ...],
+    ) -> None:
+        payload = self._delete_restore_payload(
+            bid_ref,
+            saved_takeoffs,
+            saved_annotations,
+            saved_takeoff_extras,
+        )
+        annotation_type_by_source = {
+            source_uid: spec.annotation_type
+            for source_uid, spec in zip(
+                payload.annotation_source_uids,
+                payload.annotation_specs,
+            )
+        }
+        page_uids = tuple(
+            dict.fromkeys(
+                spec.page_uid
+                for spec in (*payload.takeoff_specs, *payload.annotation_specs)
+            )
+        )
+        current = {
+            "takeoffs": list(deleted_takeoff_uids),
+            "annotations": list(deleted_annotations),
+        }
+        takeoff_scales = self._capture_takeoff_spec_scales(list(payload.takeoff_specs))
+        annotation_scales = self._capture_annotation_spec_scales(
+            list(payload.annotation_specs)
+        )
+
+        def undo() -> bool:
+            restore_payload = self._paste_payload_for_current_scales(
+                payload,
+                takeoff_scales,
+                annotation_scales,
+            )
+            result = self._write_svc.execute_plan_items_paste_local(
+                bid_ref.file_path,
+                restore_payload,
+                dependency_resources=dependency_resources,
+                publish_database_refreshed_after_write=False,
+            )
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                return False
+            takeoff_map, annotation_map = self._created_uid_maps(result)
+            if not self._project_mdb_plan_items_paste(
+                bid_ref,
+                restore_payload,
+                result,
+            ):
+                return False
+            current["takeoffs"] = list(takeoff_map.values())
+            current["annotations"] = [
+                (uid, annotation_type_by_source[source_uid])
+                for source_uid, uid in annotation_map.items()
+            ]
+            self._plan_view.set_selected_uids(
+                self._selection_keys_for_paste_maps(
+                    payload,
+                    takeoff_map,
+                    annotation_map,
+                )
+            )
+            return True
+
+        def redo() -> bool:
+            result = self._write_svc.execute_plan_items_delete_local(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                list(current["takeoffs"]),
+                list(current["annotations"]),
+                page_uids=page_uids,
+                dependency_resources=dependency_resources,
+                publish_database_refreshed_after_write=False,
+            )
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                return False
+            self._project_mdb_plan_items_deleted(
+                list(current["takeoffs"]),
+                list(current["annotations"]),
+                page_uids=page_uids,
+                condition_uids=tuple(
+                    dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
+                ),
+            )
+            self._plan_view.clear_selection()
+            return True
+
+        self._undo_svc.push_local(undo, redo)
+
+    def _push_sql_delete_history(
+        self,
+        bid_ref,
+        saved_takeoffs: list,
+        saved_annotations: list,
+        saved_takeoff_extras: dict,
+        deleted_takeoff_uids: list[str],
+        deleted_annotations: list[tuple[str, str]],
+    ) -> None:
+        paste_payload = self._delete_restore_payload(
+            bid_ref,
+            saved_takeoffs,
+            saved_annotations,
+            saved_takeoff_extras,
+        )
+        current = {
+            "takeoffs": list(deleted_takeoff_uids),
+            "annotations": list(deleted_annotations),
+        }
+
+        def undo_submit(done) -> None:
+            def completed(result: QueuedMutationResult) -> None:
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    takeoff_map, annotation_map = self._created_uid_maps(result)
+                    current["takeoffs"] = list(takeoff_map.values())
+                    annotation_type_by_source = {
+                        source_uid: spec.annotation_type
+                        for source_uid, spec in zip(
+                            paste_payload.annotation_source_uids,
+                            paste_payload.annotation_specs,
+                        )
+                    }
+                    current["annotations"] = [
+                        (uid, annotation_type_by_source[source_uid])
+                        for source_uid, uid in annotation_map.items()
+                    ]
+                done(result)
+
+            self._write_svc.queue_plan_items_paste(
+                bid_ref.file_path,
+                paste_payload,
+                completed,
+            )
+
+        def redo_submit(done) -> None:
+            pages = tuple(
+                dict.fromkeys(
+                    spec.page_uid
+                    for spec in (
+                        *paste_payload.takeoff_specs,
+                        *paste_payload.annotation_specs,
+                    )
+                )
+            )
+            self._write_svc.queue_plan_items_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                list(current["takeoffs"]),
+                list(current["annotations"]),
+                lambda result: done(result),
+                page_uids=pages,
+            )
+
+        self._undo_svc.push(undo_submit, redo_submit)
+
+    @staticmethod
+    def _created_uid_maps(
+        result: QueuedMutationResult,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        authoritative = result.authoritative_result
+        if authoritative is None:
+            raise RuntimeError("Committed paste is missing authoritative UID maps")
+        maps = {name: dict(values) for name, values in authoritative.created_uid_maps}
+        return maps.get("takeoffs", {}), maps.get("annotations", {})
 
     def _select_skipped_named_views(self, skipped_selection_keys: set[str]) -> None:
         if skipped_selection_keys:
@@ -1822,7 +3073,6 @@ class PlanViewActionHandler:
             return
         area_uid = self._page_settings_bar.get_current_area_uid()
         source_bid_uid = self._clipboard_svc.source_bid_uid
-        source_file_path = self._clipboard_svc.source_file_path
         all_items, clipboard_anns = self._permitted_paste_content(bid_ref)
         if not all_items and not clipboard_anns:
             return
@@ -1836,249 +3086,515 @@ class PlanViewActionHandler:
             }
             self._plan_view.begin_paste_backout(holes, extras_by_uid, source_bid_uid)
             holes = []
-        condition_uid_map = self._condition_uid_map_for_paste(
-            bid_ref, [t.condition_uid for t in regulars + holes]
-        )
-        if condition_uid_map is None:
-            return
-        clipboard_takeoffs = regulars + holes
-        takeoff_extras_by_uid = {
-            str(t.uid): dict(self._clipboard_svc.get_extras(t.uid))
-            for t in clipboard_takeoffs
-        }
-        same_bid_paste = (
-            source_bid_uid == bid_ref.bid_uid and source_file_path == bid_ref.file_path
-        )
-        use_fast_takeoff_paste = (
-            bool(clipboard_takeoffs)
-            and not holes
-            and same_bid_paste
-            and all(
-                self._same_bid_takeoff_extras_allow_fast_refresh(
-                    takeoff_extras_by_uid[str(t.uid)]
-                )
-                for t in clipboard_takeoffs
-            )
-        )
-        paste_dx, paste_dy, intelligent_source_anchor = self._paste_translation(
-            regulars, clipboard_anns
-        )
-        regular_specs = [
-            InsertTakeoffSpec(
-                condition_uid=condition_uid_map.get(
-                    str(t.condition_uid), t.condition_uid
-                ),
-                page_uid=page_uid,
-                area_uid=area_uid,
-                position=self._translate_position(t.position, paste_dx, paste_dy),
-                parent_uid=t.parent_uid,
-                curve=t.curve,
-                rotation=t.rotation,
-                is_negative=t.is_negative,
-                raw_extras=dict(takeoff_extras_by_uid[str(t.uid)]),
-                source_bid_uid=source_bid_uid,
-            )
-            for t in regulars
-        ]
-        new_regular_uids = (
-            self._write_svc.insert_takeoffs(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                regular_specs,
-                publish_database_refreshed_after_write=not use_fast_takeoff_paste,
-            )
-            if regular_specs
-            else []
-        )
-        parent_remap = {
-            str(regulars[i].uid): str(new_regular_uids[i])
-            for i in range(len(new_regular_uids))
-        }
-        hole_specs = [
-            InsertTakeoffSpec(
-                condition_uid=condition_uid_map.get(
-                    str(t.condition_uid), t.condition_uid
-                ),
-                page_uid=page_uid,
-                area_uid=area_uid,
-                position=self._translate_position(t.position, paste_dx, paste_dy),
-                parent_uid=parent_remap.get(str(t.parent_uid), t.parent_uid),
-                curve=t.curve,
-                rotation=t.rotation,
-                is_negative=t.is_negative,
-                raw_extras=dict(takeoff_extras_by_uid[str(t.uid)]),
-                source_bid_uid=source_bid_uid,
-            )
-            for t in holes
-        ]
-        new_hole_uids = (
-            self._write_svc.insert_takeoffs(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                hole_specs,
-                publish_database_refreshed_after_write=not use_fast_takeoff_paste,
-            )
-            if hole_specs
-            else []
-        )
-        clipboard_items = regulars + holes
-        takeoff_specs = regular_specs + hole_specs
-        new_takeoff_uids = list(new_regular_uids) + list(new_hole_uids)
-        pasted_source_items = clipboard_items[: len(new_takeoff_uids)]
-        takeoff_uid_remap = {
-            str(pasted_source_items[i].uid): str(new_takeoff_uids[i])
-            for i in range(len(new_takeoff_uids))
-        }
-        pasted_takeoffs = []
-        for i in range(len(new_takeoff_uids)):
-            takeoff = Takeoff(
-                uid=new_takeoff_uids[i],
-                condition_uid=takeoff_specs[i].condition_uid,
-                page_uid=page_uid,
-                area_uid=area_uid,
-                position=takeoff_specs[i].position,
-                parent_uid=takeoff_specs[i].parent_uid,
-                curve=pasted_source_items[i].curve,
-                rotation=pasted_source_items[i].rotation,
-                is_negative=pasted_source_items[i].is_negative,
-            )
-            self._apply_takeoff_raw_extras(takeoff, takeoff_specs[i].raw_extras)
-            pasted_takeoffs.append(takeoff)
-        if pasted_takeoffs and use_fast_takeoff_paste:
-            self._data_svc.add_takeoffs(pasted_takeoffs)
-            self._publish_takeoffs_changed_for_pages([page_uid], new_takeoff_uids)
-        pasted_takeoff_extras = {
-            pasted_source_items[i].uid: dict(takeoff_specs[i].raw_extras)
-            for i in range(len(new_takeoff_uids))
-        }
-        ann_specs = []
-        for a in clipboard_anns:
-            pos = translate_annotation_position(a, paste_dx, paste_dy)
-            ann_specs.append(
-                InsertAnnotationSpec(
-                    page_uid=page_uid,
-                    annotation_type=a.annotation_type,
-                    position=pos,
-                    color=a.color,
-                    width=a.width,
-                    properties=dict(a.properties),
-                    layer_uid=a.layer_uid,
-                )
-            )
-        new_ann_uids: list = []
-        if ann_specs:
-            self._annotation_writes.apply_default_annotation_layer(ann_specs)
-            ref_remap = PasteRefRemap(takeoff_uids=dict(takeoff_uid_remap))
-            use_fast_annotation_paste = not pasted_takeoffs or use_fast_takeoff_paste
-            insert_batch = None
-            if not use_fast_annotation_paste:
-                insert_batch = lambda current_bid_ref, current_specs, current_remap: (
-                    self._ann_write_svc.insert_annotations(
-                        current_bid_ref.file_path,
-                        current_bid_ref.bid_uid,
-                        current_specs,
-                        ref_remap=current_remap,
-                    )
-                )
-            inserted_annotations = self._annotation_writes.insert_annotation_copies(
+        if self._uses_sql_mutation_queue(bid_ref.file_path):
+            self._queue_sql_plan_items_paste(
                 bid_ref,
+                page_uid,
+                area_uid,
+                regulars,
+                holes,
                 clipboard_anns,
-                ann_specs,
-                ref_remap=ref_remap,
-                insert_batch=insert_batch,
             )
-            new_ann_uids = list(inserted_annotations.uids)
-            ann_specs = list(inserted_annotations.specs)
-        else:
-            use_fast_annotation_paste = False
-        takeoff_uids = {t.uid for t in pasted_takeoffs}
-        ann_uid_type_set = set()
-        for i, uid in enumerate(new_ann_uids):
-            ann_uid_type_set.add((uid, ann_specs[i].annotation_type))
-        ann_keys = self._plan_view.find_annotation_keys_by_uid_type(ann_uid_type_set)
-        all_new_keys = takeoff_uids | ann_keys
-        if not all_new_keys:
             return
-        self._plan_view.set_selected_uids(all_new_keys)
-        pending_drag_uids = list(new_takeoff_uids)
-        pending_drag_uids.extend(sorted(ann_keys))
-        if intelligent_source_anchor and pending_drag_uids:
+        self._execute_mdb_plan_items_paste(
+            bid_ref,
+            page_uid,
+            area_uid,
+            regulars,
+            holes,
+            clipboard_anns,
+        )
+        return
+
+    def _execute_mdb_plan_items_paste(
+        self,
+        bid_ref,
+        page_uid: str,
+        area_uid: Optional[str],
+        regulars: list,
+        holes: list,
+        annotations: list,
+    ) -> None:
+        prepared = self._prepare_plan_items_paste(
+            bid_ref,
+            page_uid,
+            area_uid,
+            regulars,
+            holes,
+            annotations,
+        )
+        if prepared is None:
+            return
+        payload, dependencies, source_anchor = prepared
+        result = self._write_svc.execute_plan_items_paste_local(
+            bid_ref.file_path,
+            payload,
+            dependency_resources=dependencies,
+            publish_database_refreshed_after_write=False,
+        )
+        if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+            return
+        if not self._project_mdb_plan_items_paste(bid_ref, payload, result):
+            return
+        takeoff_map, annotation_map = self._created_uid_maps(result)
+        selected = self._selection_keys_for_paste_maps(
+            payload,
+            takeoff_map,
+            annotation_map,
+        )
+        self._plan_view.set_selected_uids(selected)
+        if source_anchor and selected:
+            ordered_selection = list(takeoff_map.values())
+            ordered_selection.extend(sorted(selected.difference(ordered_selection)))
             self._plan_view.mark_intelligent_paste_drag_pending(
-                pending_drag_uids, intelligent_source_anchor
+                ordered_selection,
+                source_anchor,
             )
-        paste_cmds = []
-        takeoff_cmd = None
-        if pasted_takeoffs:
-            takeoff_specs_scales = self._capture_takeoff_spec_scales(
-                takeoff_specs[: len(new_takeoff_uids)]
+        self._push_mdb_paste_history(
+            bid_ref,
+            payload,
+            dependencies,
+            takeoff_map,
+            annotation_map,
+        )
+
+    def _push_mdb_paste_history(
+        self,
+        bid_ref,
+        payload: PlanItemsPastePayload,
+        dependency_resources: tuple[ResourceRef, ...],
+        takeoff_map: dict[str, str],
+        annotation_map: dict[str, str],
+    ) -> None:
+        annotation_type_by_source = {
+            source_uid: spec.annotation_type
+            for source_uid, spec in zip(
+                payload.annotation_source_uids,
+                payload.annotation_specs,
             )
-            takeoff_cmd = PasteTakeoffsCommand(
-                pasted_takeoffs=pasted_takeoffs,
-                bid_ref=bid_ref,
-                write_svc=self._write_svc,
-                plan_view=self._plan_view,
-                source_uids=[t.uid for t in pasted_source_items],
-                source_parent_uids=[t.parent_uid for t in pasted_source_items],
-                source_bid_uid=source_bid_uid,
-                takeoff_extras=pasted_takeoff_extras,
-                insert_takeoffs_fn=(
-                    self._insert_takeoffs_fast if use_fast_takeoff_paste else None
-                ),
-                delete_takeoffs_fn=(
-                    self._delete_takeoffs_fast if use_fast_takeoff_paste else None
-                ),
-                prepare_specs_fn=lambda current_specs: (
-                    self._takeoff_specs_for_current_scales(
-                        current_specs,
-                        takeoff_specs_scales,
-                    )
+        }
+        page_uids = tuple(
+            dict.fromkeys(
+                spec.page_uid
+                for spec in (*payload.takeoff_specs, *payload.annotation_specs)
+            )
+        )
+        current = {
+            "takeoffs": list(takeoff_map.values()),
+            "annotations": [
+                (uid, annotation_type_by_source[source_uid])
+                for source_uid, uid in annotation_map.items()
+            ],
+        }
+        takeoff_scales = self._capture_takeoff_spec_scales(list(payload.takeoff_specs))
+        annotation_scales = self._capture_annotation_spec_scales(
+            list(payload.annotation_specs)
+        )
+
+        def undo() -> bool:
+            result = self._write_svc.execute_plan_items_delete_local(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                list(current["takeoffs"]),
+                list(current["annotations"]),
+                page_uids=page_uids,
+                publish_database_refreshed_after_write=False,
+            )
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                return False
+            self._project_mdb_plan_items_deleted(
+                list(current["takeoffs"]),
+                list(current["annotations"]),
+                page_uids=page_uids,
+                condition_uids=tuple(
+                    dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
                 ),
             )
-            paste_cmds.append(takeoff_cmd)
-        if new_ann_uids and ann_specs:
-            ann_specs_scales = self._capture_annotation_spec_scales(ann_specs)
-            paste_cmds.append(
-                PasteAnnotationsCommand(
-                    specs=ann_specs,
-                    new_uids=new_ann_uids,
-                    bid_ref=bid_ref,
-                    write_svc=self._ann_write_svc,
-                    plan_view=self._plan_view,
-                    sibling_takeoff_cmd=takeoff_cmd,
-                    insert_annotations_fn=(
-                        self._insert_annotations_fast
-                        if use_fast_annotation_paste
-                        else None
-                    ),
-                    delete_annotations_fn=(
-                        self._delete_annotations_fast
-                        if use_fast_annotation_paste
-                        else None
-                    ),
-                    prepare_specs_fn=lambda current_specs: (
-                        self._annotation_specs_for_current_scales(
-                            current_specs,
-                            ann_specs_scales,
-                        )
-                    ),
+            self._plan_view.clear_selection()
+            return True
+
+        def redo() -> bool:
+            redo_payload = self._paste_payload_for_current_scales(
+                payload,
+                takeoff_scales,
+                annotation_scales,
+            )
+            result = self._write_svc.execute_plan_items_paste_local(
+                bid_ref.file_path,
+                redo_payload,
+                dependency_resources=dependency_resources,
+                publish_database_refreshed_after_write=False,
+            )
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                return False
+            if not self._project_mdb_plan_items_paste(
+                bid_ref,
+                redo_payload,
+                result,
+            ):
+                return False
+            next_takeoffs, next_annotations = self._created_uid_maps(result)
+            current["takeoffs"] = list(next_takeoffs.values())
+            current["annotations"] = [
+                (uid, annotation_type_by_source[source_uid])
+                for source_uid, uid in next_annotations.items()
+            ]
+            self._plan_view.set_selected_uids(
+                self._selection_keys_for_paste_maps(
+                    payload,
+                    next_takeoffs,
+                    next_annotations,
                 )
             )
-        if paste_cmds:
-            cmds = paste_cmds
+            return True
 
-            def _undo():
-                for cmd in cmds:
-                    cmd.undo()
+        self._undo_svc.push_local(undo, redo)
 
-            def _redo():
-                for cmd in cmds:
-                    cmd.redo()
-                combined = set()
-                for cmd in cmds:
-                    combined.update(cmd.get_result_keys())
-                self._plan_view.set_selected_uids(combined)
+    def _project_mdb_plan_items_paste(
+        self,
+        bid_ref,
+        payload: PlanItemsPastePayload,
+        result: MutationExecutionResult,
+    ) -> bool:
+        takeoff_map, annotation_map = self._created_uid_maps(result)
+        authoritative = result.authoritative_result
+        maps = (
+            {name: dict(values) for name, values in authoritative.created_uid_maps}
+            if authoritative is not None
+            else {}
+        )
+        condition_map = maps.get("conditions", {})
+        targeted = not condition_map and all(
+            self._same_bid_takeoff_extras_allow_fast_refresh(dict(spec.raw_extras))
+            for spec in payload.takeoff_specs
+        )
+        if not targeted:
+            return self._write_svc.reload_and_notify(bid_ref.file_path)
+        if payload.takeoff_specs:
+            takeoff_uids = [
+                takeoff_map[source_uid] for source_uid in payload.takeoff_source_uids
+            ]
+            self._add_inserted_takeoffs_to_model(
+                takeoff_uids,
+                list(payload.takeoff_specs),
+            )
+            self._publish_takeoffs_changed_for_pages(
+                self._takeoff_spec_page_uids(list(payload.takeoff_specs)),
+                takeoff_uids,
+                condition_uids=tuple(
+                    dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
+                ),
+            )
+        if payload.annotation_specs:
+            annotation_uids = [
+                annotation_map[source_uid]
+                for source_uid in payload.annotation_source_uids
+            ]
+            ref_remap = PasteRefRemap(
+                takeoff_uids=dict(takeoff_map),
+                namedview_uids={
+                    source_uid: annotation_map[source_uid]
+                    for source_uid, spec in zip(
+                        payload.annotation_source_uids,
+                        payload.annotation_specs,
+                    )
+                    if spec.annotation_type == ANNOTATION_TYPE_NAMED_VIEW
+                },
+            )
+            self._annotation_writes.project_inserted_annotations(
+                annotation_uids,
+                list(payload.annotation_specs),
+                ref_remap=ref_remap,
+            )
+        return True
 
-            self._undo_svc.push(_undo, _redo)
+    def _project_mdb_plan_items_deleted(
+        self,
+        takeoff_uids: list[str],
+        annotations: list[tuple[str, str]],
+        *,
+        page_uids: tuple[str, ...],
+        condition_uids: tuple[str, ...],
+    ) -> None:
+        if takeoff_uids:
+            removed_pages = self._data_svc.remove_takeoffs(takeoff_uids)
+            self._publish_takeoffs_changed_for_pages(
+                self._unique_ordered((*removed_pages, *page_uids)),
+                takeoff_uids,
+                condition_uids=condition_uids,
+            )
+        if annotations:
+            self._annotation_writes.project_deleted_annotations(
+                annotations,
+                page_uids=list(page_uids),
+            )
+
+    def _paste_payload_for_current_scales(
+        self,
+        payload: PlanItemsPastePayload,
+        takeoff_scales: dict[str, PageScale],
+        annotation_scales: dict[str, PageScale],
+    ) -> PlanItemsPastePayload:
+        return replace(
+            payload,
+            takeoff_specs=tuple(
+                self._takeoff_specs_for_current_scales(
+                    list(payload.takeoff_specs),
+                    takeoff_scales,
+                )
+            ),
+            annotation_specs=tuple(
+                self._annotation_specs_for_current_scales(
+                    list(payload.annotation_specs),
+                    annotation_scales,
+                )
+            ),
+        )
+
+    def _queue_sql_plan_items_paste(
+        self,
+        bid_ref,
+        page_uid: str,
+        area_uid: Optional[str],
+        regulars: list,
+        holes: list,
+        annotations: list,
+    ) -> None:
+        prepared = self._prepare_plan_items_paste(
+            bid_ref,
+            page_uid,
+            area_uid,
+            regulars,
+            holes,
+            annotations,
+        )
+        if prepared is None:
+            return
+        payload, dependencies, _source_anchor = prepared
+        self._queue_sql_plan_items_paste_payload(
+            bid_ref,
+            page_uid,
+            payload,
+            dependencies,
+        )
+
+    def _queue_sql_plan_items_paste_payload(
+        self,
+        bid_ref,
+        page_uid: str,
+        payload: PlanItemsPastePayload,
+        dependencies: tuple[ResourceRef, ...],
+    ) -> None:
+        previous_selection = set(self._plan_view.get_selected_uids())
+        self._plan_view.clear_selection()
+        handler_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_ref()
+            if handler is None:
+                return
+            if handler._sql_completion_was_applied(result):
+                return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if result.outcome_status not in {
+                    MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                    MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                }:
+                    active_bid = handler._ui_state.get_selected_bid_ref()
+                    if (
+                        active_bid == bid_ref
+                        and handler._plan_view.current_page_uid == page_uid
+                    ):
+                        handler._plan_view.set_selected_uids(previous_selection)
+                return
+            takeoff_map, annotation_map = handler._created_uid_maps(result)
+            selected = handler._selection_keys_for_paste_maps(
+                payload,
+                takeoff_map,
+                annotation_map,
+            )
+            active_bid = handler._ui_state.get_selected_bid_ref()
+            if (
+                active_bid == bid_ref
+                and handler._plan_view.current_page_uid == page_uid
+            ):
+                handler._plan_view.set_selected_uids(selected)
+            handler._push_sql_paste_history(
+                bid_ref,
+                payload,
+                takeoff_map,
+                annotation_map,
+            )
+            handler._mark_sql_completion_applied(result)
+
+        self._write_svc.queue_plan_items_paste(
+            bid_ref.file_path,
+            payload,
+            complete,
+            dependency_resources=dependencies,
+        )
+
+    def _prepare_plan_items_paste(
+        self,
+        bid_ref,
+        page_uid: str,
+        area_uid: Optional[str],
+        regulars: list,
+        holes: list,
+        annotations: list,
+    ):
+        source_bid_uid = str(self._clipboard_svc.source_bid_uid or bid_ref.bid_uid)
+        source_takeoffs = regulars + holes
+        paste_dx, paste_dy, source_anchor = self._paste_translation(
+            regulars,
+            annotations,
+        )
+        takeoff_specs = tuple(
+            InsertTakeoffSpec(
+                condition_uid=str(item.condition_uid),
+                page_uid=page_uid,
+                area_uid=area_uid,
+                position=self._translate_position(item.position, paste_dx, paste_dy),
+                parent_uid=item.parent_uid,
+                curve=item.curve,
+                rotation=item.rotation,
+                is_negative=item.is_negative,
+                raw_extras=dict(self._clipboard_svc.get_extras(item.uid)),
+                source_bid_uid=source_bid_uid,
+            )
+            for item in source_takeoffs
+        )
+        annotation_specs = [
+            InsertAnnotationSpec(
+                page_uid=page_uid,
+                annotation_type=item.annotation_type,
+                position=translate_annotation_position(item, paste_dx, paste_dy),
+                color=item.color,
+                width=item.width,
+                properties=dict(item.properties),
+                layer_uid=item.layer_uid,
+            )
+            for item in annotations
+        ]
+        annotations, annotation_specs = (
+            self._annotation_writes.filter_copyable_annotations(
+                annotations,
+                annotation_specs,
+            )
+        )
+        if not source_takeoffs and not annotations:
+            return None
+        self._annotation_writes.apply_default_annotation_layer(annotation_specs)
+        payload = PlanItemsPastePayload(
+            source_bid_uid=source_bid_uid,
+            destination_bid_uid=str(bid_ref.bid_uid),
+            takeoff_source_uids=tuple(str(item.uid) for item in source_takeoffs),
+            takeoff_specs=takeoff_specs,
+            annotation_source_uids=tuple(str(item.uid) for item in annotations),
+            annotation_specs=tuple(annotation_specs),
+        )
+        dependencies = tuple(
+            sorted(
+                {
+                    *(
+                        ResourceRef(
+                            "condition",
+                            str(spec.condition_uid),
+                            int(source_bid_uid),
+                        )
+                        for spec in takeoff_specs
+                        if source_bid_uid != str(bid_ref.bid_uid)
+                    ),
+                    *(
+                        ResourceRef("layer", str(spec.layer_uid), int(bid_ref.bid_uid))
+                        for spec in annotation_specs
+                        if spec.layer_uid
+                    ),
+                }
+            )
+        )
+        return payload, dependencies, source_anchor
+
+    def _selection_keys_for_paste_maps(
+        self,
+        payload: PlanItemsPastePayload,
+        takeoff_map: dict[str, str],
+        annotation_map: dict[str, str],
+    ) -> set[str]:
+        selected = set(takeoff_map.values())
+        annotation_type_by_source = {
+            source_uid: spec.annotation_type
+            for source_uid, spec in zip(
+                payload.annotation_source_uids,
+                payload.annotation_specs,
+            )
+        }
+        selected.update(
+            self._plan_view.find_annotation_keys_by_uid_type(
+                {
+                    (uid, annotation_type_by_source[source_uid])
+                    for source_uid, uid in annotation_map.items()
+                }
+            )
+        )
+        return selected
+
+    def _push_sql_paste_history(
+        self,
+        bid_ref,
+        payload: PlanItemsPastePayload,
+        takeoff_map: dict[str, str],
+        annotation_map: dict[str, str],
+    ) -> None:
+        annotation_type_by_source = {
+            source_uid: spec.annotation_type
+            for source_uid, spec in zip(
+                payload.annotation_source_uids,
+                payload.annotation_specs,
+            )
+        }
+        current = {
+            "takeoffs": list(takeoff_map.values()),
+            "annotations": [
+                (uid, annotation_type_by_source[source_uid])
+                for source_uid, uid in annotation_map.items()
+            ],
+        }
+        page_uids = tuple(
+            dict.fromkeys(
+                spec.page_uid
+                for spec in (*payload.takeoff_specs, *payload.annotation_specs)
+            )
+        )
+
+        def undo_submit(done) -> None:
+            self._write_svc.queue_plan_items_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                list(current["takeoffs"]),
+                list(current["annotations"]),
+                lambda result: done(result),
+                page_uids=page_uids,
+            )
+
+        def redo_submit(done) -> None:
+            def completed(result: QueuedMutationResult) -> None:
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    next_takeoffs, next_annotations = self._created_uid_maps(result)
+                    current["takeoffs"] = list(next_takeoffs.values())
+                    current["annotations"] = [
+                        (uid, annotation_type_by_source[source_uid])
+                        for source_uid, uid in next_annotations.items()
+                    ]
+                done(result)
+
+            self._write_svc.queue_plan_items_paste(
+                bid_ref.file_path,
+                payload,
+                completed,
+            )
+
+        self._undo_svc.push(undo_submit, redo_submit)
 
     def _paste_translation(
         self, regulars: list, annotations: list

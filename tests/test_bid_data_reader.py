@@ -95,7 +95,8 @@ class BidDataReaderTests(unittest.TestCase):
         )
         coordinator._stage_selection_after_page_delete = Mock()
         coordinator._project_write_service = SimpleNamespace(
-            delete_pages=Mock(side_effect=AssertionError("delete must not run"))
+            uses_sql_collaboration_mutations=lambda _file_path: False,
+            delete_pages=Mock(side_effect=AssertionError("delete must not run")),
         )
         coordinator.main_window = object()
         with patch(
@@ -120,7 +121,9 @@ class BidDataReaderTests(unittest.TestCase):
             icon_provider=object(),
             project_data_service=object(),
             project_read_service=read_service,
-            project_write_service=object(),
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _file_path: False
+            ),
             infrastructure_provider=object(),
             event_bus=object(),
             ui_state_manager=SimpleNamespace(

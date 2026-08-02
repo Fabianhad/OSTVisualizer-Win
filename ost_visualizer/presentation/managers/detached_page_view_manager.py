@@ -744,7 +744,15 @@ class DetachedPageViewManager(IShutdownAware):
         if not db_path:
             return
         try:
-            saved = self._write_service.save_page_scale(db_path, page_uid, sf1, sf2)
+            saved = self._write_service.queue_page_setting_if_sql(
+                db_path,
+                page_uid,
+                "scale",
+                [sf1, sf2],
+                owning_surface="detached-plan",
+            )
+            if saved is None:
+                saved = self._write_service.save_page_scale(db_path, page_uid, sf1, sf2)
             if saved is False:
                 self._refresh_window()
         except Exception:
@@ -829,6 +837,7 @@ class DetachedPageViewManager(IShutdownAware):
             on_scale_changed=self._on_window_scale_changed,
             annotation_write_service=self._annotation_write_service,
             annotation_write_coordinator=annotation_write_coordinator,
+            project_write_service=self._write_service,
             file_path=file_path,
             undo_service=undo_svc,
             initial_geometry=initial_geometry,

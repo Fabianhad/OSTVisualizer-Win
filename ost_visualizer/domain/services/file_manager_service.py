@@ -54,6 +54,16 @@ class FileManager:
         self.current_file_path = self.project_repository.active_file_path or file_path
         return result
 
+    def prepare_bid_load(self, bid_uid: str, file_path: str) -> BidLoadResult:
+        if not file_path:
+            self.logger.error("file_path is required for prepare_bid_load")
+            return BidLoadResult()
+        return self.project_repository.prepare_bid_load(bid_uid, file_path)
+
+    def apply_bid_load(self, file_path: str) -> None:
+        self.project_repository.apply_bid_load(file_path)
+        self.current_file_path = file_path
+
     def reload_database(self, file_path: Optional[str] = None) -> FileLoadResult:
         if not file_path:
             return FileLoadResult(

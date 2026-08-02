@@ -10,5 +10,5 @@ class SavePayClassesUseCase:
         self._writer = mdb_writer
         self.logger = logger or logging.getLogger(__name__)
 
-    def execute(self, db_path: str, changes: dict) -> bool:
+    def execute(self, db_path: str, changes: dict) -> Optional[dict[str, str]]:
         return self._writer.save_pay_classes(db_path, changes)

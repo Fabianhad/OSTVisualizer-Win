@@ -3,6 +3,7 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
+    MutationOutcomeStatus,
     ResourceRef,
 )
 from ost_visualizer.application.services.annotation_write_service import (
@@ -39,9 +40,13 @@ class _MutationExecutor:
     def __init__(self) -> None:
         self.calls = 0
 
-    def execute(self, _request, operation):
+    def execute(self, request, operation):
         self.calls += 1
-        return DatabaseMutationResult(success=True, value=operation(SimpleNamespace()))
+        return DatabaseMutationResult(
+            operation_id=request.operation_id,
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            value=operation(SimpleNamespace()),
+        )
 
 
 class _SessionRegistry:
@@ -205,7 +210,7 @@ class UIAccessPlanEditingTests(unittest.TestCase):
         result = service._execute_database_mutation(
             "sql-db", (resource,), lambda _recorder: True
         )
-        self.assertFalse(result.success)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.REJECTED)
         self.assertEqual(executor.calls, 0)
         self.assertEqual(tokens.load_calls, 0)
         self.assertEqual(
@@ -229,7 +234,7 @@ class UIAccessPlanEditingTests(unittest.TestCase):
         result = service._execute_database_mutation(
             "access-db", (resource,), lambda _recorder: True
         )
-        self.assertTrue(result.success)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertEqual(executor.calls, 1)
         self.assertEqual(tokens.load_calls, 1)
 
@@ -249,7 +254,7 @@ class UIAccessPlanEditingTests(unittest.TestCase):
         result = service._execute_database_mutation(
             "sql-db", (resource,), lambda _recorder: True
         )
-        self.assertFalse(result.success)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.REJECTED)
         self.assertEqual(executor.calls, 0)
         self.assertEqual(tokens.load_calls, 0)
         self.assertEqual(

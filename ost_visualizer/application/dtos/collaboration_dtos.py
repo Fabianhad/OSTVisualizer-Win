@@ -1,16 +1,23 @@
 from __future__ import annotations
+import hashlib
+import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from functools import total_ordering
-from typing import Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 from .collaboration_resource_catalog import resource_definition
+from .insert_annotation_spec_dto import InsertAnnotationSpec
+from .insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
+from ...domain.entities.cover_sheet import CoverSheetData, JobStatus
+from ...domain.entities.employee import Employee, PayClass
 from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.hierarchy_data import HierarchyFileEntry
+from ...domain.entities.layer import BidLayer
 
 COLLABORATION_STALE_SECONDS = 45
 COLLABORATION_LOCK_SECONDS = 45
@@ -28,6 +35,36 @@ class ChangeOperation(str, Enum):
     MOVE = "move"
     REORDER = "reorder"
     BULK_REFRESH = "bulk_refresh"
+
+
+class CollaborationMutationType(str, Enum):
+    TAKEOFF_PLACEMENT = "takeoff_placement"
+    PLAN_ITEMS_DELETE = "plan_items_delete"
+    PLAN_GEOMETRY = "plan_geometry"
+    TAKEOFF_PROPERTIES = "takeoff_properties"
+    ANNOTATION_UPDATE = "annotation_update"
+    PLAN_ITEMS_PASTE = "plan_items_paste"
+    PAGE_SETTINGS = "page_settings"
+    PROJECT_WRITE = "project_write"
+    PROJECT_IMPORT = "project_import"
+
+
+class MutationOutcomeStatus(str, Enum):
+    COMMITTED = "committed"
+    REJECTED = "rejected"
+    CONFLICT = "conflict"
+    FAILED_BEFORE_COMMIT = "failed_before_commit"
+    COMMITTED_PROJECTION_FAILED = "committed_projection_failed"
+    COMMIT_STATUS_UNKNOWN = "commit_status_unknown"
+    CANCELLED_BEFORE_START = "cancelled_before_start"
+
+
+class PendingMutationState(str, Enum):
+    QUEUED = "queued"
+    EXECUTING = "executing"
+    PROJECTING = "projecting"
+    RECOVERING = "recovering"
+    UNCERTAIN = "uncertain"
 
 
 class ChangeSourceKind(str, Enum):
@@ -214,16 +251,420 @@ class EditLeaseResult:
             )
 
 
+def _canonical_mutation_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, bytes):
+        return {"bytes": value.hex()}
+    if isinstance(value, Enum):
+        return value.value
+    if is_dataclass(value):
+        return {
+            item.name: _canonical_mutation_value(getattr(value, item.name))
+            for item in fields(value)
+        }
+    if isinstance(value, dict):
+        return {
+            str(key): _canonical_mutation_value(item)
+            for key, item in sorted(value.items(), key=lambda entry: str(entry[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonical_mutation_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        normalized = [_canonical_mutation_value(item) for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(
+                item, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ),
+        )
+    raise TypeError(
+        f"Unsupported collaboration mutation payload value: {type(value).__name__}"
+    )
+
+
+def canonical_mutation_request_hash(payload: object) -> str:
+    encoded = json.dumps(
+        _canonical_mutation_value(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass(frozen=True, kw_only=True)
-class QueuedMutationWorkResult:
-    success: bool
+class AuthoritativeMutationResult:
     created_resource_ids: tuple[str, ...] = ()
-    message: str = ""
-    conflict: Optional[SynchronizationConflict] = None
+    created_uid_maps: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
+    updated_resources: tuple[ResourceRef, ...] = ()
+    deleted_resources: tuple[ResourceRef, ...] = ()
+    affected_page_uids: tuple[str, ...] = ()
+    affected_condition_uids: tuple[str, ...] = ()
+    affected_families: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlanItemsDeletePayload:
+    takeoff_uids: tuple[str, ...] = ()
+    annotations: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
-        if self.success and self.conflict is not None:
-            raise ValueError("A successful queued mutation cannot carry a conflict.")
+        takeoff_uids = tuple(
+            dict.fromkeys(str(uid) for uid in self.takeoff_uids if uid)
+        )
+        annotations = tuple(
+            dict.fromkeys(
+                (str(uid), str(annotation_type))
+                for uid, annotation_type in self.annotations
+                if uid and annotation_type
+            )
+        )
+        if not takeoff_uids and not annotations:
+            raise ValueError("A plan-item deletion requires at least one item")
+        object.__setattr__(self, "takeoff_uids", takeoff_uids)
+        object.__setattr__(self, "annotations", annotations)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlanItemsPastePayload:
+    source_bid_uid: str
+    destination_bid_uid: str
+    takeoff_source_uids: tuple[str, ...] = ()
+    takeoff_specs: tuple[InsertTakeoffSpec, ...] = ()
+    annotation_source_uids: tuple[str, ...] = ()
+    annotation_specs: tuple[InsertAnnotationSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(self.takeoff_source_uids) != len(self.takeoff_specs):
+            raise ValueError("Paste takeoff sources and specifications must align")
+        if len(self.annotation_source_uids) != len(self.annotation_specs):
+            raise ValueError("Paste annotation sources and specifications must align")
+        if not self.takeoff_specs and not self.annotation_specs:
+            raise ValueError("A plan-item paste requires at least one item")
+        if len(set(self.takeoff_source_uids)) != len(self.takeoff_source_uids):
+            raise ValueError("Paste takeoff source identities must be unique")
+        if len(set(self.annotation_source_uids)) != len(self.annotation_source_uids):
+            raise ValueError("Paste annotation source identities must be unique")
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlanGeometryPayload:
+    takeoff_positions: tuple[tuple[str, tuple[float, ...]], ...] = ()
+    takeoff_rotations: tuple[tuple[str, float], ...] = ()
+    annotation_positions: tuple[tuple[str, str, tuple[float, ...]], ...] = ()
+
+    def __post_init__(self) -> None:
+        if not (
+            self.takeoff_positions
+            or self.takeoff_rotations
+            or self.annotation_positions
+        ):
+            raise ValueError("A geometry mutation requires at least one update")
+        identities = [uid for uid, _position in self.takeoff_positions]
+        identities.extend(uid for uid, _rotation in self.takeoff_rotations)
+        if any(not uid for uid in identities):
+            raise ValueError("Geometry mutation identities cannot be empty")
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlanPropertyPayload:
+    property_kind: str
+    updates_json: str
+
+    def __post_init__(self) -> None:
+        if self.property_kind not in {
+            "takeoff_text",
+            "takeoff_area",
+            "takeoff_condition",
+            "takeoff_negative",
+            "takeoff_curve",
+            "annotation_text",
+            "annotation_style",
+        }:
+            raise ValueError("Unsupported plan property mutation")
+        try:
+            updates = json.loads(self.updates_json)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Plan property updates must be valid JSON") from exc
+        if not isinstance(updates, list) or not updates:
+            raise ValueError("Plan property updates must be a non-empty list")
+
+    @classmethod
+    def from_updates(cls, property_kind: str, updates: list) -> "PlanPropertyPayload":
+        return cls(
+            property_kind=property_kind,
+            updates_json=json.dumps(
+                updates,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ),
+        )
+
+    def decoded_updates(self) -> list:
+        return json.loads(self.updates_json)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PageSettingsPayload:
+    setting_kind: str
+    updates_json: str
+
+    def __post_init__(self) -> None:
+        if self.setting_kind not in {
+            "scale",
+            "show_mode",
+            "overlay_image",
+            "overlay_rect",
+            "invert",
+            "bitonal",
+            "image_adjustments",
+            "area",
+            "view_state",
+            "name",
+            "layer_show",
+        }:
+            raise ValueError("Unsupported page setting mutation")
+        try:
+            updates = json.loads(self.updates_json)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Page setting updates must be valid JSON") from exc
+        if not isinstance(updates, list) or not updates:
+            raise ValueError("Page setting updates must be a non-empty list")
+
+    @classmethod
+    def from_updates(cls, setting_kind: str, updates: list) -> "PageSettingsPayload":
+        return cls(
+            setting_kind=setting_kind,
+            updates_json=json.dumps(
+                updates,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ),
+        )
+
+    def decoded_updates(self) -> list:
+        return json.loads(self.updates_json)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProjectWritePayload:
+    write_kind: str
+    values_json: str
+
+    def __post_init__(self) -> None:
+        if self.write_kind not in {
+            "create_condition",
+            "create_condition_folder",
+            "create_bid",
+            "create_project",
+            "delete_bids",
+            "delete_condition_folders",
+            "delete_conditions",
+            "delete_pages",
+            "delete_projects",
+            "duplicate_bids",
+            "duplicate_conditions",
+            "insert_layer",
+            "delete_layer",
+            "delete_layers",
+            "rename_condition_folder",
+            "rename_project",
+            "renumber_conditions",
+            "swap_layers",
+            "update_conditions",
+            "update_bid_job_status",
+            "move_bids",
+            "rename_layer",
+            "save_bid_areas",
+            "save_condition_types",
+            "save_cover_sheet",
+            "save_default_layers",
+            "save_employees",
+            "save_job_statuses",
+            "save_pay_classes",
+        }:
+            raise ValueError("Unsupported queued project write")
+        try:
+            values = json.loads(self.values_json)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Project write values must be valid JSON") from exc
+        if not isinstance(values, dict):
+            raise ValueError("Project write values must be a JSON object")
+
+    @classmethod
+    def from_values(cls, write_kind: str, values: dict) -> "ProjectWritePayload":
+        return cls(
+            write_kind=write_kind,
+            values_json=json.dumps(
+                values,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProjectImportPayload:
+    source_path: str
+    source_kind: str
+    source_size: int
+    source_modified_ns: int
+    target_project_uid: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.source_path:
+            raise ValueError("A project import requires a source path")
+        if self.source_kind not in {"ost", "osp"}:
+            raise ValueError("A project import source must be OST or OSP")
+        if self.source_size < 0 or self.source_modified_ns < 0:
+            raise ValueError("Project import file metadata cannot be negative")
+
+
+@dataclass(frozen=True, kw_only=True)
+class QueuedMutationRequest:
+    database_id: str
+    operation_id: str
+    mutation_type: CollaborationMutationType
+    owning_surface: str
+    resources: tuple[ResourceRef, ...]
+    dependency_resources: tuple[ResourceRef, ...] = ()
+    bid_uid: Optional[int] = None
+    page_uid: str = ""
+    payload: object = None
+    payload_format_version: int = 1
+    lifecycle_critical: bool = True
+    request_hash: str = field(init=False)
+    edit_lease_handle: Optional[EditLeaseHandle] = None
+
+    def __post_init__(self) -> None:
+        try:
+            operation_id = str(uuid.UUID(str(self.operation_id)))
+        except ValueError as exc:
+            raise ValueError("Queued mutation operation IDs must be UUIDs") from exc
+        if not self.database_id:
+            raise ValueError("A queued mutation requires a database ID")
+        if not self.owning_surface:
+            raise ValueError("A queued mutation requires an owning surface")
+        if not self.resources:
+            raise ValueError("A queued mutation requires at least one resource")
+        if self.edit_lease_handle is not None:
+            handle = self.edit_lease_handle
+            if (
+                handle.database_id != self.database_id
+                or handle.owning_surface != self.owning_surface
+                or handle.resources != tuple(sorted(set(self.resources)))
+                or handle.dependency_resources
+                != tuple(sorted(set(self.dependency_resources)))
+            ):
+                raise ValueError(
+                    "A queued mutation's edit lease must own the same resources"
+                )
+        if self.payload_format_version != 1:
+            raise ValueError("Only mutation payload format version 1 is supported")
+        request_hash = canonical_mutation_request_hash(
+            {
+                "mutation_type": self.mutation_type.value,
+                "payload_format_version": self.payload_format_version,
+                "payload": self.payload,
+            }
+        )
+        object.__setattr__(self, "operation_id", operation_id)
+        object.__setattr__(self, "resources", tuple(sorted(set(self.resources))))
+        object.__setattr__(
+            self,
+            "dependency_resources",
+            tuple(sorted(set(self.dependency_resources))),
+        )
+        object.__setattr__(self, "request_hash", request_hash)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PendingMutation:
+    request: QueuedMutationRequest
+    state: PendingMutationState = PendingMutationState.QUEUED
+    runtime_generation: int = 0
+    message: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class PendingSqlOperationRecord:
+    database_id: str
+    operation_id: str
+    mutation_type: CollaborationMutationType
+    request_hash: str
+    owning_surface: str
+    resources: tuple[ResourceRef, ...]
+    dependency_resources: tuple[ResourceRef, ...] = ()
+    bid_uid: Optional[int] = None
+    page_uid: str = ""
+    state: PendingMutationState = PendingMutationState.QUEUED
+
+    def __post_init__(self) -> None:
+        try:
+            operation_id = str(uuid.UUID(str(self.operation_id)))
+        except ValueError as exc:
+            raise ValueError("Pending SQL operation IDs must be UUIDs") from exc
+        if not self.database_id or not self.owning_surface or not self.resources:
+            raise ValueError("A pending SQL operation record is incomplete")
+        if len(self.request_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in self.request_hash
+        ):
+            raise ValueError(
+                "Pending SQL operation hashes must be lowercase SHA-256 hex"
+            )
+        object.__setattr__(self, "operation_id", operation_id)
+        object.__setattr__(self, "resources", tuple(sorted(set(self.resources))))
+        object.__setattr__(
+            self,
+            "dependency_resources",
+            tuple(sorted(set(self.dependency_resources))),
+        )
+
+    @classmethod
+    def from_request(
+        cls,
+        request: QueuedMutationRequest,
+        state: PendingMutationState = PendingMutationState.QUEUED,
+    ) -> "PendingSqlOperationRecord":
+        return cls(
+            database_id=request.database_id,
+            operation_id=request.operation_id,
+            mutation_type=request.mutation_type,
+            request_hash=request.request_hash,
+            owning_surface=request.owning_surface,
+            resources=request.resources,
+            dependency_resources=request.dependency_resources,
+            bid_uid=request.bid_uid,
+            page_uid=request.page_uid,
+            state=state,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class MutationExecutionResult:
+    outcome_status: MutationOutcomeStatus
+    created_resource_ids: tuple[str, ...] = ()
+    authoritative_result: Optional[AuthoritativeMutationResult] = None
+    message: str = ""
+    conflict: Optional[SynchronizationConflict] = None
+    commit_attempted: bool = False
+
+    def __post_init__(self) -> None:
+        if (
+            self.conflict is not None
+            and self.outcome_status != MutationOutcomeStatus.CONFLICT
+        ):
+            raise ValueError("Only a conflict outcome may carry a conflict")
+        if (
+            self.outcome_status == MutationOutcomeStatus.COMMITTED
+            and not self.commit_attempted
+        ):
+            object.__setattr__(self, "commit_attempted", True)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -231,21 +672,36 @@ class QueuedMutationResult:
     database_id: str
     runtime_generation: int
     operation_id: str
-    success: bool
+    outcome_status: MutationOutcomeStatus
     created_resource_ids: tuple[str, ...] = ()
+    authoritative_result: Optional[AuthoritativeMutationResult] = None
     message: str = ""
     conflict: Optional[SynchronizationConflict] = None
+    commit_attempted: bool = False
 
     def __post_init__(self) -> None:
-        if self.success and self.conflict is not None:
-            raise ValueError("A successful queued mutation cannot carry a conflict.")
+        try:
+            operation_id = str(uuid.UUID(str(self.operation_id)))
+        except ValueError as exc:
+            raise ValueError("Queued mutation result IDs must be UUIDs") from exc
+        if (
+            self.conflict is not None
+            and self.outcome_status != MutationOutcomeStatus.CONFLICT
+        ):
+            raise ValueError("Only a conflict outcome may carry a conflict")
+        if (
+            self.outcome_status == MutationOutcomeStatus.COMMITTED
+            and not self.commit_attempted
+        ):
+            object.__setattr__(self, "commit_attempted", True)
+        object.__setattr__(self, "operation_id", operation_id)
 
 
 _QUEUED_TAKEOFF_PREVIEW_UID_PREFIX = "pending:takeoff-placement:"
 
 
 def queued_takeoff_preview_uid(operation_id: str, index: int) -> str:
-    return f"pending:{operation_id}:{index}"
+    return f"{_QUEUED_TAKEOFF_PREVIEW_UID_PREFIX}{operation_id}:{index}"
 
 
 def is_queued_takeoff_preview_uid(uid: str) -> bool:
@@ -287,6 +743,17 @@ class HydratedDatabaseChangeBatch:
     bid_data_by_bid: dict[int, BidLoadResult] = field(default_factory=dict)
     hierarchy_file: Optional[HierarchyFileEntry] = None
     cdn_types: dict[str, CdnType] = field(default_factory=dict)
+    default_layers: Optional[tuple[BidLayer, ...]] = None
+    job_statuses: Optional[tuple[JobStatus, ...]] = None
+    employees: Optional[tuple[Employee, ...]] = None
+    pay_classes: Optional[tuple[PayClass, ...]] = None
+    used_job_status_uids: Optional[frozenset[str]] = None
+    used_employee_uids: Optional[frozenset[str]] = None
+    cover_sheet_by_bid: dict[int, CoverSheetData] = field(default_factory=dict)
+    page_delete_content_uids_by_bid: dict[int, frozenset[str]] = field(
+        default_factory=dict
+    )
+    settings_defaults: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -330,11 +797,35 @@ class SynchronizationConflict:
 class DatabaseMutationRequest:
     database_id: str
     session_id: str
+    operation_id: str
+    mutation_type: str
+    request_hash: str
+    result_format_version: int = 1
     resources: tuple[ResourceRef, ...] = ()
     expected_versions: tuple[ExpectedResourceVersion, ...] = ()
     required_lock_tokens: tuple[str, ...] = ()
     block_bid_child_locks: bool = False
     block_bid_active_editors: bool = False
+
+    def __post_init__(self) -> None:
+        try:
+            operation_id = str(uuid.UUID(str(self.operation_id)))
+        except ValueError as exc:
+            raise ValueError("Database mutation operation IDs must be UUIDs") from exc
+        try:
+            mutation_type = CollaborationMutationType(str(self.mutation_type)).value
+        except ValueError as exc:
+            raise ValueError("Database mutation types must be canonical") from exc
+        request_hash = self.request_hash
+        if len(request_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in request_hash
+        ):
+            raise ValueError("Mutation request hashes must be lowercase SHA-256 hex")
+        if self.result_format_version != 1:
+            raise ValueError("Only mutation result format version 1 is supported")
+        object.__setattr__(self, "operation_id", operation_id)
+        object.__setattr__(self, "mutation_type", mutation_type)
+        object.__setattr__(self, "request_hash", request_hash)
 
 
 T = TypeVar("T")
@@ -342,12 +833,64 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class DatabaseMutationResult(Generic[T]):
-    success: bool
+    operation_id: str
+    outcome_status: MutationOutcomeStatus
     value: Optional[T] = None
     resulting_versions: dict[ResourceRef, ConcurrencyToken] = field(
         default_factory=dict
     )
     conflict: Optional[SynchronizationConflict] = None
+    commit_attempted: bool = False
+
+    def __post_init__(self) -> None:
+        try:
+            operation_id = str(uuid.UUID(str(self.operation_id)))
+        except ValueError as exc:
+            raise ValueError("Database mutation result IDs must be UUIDs") from exc
+        if (
+            self.conflict is not None
+            and self.outcome_status != MutationOutcomeStatus.CONFLICT
+        ):
+            raise ValueError("Only a conflict outcome may carry a conflict")
+        if (
+            self.outcome_status == MutationOutcomeStatus.COMMITTED
+            and not self.commit_attempted
+        ):
+            object.__setattr__(self, "commit_attempted", True)
+        object.__setattr__(self, "operation_id", operation_id)
+
+
+@dataclass(frozen=True, kw_only=True)
+class DurableOperationResult:
+    database_id: str
+    operation_id: str
+    found: bool
+    mutation_type: str = ""
+    request_hash: str = ""
+    result_format_version: int = 0
+    result_payload: str = ""
+
+    def __post_init__(self) -> None:
+        try:
+            normalized_operation_id = str(uuid.UUID(str(self.operation_id)))
+        except ValueError as exc:
+            raise ValueError("Durable operation IDs must be UUIDs") from exc
+        object.__setattr__(self, "operation_id", normalized_operation_id)
+        if self.found:
+            try:
+                CollaborationMutationType(self.mutation_type)
+            except ValueError as exc:
+                raise ValueError(
+                    "A durable operation result has a noncanonical mutation type"
+                ) from exc
+            if len(self.request_hash) != 64 or any(
+                character not in "0123456789abcdef" for character in self.request_hash
+            ):
+                raise ValueError(
+                    "A durable operation result has an invalid request hash"
+                )
+            if self.result_format_version != 1 or not self.result_payload:
+                raise ValueError("A durable operation result is incomplete")
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@ from typing import List, Optional, Tuple
 from ...domain.entities.file_state import normalize_path
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
+    MutationOutcomeStatus,
     ResourceRef,
 )
 from ..dtos.insert_annotation_spec_dto import InsertAnnotationSpec
@@ -81,7 +82,11 @@ class AnnotationWriteService(DatabaseMutationWriteService):
     def _execute_mutation(self, db_path: str, resources, operation):
         resources = tuple(resources)
         result = self._execute_database_mutation(db_path, resources, operation)
-        return result.value if result.success else None
+        return (
+            result.value
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED
+            else None
+        )
 
     def _update_resources(self, db_path: str, annotations, operation) -> bool:
         resources = tuple(

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from PySide6.QtCore import QDate
 from ....domain.entities.cover_sheet import CoverSheetData
 from ....domain.entities.employee import Employee
@@ -134,13 +135,18 @@ class CoverSheetDialog(QtWidgets.QDialog):
         has_license: bool = True,
         context: Optional[CoverSheetContext] = None,
         save_job_statuses_fn=None,
+        save_job_statuses_async_fn=None,
         reload_job_statuses_fn=None,
         save_employees_fn=None,
+        save_employees_async_fn=None,
         save_pay_classes_fn=None,
+        save_pay_classes_async_fn=None,
         reload_employees_fn=None,
         save_bid_areas_fn=None,
+        save_bid_areas_async_fn=None,
         reload_bid_areas_fn=None,
         refresh_fn=None,
+        save_cover_sheet_async_fn=None,
         get_used_area_uids_fn=None,
         pdf_page_sizes_fn: Optional[Callable[[str], List[PdfPageSize]]] = None,
         bid_ref: Optional[BidRef] = None,
@@ -179,12 +185,16 @@ class CoverSheetDialog(QtWidgets.QDialog):
         )
         if context is not None:
             self._save_job_statuses_fn = context.save_job_statuses
-            self._reload_job_statuses_fn = context.reload_job_statuses
+            self._reload_job_statuses_fn = (
+                reload_job_statuses_fn or context.reload_job_statuses
+            )
             self._save_employees_fn = context.save_employees
             self._save_pay_classes_fn = context.save_pay_classes
-            self._reload_employees_fn = context.reload_employees_and_pay_classes
+            self._reload_employees_fn = (
+                reload_employees_fn or context.reload_employees_and_pay_classes
+            )
             self._save_bid_areas_fn = context.save_bid_areas
-            self._reload_bid_areas_fn = context.reload_bid_areas
+            self._reload_bid_areas_fn = reload_bid_areas_fn or context.reload_bid_areas
             self._refresh_fn = context.refresh
         else:
             self._save_job_statuses_fn = save_job_statuses_fn
@@ -207,7 +217,14 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._all_employees: List[Employee] = list(self.data.employees)
         self._locked: bool = False
         self._closed = False
+        self._operation_pending = False
+        self._save_done = False
         self._active_sub_dialog = None
+        self._save_job_statuses_async_fn = save_job_statuses_async_fn
+        self._save_employees_async_fn = save_employees_async_fn
+        self._save_pay_classes_async_fn = save_pay_classes_async_fn
+        self._save_bid_areas_async_fn = save_bid_areas_async_fn
+        self._save_cover_sheet_async_fn = save_cover_sheet_async_fn
         self._setup_ui()
         self._populate()
 
@@ -714,6 +731,35 @@ class CoverSheetDialog(QtWidgets.QDialog):
         return bool(self.plan_tree.header().restoreState(state))
 
     def done(self, result: int) -> None:
+        if self._operation_pending:
+            return
+        if (
+            result == QtWidgets.QDialog.DialogCode.Accepted
+            and self._save_cover_sheet_async_fn is not None
+            and not self._save_done
+        ):
+            self._operation_pending = True
+            self.set_interactive(False)
+
+            def completed(success: bool) -> None:
+                if not isValid(self):
+                    return
+                self._operation_pending = False
+                self.set_interactive(True)
+                if success:
+                    self._save_done = True
+                    self.done(result)
+
+            try:
+                started = self._save_cover_sheet_async_fn(self.get_updates(), completed)
+            except Exception:
+                self._operation_pending = False
+                self.set_interactive(True)
+                raise
+            if not started:
+                self._operation_pending = False
+                self.set_interactive(True)
+            return
         if not self._closed:
             self._closed = True
             self._metadata_loader.result_ready.disconnect(self._on_pdf_metadata_result)
@@ -883,6 +929,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if self._active_sub_dialog is not None:
             self._active_sub_dialog.set_interactive(enabled)
 
+    def closeEvent(self, event) -> None:
+        if self._operation_pending:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def _on_job_status_changed(self) -> None:
         uid = self.combo_job_status.currentData() or ""
         locked = any(js.locked for js in self.data.job_statuses if js.uid == str(uid))
@@ -1013,6 +1065,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             used_job_status_uids=self.data.used_job_status_uids,
             initial_name=initial_name,
             save_fn=self._save_job_statuses_fn,
+            save_async_fn=self._save_job_statuses_async_fn,
         )
         self._active_sub_dialog = dialog
         try:
@@ -1075,7 +1128,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
             pay_classes=self.data.pay_classes,
             initial_first_name=initial_first_name,
             save_fn=self._save_employees_fn,
+            save_async_fn=self._save_employees_async_fn,
             pay_classes_save_fn=self._save_pay_classes_fn,
+            pay_classes_save_async_fn=self._save_pay_classes_async_fn,
         )
         self._active_sub_dialog = dialog
         try:
@@ -1147,6 +1202,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             parent=self,
             bid_areas=bid_areas,
             save_fn=save_bid_areas if self._save_bid_areas_fn else None,
+            save_async_fn=self._save_bid_areas_async_fn,
             used_uids=used_uids,
             has_license=self._has_license,
             bid_ref=self._bid_ref,
@@ -1159,7 +1215,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             dialog.cleanup()
             saved_changes = dialog.has_saved_changes()
             dialog.deleteLater()
-        if saved_changes and self._refresh_fn:
+        if saved_changes and self._save_bid_areas_async_fn is None and self._refresh_fn:
             refresh_result = self._refresh_fn()
             if refresh_result is False:
                 show_warning(
@@ -1681,6 +1737,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _populate_imported_pages(
         self, file_sizes: List[Tuple[str, List[PdfPageSize]]]
     ) -> None:
+        # Cover-sheet drawings remain user-owned external references. Importing,
+        # duplicating, and deleting rows must never copy, move, or delete them.
         parent_item, folder_uid, insertion_index = self._resolve_insertion_point()
         def_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
         last_item = None

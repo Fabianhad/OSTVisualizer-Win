@@ -99,6 +99,7 @@ def _walk_page_uids(root: QtGui.QStandardItem) -> List[str]:
 class PageComboBox(TreePopupComboBoxBase):
     page_selection_changed = QtCore.Signal(list)
     active_page_changed = QtCore.Signal(object)
+    navigation_state_changed = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -119,6 +120,7 @@ class PageComboBox(TreePopupComboBoxBase):
         self._pages_with_takeoffs: Set[str] = set()
         self._selected_uids: List[str] = []
         self._active_uid: Optional[str] = None
+        self._bid_uid: Optional[str] = None
         self._block_signals: bool = False
         self._show_page_index: bool = False
         self._show_sheet_number: bool = False
@@ -143,19 +145,32 @@ class PageComboBox(TreePopupComboBoxBase):
     def load_bid(
         self, bid: Bid, pages_with_takeoffs: Optional[Set[str]] = None
     ) -> None:
+        bid_uid = str(bid.uid)
+        preserve_navigation = self._bid_uid == bid_uid
+        previous_selected = list(self._selected_uids) if preserve_navigation else []
+        previous_active = self._active_uid if preserve_navigation else None
         self._block_signals = True
         self._model.clear()
         self._page_items.clear()
         self._pages_with_takeoffs = set(pages_with_takeoffs or ())
-        self._selected_uids = []
-        self._active_uid = None
         root = self._model.invisibleRootItem()
         for folder in bid.folders.values():
             self._add_folder_item(root, folder)
         for page in bid.pages_without_folder:
             self._add_page_item(root, page)
+        self._selected_uids = [
+            uid for uid in previous_selected if uid in self._page_items
+        ]
+        for uid in self._selected_uids:
+            self._page_items[uid].setCheckState(QtCore.Qt.CheckState.Checked)
+        self._active_uid = (
+            previous_active if previous_active in self._page_items else None
+        )
+        self._update_bold(self._active_uid)
+        self._bid_uid = bid_uid
         self._block_signals = False
         self._update_display_text()
+        self.navigation_state_changed.emit()
 
     def set_page_has_takeoffs(self, page_uid: str, has_takeoffs: bool = True) -> None:
         if not page_uid or page_uid not in self._page_items:
@@ -382,8 +397,10 @@ class PageComboBox(TreePopupComboBoxBase):
         self._pages_with_takeoffs.clear()
         self._selected_uids = []
         self._active_uid = None
+        self._bid_uid = None
         self._block_signals = False
         self._update_display_text()
+        self.navigation_state_changed.emit()
 
     def cleanup(self) -> None:
         if self._page_items is None:
@@ -402,6 +419,7 @@ class PageComboBox(TreePopupComboBoxBase):
         self._pages_with_takeoffs = None
         self._selected_uids = None
         self._active_uid = None
+        self._bid_uid = None
         self._page_delegate = None
 
 

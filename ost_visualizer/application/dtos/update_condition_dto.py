@@ -24,3 +24,4 @@ class UpdateConditionDto:
 class UpdateConditionResultDto:
     success: bool = False
     error: Optional[str] = None
+    error_presented: bool = False

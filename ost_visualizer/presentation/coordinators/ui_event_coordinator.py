@@ -16,6 +16,8 @@ from ...application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseLoss,
     EditLeaseResult,
+    MutationOutcomeStatus,
+    QueuedMutationResult,
     ResourceRef,
     SynchronizationState,
 )
@@ -313,8 +315,15 @@ class UIEventCoordinator:
         self._sidebar.update_conditions_quantities()
 
     def _load_condition_summary(self) -> None:
-        if self._sidebar:
-            self._sidebar.load_condition_summary()
+        if not self._sidebar:
+            return
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if bid_ref and self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        ):
+            self._sidebar.load_condition_summary_from_memory()
+            return
+        self._sidebar.load_condition_summary()
 
     def set_conditions_sidebar(self, sidebar) -> None:
         self.conditions_sidebar = sidebar
@@ -844,9 +853,18 @@ class UIEventCoordinator:
                     areas_with_takeoff=(self.project_data.get_area_uids_with_takeoff()),
                     selected_uid=self._pending_takeoff_selected_area_uid or None,
                 )
-            self._load_takeoff_sidebar(bid_ref)
-            self._sidebar.load_bid_layers_sidebar()
-            self._sidebar.load_conditions_sidebar()
+            if self._project_write_service.uses_sql_collaboration_mutations(
+                bid_ref.file_path
+            ):
+                self._sidebar.load_takeoff_sidebar_from_memory(
+                    bid_ref, self._bid_data_cache
+                )
+                self._sidebar.load_bid_layers_sidebar_from_memory()
+                self._sidebar.refresh_conditions_from_memory()
+            else:
+                self._load_takeoff_sidebar(bid_ref)
+                self._sidebar.load_bid_layers_sidebar()
+                self._sidebar.load_conditions_sidebar()
             self._load_condition_summary()
             highlighted = self._validate_condition_uids(
                 self.ui_state_manager.highlighted_condition_uids
@@ -1247,6 +1265,10 @@ class UIEventCoordinator:
         self._subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
         self._subscribe(AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed)
         self._subscribe(
+            AppEvents.PENDING_PLAN_MUTATIONS_CHANGED,
+            self._on_pending_plan_mutations_changed,
+        )
+        self._subscribe(
             AppEvents.REMOTE_CONDITIONS_CHANGED,
             self._on_remote_conditions_changed,
         )
@@ -1266,6 +1288,10 @@ class UIEventCoordinator:
         self._subscribe(
             AppEvents.COLLABORATION_STATE_CHANGED,
             self._on_collaboration_state_changed,
+        )
+        self._subscribe(
+            AppEvents.COLLABORATION_MUTATION_STATE_CHANGED,
+            self._on_collaboration_mutation_state_changed,
         )
         self._subscribe(AppEvents.PRESENCE_CHANGED, self._on_presence_changed)
         self._subscribe(
@@ -1322,6 +1348,8 @@ class UIEventCoordinator:
                 )
                 return
             if not result.granted:
+                if owning_surface == "main-plan":
+                    self._prepare_for_modal_mutation_error(database_id)
                 show_warning(
                     self.main_window,
                     "Editing Unavailable",
@@ -1383,8 +1411,15 @@ class UIEventCoordinator:
             return
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return
-        areas = self._project_read_service.get_bid_areas(
-            bid_ref.file_path, bid_ref.bid_uid
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
+        areas = (
+            self.project_data.get_bid_area_snapshot()
+            if uses_sql_queue
+            else self._project_read_service.get_bid_areas(
+                bid_ref.file_path, bid_ref.bid_uid
+            )
         )
         used_uids = self.project_data.get_area_uids_with_takeoff()
 
@@ -1396,6 +1431,17 @@ class UIEventCoordinator:
             parent=self.main_window,
             bid_areas=areas,
             save_fn=save_fn,
+            save_async_fn=(
+                (
+                    lambda changes, completed: self._save_bid_areas_async(
+                        bid_ref,
+                        changes,
+                        completed,
+                    )
+                )
+                if uses_sql_queue
+                else None
+            ),
             used_uids=used_uids,
             has_license=True,
             bid_ref=bid_ref,
@@ -1413,6 +1459,7 @@ class UIEventCoordinator:
             if (
                 executed
                 and dialog.has_saved_changes()
+                and not uses_sql_queue
                 and not self._project_write_service.reload_and_notify(bid_ref.file_path)
             ):
                 show_warning(
@@ -1450,16 +1497,57 @@ class UIEventCoordinator:
             )
         return result
 
+    def _save_bid_areas_async(self, bid_ref, changes, completed) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            completed(False, None)
+            return False
+
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                authoritative = result.authoritative_result
+                maps = dict(authoritative.created_uid_maps) if authoritative else {}
+                completed(True, dict(maps.get("areas", ())))
+                return
+            self.present_queued_mutation_error(
+                bid_ref.file_path,
+                "Bid Areas",
+                result,
+            )
+            completed(False, None)
+
+        try:
+            self._project_write_service.queue_bid_areas_save(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                changes,
+                finish,
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_warning(self.main_window, "Bid Areas", str(exc))
+            return False
+        return True
+
+    def save_bid_areas_async(self, bid_ref, changes, completed) -> bool:
+        return self._save_bid_areas_async(bid_ref, changes, completed)
+
     def open_employees_dialog(self) -> None:
         file_path = self._editable_master_data_file_path()
         if not file_path:
             return
-        employees, pay_classes = (
-            self._project_read_service.get_employees_and_pay_classes(file_path)
-        )
-        used_employee_uids = self._project_read_service.get_estimator_uids_in_use(
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
             file_path
         )
+        if uses_sql_queue:
+            employees = self.project_data.get_employee_snapshot(file_path)
+            pay_classes = self.project_data.get_pay_class_snapshot(file_path)
+            used_employee_uids = self.project_data.get_used_employee_uids(file_path)
+        else:
+            employees, pay_classes = (
+                self._project_read_service.get_employees_and_pay_classes(file_path)
+            )
+            used_employee_uids = self._project_read_service.get_estimator_uids_in_use(
+                file_path
+            )
         dialog = EmployeesDialog(
             self._icon_provider,
             parent=self.main_window,
@@ -1469,8 +1557,36 @@ class UIEventCoordinator:
             save_fn=lambda changes: self._save_master_employees_result(
                 file_path, changes
             ),
+            save_async_fn=(
+                lambda changes, completed: (
+                    self._save_master_data_async(
+                        file_path,
+                        "Employees",
+                        self._project_write_service.queue_employees_save,
+                        changes,
+                        completed,
+                        "employees",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
             pay_classes_save_fn=lambda changes: self._save_master_pay_classes(
                 file_path, changes
+            ),
+            pay_classes_save_async_fn=(
+                lambda changes, completed: (
+                    self._save_master_data_async(
+                        file_path,
+                        "Payroll Classes",
+                        self._project_write_service.queue_pay_classes_save,
+                        changes,
+                        completed,
+                        "pay_classes",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
             ),
             menu_mode=True,
         )
@@ -1490,25 +1606,50 @@ class UIEventCoordinator:
         file_path = self._editable_master_data_file_path()
         if not file_path:
             return
-        bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        data = (
-            self._project_read_service.get_cover_sheet_data(file_path, bid_ref.bid_uid)
-            if bid_ref
-            and normalize_path(bid_ref.file_path) == normalize_path(file_path)
-            else None
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            file_path
         )
-        job_statuses = (
-            data.job_statuses
-            if data
-            else self._project_read_service.get_job_statuses(file_path)
-        )
-        used_job_status_uids = data.used_job_status_uids if data is not None else set()
+        if uses_sql_queue:
+            job_statuses = self.project_data.get_job_status_snapshot(file_path)
+            used_job_status_uids = self.project_data.get_used_job_status_uids(file_path)
+        else:
+            bid_ref = self.ui_state_manager.get_selected_bid_ref()
+            data = (
+                self._project_read_service.get_cover_sheet_data(
+                    file_path, bid_ref.bid_uid
+                )
+                if bid_ref
+                and normalize_path(bid_ref.file_path) == normalize_path(file_path)
+                else None
+            )
+            job_statuses = (
+                data.job_statuses
+                if data
+                else self._project_read_service.get_job_statuses(file_path)
+            )
+            used_job_status_uids = (
+                data.used_job_status_uids if data is not None else set()
+            )
         dialog = JobStatusesDialog(
             self._icon_provider,
             parent=self.main_window,
             job_statuses=job_statuses,
             used_job_status_uids=used_job_status_uids,
             save_fn=lambda changes: self._save_master_job_statuses(file_path, changes),
+            save_async_fn=(
+                lambda changes, completed: (
+                    self._save_master_data_async(
+                        file_path,
+                        "Job Statuses",
+                        self._project_write_service.queue_job_statuses_save,
+                        changes,
+                        completed,
+                        "job_statuses",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
             menu_mode=True,
         )
         self._exec_with_collaboration_lease(
@@ -1527,24 +1668,52 @@ class UIEventCoordinator:
         file_path = self._editable_master_data_file_path()
         if not file_path:
             return
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            file_path
+        )
         dialog = ConditionTypesDialog(
             self._icon_provider,
             parent=self.main_window,
             condition_types=list(
-                self._project_read_service.get_cdn_types(file_path).values()
+                (
+                    self.project_data.get_cdn_types()
+                    if uses_sql_queue
+                    else self._project_read_service.get_cdn_types(file_path)
+                ).values()
             ),
             save_fn=lambda changes: self._save_master_condition_types(
                 file_path, changes
             ),
-            blocked_delete_uids_fn=lambda uids: {
-                str(uid)
-                for uid in self._project_write_service.validate_condition_types_delete(
-                    file_path, uids
-                ).blocked_uids
-            },
+            save_async_fn=(
+                (
+                    lambda changes, completed: (
+                        self._save_master_condition_types_async(
+                            file_path,
+                            changes,
+                            completed,
+                        )
+                    )
+                )
+                if uses_sql_queue
+                else None
+            ),
+            blocked_delete_uids_fn=(
+                (lambda _uids: set())
+                if uses_sql_queue
+                else lambda uids: {
+                    str(uid)
+                    for uid in self._project_write_service.validate_condition_types_delete(
+                        file_path, uids
+                    ).blocked_uids
+                }
+            ),
             delete_fn=lambda uids: self._delete_master_condition_types(file_path, uids),
-            reload_fn=lambda: list(
-                self._project_read_service.get_cdn_types(file_path).values()
+            reload_fn=(
+                (lambda: list(self.project_data.get_cdn_types().values()))
+                if uses_sql_queue
+                else lambda: list(
+                    self._project_read_service.get_cdn_types(file_path).values()
+                )
             ),
             has_license=True,
             menu_mode=True,
@@ -1565,9 +1734,16 @@ class UIEventCoordinator:
         file_path = self._editable_master_data_file_path()
         if not file_path:
             return
-        employees, pay_classes = (
-            self._project_read_service.get_employees_and_pay_classes(file_path)
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            file_path
         )
+        if uses_sql_queue:
+            employees = self.project_data.get_employee_snapshot(file_path)
+            pay_classes = self.project_data.get_pay_class_snapshot(file_path)
+        else:
+            employees, pay_classes = (
+                self._project_read_service.get_employees_and_pay_classes(file_path)
+            )
         used_pay_class_uids = {
             str(employee.pay_class_uid)
             for employee in employees
@@ -1579,6 +1755,20 @@ class UIEventCoordinator:
             pay_classes=pay_classes,
             used_pay_class_uids=used_pay_class_uids,
             save_fn=lambda changes: self._save_master_pay_classes(file_path, changes),
+            save_async_fn=(
+                lambda changes, completed: (
+                    self._save_master_data_async(
+                        file_path,
+                        "Payroll Classes",
+                        self._project_write_service.queue_pay_classes_save,
+                        changes,
+                        completed,
+                        "pay_classes",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
             menu_mode=True,
         )
         self._exec_with_collaboration_lease(
@@ -1597,11 +1787,24 @@ class UIEventCoordinator:
         file_path = self._editable_master_data_file_path()
         if not file_path:
             return
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            file_path
+        )
+        layers = (
+            self.project_data.get_default_layer_snapshot(file_path)
+            if uses_sql_queue
+            else self._project_read_service.get_default_layers(file_path)
+        )
+        reload_layers = (
+            (lambda: self.project_data.get_default_layer_snapshot(file_path))
+            if uses_sql_queue
+            else (lambda: self._project_read_service.get_default_layers(file_path))
+        )
         dialog = LayersDialog(
             self._icon_provider,
             parent=self.main_window,
-            layers=self._project_read_service.get_default_layers(file_path),
-            reload_fn=lambda: self._project_read_service.get_default_layers(file_path),
+            layers=layers,
+            reload_fn=reload_layers,
             insert_fn=lambda name, after_sequence: (
                 self._insert_default_layer_from_dialog(file_path, name, after_sequence)
             ),
@@ -1620,6 +1823,77 @@ class UIEventCoordinator:
             move_fn=lambda layer_uid, neighbor_uid: (
                 self._move_default_layer_from_dialog(file_path, layer_uid, neighbor_uid)
             ),
+            insert_async_fn=(
+                lambda name, sequence, completed: (
+                    self._save_default_layer_async(
+                        file_path,
+                        "New Default Layer",
+                        lambda callback: self._project_write_service.queue_default_layer_insert(
+                            file_path, name, sequence, callback
+                        ),
+                        completed,
+                        "default_layers",
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            delete_many_async_fn=(
+                lambda uids, completed: (
+                    self._save_default_layer_async(
+                        file_path,
+                        "Delete Default Layer",
+                        lambda callback: self._project_write_service.queue_default_layers_delete(
+                            file_path, uids, callback
+                        ),
+                        completed,
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            update_name_async_fn=(
+                lambda uid, name, completed: (
+                    self._save_default_layer_update_async(
+                        file_path, "rename", {"layer_uid": uid, "name": name}, completed
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            move_async_fn=(
+                lambda uid, neighbor, completed: (
+                    self._save_default_layer_update_async(
+                        file_path,
+                        "reorder",
+                        {"layer_uid": uid, "neighbor_uid": neighbor},
+                        completed,
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            update_show_async_fn=(
+                lambda uid, show, completed: (
+                    self._save_default_layer_update_async(
+                        file_path,
+                        "show",
+                        {"layer_uid": uid, "show": show},
+                        completed,
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
+            update_all_show_async_fn=(
+                lambda show, completed: (
+                    self._save_default_layer_update_async(
+                        file_path, "show_all", {"show": show}, completed
+                    )
+                    if uses_sql_queue
+                    else None
+                )
+            ),
             has_license=True,
             mode=LayersDialogMode.DEFAULT_LAYERS,
         )
@@ -1633,6 +1907,79 @@ class UIEventCoordinator:
                 ),
             ),
             dialog.cleanup,
+        )
+
+    def _save_master_data_async(
+        self,
+        file_path: str,
+        title: str,
+        queue_fn,
+        changes,
+        completed,
+        result_family: str,
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            completed(False, None)
+            return False
+
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                authoritative = result.authoritative_result
+                maps = dict(authoritative.created_uid_maps) if authoritative else {}
+                completed(True, dict(maps.get(result_family, ())))
+                return
+            self.present_queued_mutation_error(file_path, title, result)
+            completed(False, None)
+
+        try:
+            queue_fn(file_path, changes, finish)
+        except (RuntimeError, ValueError) as exc:
+            show_warning(self.main_window, title, str(exc))
+            return False
+        return True
+
+    def _save_default_layer_async(
+        self,
+        file_path: str,
+        title: str,
+        submit,
+        completed,
+        result_family: str = "",
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            completed(False, None)
+            return False
+
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                value = None
+                if result_family and result.authoritative_result is not None:
+                    mapping = dict(result.authoritative_result.created_uid_maps).get(
+                        result_family, ()
+                    )
+                    value = dict(mapping).get("0")
+                completed(True, value)
+                return
+            self.present_queued_mutation_error(file_path, title, result)
+            completed(False, None)
+
+        try:
+            submit(finish)
+        except (RuntimeError, ValueError) as exc:
+            show_warning(self.main_window, title, str(exc))
+            return False
+        return True
+
+    def _save_default_layer_update_async(
+        self, file_path: str, operation: str, values: dict, completed
+    ) -> bool:
+        return self._save_default_layer_async(
+            file_path,
+            "Default Layers",
+            lambda callback: self._project_write_service.queue_default_layer_update(
+                file_path, operation, values, callback
+            ),
+            completed,
         )
 
     def _save_master_employees_result(self, file_path: str, changes):
@@ -1675,6 +2022,40 @@ class UIEventCoordinator:
                 "condition types.",
             )
         return result.value
+
+    def _save_master_condition_types_async(
+        self,
+        file_path: str,
+        changes,
+        completed,
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            completed(False, None)
+            return False
+
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                authoritative = result.authoritative_result
+                maps = dict(authoritative.created_uid_maps) if authoritative else {}
+                completed(True, dict(maps.get("condition_types", ())))
+                return
+            self.present_queued_mutation_error(
+                file_path,
+                "Condition Types",
+                result,
+            )
+            completed(False, None)
+
+        try:
+            self._project_write_service.queue_condition_types_save(
+                file_path,
+                changes,
+                finish,
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_warning(self.main_window, "Condition Types", str(exc))
+            return False
+        return True
 
     def _delete_master_condition_types(self, file_path: str, uids: list):
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
@@ -1777,6 +2158,43 @@ class UIEventCoordinator:
         self._set_plan_select_mode()
         self._toolbar.refresh()
 
+    def _prepare_for_modal_mutation_error(self, database_id: str) -> None:
+        if database_id != self.project_data.get_current_file_path():
+            return
+        self._reset_to_select_mode()
+        if self._plan_view_handler is not None:
+            self._plan_view_handler.prepare_for_modal_mutation_error()
+        elif self.plan_view is not None:
+            self.plan_view.prepare_for_modal_mutation_error()
+
+    def present_queued_mutation_error(
+        self,
+        database_id: str,
+        title: str,
+        result: QueuedMutationResult,
+        *,
+        critical: bool = False,
+    ) -> None:
+        if self._is_cleaning_up:
+            return
+        self._prepare_for_modal_mutation_error(database_id)
+        if result.outcome_status in {
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+        }:
+            show_warning(
+                self.main_window,
+                "SQL Synchronization",
+                result.message
+                or "The committed update requires authoritative SQL recovery.",
+            )
+            return
+        message = result.message or f"The {title.lower()} could not be completed."
+        if critical:
+            show_critical(self.main_window, title, message)
+        else:
+            show_warning(self.main_window, title, message)
+
     def ensure_select_mode(self) -> None:
         selected_takeoff_condition_uid = (
             self.plan_view.selected_takeoff_condition_uid() if self.plan_view else None
@@ -1800,6 +2218,7 @@ class UIEventCoordinator:
         if self._is_cleaning_up:
             return
         self._is_cleaning_up = True
+        self.project_operations.cancel_navigation_load()
         self._invalidate_mesh_scene_request()
         if self._plan_view_handler is not None:
             self._plan_view_handler.invalidate_pending_takeoff_placements()
@@ -1872,9 +2291,8 @@ class UIEventCoordinator:
         self._condition_handler = None
         self._deferred_persistence = None
 
-    def flush_current_page_state(self) -> bool:
+    def capture_current_page_state_for_shutdown(self) -> None:
         self._save_current_page_view_state()
-        return bool(self._deferred_persistence.flush())
 
     def _on_file_opened(self, file_path: str = "") -> None:
         self._save_current_page_view_state()
@@ -1973,6 +2391,23 @@ class UIEventCoordinator:
             self._update_export_menu_state()
             self._restore_project_tree_bid_selection_if_needed()
 
+    def _on_pending_plan_mutations_changed(
+        self,
+        database_id: str,
+        takeoff_uids: Optional[List[str]] = None,
+        pending: bool = True,
+    ) -> None:
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        if selected is None or selected.file_path != database_id:
+            return
+        changed = {str(uid) for uid in (takeoff_uids or ()) if uid}
+        for view in self._native_3d_views():
+            existing = view.get_pending_mutation_uids()
+            next_uids = (
+                existing.union(changed) if pending else existing.difference(changed)
+            )
+            view.set_pending_mutation_uids(next_uids)
+
     def _on_remote_bid_content_changed(
         self,
         database_id: str = "",
@@ -1980,13 +2415,14 @@ class UIEventCoordinator:
         families: Optional[List[str]] = None,
         resource_uids_by_family: Optional[Dict[str, List[str]]] = None,
         defer_plan_projection: bool = False,
+        local_completion: bool = False,
     ) -> None:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
             return
         changed_families = set(families or [])
         changed_uids = resource_uids_by_family or {}
-        if self._undo_service and changed_families:
+        if self._undo_service and changed_families and not local_completion:
             self._undo_service.clear()
         if CollaborationResourceFamily.TAKEOFFS.value in changed_families:
             self._on_takeoffs_changed(
@@ -2009,23 +2445,29 @@ class UIEventCoordinator:
                 update_plan=not defer_plan_projection,
             )
         if CollaborationResourceFamily.PAGES.value in changed_families:
-            valid_pages = [
-                uid
-                for uid in self.ui_state_manager.selected_page_uids
-                if self.project_data.get_page(uid)
-            ]
-            active_page = self.ui_state_manager.active_page_uid
-            if active_page and not self.project_data.get_page(active_page):
-                ordered_pages = sorted(
-                    self.project_data.get_all_pages(), key=lambda page: page.sequence
-                )
-                active_page = ordered_pages[0].uid if ordered_pages else None
+            if self._pending_takeoff_page_uids is not None:
+                valid_pages, active_page = self._resolve_takeoff_selection()
+                self._clear_staged_takeoff_restore()
+            else:
+                valid_pages = [
+                    uid
+                    for uid in self.ui_state_manager.selected_page_uids
+                    if self.project_data.get_page(uid)
+                ]
+                active_page = self.ui_state_manager.active_page_uid
+                if active_page and not self.project_data.get_page(active_page):
+                    ordered_pages = sorted(
+                        self.project_data.get_all_pages(),
+                        key=lambda page: page.sequence,
+                    )
+                    active_page = ordered_pages[0].uid if ordered_pages else None
             self.ui_state_manager.set_page_selection(valid_pages)
             self.ui_state_manager.active_page_uid = active_page
             self.project_data.select_pages(valid_pages)
             self._sidebar.load_takeoff_sidebar_from_memory(
                 selected, self._bid_data_cache
             )
+            self.takeoff_sidebar.restore_selection(valid_pages, active_page)
             if active_page:
                 self._update_page_settings_bar(active_page)
                 if not defer_plan_projection:
@@ -2161,6 +2603,24 @@ class UIEventCoordinator:
         if self._status_panel and database_id == selected:
             self._status_panel.set_collaboration_state(state, message)
 
+    def _on_collaboration_mutation_state_changed(
+        self,
+        database_id: str = "",
+        operation_id: str = "",
+        mutation_type: str = "",
+        state: str = "",
+        message: str = "",
+        pending_count: int = 0,
+    ) -> None:
+        del operation_id, mutation_type
+        selected = self.ui_state_manager.selected_file_path or ""
+        if self._status_panel and database_id == selected:
+            self._status_panel.set_collaboration_mutation_state(
+                state,
+                pending_count,
+                message,
+            )
+
     def _on_edit_lease_lost(
         self,
         loss: EditLeaseLoss,
@@ -2194,6 +2654,7 @@ class UIEventCoordinator:
             return
         if recovery_started:
             return
+        self._prepare_for_modal_mutation_error(database_id)
         show_warning(
             self.main_window,
             "SQL Synchronization",
@@ -2210,6 +2671,10 @@ class UIEventCoordinator:
         selected_bid = self.ui_state_manager.get_selected_bid_ref()
         selected_database_id = self.ui_state_manager.selected_file_path
         self._do_file_refresh()
+        if self.project_data.get_current_file_path() and normalize_path(
+            self.project_data.get_current_file_path()
+        ) == normalize_path(database_id):
+            self.refresh_conditions_ui()
         if active_bid is None:
             if selected_database_id and normalize_path(
                 selected_database_id
@@ -2344,6 +2809,7 @@ class UIEventCoordinator:
                 ConflictResolutionAction.RELOAD,
                 ConflictResolutionAction.CANCEL_READ_ONLY,
             )
+        self._prepare_for_modal_mutation_error(database_id)
         dialog = SynchronizationConflictDialog(
             self._icon_provider,
             message
@@ -2398,6 +2864,11 @@ class UIEventCoordinator:
         loaded_files = build_loaded_files(hierarchy)
         self._cache_bid_data(loaded_files)
         self.main_window.project_view.build_complete_structure(loaded_files)
+
+    def refresh_hierarchy_projection(self) -> None:
+        """Rebuild the tree from the last authoritative hierarchy snapshot."""
+        if not self._is_cleaning_up:
+            self._do_file_refresh()
 
     def _finish_refresh(self) -> None:
         snap = self._nav.refresh_snapshot
@@ -2531,6 +3002,7 @@ class UIEventCoordinator:
     def _on_file_unloaded(
         self, file_path: str = "", active_context_removed: bool = True
     ) -> None:
+        self.project_operations.cancel_navigation_load(file_path)
         removed_path = file_path or ""
         selected_path = self.ui_state_manager.selected_file_path
         if removed_path and selected_path:
@@ -2557,6 +3029,8 @@ class UIEventCoordinator:
         self._refresh_project_tree_after_file_unload()
         self._update_export_menu_state()
         if self._status_panel:
+            self._status_panel.set_collaboration_presence([])
+            self._status_panel.set_collaboration_mutation_state("", 0)
             self._status_panel.set_collaboration_state("stopped")
         self.main_window.refresh_window_title()
 
@@ -2579,6 +3053,7 @@ class UIEventCoordinator:
         project_uid: str | None = None,
         is_database_root: bool = False,
     ) -> None:
+        self.project_operations.cancel_navigation_load()
         self._save_current_page_view_state()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
@@ -2595,6 +3070,9 @@ class UIEventCoordinator:
         self._viewer.clear_plan_view()
         self._clear_mesh_views_for_scene_update()
         self._update_export_menu_state()
+        if self._status_panel:
+            self._status_panel.set_collaboration_presence([])
+            self._status_panel.set_collaboration_mutation_state("", 0)
         if file_path:
             collaboration_status = self._sql_collaboration.status(file_path)
             if self._status_panel:
@@ -2627,8 +3105,7 @@ class UIEventCoordinator:
 
     def _refresh_condition_display_after_app_config_change(self) -> None:
         prev_highlighted = set(self.ui_state_manager.highlighted_condition_uids)
-        self._sidebar.load_conditions_sidebar()
-        self._load_condition_summary()
+        self._sidebar.refresh_conditions_from_memory()
         if prev_highlighted and self.conditions_sidebar:
             self.conditions_sidebar.highlight_conditions(prev_highlighted)
         if self.ui_access_manager.is_allowed(Feature.VIEW_3D):
@@ -2724,14 +3201,21 @@ class UIEventCoordinator:
         self, bid_ref: Optional[BidRef], force: bool = False
     ) -> None:
         prev_bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        if bid_ref and prev_bid_ref and bid_ref == prev_bid_ref and not force:
+        if (
+            bid_ref
+            and prev_bid_ref
+            and bid_ref == prev_bid_ref
+            and not force
+            and not self.project_operations.navigation_load_in_progress()
+        ):
             return
         self._save_current_page_view_state()
-        if prev_bid_ref and (
-            bid_ref is None or bid_ref.file_path != prev_bid_ref.file_path
-        ):
-            self._sql_collaboration.update_presence(prev_bid_ref.file_path, None, None)
         if not bid_ref:
+            self.project_operations.cancel_navigation_load()
+            if prev_bid_ref:
+                self._sql_collaboration.update_presence(
+                    prev_bid_ref.file_path, None, None
+                )
             if self._plan_view_handler is not None:
                 self._plan_view_handler.invalidate_pending_takeoff_placements()
             self._placement.force_exit()
@@ -2751,14 +3235,48 @@ class UIEventCoordinator:
             self.main_window.refresh_window_title()
             return
         prev_current_file_path = self.project_data.get_current_file_path()
-        self.project_data.set_current_file(bid_ref.file_path)
-        load_error = ""
+        if self._status_panel:
+            self._status_panel.set_page_info("Loading bid pages…")
         try:
-            load_success = self.project_operations.load_bid(bid_ref)
+            self.project_operations.request_load_bid(
+                bid_ref,
+                lambda success, message: self._complete_bid_navigation_load(
+                    bid_ref,
+                    prev_bid_ref,
+                    prev_current_file_path,
+                    success,
+                    message,
+                ),
+            )
         except DatabaseCatalogError as exc:
-            logger.warning("Failed to load selected SQL bid", exc_info=True)
-            load_success = False
-            load_error = str(exc)
+            logger.warning("Failed to start the selected SQL bid load", exc_info=True)
+            self._complete_bid_navigation_load(
+                bid_ref,
+                prev_bid_ref,
+                prev_current_file_path,
+                False,
+                str(exc),
+            )
+        except Exception as exc:
+            logger.exception("Failed to start the selected bid load")
+            self._complete_bid_navigation_load(
+                bid_ref,
+                prev_bid_ref,
+                prev_current_file_path,
+                False,
+                str(exc) or exc.__class__.__name__,
+            )
+
+    def _complete_bid_navigation_load(
+        self,
+        bid_ref: BidRef,
+        prev_bid_ref: Optional[BidRef],
+        prev_current_file_path: Optional[str],
+        load_success: bool,
+        load_error: str,
+    ) -> None:
+        if self._is_cleaning_up:
+            return
         if not load_success:
             if prev_current_file_path:
                 self.project_data.set_current_file(prev_current_file_path)
@@ -2769,7 +3287,10 @@ class UIEventCoordinator:
             self._restore_project_tree_bid_selection_if_needed()
             if load_error:
                 show_warning(self.main_window, "Open SQL Bid", load_error)
+            self._update_page_info_status()
             return
+        if prev_bid_ref and bid_ref.file_path != prev_bid_ref.file_path:
+            self._sql_collaboration.update_presence(prev_bid_ref.file_path, None, None)
         if self._plan_view_handler is not None:
             self._plan_view_handler.invalidate_pending_takeoff_placements()
         self._placement.force_exit()
@@ -3108,9 +3629,19 @@ class UIEventCoordinator:
     def _resolve_bid_lock_state(self, bid_ref: BidRef) -> None:
         bid = self.project_data.get_bid(bid_ref)
         bid_status = bid.status if bid else None
-        is_locked = self._project_read_service.is_bid_locked(
-            bid_ref.file_path, bid_status
-        )
+        if self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        ):
+            is_locked = any(
+                status.name == bid_status and status.locked
+                for status in self.project_data.get_job_status_snapshot(
+                    bid_ref.file_path
+                )
+            )
+        else:
+            is_locked = self._project_read_service.is_bid_locked(
+                bid_ref.file_path, bid_status
+            )
         self.project_data.set_current_bid_locked(is_locked)
 
     def _on_page_scale_changed(
@@ -3120,6 +3651,16 @@ class UIEventCoordinator:
             self._update_page_settings_bar(page_uid)
             return
         write_svc = self._project_write_service
+        queued = write_svc.queue_page_setting_if_sql(
+            file_path,
+            page_uid,
+            "scale",
+            [sf1, sf2],
+        )
+        if queued is not None:
+            if not queued:
+                self._update_page_settings_bar(page_uid)
+            return
         success = False
         try:
             success = bool(write_svc.save_page_scale(file_path, page_uid, sf1, sf2))
@@ -3184,15 +3725,22 @@ class UIEventCoordinator:
         self._save_current_page_view_state(selected_page_override=page_uid)
         if not self._flush_deferred_for_file(bid_ref.file_path):
             return
-        self._project_write_service.save_page_image_adjustments(
+        queued = self._project_write_service.queue_page_setting_if_sql(
             bid_ref.file_path,
-            [page_uid],
-            rotation,
-            flip_x,
-            flip_y,
-            page.invert,
-            page.bitonal,
+            page_uid,
+            "image_adjustments",
+            [rotation, flip_x, flip_y, page.invert, page.bitonal],
         )
+        if queued is None:
+            self._project_write_service.save_page_image_adjustments(
+                bid_ref.file_path,
+                [page_uid],
+                rotation,
+                flip_x,
+                flip_y,
+                page.invert,
+                page.bitonal,
+            )
 
     def open_adjust_images_dialog(self) -> None:
         page_uid = self.ui_state_manager.active_page_uid
@@ -3239,6 +3787,33 @@ class UIEventCoordinator:
             return False
         if not self._flush_deferred_for_file(file_path):
             return False
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if (
+            bid_ref is not None
+            and bid_ref.file_path == file_path
+            and self._project_write_service.uses_sql_collaboration_mutations(file_path)
+        ):
+            updates = [
+                [
+                    uid,
+                    settings.rotation,
+                    settings.flip_x,
+                    settings.flip_y,
+                    settings.invert,
+                    settings.bitonal,
+                ]
+                for uid in page_uids
+            ]
+            return (
+                self._project_write_service.queue_page_settings(
+                    file_path,
+                    bid_ref.bid_uid,
+                    "image_adjustments",
+                    updates,
+                    lambda _result: None,
+                )
+                >= 0
+            )
         return self._project_write_service.save_page_image_adjustments(
             file_path,
             page_uids,
@@ -3294,6 +3869,25 @@ class UIEventCoordinator:
             return False
         if not self._flush_deferred_for_file(file_path):
             return False
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if (
+            bid_ref is not None
+            and bid_ref.file_path == file_path
+            and self._project_write_service.uses_sql_collaboration_mutations(file_path)
+        ):
+            return (
+                self._project_write_service.queue_page_settings(
+                    file_path,
+                    bid_ref.bid_uid,
+                    "scale",
+                    [
+                        [uid, settings.scale_factor1, settings.scale_factor2]
+                        for uid in page_uids
+                    ],
+                    lambda _result: None,
+                )
+                >= 0
+            )
         if len(page_uids) == 1:
             return self._project_write_service.save_page_scale(
                 file_path,
@@ -3349,6 +3943,14 @@ class UIEventCoordinator:
             return False
         if not self._flush_deferred_for_file(file_path):
             return False
+        queued = self._project_write_service.queue_page_setting_if_sql(
+            file_path,
+            page_uid,
+            "name",
+            [new_name],
+        )
+        if queued is not None:
+            return queued
         return self._project_write_service.save_page_name(file_path, page_uid, new_name)
 
     def can_delete_current_page(self) -> bool:
@@ -3373,8 +3975,17 @@ class UIEventCoordinator:
         page = self.project_data.get_page(page_uid) if page_uid else None
         if not bid_ref or not page_uid or not page:
             return
-        pages_with_content = self._project_read_service.get_pages_with_delete_content(
-            bid_ref.file_path, bid_ref.bid_uid
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
+        pages_with_content = (
+            self.project_data.get_page_delete_content_snapshot(
+                bid_ref.file_path, bid_ref.bid_uid
+            )
+            if uses_sql_queue
+            else self._project_read_service.get_pages_with_delete_content(
+                bid_ref.file_path, bid_ref.bid_uid
+            )
         )
         if pages_with_content is None:
             show_critical(
@@ -3397,6 +4008,16 @@ class UIEventCoordinator:
         if not self._flush_deferred_for_file(bid_ref.file_path):
             self._clear_staged_takeoff_restore()
             return
+        if uses_sql_queue:
+            self._project_write_service.queue_pages_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                [page_uid],
+                lambda result: self._on_queued_page_delete_complete(
+                    bid_ref.file_path, result
+                ),
+            )
+            return
         if not self._project_write_service.delete_pages(bid_ref.file_path, [page_uid]):
             self._clear_staged_takeoff_restore()
             show_critical(
@@ -3404,6 +4025,19 @@ class UIEventCoordinator:
                 "Delete Page",
                 f"Failed to delete page. {DB_LOCKED_HINT}",
             )
+
+    def _on_queued_page_delete_complete(
+        self, database_id: str, result: QueuedMutationResult
+    ) -> None:
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+            return
+        self._clear_staged_takeoff_restore()
+        self.present_queued_mutation_error(
+            database_id,
+            "Delete Page",
+            result,
+            critical=True,
+        )
 
     def _stage_selection_after_page_delete(self, page_uid: str) -> bool:
         if not self.takeoff_sidebar:
@@ -3495,9 +4129,16 @@ class UIEventCoordinator:
         self._save_current_page_view_state(selected_page_override=page_uid)
         if not self._flush_deferred_for_file(file_path):
             return
-        self._project_write_service.save_page_overlay_image(
-            file_path, page_uid, overlay_image_path
+        queued = self._project_write_service.queue_page_setting_if_sql(
+            file_path,
+            page_uid,
+            "overlay_image",
+            [overlay_image_path],
         )
+        if queued is None:
+            self._project_write_service.save_page_overlay_image(
+                file_path, page_uid, overlay_image_path
+            )
 
     def _on_page_area_changed(
         self, file_path: str, page_uid: str, area_uid: str
@@ -3687,6 +4328,17 @@ class UIEventCoordinator:
             return
         if not self._flush_deferred_for_file(bid_ref.file_path):
             return
+        if self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        ):
+            self._project_write_service.queue_layer_insert(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                name,
+                after_sequence,
+                lambda result: self._on_queued_layer_insert_complete(sidebar, result),
+            )
+            return
         try:
             result = self._project_write_service.insert_layer_result(
                 bid_ref.file_path, bid_ref.bid_uid, name, after_sequence
@@ -3707,6 +4359,22 @@ class UIEventCoordinator:
             logger.warning("Failed to insert layer", exc_info=True)
             self._sidebar.load_bid_layers_sidebar()
 
+    def _on_queued_layer_insert_complete(
+        self, sidebar, result: QueuedMutationResult
+    ) -> None:
+        if (
+            result.outcome_status == MutationOutcomeStatus.COMMITTED
+            and result.created_resource_ids
+        ):
+            sidebar.set_pending_selection(result.created_resource_ids[0])
+            return
+        logger.warning("Queued SQL layer insertion failed: %s", result.message)
+        if not self._is_cleaning_up:
+            self._sidebar.load_bid_layers_sidebar_from_memory()
+            self.present_queued_mutation_error(
+                result.database_id, "Layer Creation", result
+            )
+
     def _on_layer_deleted(self, layer_uid: str) -> None:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return
@@ -3715,6 +4383,14 @@ class UIEventCoordinator:
             return
         write_svc = self._project_write_service
         if not self._flush_deferred_for_file(bid_ref.file_path):
+            return
+        if write_svc.uses_sql_collaboration_mutations(bid_ref.file_path):
+            write_svc.queue_layer_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                layer_uid,
+                self._on_queued_layer_write_complete,
+            )
             return
         try:
             write_svc.delete_layer(bid_ref.file_path, layer_uid)
@@ -3733,9 +4409,14 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
         if self._sidebar.bid_layers_sidebar:
             layers = self._sidebar.bid_layers_sidebar.get_layers()
             self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
+        elif uses_sql_queue:
+            layers = self.project_data.get_bid_layer_snapshot()
         else:
             layers = self._project_read_service.get_merged_bid_layers(
                 bid_ref.file_path, bid_ref.bid_uid
@@ -3809,6 +4490,17 @@ class UIEventCoordinator:
             return
         if not self._flush_deferred_for_file(bid_ref.file_path):
             return
+        if self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        ):
+            self._project_write_service.queue_layer_reorder(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                layer_uid,
+                neighbor_uid,
+                self._on_queued_layer_write_complete,
+            )
+            return
         try:
             self._project_write_service.swap_layer_sequence(
                 bid_ref.file_path, layer_uid, neighbor_uid
@@ -3823,9 +4515,22 @@ class UIEventCoordinator:
         if not bid_ref:
             return
         write_svc = self._project_write_service
+        uses_sql_queue = write_svc.uses_sql_collaboration_mutations(bid_ref.file_path)
         success = False
         if not self._flush_deferred_for_file(bid_ref.file_path):
-            self._sidebar.load_bid_layers_sidebar()
+            if uses_sql_queue:
+                self._sidebar.load_bid_layers_sidebar_from_memory()
+            else:
+                self._sidebar.load_bid_layers_sidebar()
+            return
+        if uses_sql_queue:
+            write_svc.queue_layer_rename(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                layer_uid,
+                new_name,
+                self._on_queued_layer_write_complete,
+            )
             return
         try:
             success = bool(
@@ -3835,3 +4540,13 @@ class UIEventCoordinator:
             logger.warning("Failed to rename layer", exc_info=True)
         if not success:
             self._sidebar.load_bid_layers_sidebar()
+
+    def _on_queued_layer_write_complete(self, result: QueuedMutationResult) -> None:
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+            return
+        logger.warning("Queued SQL layer update failed: %s", result.message)
+        if not self._is_cleaning_up:
+            self._sidebar.load_bid_layers_sidebar_from_memory()
+            self.present_queued_mutation_error(
+                result.database_id, "Layer Update", result
+            )

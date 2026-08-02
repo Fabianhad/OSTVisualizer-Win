@@ -1379,8 +1379,12 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator.condition_summary_tab = tab
         coordinator.ui_access_manager = SimpleNamespace(refresh=lambda: None)
         coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref,
             set_highlighted_conditions=lambda _uids: None,
             set_bid_selection=lambda _bid_ref: None,
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
         )
         coordinator.project_data = SimpleNamespace(
             get_current_file_path=lambda: "a.mdb",
@@ -1425,6 +1429,10 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             tab.load_summary(root, tab.grouping)
 
         class FakeWriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return False
+
             def delete_conditions(self, _file_path, _bid_uid, condition_uids):
                 for uid in condition_uids:
                     conditions.pop(uid, None)

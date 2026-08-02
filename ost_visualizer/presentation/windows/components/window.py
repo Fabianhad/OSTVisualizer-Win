@@ -1,8 +1,17 @@
 import logging
+import uuid
+import weakref
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
+from ....application.dtos.collaboration_dtos import (
+    EditLeaseHandle,
+    MutationOutcomeStatus,
+    PlanItemsPastePayload,
+    QueuedMutationResult,
+    ResourceRef,
+)
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
@@ -123,6 +132,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         on_named_view_selected: Optional[Callable[[str, str], None]] = None,
         on_scale_changed: Optional[Callable[[str, float, float], None]] = None,
         annotation_write_service=None,
+        project_write_service=None,
         file_path: Optional[str] = None,
         undo_service=None,
         initial_geometry: Optional[QtCore.QByteArray] = None,
@@ -174,6 +184,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             on_scale_changed
         )
         self._ann_write_svc = annotation_write_service
+        self._project_write_svc = project_write_service
         self._annotation_write_coordinator = annotation_write_coordinator
         if config.allow_annotation_editing and annotation_write_coordinator is None:
             raise ValueError(
@@ -181,6 +192,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
         self._file_path: Optional[str] = file_path
         self._undo_svc = undo_service
+        self._pending_annotation_mutation_uids: set[str] = set()
+        self._completed_sql_mutation_ids: set[str] = set()
+        self._geometry_edit_lease_handle: Optional[EditLeaseHandle] = None
+        self._geometry_edit_lease_request_id = ""
+        self._geometry_edit_lease_selection: set[str] = set()
         self._annotation_clipboard_svc: Optional[SelectionClipboardService] = (
             SelectionClipboardService() if config.allow_annotation_editing else None
         )
@@ -524,6 +540,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.named_view_created.connect(self._on_named_view_created)
         self.plan_view.hotlink_placement_requested.connect(
             self._on_hotlink_placement_requested
+        )
+        self.plan_view.geometry_edit_lease_requested.connect(
+            self._on_geometry_edit_lease_requested
+        )
+        self.plan_view.plan_item_selection_changed.connect(
+            self._on_plan_item_selection_changed
         )
         if self._annotation_clipboard_svc is not None:
             self.plan_view.copy_requested.connect(self._on_copy_requested)
@@ -1188,6 +1210,614 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _get_db_path(self) -> Optional[str]:
         return self._file_path
 
+    def _uses_sql_mutation_queue(self) -> bool:
+        db_path = self._get_db_path()
+        return bool(
+            db_path
+            and self._project_write_svc is not None
+            and self._project_write_svc.uses_sql_collaboration_mutations(db_path)
+        )
+
+    def _release_geometry_edit_lease(self) -> None:
+        handle = self._geometry_edit_lease_handle
+        self._geometry_edit_lease_handle = None
+        self._geometry_edit_lease_request_id = ""
+        self._geometry_edit_lease_selection = set()
+        if self.plan_view is not None:
+            self.plan_view.disable_geometry_edit_leasing()
+        if handle is not None and self._project_write_svc is not None:
+            self._project_write_svc.end_plan_edit_lease(handle)
+
+    def _on_plan_item_selection_changed(self, selected_uids: list) -> None:
+        selection = {str(uid) for uid in selected_uids if uid}
+        if (
+            self._geometry_edit_lease_selection
+            and selection != self._geometry_edit_lease_selection
+        ):
+            self._release_geometry_edit_lease()
+
+    def _annotation_edit_resources(
+        self, bid_ref, selected_uids: set[str]
+    ) -> tuple[tuple[ResourceRef, ...], tuple[ResourceRef, ...]]:
+        bid_value = int(bid_ref.bid_uid)
+        annotations = [
+            annotation
+            for annotation in (
+                self.plan_view.get_annotation(uid) for uid in sorted(selected_uids)
+            )
+            if annotation is not None
+        ]
+        resources = tuple(
+            sorted(
+                {
+                    ResourceRef(
+                        "annotation",
+                        f"{annotation.annotation_type}/{annotation.uid}",
+                        bid_value,
+                    )
+                    for annotation in annotations
+                }
+            )
+        )
+        dependencies = tuple(
+            sorted(
+                {
+                    *(
+                        ResourceRef("page", str(annotation.page_uid), bid_value)
+                        for annotation in annotations
+                        if annotation.page_uid
+                    ),
+                    *(
+                        ResourceRef("layer", str(annotation.layer_uid), bid_value)
+                        for annotation in annotations
+                        if annotation.layer_uid
+                    ),
+                }
+            )
+        )
+        return resources, dependencies
+
+    def _on_geometry_edit_lease_requested(self, selected_uids: list) -> None:
+        selection = {str(uid) for uid in selected_uids if uid}
+        bid_ref = self.view.bid_ref if self.view else None
+        if not selection or bid_ref is None or not self._uses_sql_mutation_queue():
+            self._release_geometry_edit_lease()
+            return
+        resources, dependencies = self._annotation_edit_resources(
+            bid_ref,
+            selection,
+        )
+        if not resources:
+            self._release_geometry_edit_lease()
+            return
+        handle = self._geometry_edit_lease_handle
+        if (
+            handle is not None
+            and handle.resources == resources
+            and handle.dependency_resources == dependencies
+        ):
+            self._geometry_edit_lease_selection = selection
+            self.plan_view.set_geometry_edit_lease_granted(selection)
+            return
+        if (
+            self._geometry_edit_lease_request_id
+            and self._geometry_edit_lease_selection == selection
+        ):
+            return
+        self._release_geometry_edit_lease()
+        request_id = str(uuid.uuid4())
+        self._geometry_edit_lease_request_id = request_id
+        self._geometry_edit_lease_selection = selection
+        self.plan_view.set_geometry_edit_lease_pending(selection)
+        window_ref = weakref.ref(self)
+        write_service = self._project_write_svc
+
+        def resolved(result) -> None:
+            window = window_ref()
+            if window is None or window._is_closing:
+                if result.handle is not None:
+                    write_service.end_plan_edit_lease(result.handle)
+                return
+            if window._geometry_edit_lease_request_id != request_id:
+                if result.handle is not None:
+                    window._project_write_svc.end_plan_edit_lease(result.handle)
+                return
+            window._geometry_edit_lease_request_id = ""
+            if (
+                not result.granted
+                or set(window.plan_view.get_selected_uids()) != selection
+            ):
+                if result.handle is not None:
+                    window._project_write_svc.end_plan_edit_lease(result.handle)
+                window._geometry_edit_lease_selection.clear()
+                window.plan_view.set_geometry_edit_lease_pending(set())
+                return
+            window._geometry_edit_lease_handle = result.handle
+            window.plan_view.set_geometry_edit_lease_granted(selection)
+
+        self._project_write_svc.request_plan_edit_lease(
+            bid_ref.file_path,
+            resources,
+            dependencies,
+            resolved,
+            operation_id=request_id,
+            owning_surface="detached-plan",
+        )
+
+    @staticmethod
+    def _sql_result_remains_pending(result: QueuedMutationResult) -> bool:
+        return result.outcome_status in {
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        }
+
+    def _sql_completion_was_applied(self, result: QueuedMutationResult) -> bool:
+        return bool(
+            result.outcome_status == MutationOutcomeStatus.COMMITTED
+            and result.operation_id in self._completed_sql_mutation_ids
+        )
+
+    def _mark_sql_completion_applied(self, result: QueuedMutationResult) -> None:
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+            self._completed_sql_mutation_ids.add(result.operation_id)
+
+    def _set_annotation_items_pending(
+        self, annotation_keys: set[str], pending: bool
+    ) -> None:
+        if pending:
+            self._pending_annotation_mutation_uids.update(annotation_keys)
+        else:
+            self._pending_annotation_mutation_uids.difference_update(annotation_keys)
+        if self.plan_view is not None:
+            self.plan_view.set_pending_mutation_uids(
+                set(self._pending_annotation_mutation_uids)
+            )
+
+    def _annotation_keys_for_identities(self, identities) -> set[str]:
+        if self.plan_view is None:
+            return set()
+        return set(self.plan_view.find_annotation_keys_by_uid_type(set(identities)))
+
+    def _annotation_page_uids_for_keys(self, keys: set[str]) -> tuple[str, ...]:
+        if self.plan_view is None:
+            return ()
+        return tuple(
+            dict.fromkeys(
+                str(annotation.page_uid)
+                for annotation in (
+                    self.plan_view.get_annotation(key) for key in sorted(keys)
+                )
+                if annotation is not None and annotation.page_uid
+            )
+        )
+
+    def _queue_sql_annotation_geometry(self, db_path: str, ann_changes: list) -> None:
+        bid_ref = self.view.bid_ref if self.view else None
+        if bid_ref is None:
+            return
+        new_changes = [
+            (str(uid), str(annotation_type), list(new_position))
+            for uid, annotation_type, _old_position, new_position in ann_changes
+        ]
+        old_changes = [
+            (str(uid), str(annotation_type), list(old_position))
+            for uid, annotation_type, old_position, _new_position in ann_changes
+            if old_position
+        ]
+        identities = {
+            (uid, annotation_type) for uid, annotation_type, _position in new_changes
+        }
+        keys = self._annotation_keys_for_identities(identities)
+        page_uids = self._annotation_page_uids_for_keys(keys)
+        resources, dependencies = self._annotation_edit_resources(bid_ref, keys)
+        edit_lease_handle = self._geometry_edit_lease_handle
+        if edit_lease_handle is not None and (
+            edit_lease_handle.resources != resources
+            or edit_lease_handle.dependency_resources != dependencies
+        ):
+            self._release_geometry_edit_lease()
+            edit_lease_handle = None
+        elif edit_lease_handle is not None:
+            self._geometry_edit_lease_handle = None
+            self._geometry_edit_lease_request_id = ""
+            self._geometry_edit_lease_selection.clear()
+            self.plan_view.disable_geometry_edit_leasing()
+        self._set_annotation_items_pending(keys, True)
+        window_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            window = window_ref()
+            if window is None or window._is_closing:
+                return
+            if window._sql_completion_was_applied(result):
+                return
+            if window._sql_result_remains_pending(result):
+                return
+            window._set_annotation_items_pending(keys, False)
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                window.plan_view.restore_flushed_positions([], ann_changes)
+                if window.plan_view.current_page_uid in page_uids:
+                    window.plan_view.set_selected_uids(keys)
+                return
+            if window.plan_view.current_page_uid in page_uids:
+                window.plan_view.set_selected_uids(keys)
+            window._push_sql_annotation_geometry_history(
+                bid_ref,
+                old_changes,
+                new_changes,
+                page_uids,
+            )
+            window._mark_sql_completion_applied(result)
+
+        self._project_write_svc.queue_plan_geometry(
+            db_path,
+            bid_ref.bid_uid,
+            complete,
+            annotation_positions=new_changes,
+            page_uids=page_uids,
+            dependency_resources=dependencies,
+            owning_surface="detached-plan",
+            edit_lease_handle=edit_lease_handle,
+        )
+
+    def _push_sql_annotation_geometry_history(
+        self,
+        bid_ref,
+        old_changes: list,
+        new_changes: list,
+        page_uids: tuple[str, ...],
+    ) -> None:
+        if self._undo_svc is None:
+            return
+
+        def submit(done, updates: list) -> None:
+            self._project_write_svc.queue_plan_geometry(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                lambda result: done(result),
+                annotation_positions=updates,
+                page_uids=page_uids,
+                owning_surface="detached-plan",
+            )
+
+        self._undo_svc.push(
+            lambda done: submit(done, old_changes),
+            lambda done: submit(done, new_changes),
+        )
+
+    def _queue_sql_annotation_properties(
+        self,
+        db_path: str,
+        property_kind: str,
+        changes: list,
+        restore: Callable[[], None],
+    ) -> None:
+        bid_ref = self.view.bid_ref if self.view else None
+        if bid_ref is None:
+            return
+        self._release_geometry_edit_lease()
+        new_updates = [
+            (str(uid), str(annotation_type), dict(new_value))
+            for uid, annotation_type, _old_value, new_value in changes
+        ]
+        old_updates = [
+            (str(uid), str(annotation_type), dict(old_value))
+            for uid, annotation_type, old_value, _new_value in changes
+            if old_value
+        ]
+        identities = {
+            (uid, annotation_type) for uid, annotation_type, _properties in new_updates
+        }
+        keys = self._annotation_keys_for_identities(identities)
+        page_uids = self._annotation_page_uids_for_keys(keys)
+        self._set_annotation_items_pending(keys, True)
+        window_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            window = window_ref()
+            if window is None or window._is_closing:
+                return
+            if window._sql_completion_was_applied(result):
+                return
+            if window._sql_result_remains_pending(result):
+                return
+            window._set_annotation_items_pending(keys, False)
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                restore()
+                if window.plan_view.current_page_uid in page_uids:
+                    window.plan_view.set_selected_uids(keys)
+                return
+            if window.plan_view.current_page_uid in page_uids:
+                window.plan_view.set_selected_uids(keys)
+            window._push_sql_annotation_property_history(
+                bid_ref,
+                property_kind,
+                old_updates,
+                new_updates,
+                page_uids,
+            )
+            window._mark_sql_completion_applied(result)
+
+        self._project_write_svc.queue_plan_properties(
+            db_path,
+            bid_ref.bid_uid,
+            property_kind,
+            new_updates,
+            complete,
+            page_uids=page_uids,
+            owning_surface="detached-plan",
+        )
+
+    def _push_sql_annotation_property_history(
+        self,
+        bid_ref,
+        property_kind: str,
+        old_updates: list,
+        new_updates: list,
+        page_uids: tuple[str, ...],
+    ) -> None:
+        if not old_updates or self._undo_svc is None:
+            return
+
+        def submit(done, updates: list) -> None:
+            self._project_write_svc.queue_plan_properties(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                property_kind,
+                updates,
+                lambda result: done(result),
+                page_uids=page_uids,
+                owning_surface="detached-plan",
+            )
+
+        self._undo_svc.push(
+            lambda done: submit(done, old_updates),
+            lambda done: submit(done, new_updates),
+        )
+
+    @staticmethod
+    def _created_annotation_uid_map(
+        result: QueuedMutationResult,
+    ) -> dict[str, str]:
+        authoritative = result.authoritative_result
+        if authoritative is None:
+            raise RuntimeError("Committed paste is missing authoritative UID maps")
+        maps = {name: dict(values) for name, values in authoritative.created_uid_maps}
+        return maps.get("annotations", {})
+
+    def _queue_sql_annotation_insert(
+        self,
+        bid_ref,
+        specs: list[InsertAnnotationSpec],
+        *,
+        source_uids: Optional[list[str]] = None,
+        source_anchor=None,
+        reactivate_annotation_type: Optional[str] = None,
+    ) -> None:
+        if not specs:
+            return
+        self._annotation_write_coordinator.apply_default_annotation_layer(specs)
+        sources = tuple(source_uids or (f"detached-{uuid.uuid4()}" for _spec in specs))
+        payload = PlanItemsPastePayload(
+            source_bid_uid=str(bid_ref.bid_uid),
+            destination_bid_uid=str(bid_ref.bid_uid),
+            annotation_source_uids=sources,
+            annotation_specs=tuple(specs),
+        )
+        window_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            window = window_ref()
+            if (
+                window is None
+                or window._is_closing
+                or result.outcome_status != MutationOutcomeStatus.COMMITTED
+            ):
+                return
+            if window._sql_completion_was_applied(result):
+                return
+            uid_map = window._created_annotation_uid_map(result)
+            annotation_type_by_source = {
+                source_uid: spec.annotation_type
+                for source_uid, spec in zip(sources, specs)
+            }
+            identities = {
+                (uid, annotation_type_by_source[source_uid])
+                for source_uid, uid in uid_map.items()
+            }
+            keys = window._annotation_keys_for_identities(identities)
+            if (
+                keys
+                and window.plan_view is not None
+                and window.plan_view.current_page_uid == specs[0].page_uid
+            ):
+                window.plan_view.set_selected_uids(keys)
+                if source_anchor:
+                    window.plan_view.mark_intelligent_paste_drag_pending(
+                        sorted(keys), source_anchor
+                    )
+            if reactivate_annotation_type and window.plan_view is not None:
+                window.plan_view.activate_annotation_placement(
+                    reactivate_annotation_type
+                )
+            window._push_sql_annotation_insert_history(
+                bid_ref,
+                payload,
+                uid_map,
+            )
+            window._mark_sql_completion_applied(result)
+
+        self._project_write_svc.queue_plan_items_paste(
+            bid_ref.file_path,
+            payload,
+            complete,
+            owning_surface="detached-plan",
+        )
+
+    def _push_sql_annotation_insert_history(
+        self,
+        bid_ref,
+        payload: PlanItemsPastePayload,
+        uid_map: dict[str, str],
+    ) -> None:
+        if self._undo_svc is None:
+            return
+        annotation_type_by_source = {
+            source_uid: spec.annotation_type
+            for source_uid, spec in zip(
+                payload.annotation_source_uids,
+                payload.annotation_specs,
+            )
+        }
+        current = {
+            "annotations": [
+                (uid, annotation_type_by_source[source_uid])
+                for source_uid, uid in uid_map.items()
+            ]
+        }
+        page_uids = tuple(
+            dict.fromkeys(spec.page_uid for spec in payload.annotation_specs)
+        )
+
+        def undo_submit(done) -> None:
+            self._project_write_svc.queue_plan_items_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                [],
+                list(current["annotations"]),
+                lambda result: done(result),
+                page_uids=page_uids,
+                owning_surface="detached-plan",
+            )
+
+        def redo_submit(done) -> None:
+            def completed(result: QueuedMutationResult) -> None:
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    next_map = self._created_annotation_uid_map(result)
+                    current["annotations"] = [
+                        (uid, annotation_type_by_source[source_uid])
+                        for source_uid, uid in next_map.items()
+                    ]
+                done(result)
+
+            self._project_write_svc.queue_plan_items_paste(
+                bid_ref.file_path,
+                payload,
+                completed,
+                owning_surface="detached-plan",
+            )
+
+        self._undo_svc.push(undo_submit, redo_submit)
+
+    def _queue_sql_annotation_delete(
+        self,
+        bid_ref,
+        requested_selection_uids: set[str],
+        saved_annotations: list,
+        skipped_selection_keys: set[str],
+    ) -> None:
+        identities = [
+            (str(annotation.uid), str(annotation.annotation_type))
+            for annotation in saved_annotations
+        ]
+        pending_keys = set(requested_selection_uids).difference(skipped_selection_keys)
+        page_uids = tuple(
+            dict.fromkeys(
+                str(annotation.page_uid)
+                for annotation in saved_annotations
+                if annotation.page_uid
+            )
+        )
+        self._set_annotation_items_pending(pending_keys, True)
+        self.plan_view.set_selected_uids(set(skipped_selection_keys))
+        window_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            window = window_ref()
+            if window is None or window._is_closing:
+                return
+            if window._sql_completion_was_applied(result):
+                return
+            if window._sql_result_remains_pending(result):
+                return
+            window._set_annotation_items_pending(pending_keys, False)
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                window.plan_view.set_selected_uids(requested_selection_uids)
+                return
+            window._push_sql_annotation_delete_history(
+                bid_ref,
+                saved_annotations,
+                identities,
+            )
+            window._mark_sql_completion_applied(result)
+
+        self._project_write_svc.queue_plan_items_delete(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            [],
+            identities,
+            complete,
+            page_uids=page_uids,
+            owning_surface="detached-plan",
+        )
+
+    def _push_sql_annotation_delete_history(
+        self,
+        bid_ref,
+        saved_annotations: list,
+        deleted_identities: list[tuple[str, str]],
+    ) -> None:
+        if self._undo_svc is None:
+            return
+        specs = tuple(
+            self._annotation_write_coordinator.annotation_specs_from_saved(
+                saved_annotations
+            )
+        )
+        source_uids = tuple(str(annotation.uid) for annotation in saved_annotations)
+        payload = PlanItemsPastePayload(
+            source_bid_uid=str(bid_ref.bid_uid),
+            destination_bid_uid=str(bid_ref.bid_uid),
+            annotation_source_uids=source_uids,
+            annotation_specs=specs,
+        )
+        annotation_type_by_source = {
+            source_uid: spec.annotation_type
+            for source_uid, spec in zip(source_uids, specs)
+        }
+        current = {"annotations": list(deleted_identities)}
+        page_uids = tuple(dict.fromkeys(spec.page_uid for spec in specs))
+
+        def undo_submit(done) -> None:
+            def completed(result: QueuedMutationResult) -> None:
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    uid_map = self._created_annotation_uid_map(result)
+                    current["annotations"] = [
+                        (uid, annotation_type_by_source[source_uid])
+                        for source_uid, uid in uid_map.items()
+                    ]
+                done(result)
+
+            self._project_write_svc.queue_plan_items_paste(
+                bid_ref.file_path,
+                payload,
+                completed,
+                owning_surface="detached-plan",
+            )
+
+        def redo_submit(done) -> None:
+            self._project_write_svc.queue_plan_items_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                [],
+                list(current["annotations"]),
+                lambda result: done(result),
+                page_uids=page_uids,
+                owning_surface="detached-plan",
+            )
+
+        self._undo_svc.push(undo_submit, redo_submit)
+
     def _on_positions_flushed(self, _takeoff_changes: list, ann_changes: list) -> None:
         if not self._editing_enabled():
             return
@@ -1195,6 +1825,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         db_path = self._get_db_path()
         if not db_path:
+            return
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_geometry(db_path, ann_changes)
             return
         new_changes = [
             (uid, ann_type, list(new_pos))
@@ -1214,12 +1847,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
 
         def _undo_move():
-            self._save_annotation_positions(db_path, old_changes)
+            return self._save_annotation_positions(db_path, old_changes)
 
         def _redo_move():
-            self._save_annotation_positions(db_path, new_changes)
+            return self._save_annotation_positions(db_path, new_changes)
 
-        self._undo_svc.push(_undo_move, _redo_move)
+        self._undo_svc.push_local(_undo_move, _redo_move)
 
     def _on_annotation_text_properties_flushed(self, changes: list) -> None:
         if not self._text_editing_enabled():
@@ -1228,6 +1861,14 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         db_path = self._get_db_path()
         if not db_path:
+            return
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_properties(
+                db_path,
+                "annotation_text",
+                changes,
+                lambda: self.plan_view.restore_annotation_text_properties(changes),
+            )
             return
         new_updates = [
             (uid, ann_type, dict(new_props))
@@ -1248,12 +1889,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
 
         def _undo_text_properties():
-            self._save_annotation_text_properties(db_path, old_updates)
+            return self._save_annotation_text_properties(db_path, old_updates)
 
         def _redo_text_properties():
-            self._save_annotation_text_properties(db_path, new_updates)
+            return self._save_annotation_text_properties(db_path, new_updates)
 
-        self._undo_svc.push(_undo_text_properties, _redo_text_properties)
+        self._undo_svc.push_local(_undo_text_properties, _redo_text_properties)
 
     def _on_annotation_styles_flushed(self, changes: list) -> None:
         if not self._editing_enabled():
@@ -1262,6 +1903,14 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         db_path = self._get_db_path()
         if not db_path:
+            return
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_properties(
+                db_path,
+                "annotation_style",
+                changes,
+                lambda: self.plan_view.restore_annotation_styles(changes),
+            )
             return
         new_updates = [
             (uid, ann_type, dict(new_style))
@@ -1282,12 +1931,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
 
         def _undo_styles():
-            self._save_annotation_styles(db_path, old_updates)
+            return self._save_annotation_styles(db_path, old_updates)
 
         def _redo_styles():
-            self._save_annotation_styles(db_path, new_updates)
+            return self._save_annotation_styles(db_path, new_updates)
 
-        self._undo_svc.push(_undo_styles, _redo_styles)
+        self._undo_svc.push_local(_undo_styles, _redo_styles)
 
     def _save_annotation_positions(self, db_path: str, changes: list) -> bool:
         return self._annotation_write_coordinator.save_positions(db_path, changes)
@@ -1443,9 +2092,25 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
             for annotation in clipboard_annotations
         ]
+        clipboard_annotations, specs = (
+            self._annotation_write_coordinator.filter_copyable_annotations(
+                clipboard_annotations,
+                specs,
+            )
+        )
+        if not specs:
+            return
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_insert(
+                bid_ref,
+                specs,
+                source_uids=[
+                    str(annotation.uid) for annotation in clipboard_annotations
+                ],
+                source_anchor=source_anchor,
+            )
+            return
         new_uids = self._insert_annotations(bid_ref, specs)
-        new_uids = list(new_uids[: len(specs)])
-        specs = specs[: len(new_uids)]
         uid_type_set = {
             (uid, specs[i].annotation_type) for i, uid in enumerate(new_uids)
         }
@@ -1468,7 +2133,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
         )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        self._undo_svc.push_local(cmd.undo, cmd.redo)
 
     def _on_annotation_created(
         self, annotation_type: str, position: list, page_uid: str
@@ -1489,6 +2154,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         spec = build_placed_annotation_spec(annotation_type, page_uid, list(position))
         if spec is None:
             return
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_insert(bid_ref, [spec])
+            return
         new_uids = self._insert_annotations(bid_ref, [spec])
         if not new_uids:
             return
@@ -1507,7 +2175,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
         )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        self._undo_svc.push_local(cmd.undo, cmd.redo)
 
     def _on_text_annotation_created(
         self, position: list, page_uid: str, properties: dict
@@ -1536,6 +2204,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         font_color = spec.properties.get("FontColor")
         if isinstance(font_color, int):
             spec.color = int_color_to_hex(font_color)
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_insert(bid_ref, [spec])
+            return
         new_uids = self._insert_annotations(bid_ref, [spec])
         if not new_uids:
             return
@@ -1554,7 +2225,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
         )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        self._undo_svc.push_local(cmd.undo, cmd.redo)
 
     def _on_named_view_created(
         self, position: list, page_uid: str, properties: dict
@@ -1585,6 +2256,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         color = properties.get("Color")
         if isinstance(color, str) and color:
             spec.color = color
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_insert(
+                bid_ref,
+                [spec],
+                reactivate_annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            )
+            return
         new_uids = self._insert_annotations(bid_ref, [spec])
         if not new_uids:
             return
@@ -1604,7 +2282,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
         )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        self._undo_svc.push_local(cmd.undo, cmd.redo)
 
     def _on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:
         if not self._annotation_placement_enabled():
@@ -1636,6 +2314,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if spec is None:
             return
         spec.properties = {"BidPageViewUID": result.named_view_uid}
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_insert(
+                bid_ref,
+                [spec],
+                reactivate_annotation_type=ANNOTATION_TYPE_HOTLINK,
+            )
+            return
         new_uids = self._insert_annotations(bid_ref, [spec])
         if not new_uids:
             return
@@ -1655,7 +2340,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
         )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        self._undo_svc.push_local(cmd.undo, cmd.redo)
 
     def _on_elements_deleted(self, uids: list) -> None:
         if not self._editing_enabled():
@@ -1703,6 +2388,14 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         skipped_selection_keys = skipped_named_view_selection_keys(
             annotation_selection_keys, skipped_namedview_uids
         )
+        if self._uses_sql_mutation_queue():
+            self._queue_sql_annotation_delete(
+                bid_ref,
+                set(uids),
+                saved_annotations,
+                skipped_selection_keys,
+            )
+            return
         if not self._delete_saved_annotations(db_path, saved_annotations):
             self.plan_view.set_selected_uids(set(uids))
             return
@@ -1717,7 +2410,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             insert_saved_annotations_fn=self._insert_saved_annotations,
             delete_saved_annotations_fn=self._delete_saved_annotations,
         )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        self._undo_svc.push_local(cmd.undo, cmd.redo)
 
     def cleanup(self) -> None:
         if self._is_closing:
@@ -1754,6 +2447,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         plan_view.hotlink_placement_requested.disconnect(
             self._on_hotlink_placement_requested
         )
+        plan_view.geometry_edit_lease_requested.disconnect(
+            self._on_geometry_edit_lease_requested
+        )
+        plan_view.plan_item_selection_changed.disconnect(
+            self._on_plan_item_selection_changed
+        )
         if self._annotation_clipboard_svc is not None:
             plan_view.copy_requested.disconnect(self._on_copy_requested)
             plan_view.paste_requested.disconnect(self._on_paste_requested)
@@ -1770,6 +2469,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._undo_svc is not None:
             plan_view.undo_requested.disconnect(self._undo_svc.undo)
             plan_view.redo_requested.disconnect(self._undo_svc.redo)
+        self._release_geometry_edit_lease()
         plan_view.blockSignals(True)
         plan_view.cleanup()
         self.plan_view = None
@@ -1778,6 +2478,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._undo_svc = None
         self._annotation_clipboard_svc = None
         self._ann_write_svc = None
+        self._project_write_svc = None
         self._annotation_write_coordinator = None
         self._annotation_style_getter = None
         self._annotation_style_setter = None

@@ -8,3 +8,10 @@ class IOstImporter(Protocol):
         target_db_path: str,
         target_project_uid: Optional[str] = None,
     ) -> bool: ...
+    def import_ost_mutation(
+        self,
+        ost_file_path: str,
+        target_db_path: str,
+        target_project_uid: Optional[str],
+        recorder,
+    ) -> dict[str, object]: ...

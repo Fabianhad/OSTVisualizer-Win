@@ -2,8 +2,18 @@ from datetime import datetime
 from PySide6 import QtCore, QtWidgets
 from ..config import INLINE_MARGINS, NO_SPACING
 
-_LICENSE_ACTIVATED = "ACTIVATED"
-_LICENSE_NOT_ACTIVATED = "NOT ACTIVATED"
+_LICENSE_ACTIVATED = " ACTIVATED"
+_LICENSE_NOT_ACTIVATED = " NOT ACTIVATED"
+_COLLABORATION_STATE_LABELS = {
+    "connecting": "SQL: CONNECTING",
+    "catching_up": "SQL: SYNCING",
+    "healthy": "SQL: CONNECTED",
+    "disconnected": "SQL: DISCONNECTED",
+    "credential_required": "SQL: SIGN IN REQUIRED",
+    "read_only": "SQL: READ ONLY",
+    "conflicted": "SQL: CONFLICT",
+    "reconciliation_required": "SQL: REFRESH REQUIRED",
+}
 
 
 class StatusPanel(QtWidgets.QWidget):
@@ -20,6 +30,10 @@ class StatusPanel(QtWidgets.QWidget):
         self.collaboration_label.hide()
         self._collaboration_state = "stopped"
         self._collaboration_message = ""
+        self._collaboration_users = []
+        self._mutation_state = ""
+        self._mutation_message = ""
+        self._pending_mutation_count = 0
         layout.addWidget(self.date_label, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
         layout.addStretch()
         layout.addWidget(self.page_info_label, 1)
@@ -46,39 +60,73 @@ class StatusPanel(QtWidgets.QWidget):
     def set_collaboration_state(self, state: str, message: str = "") -> None:
         self._collaboration_state = state or "stopped"
         self._collaboration_message = message
-        if state in {"", "stopped"}:
+        self._render_collaboration_state()
+
+    def set_collaboration_mutation_state(
+        self, state: str, pending_count: int, message: str = ""
+    ) -> None:
+        self._mutation_state = state
+        self._mutation_message = message
+        self._pending_mutation_count = max(0, int(pending_count))
+        self._render_collaboration_state()
+
+    def _render_collaboration_state(self) -> None:
+        if self._pending_mutation_count:
+            labels = {
+                "uncertain": "SQL: COMMIT UNKNOWN",
+                "recovering": "SQL: RECOVERING",
+                "projecting": "SQL: APPLYING",
+            }
+            self.collaboration_label.setText(
+                labels.get(
+                    self._mutation_state,
+                    f"SQL: {self._pending_mutation_count} PENDING",
+                )
+            )
+            self.collaboration_label.setToolTip(
+                self._mutation_message or self._collaboration_message
+            )
+            self.collaboration_label.show()
+            return
+        if self._collaboration_state in {"", "stopped"}:
             self.collaboration_label.clear()
             self.collaboration_label.hide()
             return
-        labels = {
-            "connecting": "SQL: CONNECTING",
-            "catching_up": "SQL: SYNCING",
-            "healthy": "SQL: CONNECTED",
-            "disconnected": "SQL: DISCONNECTED",
-            "credential_required": "SQL: SIGN IN REQUIRED",
-            "read_only": "SQL: READ ONLY",
-            "conflicted": "SQL: CONFLICT",
-            "reconciliation_required": "SQL: REFRESH REQUIRED",
-        }
-        self.collaboration_label.setText(labels.get(state, "SQL: READ ONLY"))
-        self.collaboration_label.setToolTip(message)
+        if self._collaboration_state not in {"healthy", "catching_up"}:
+            self.collaboration_label.setText(
+                _COLLABORATION_STATE_LABELS.get(
+                    self._collaboration_state, "SQL: READ ONLY"
+                )
+            )
+            self.collaboration_label.setToolTip(self._collaboration_message)
+            self.collaboration_label.show()
+            return
+        if self._collaboration_users:
+            editors = sum(
+                1 for user in self._collaboration_users if user.mode.value == "editing"
+            )
+            viewers = len(self._collaboration_users) - editors
+            self.collaboration_label.setText(
+                f"SQL: {viewers} VIEWING / {editors} EDITING"
+            )
+            self.collaboration_label.setToolTip(
+                "\n".join(
+                    f"{user.display_name} ({user.mode.value}, "
+                    f"{user.application_version})"
+                    for user in self._collaboration_users
+                )
+            )
+            self.collaboration_label.show()
+            return
+        self.collaboration_label.setText(
+            _COLLABORATION_STATE_LABELS.get(self._collaboration_state, "SQL: READ ONLY")
+        )
+        self.collaboration_label.setToolTip(self._collaboration_message)
         self.collaboration_label.show()
 
     def set_collaboration_presence(self, users: list) -> None:
-        if not users:
-            self.set_collaboration_state(
-                self._collaboration_state, self._collaboration_message
-            )
-            return
-        editors = sum(1 for user in users if user.mode.value == "editing")
-        viewers = len(users) - editors
-        self.collaboration_label.setText(f"SQL: {viewers} VIEWING / {editors} EDITING")
-        self.collaboration_label.setToolTip(
-            "\n".join(
-                f"{user.display_name} ({user.mode.value}, {user.application_version})"
-                for user in users
-            )
-        )
+        self._collaboration_users = list(users)
+        self._render_collaboration_state()
 
     def cleanup(self) -> None:
         self.date_label = None
@@ -87,3 +135,7 @@ class StatusPanel(QtWidgets.QWidget):
         self.collaboration_label = None
         self._collaboration_state = "stopped"
         self._collaboration_message = ""
+        self._collaboration_users = []
+        self._mutation_state = ""
+        self._mutation_message = ""
+        self._pending_mutation_count = 0

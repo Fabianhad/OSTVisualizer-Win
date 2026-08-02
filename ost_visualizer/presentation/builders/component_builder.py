@@ -420,6 +420,7 @@ class ComponentBuilder:
 
         _update_page_nav_actions()
         page_combo.active_page_changed.connect(_update_page_nav_actions)
+        page_combo.navigation_state_changed.connect(_update_page_nav_actions)
         page_nav_spacer = QtWidgets.QWidget()
         page_nav_spacer.setFixedWidth(6)
         main_toolbar.addWidget(page_nav_spacer)
@@ -489,11 +490,18 @@ class ComponentBuilder:
         zoom_combo.setCurrentIndex(-1)
         zoom_combo.setEditText("100%")
         main_toolbar.addWidget(zoom_combo)
+
+        def load_bid_areas(file_path, bid_uid):
+            if project_write_service.uses_sql_collaboration_mutations(file_path):
+                return project_data_service.get_bid_area_snapshot()
+            return project_read_service.get_bid_areas(file_path, bid_uid)
+
         page_settings_bar = PageSettingsBar(
             icon_provider=self.window.icon_provider,
             event_bus=event_bus,
-            load_areas_fn=project_read_service.get_bid_areas,
+            load_areas_fn=load_bid_areas,
             save_areas_fn=project_write_service.save_bid_areas_result,
+            save_areas_async_fn=ui_event_handler.save_bid_areas_async,
             refresh_areas_fn=project_write_service.reload_and_notify,
             parent=viewer_container,
             ui_access_manager=ui_access_manager,

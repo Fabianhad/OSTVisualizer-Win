@@ -15,6 +15,7 @@ from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationRequest,
     DatabaseMutationResult,
+    MutationOutcomeStatus,
     ResourceRef,
 )
 from ...domain.dtos.raw_bid_data_dto import RawBidData
@@ -45,6 +46,10 @@ class DatabaseProjectWriter(SqlProjectWriter):
         )
         self._conn_manager = access_connections
         self._descriptor_registry = descriptor_registry
+        self._access_transaction_depth = contextvars.ContextVar(
+            "database_project_writer_access_transaction_depth",
+            default=0,
+        )
         self._active_backend = contextvars.ContextVar(
             "database_writer_backend",
             default=None,
@@ -100,8 +105,13 @@ class DatabaseProjectWriter(SqlProjectWriter):
         with self._backend_scope(request.database_id) as backend:
             if backend == DatabaseBackend.SQL_SERVER:
                 return SqlProjectWriter.execute(self, request, operation)
-            value = operation(_AccessMutationRecorder())
-            return DatabaseMutationResult(success=True, value=value)
+            with MdbWriter._connection(self, request.database_id):
+                value = operation(_AccessMutationRecorder())
+            return DatabaseMutationResult(
+                operation_id=request.operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                value=value,
+            )
 
     def _next_uid(self, cursor, table: str) -> int:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:

@@ -4,7 +4,6 @@ import contextvars
 import json
 import logging
 import threading
-import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Generator, Optional, Sequence, TypeVar
@@ -27,6 +26,7 @@ from ...application.dtos.collaboration_dtos import (
     ConcurrencyToken,
     DatabaseMutationRequest,
     DatabaseMutationResult,
+    MutationOutcomeStatus,
     ResourceRef,
     SynchronizationConflict,
     SynchronizationConflictKind,
@@ -34,6 +34,7 @@ from ...application.dtos.collaboration_dtos import (
 from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...domain.dtos.raw_bid_data_dto import RawBidData
 from ..mdb.components.constants import BID_TABLES_WRITE_ORDER
+from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
 from ..mdb.mdb_writer import MdbWriter
@@ -48,7 +49,10 @@ from .errors import (
     sql_schema_mismatch,
 )
 from .schema_definition import SQL_SCHEMA_V1
-from .schema_lock import acquire_resource_transaction_lock
+from .schema_lock import (
+    acquire_operation_transaction_lock,
+    acquire_resource_transaction_lock,
+)
 from .write_schema import CurrentSqlWriteSchema
 
 T = TypeVar("T")
@@ -113,9 +117,12 @@ class _SqlMutationState(IMutationRecorder):
     database_id: str
     lease: SqlConnectionLease
     request: DatabaseMutationRequest
-    transaction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    transaction_id: str = ""
     records: list[_RecordedMutation] = field(default_factory=list)
     operation_error: Optional[BaseException] = None
+
+    def __post_init__(self) -> None:
+        self.transaction_id = self.request.operation_id
 
     def record(
         self,
@@ -176,6 +183,78 @@ class SqlProjectWriter(MdbWriter):
             )
         )
 
+    def verify_plan_items_exist(
+        self,
+        database_id: str,
+        takeoff_uids: Sequence[str],
+        annotations: Sequence[tuple[str, str]],
+    ) -> None:
+        with self._connection(database_id) as connection:
+            schema = self._schema(connection)
+            cursor = connection.cursor()
+            try:
+                normalized_takeoffs = tuple(
+                    dict.fromkeys(int(uid) for uid in takeoff_uids)
+                )
+                for uid in normalized_takeoffs:
+                    cursor.execute(
+                        "SELECT 1 FROM [BidTakeoffs] WITH (UPDLOCK, HOLDLOCK) "
+                        "WHERE [UID]=?",
+                        uid,
+                    )
+                    if cursor.fetchone() is None:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.CONFLICT,
+                                "A takeoff changed or was deleted before this "
+                                "operation started.",
+                            )
+                        )
+                if normalized_takeoffs and schema.column_exists(
+                    "BidTakeoffs", "ParentUID"
+                ):
+                    placeholders = ",".join("?" for _uid in normalized_takeoffs)
+                    cursor.execute(
+                        "SELECT TOP (1) [UID] FROM [BidTakeoffs] WITH "
+                        "(UPDLOCK, HOLDLOCK) WHERE [ParentUID] IN "
+                        f"({placeholders}) AND [UID] NOT IN ({placeholders})",
+                        *normalized_takeoffs,
+                        *normalized_takeoffs,
+                    )
+                    if cursor.fetchone() is not None:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.CONFLICT,
+                                "The takeoff relationship graph changed before "
+                                "deletion.",
+                            )
+                        )
+                for uid, annotation_type in annotations:
+                    table = self._ANNOTATION_TABLE.get(str(annotation_type))
+                    if not table or schema.optional_table_missing(table):
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.CONFLICT,
+                                "An annotation changed or was deleted before this "
+                                "operation started.",
+                            )
+                        )
+                    cursor.execute(
+                        f"SELECT 1 FROM [{table}] WITH (UPDLOCK, HOLDLOCK) "
+                        "WHERE [UID]=?",
+                        int(uid),
+                    )
+                    if cursor.fetchone() is None:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.CONFLICT,
+                                "An annotation changed or was deleted before this "
+                                "operation started.",
+                            )
+                        )
+            finally:
+                cursor.close()
+
     def execute(
         self,
         request: DatabaseMutationRequest,
@@ -203,7 +282,8 @@ class SqlProjectWriter(MdbWriter):
                 )
             )
             return DatabaseMutationResult(
-                success=False,
+                operation_id=request.operation_id,
+                outcome_status=MutationOutcomeStatus.CONFLICT,
                 conflict=SynchronizationConflict(
                     database_id=request.database_id,
                     resource=resource,
@@ -245,12 +325,17 @@ class SqlProjectWriter(MdbWriter):
         with self._sql_connections.connection(
             connection_request, autocommit=False
         ) as lease:
-            committed = False
+            transaction_finished = False
+            commit_attempted = False
             try:
                 self._require_sql_client_editability(lease)
                 state = _SqlMutationState(request.database_id, lease, request)
                 self._set_session_context(state)
-                self._prepare_mutation(state)
+                recovered = self._prepare_mutation(state)
+                if recovered is not None:
+                    lease.rollback()
+                    transaction_finished = True
+                    return recovered
                 token = self._active_mutation.set(state)
                 try:
                     value = operation(state)
@@ -262,16 +347,27 @@ class SqlProjectWriter(MdbWriter):
                     raise RuntimeError(
                         "The SQL mutation did not record an affected resource."
                     )
-                versions = self._finish_mutation(state)
-                lease.commit()
-                committed = True
+                versions = self._finish_mutation(state, value)
+                commit_attempted = True
+                try:
+                    lease.commit()
+                except Exception:
+                    transaction_finished = True
+                    return DatabaseMutationResult(
+                        operation_id=request.operation_id,
+                        outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                        commit_attempted=True,
+                    )
+                transaction_finished = True
                 return DatabaseMutationResult(
-                    success=True,
+                    operation_id=request.operation_id,
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
                     value=value,
                     resulting_versions=versions,
+                    commit_attempted=True,
                 )
             finally:
-                if not committed:
+                if not transaction_finished and not commit_attempted:
                     try:
                         lease.rollback()
                     except pyodbc.Error:
@@ -302,12 +398,24 @@ class SqlProjectWriter(MdbWriter):
                     "EXEC sys.sp_set_session_context "
                     "@key=N'ostv_transaction_id', @value=NULL"
                 )
-        except pyodbc.Error:
+        except (pyodbc.Error, RuntimeError):
             return
 
-    def _prepare_mutation(self, state: _SqlMutationState) -> None:
+    def _prepare_mutation(
+        self, state: _SqlMutationState
+    ) -> Optional[DatabaseMutationResult]:
         cursor = state.lease.cursor()
         try:
+            acquire_operation_transaction_lock(cursor, state.request.operation_id)
+            cursor.execute(
+                "SELECT [OperationType], [RequestHash], [ResultFormatVersion], "
+                "[ResultPayload] FROM [ostv].[ChangeTransactions] "
+                "WHERE [TransactionId]=?",
+                state.request.operation_id,
+            )
+            operation_row = cursor.fetchone()
+            if operation_row is not None:
+                return self._recovered_operation_result(state, operation_row)
             cursor.execute(
                 "SELECT 1 FROM [ostv].[Sessions] WHERE [SessionId]=? AND "
                 "[DisconnectedAt] IS NULL AND [LastHeartbeatAt] >= "
@@ -509,8 +617,9 @@ class SqlProjectWriter(MdbWriter):
                     )
         finally:
             cursor.close()
+        return None
 
-    def _finish_mutation(self, state: _SqlMutationState):
+    def _finish_mutation(self, state: _SqlMutationState, value=None):
         versions = {}
         cursor = state.lease.cursor()
         try:
@@ -579,15 +688,75 @@ class SqlProjectWriter(MdbWriter):
             cursor.execute(
                 "INSERT INTO [ostv].[ChangeTransactions] "
                 "([TransactionId], [SourceSessionId], [DatabaseGuid], "
-                "[ResourceFamilySummary]) VALUES (?, ?, ?, ?)",
+                "[ResourceFamilySummary], [OperationType], [RequestHash], "
+                "[ResultFormatVersion], [ResultPayload]) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 state.transaction_id,
                 state.request.session_id,
                 database_guid,
                 json.dumps(resource_families),
+                state.request.mutation_type,
+                state.request.request_hash,
+                state.request.result_format_version,
+                self._serialize_operation_result(value),
             )
         finally:
             cursor.close()
         return versions
+
+    @staticmethod
+    def _serialize_operation_result(value) -> str:
+        def json_safe(item):
+            if item is None or isinstance(item, (bool, int, float, str)):
+                return item
+            if isinstance(item, (list, tuple)):
+                return [json_safe(child) for child in item]
+            if isinstance(item, dict):
+                return {str(key): json_safe(child) for key, child in item.items()}
+            raise TypeError
+
+        payload = {"value": json_safe(value), "value_available": True}
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _recovered_operation_result(
+        state: _SqlMutationState, row
+    ) -> DatabaseMutationResult:
+        mutation_type = str(row[0])
+        request_hash = str(row[1])
+        result_format_version = int(row[2])
+        if (
+            mutation_type != state.request.mutation_type
+            or request_hash != state.request.request_hash
+            or result_format_version != state.request.result_format_version
+        ):
+            raise SqlInfrastructureError(
+                SqlErrorDetails(
+                    SqlErrorCode.CONFLICT,
+                    "A committed SQL operation ID was reused with a different "
+                    "request.",
+                )
+            )
+        try:
+            payload = json.loads(str(row[3]))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "A committed SQL operation has an invalid result payload."
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"value", "value_available"}
+            or payload["value_available"] is not True
+        ):
+            raise RuntimeError(
+                "A committed SQL operation cannot reconstruct its result payload."
+            )
+        return DatabaseMutationResult(
+            operation_id=state.request.operation_id,
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            value=payload["value"],
+            commit_attempted=True,
+        )
 
     @staticmethod
     def _deduplicate_records(
@@ -751,7 +920,7 @@ class SqlProjectWriter(MdbWriter):
         raw_data: RawBidData,
         transform_fn,
         target_project_uid: Optional[str] = None,
-    ) -> bool:
+    ) -> dict[str, object]:
         with self._connection(db_path) as connection:
             cdn_map = self._resolve_global_by_column(
                 connection, raw_data, "CdnTypes", "Name"
@@ -780,8 +949,32 @@ class SqlProjectWriter(MdbWriter):
             remapped.bid_row["BidProjectUID"] = (
                 target_project_uid if target_project_uid else None
             )
-            self._write_remapped_identity_graph(connection, remapped)
-        return True
+            table_uid_maps = self._write_remapped_identity_graph(connection, remapped)
+        annotation_uids = {
+            source_uid: actual_uid
+            for table, uid_map in table_uid_maps.items()
+            if table in ANNOTATION_TYPE_BY_TABLE
+            for source_uid, actual_uid in uid_map.items()
+        }
+        return {
+            "project_uids": (
+                {"target": str(target_project_uid)} if target_project_uid else {}
+            ),
+            "bid_uids": table_uid_maps.get("Bids", {}),
+            "page_uids": table_uid_maps.get("BidPages", {}),
+            "condition_uids": table_uid_maps.get("BidConditions", {}),
+            "layer_uids": table_uid_maps.get("BidLayers", {}),
+            "area_uids": table_uid_maps.get("BidAreas", {}),
+            "takeoff_uids": table_uid_maps.get("BidTakeoffs", {}),
+            "annotation_uids": annotation_uids,
+            "table_uid_maps": table_uid_maps,
+            "global_uid_maps": {
+                "condition_types": cdn_map,
+                "job_statuses": status_map,
+                "employees": employee_map,
+                "pay_classes": pay_class_map,
+            },
+        }
 
     def _resolve_global_by_column(
         self,
@@ -850,7 +1043,9 @@ class SqlProjectWriter(MdbWriter):
                 existing[key] = str(actual)
         return result
 
-    def _write_remapped_identity_graph(self, connection, remapped: RawBidData) -> None:
+    def _write_remapped_identity_graph(
+        self, connection, remapped: RawBidData
+    ) -> dict[str, dict[str, str]]:
         rows_by_table: list[tuple[str, dict]] = [("Bids", remapped.bid_row)]
         rows_by_table.extend(
             (table, row)
@@ -926,6 +1121,10 @@ class SqlProjectWriter(MdbWriter):
                 )
         finally:
             cursor.close()
+        result: dict[str, dict[str, str]] = {}
+        for (table, source_uid), actual_uid in identity_map.items():
+            result.setdefault(table, {})[source_uid] = str(actual_uid)
+        return result
 
     def _insert_identity_raw(
         self,

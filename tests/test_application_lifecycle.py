@@ -341,6 +341,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
     ):
         container = ServiceContainer()
         container.register_instance("project_read_service", SimpleNamespace())
+        container.register_instance("project_write_service", SimpleNamespace())
         container.register_instance(
             "reload_database_use_case",
             SimpleNamespace(execute=lambda: None),
@@ -404,6 +405,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
 
         container = ServiceContainer()
         container.register_instance("project_read_service", SimpleNamespace())
+        container.register_instance("project_write_service", SimpleNamespace())
         container.register_instance(
             "reload_database_use_case",
             SimpleNamespace(execute=lambda: None),

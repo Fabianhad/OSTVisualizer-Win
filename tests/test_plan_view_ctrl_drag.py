@@ -301,6 +301,7 @@ class InputHandlerHarness(
 ):
     def __init__(self):
         self._editing_enabled = True
+        self._pending_mutation_uids = set()
         self.selected_text_annotation_uids = []
         self.editing_text_annotation_uids = []
         self.editing_named_view_uids = []
@@ -313,6 +314,9 @@ class InputHandlerHarness(
 
     def _condition_text_label_at(self, _vp_pos):
         return None
+
+    def reset_ctrl_held(self):
+        self._ctrl_held = False
 
     def _dimension_text_label_at(self, _vp_pos):
         return None
@@ -770,6 +774,8 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_last_valid_new_pos = []
         view._keyboard_move_dirty = False
         view._selected_uids = set({"t1"} if selected_uids is None else selected_uids)
+        view.plan_item_selection_changed = _FakeSignal()
+        view.takeoff_selection_changed = _FakeSignal()
         view._handle_infos = []
         view._selection_items = []
         view._current_takeoffs = {
@@ -1842,6 +1848,23 @@ class CtrlDragTests(unittest.TestCase):
         cursor = view._resolve_select_cursor(QtCore.QPoint(5, 5))
         self.assertEqual(cursor, Qt.CursorShape.SizeAllCursor)
 
+    def test_modal_mutation_error_clears_stale_move_cursor_without_override(self):
+        view = self._make_selected_path_takeoff_view()
+        viewport = FakeCursorViewport()
+        view.viewport = lambda: viewport
+        view._last_mouse_vp_pos = QtCore.QPoint(5, 5)
+        viewport.setCursor(Qt.CursorShape.SizeAllCursor)
+        view.prepare_for_modal_mutation_error()
+        self.assertIsNone(view._last_mouse_vp_pos)
+        self.assertEqual(viewport.cursor, Qt.CursorShape.ArrowCursor)
+        self.assertIsNone(QApplication.overrideCursor())
+        viewport.setCursor(Qt.CursorShape.SizeAllCursor)
+        view._last_mouse_vp_pos = QtCore.QPoint(5, 5)
+        view.prepare_for_modal_mutation_error()
+        self.assertIsNone(view._last_mouse_vp_pos)
+        self.assertEqual(viewport.cursor, Qt.CursorShape.ArrowCursor)
+        self.assertIsNone(QApplication.overrideCursor())
+
     def test_rotate_mode_uses_normal_hover_cursors_except_rotate_handle(self):
         view = self._make_selected_path_takeoff_view()
         view._cursor_mode = "rotate"
@@ -2363,6 +2386,22 @@ class CtrlDragTests(unittest.TestCase):
             [1.0, 0.0, 11.0, 0.0],
         )
         self.assertEqual(flushed, [{"t1": [1.0, 0.0, 11.0, 0.0]}])
+
+    def test_takeoff_arrow_move_waits_for_geometry_edit_lease(self):
+        view = self._make_view({"t1"})
+        requested = []
+        view.request_geometry_edit_lease = (
+            lambda uids: requested.append(set(uids)) or False
+        )
+        event = FakeKeyEvent(Qt.Key.Key_Right)
+        InputHandlerMixin.keyPressEvent(view, event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(requested, [{"t1"}])
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [0.0, 0.0, 10.0, 0.0],
+        )
+        self.assertEqual(view._dirty_positions, {})
 
     def test_area_parent_arrow_move_preserves_hole_relative_position(self):
         view = self._make_view({"parent"})

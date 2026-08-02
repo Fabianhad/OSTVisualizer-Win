@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsTextItem,
 )
+
+_PENDING_MUTATION_ORIGINAL_OPACITY_ROLE = 20
 from .....application.dtos.hotlink_dto import HotlinkDto
 from .....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
@@ -92,6 +94,8 @@ class SelectionManagerMixin:
         return False
 
     def _is_selectable(self, uid: str) -> bool:
+        if uid in self._pending_mutation_uids:
+            return False
         if self._annotation_only_selection:
             ann = self._current_annotations.get(uid)
             if ann is None or not ann.is_interactive:
@@ -104,6 +108,36 @@ class SelectionManagerMixin:
         if ann is None or not ann.is_interactive:
             return False
         return bool(self._annotation_layer_visible(ann))
+
+    def set_pending_mutation_uids(self, uids: set[str]) -> None:
+        pending = {str(uid) for uid in uids if uid}
+        affected = self._pending_mutation_uids.symmetric_difference(pending)
+        self._pending_mutation_uids = pending
+        selected_changed = bool(self._selected_uids.intersection(pending))
+        if selected_changed:
+            self._selected_uids.difference_update(pending)
+            self._on_selection_changed()
+            self.update_selection_visuals()
+        for uid in affected:
+            self._apply_pending_mutation_visual(uid)
+
+    def get_pending_mutation_uids(self) -> set[str]:
+        return set(self._pending_mutation_uids)
+
+    def _apply_pending_mutation_visual(self, uid: str) -> None:
+        is_pending = uid in self._pending_mutation_uids
+        for item in self._uid_to_items.get(uid, ()):
+            original_opacity = item.data(_PENDING_MUTATION_ORIGINAL_OPACITY_ROLE)
+            if is_pending:
+                if original_opacity is None:
+                    item.setData(
+                        _PENDING_MUTATION_ORIGINAL_OPACITY_ROLE,
+                        float(item.opacity()),
+                    )
+                item.setOpacity(0.35)
+            elif original_opacity is not None:
+                item.setOpacity(float(original_opacity))
+                item.setData(_PENDING_MUTATION_ORIGINAL_OPACITY_ROLE, None)
 
     def _annotation_layer_visible(self, annotation) -> bool:
         layer_uid = str(annotation.layer_uid or "")
@@ -537,6 +571,7 @@ class SelectionManagerMixin:
             self._on_selection_changed()
         if not valid:
             if emit:
+                self.plan_item_selection_changed.emit([])
                 self.takeoff_selection_changed.emit([])
             return
         if len(valid) == 1:
@@ -553,6 +588,7 @@ class SelectionManagerMixin:
                     item.setTransform(transform)
         valid_takeoffs = valid & self._current_takeoffs.keys()
         if emit:
+            self.plan_item_selection_changed.emit(list(valid))
             self.takeoff_selection_changed.emit(list(valid_takeoffs))
 
     def _create_single_handles(self, uid: str) -> List:

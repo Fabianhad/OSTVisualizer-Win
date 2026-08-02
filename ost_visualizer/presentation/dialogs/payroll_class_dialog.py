@@ -30,6 +30,7 @@ class PayrollClassListDialog(BasePickerDialog):
         used_pay_class_uids: Optional[Set[str]] = None,
         initial_name: Optional[str] = None,
         save_fn=None,
+        save_async_fn=None,
         menu_mode: bool = False,
     ):
         self.was_cancelled: bool = False
@@ -45,6 +46,7 @@ class PayrollClassListDialog(BasePickerDialog):
             used_uids=used_pay_class_uids,
             initial_name=initial_name,
             save_fn=save_fn,
+            save_async_fn=save_async_fn,
             accept_button_text="OK" if menu_mode else "Select",
             show_cancel_button=not menu_mode,
             accept_requires_selection=not menu_mode,

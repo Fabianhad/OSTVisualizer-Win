@@ -1,5 +1,6 @@
 from typing import Callable, Dict, List, Optional, Set
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...domain.entities.cdn_type import CdnType
 from ..config import (
     CDNTYPE_BUTTON_WIDTH,
@@ -26,6 +27,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         condition_types: Optional[List[CdnType]] = None,
         current_name: str = "",
         save_fn: Optional[Callable[[dict], Optional[Dict[str, str]]]] = None,
+        save_async_fn=None,
         blocked_delete_uids_fn: Optional[Callable[[List[str]], Set[str]]] = None,
         delete_fn: Optional[Callable[[List[str]], object]] = None,
         reload_fn: Optional[Callable[[], List[CdnType]]] = None,
@@ -36,12 +38,14 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self.icon_provider = icon_provider
         self._items = list(condition_types or [])
         self._save_fn = save_fn
+        self._save_async_fn = save_async_fn
         self._blocked_delete_uids_fn = blocked_delete_uids_fn
         self._delete_fn = delete_fn
         self._reload_fn = reload_fn
         self._selected_name: str = ""
         self._has_license: bool = has_license
         self._is_interactive: bool = has_license
+        self._operation_pending = False
         self._menu_mode = menu_mode
         self._building = False
         self._pending_new_item: Optional[QtWidgets.QTreeWidgetItem] = None
@@ -264,14 +268,20 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             )
             self._set_item_text(item, original)
             return
-        try:
-            result = self._save_fn(
-                {
-                    "new": [],
-                    "updated": [{"uid": uid, "name": new_name}],
-                    "deleted_uids": [],
-                }
+        changes = {
+            "new": [],
+            "updated": [{"uid": uid, "name": new_name}],
+            "deleted_uids": [],
+        }
+        if self._save_async_fn is not None:
+            self._run_async_save(
+                changes,
+                lambda _mapping: self._reload_items(select_uid=uid),
+                lambda: self._set_item_text(item, original),
             )
+            return
+        try:
+            result = self._save_fn(changes)
         except Exception:
             self._set_item_text(item, original)
             show_warning(self, "Condition Types", "Failed to rename condition type.")
@@ -292,6 +302,26 @@ class ConditionTypesDialog(QtWidgets.QDialog):
                 self,
                 "Duplicate Condition Type",
                 f"Condition type {name} already exists.",
+            )
+            return
+        if self._save_async_fn is not None:
+            temp_uid = "new_condition_type"
+            self._disconnect_pending_new_editor_signal()
+            self._pending_new_item = None
+            self._pending_new_prev_uid = None
+
+            def created(mapping) -> None:
+                new_uid = (mapping or {}).get(temp_uid)
+                if new_uid:
+                    self._reload_items(select_uid=new_uid, select_name=name)
+
+            self._run_async_save(
+                {
+                    "new": [{"uid": temp_uid, "name": name}],
+                    "updated": [],
+                    "deleted_uids": [],
+                },
+                created,
             )
             return
         if self.create_condition_type(name):
@@ -370,6 +400,18 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         if to_delete is None:
             return
         deleted_uids = [uid for _, uid in to_delete]
+        if self._save_async_fn is not None:
+
+            def deleted(_mapping) -> None:
+                self._reload_items()
+                if self.tree.topLevelItemCount():
+                    self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
+
+            self._run_async_save(
+                {"new": [], "updated": [], "deleted_uids": deleted_uids},
+                deleted,
+            )
+            return
         try:
             result = self._delete_condition_types(deleted_uids)
         except Exception:
@@ -423,6 +465,37 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._is_interactive = bool(enabled) and self._has_license
         self._set_controls_interactive(self._is_interactive)
 
+    def _run_async_save(self, changes: dict, on_success, on_failure=None) -> None:
+        if self._operation_pending:
+            return
+        self._operation_pending = True
+        self.set_interactive(False)
+
+        def completed(success: bool, mapping=None) -> None:
+            if not isValid(self):
+                return
+            self._operation_pending = False
+            self.set_interactive(True)
+            if success:
+                on_success(mapping if isinstance(mapping, dict) else {})
+            elif on_failure is not None:
+                on_failure()
+
+        try:
+            started = self._save_async_fn(changes, completed)
+        except Exception as exc:
+            self._operation_pending = False
+            self.set_interactive(True)
+            if on_failure is not None:
+                on_failure()
+            show_warning(self, "Condition Types", str(exc))
+            return
+        if not started:
+            self._operation_pending = False
+            self.set_interactive(True)
+            if on_failure is not None:
+                on_failure()
+
     def _set_controls_interactive(self, enabled: bool) -> None:
         if not enabled and self._pending_new_item is not None:
             self._remove_pending_new_item()
@@ -449,10 +522,22 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         super().showEvent(event)
         remove_minimize(self)
 
+    def closeEvent(self, event) -> None:
+        if self._operation_pending:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:
+        if self._operation_pending:
+            return
+        super().done(result)
+
     def cleanup(self) -> None:
         self._disconnect_pending_new_editor_signal()
         self.icon_provider = None
         self._save_fn = None
+        self._save_async_fn = None
         self._blocked_delete_uids_fn = None
         self._delete_fn = None
         self._reload_fn = None

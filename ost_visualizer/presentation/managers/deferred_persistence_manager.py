@@ -5,7 +5,9 @@ from PySide6 import QtCore
 
 DeferredPersistenceKey = Tuple[Hashable, ...]
 BID_SELECTED_PAGE_KIND = "bid_selected_page"
-NON_RETRYABLE_UI_STATE_KINDS = {BID_SELECTED_PAGE_KIND}
+PAGE_VIEW_STATE_KIND = "page_view_state"
+NON_RETRYABLE_UI_STATE_KINDS = {BID_SELECTED_PAGE_KIND, PAGE_VIEW_STATE_KIND}
+SILENT_BEST_EFFORT_UI_STATE_KINDS = {PAGE_VIEW_STATE_KIND}
 
 
 @dataclass
@@ -15,6 +17,7 @@ class DeferredPersistenceItem:
     description: str
     write_fn: Callable[[], bool]
     skippable_when_blocked: bool = False
+    blocks_shutdown: bool = True
 
 
 class DeferredPersistenceManager(QtCore.QObject):
@@ -49,6 +52,7 @@ class DeferredPersistenceManager(QtCore.QObject):
         description: str,
         write_fn: Callable[[], bool],
         skippable_when_blocked: bool = False,
+        blocks_shutdown: bool = True,
     ) -> bool:
         if self._cleaned_up or self._shutdown_started:
             return False
@@ -58,6 +62,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             description,
             write_fn,
             skippable_when_blocked,
+            blocks_shutdown,
         )
         self._timer.start()
         return True
@@ -71,13 +76,20 @@ class DeferredPersistenceManager(QtCore.QObject):
         current_y: float,
     ) -> None:
         self.schedule(
-            "page_view_state",
-            ("page_view_state", db_path, page_uid),
+            PAGE_VIEW_STATE_KIND,
+            (PAGE_VIEW_STATE_KIND, db_path, page_uid),
             f"page view state for page {page_uid}",
-            lambda: self._write_service.save_page_view_state(
-                db_path, page_uid, zoom_fac, current_x, current_y
+            lambda: self._save_or_queue_page_setting(
+                db_path,
+                page_uid,
+                "view_state",
+                [zoom_fac, current_x, current_y],
+                lambda: self._write_service.save_page_view_state(
+                    db_path, page_uid, zoom_fac, current_x, current_y
+                ),
             ),
             skippable_when_blocked=True,
+            blocks_shutdown=False,
         )
 
     def schedule_bid_selected_page(
@@ -87,10 +99,17 @@ class DeferredPersistenceManager(QtCore.QObject):
             BID_SELECTED_PAGE_KIND,
             self._bid_selected_page_key(db_path, bid_uid),
             f"selected page {page_uid} for bid {bid_uid}",
-            lambda: self._write_service.save_bid_selected_page(
-                db_path, bid_uid, page_uid
+            lambda: self._save_or_queue_page_setting(
+                db_path,
+                bid_uid,
+                "bid_selected_page",
+                [page_uid],
+                lambda: self._write_service.save_bid_selected_page(
+                    db_path, bid_uid, page_uid
+                ),
             ),
             skippable_when_blocked=True,
+            blocks_shutdown=False,
         )
 
     def cancel_bid_selected_pages(self, db_path: str, bid_uids: list[str]) -> None:
@@ -127,8 +146,17 @@ class DeferredPersistenceManager(QtCore.QObject):
             "layer_show",
             ("layer_show", db_path, layer_uid),
             f"layer visibility for layer {layer_uid}",
-            lambda: self._write_service.update_layer_show(
-                db_path, layer_uid, show, publish_database_refreshed_after_write=False
+            lambda: self._save_or_queue_page_setting(
+                db_path,
+                layer_uid,
+                "layer_show",
+                [show],
+                lambda: self._write_service.update_layer_show(
+                    db_path,
+                    layer_uid,
+                    show,
+                    publish_database_refreshed_after_write=False,
+                ),
             ),
             skippable_when_blocked=True,
         )
@@ -140,11 +168,17 @@ class DeferredPersistenceManager(QtCore.QObject):
             "page_show_mode",
             ("page_show_mode", db_path, page_uid),
             f"page display mode for page {page_uid}",
-            lambda: self._write_service.save_page_show_mode(
+            lambda: self._save_or_queue_page_setting(
                 db_path,
                 page_uid,
-                show_mode,
-                publish_database_refreshed_after_write=False,
+                "show_mode",
+                [show_mode],
+                lambda: self._write_service.save_page_show_mode(
+                    db_path,
+                    page_uid,
+                    show_mode,
+                    publish_database_refreshed_after_write=False,
+                ),
             ),
             skippable_when_blocked=True,
         )
@@ -156,11 +190,17 @@ class DeferredPersistenceManager(QtCore.QObject):
             "page_area_selection",
             ("page_area_selection", db_path, page_uid),
             f"selected area for page {page_uid}",
-            lambda: self._write_service.save_page_area(
+            lambda: self._save_or_queue_page_setting(
                 db_path,
                 page_uid,
-                area_uid,
-                publish_database_refreshed_after_write=False,
+                "area",
+                [area_uid],
+                lambda: self._write_service.save_page_area(
+                    db_path,
+                    page_uid,
+                    area_uid,
+                    publish_database_refreshed_after_write=False,
+                ),
             ),
             skippable_when_blocked=True,
         )
@@ -170,7 +210,13 @@ class DeferredPersistenceManager(QtCore.QObject):
             "page_invert",
             ("page_invert", db_path, page_uid),
             f"page invert state for page {page_uid}",
-            lambda: self._write_service.save_page_invert(db_path, page_uid, invert),
+            lambda: self._save_or_queue_page_setting(
+                db_path,
+                page_uid,
+                "invert",
+                [invert],
+                lambda: self._write_service.save_page_invert(db_path, page_uid, invert),
+            ),
             skippable_when_blocked=True,
         )
 
@@ -179,7 +225,15 @@ class DeferredPersistenceManager(QtCore.QObject):
             "page_bitonal",
             ("page_bitonal", db_path, page_uid),
             f"page bitonal state for page {page_uid}",
-            lambda: self._write_service.save_page_bitonal(db_path, page_uid, bitonal),
+            lambda: self._save_or_queue_page_setting(
+                db_path,
+                page_uid,
+                "bitonal",
+                [bitonal],
+                lambda: self._write_service.save_page_bitonal(
+                    db_path, page_uid, bitonal
+                ),
+            ),
             skippable_when_blocked=True,
         )
 
@@ -194,16 +248,40 @@ class DeferredPersistenceManager(QtCore.QObject):
             "page_overlay_rect",
             ("page_overlay_rect", db_path, page_uid),
             f"overlay rectangle for page {page_uid}",
-            lambda: bool(
-                self._write_service.save_page_overlay_rect_result(
-                    db_path,
-                    page_uid,
-                    rect,
-                    publish_database_refreshed_after_write=False,
-                ).write_success
+            lambda: self._save_or_queue_page_setting(
+                db_path,
+                page_uid,
+                "overlay_rect",
+                [list(rect)],
+                lambda: bool(
+                    self._write_service.save_page_overlay_rect_result(
+                        db_path,
+                        page_uid,
+                        rect,
+                        publish_database_refreshed_after_write=False,
+                    ).write_success
+                ),
             ),
             skippable_when_blocked=True,
         )
+
+    def _save_or_queue_page_setting(
+        self,
+        db_path: str,
+        page_uid: str,
+        setting_kind: str,
+        values: list,
+        fallback: Callable[[], bool],
+    ) -> bool:
+        queued = self._write_service.queue_page_setting_if_sql(
+            db_path,
+            page_uid,
+            setting_kind,
+            values,
+        )
+        if queued is not None:
+            return bool(queued)
+        return bool(fallback())
 
     def flush(self) -> bool:
         if self._flushing:
@@ -245,21 +323,35 @@ class DeferredPersistenceManager(QtCore.QObject):
         return True
 
     def _flush_keys(
-        self, keys: list[DeferredPersistenceKey]
+        self,
+        keys: list[DeferredPersistenceKey],
+        *,
+        warn_noncritical_failures: bool = True,
     ) -> Dict[DeferredPersistenceKey, DeferredPersistenceItem]:
         failed: Dict[DeferredPersistenceKey, DeferredPersistenceItem] = {}
         for key in keys:
             item = self._pending.get(key)
             if item is None:
                 continue
-            if self._execute_item(item):
+            if self._execute_item(
+                item,
+                warn_on_failure=(
+                    item.blocks_shutdown
+                    or (
+                        warn_noncritical_failures
+                        and item.kind not in SILENT_BEST_EFFORT_UI_STATE_KINDS
+                    )
+                ),
+            ):
                 if self._pending.get(key) is item:
                     self._pending.pop(key, None)
             else:
                 failed[key] = item
         return failed
 
-    def _execute_item(self, item: DeferredPersistenceItem) -> bool:
+    def _execute_item(
+        self, item: DeferredPersistenceItem, *, warn_on_failure: bool = True
+    ) -> bool:
         if self._should_skip_expected_block(item):
             return True
         try:
@@ -267,21 +359,23 @@ class DeferredPersistenceManager(QtCore.QObject):
         except Exception:
             if self._is_non_retryable_ui_state(item):
                 return True
-            self._logger.warning(
-                "Deferred persistence failed for %s %s",
-                item.kind,
-                item.key,
-                exc_info=True,
-            )
+            if warn_on_failure:
+                self._logger.warning(
+                    "Deferred persistence failed for %s %s",
+                    item.kind,
+                    item.key,
+                    exc_info=True,
+                )
             success = False
         if not success:
             if self._is_non_retryable_ui_state(item):
                 return True
-            self._logger.warning(
-                "Deferred persistence write did not complete: %s (%s)",
-                item.description,
-                item.key,
-            )
+            if warn_on_failure:
+                self._logger.warning(
+                    "Deferred persistence write did not complete: %s (%s)",
+                    item.description,
+                    item.key,
+                )
         return success
 
     @staticmethod
@@ -312,7 +406,33 @@ class DeferredPersistenceManager(QtCore.QObject):
             return True
         if not self._shutdown_started:
             self.begin_shutdown()
-        if not self.flush():
+        self._timer.stop()
+        self._flushing = True
+        try:
+            failed = self._flush_keys(
+                list(self._pending), warn_noncritical_failures=False
+            )
+        finally:
+            self._flushing = False
+        blocking_failed = {
+            key: item for key, item in failed.items() if item.blocks_shutdown
+        }
+        for key, item in failed.items():
+            if item.blocks_shutdown:
+                continue
+            if self._pending.get(key) is item:
+                self._pending.pop(key, None)
+            log = (
+                self._logger.debug
+                if item.kind in SILENT_BEST_EFFORT_UI_STATE_KINDS
+                else self._logger.warning
+            )
+            log(
+                "Abandoning noncritical deferred persistence during shutdown: %s (%s)",
+                item.description,
+                item.key,
+            )
+        if blocking_failed:
             self._shutdown_started = False
             if self._pending:
                 self._timer.start()

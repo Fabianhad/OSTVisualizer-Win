@@ -1,4 +1,5 @@
 import logging
+import contextvars
 from contextlib import contextmanager
 from typing import Generator, Optional
 import pyodbc
@@ -39,19 +40,30 @@ class MdbWriter(
     ) -> None:
         self.logger = logger or logging.getLogger(__name__)
         self._conn_manager = conn_manager or MdbConnectionManager()
+        self._access_transaction_depth = contextvars.ContextVar(
+            "mdb_writer_transaction_depth",
+            default=0,
+        )
 
     @contextmanager
     def _connection(self, db_path: str) -> Generator[ConnectionWrapper, None, None]:
-        with self._conn_manager.connection(db_path, autocommit=False) as conn:
-            try:
-                yield conn
-                conn.commit()
-            except Exception:
+        depth = self._access_transaction_depth.get()
+        token = self._access_transaction_depth.set(depth + 1)
+        try:
+            with self._conn_manager.connection(db_path, autocommit=False) as conn:
                 try:
-                    conn.rollback()
-                except pyodbc.Error:
-                    pass
-                raise
+                    yield conn
+                    if depth == 0:
+                        conn.commit()
+                except Exception:
+                    if depth == 0:
+                        try:
+                            conn.rollback()
+                        except pyodbc.Error:
+                            pass
+                    raise
+        finally:
+            self._access_transaction_depth.reset(token)
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)

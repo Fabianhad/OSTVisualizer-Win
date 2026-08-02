@@ -3,7 +3,6 @@ import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
 from ....application.dtos.collaboration_dtos import (
     ChangeOperation,
-    DatabaseMutationRequest,
     ResourceRef,
 )
 from ....domain.dtos.raw_bid_data_dto import RawBidData
@@ -80,12 +79,8 @@ def _database_row(attributes) -> Dict[str, str]:
 
 
 class OstImporter:
-    def __init__(
-        self, mdb_writer, mutation_executor=None, session_registry=None
-    ) -> None:
+    def __init__(self, mdb_writer) -> None:
         self._mdb_writer = mdb_writer
-        self._mutation_executor = mutation_executor
-        self._session_registry = session_registry
 
     def import_ost(
         self,
@@ -94,87 +89,114 @@ class OstImporter:
         target_project_uid: Optional[str] = None,
     ) -> bool:
         try:
-            raw_data = self._parse_ost_xml(ost_file_path)
-            takeoff_graph = resolve_takeoff_graph(raw_data)
-            if takeoff_graph.fatal_issues:
-                logger.error(
-                    "Rejecting OST import because the takeoff graph is invalid: %s",
-                    format_integrity_issues(takeoff_graph.fatal_issues),
+            raw_data = self._validated_raw_data(ost_file_path)
+            return bool(
+                self._mdb_writer.import_ost_data(
+                    target_db_path, raw_data, self._transform, target_project_uid
                 )
-                return False
-            if takeoff_graph.skipped_count:
-                descendant_diagnostic = (
-                    "; skipped dependent descendants: "
-                    + format_integrity_issues(takeoff_graph.dependent_descendants)
-                    if takeoff_graph.dependent_descendants
-                    else ""
-                )
-                logger.warning(
-                    "Skipping %d invalid takeoff(s) during OST import; "
-                    "missing-parent roots: %s%s",
-                    takeoff_graph.skipped_count,
-                    format_integrity_issues(takeoff_graph.missing_parent_roots),
-                    descendant_diagnostic,
-                )
-            cleared_selected_pages = clear_missing_selected_page_references(raw_data)
-            if cleared_selected_pages:
-                logger.warning(
-                    "Cleared %d missing selected-page reference(s) during OST "
-                    "import: %s",
-                    len(cleared_selected_pages),
-                    format_integrity_issues(cleared_selected_pages),
-                )
-            cleared_annotation_refs = clear_missing_annotation_takeoff_references(
-                raw_data
             )
-            if cleared_annotation_refs:
-                logger.warning(
-                    "Cleared %d missing annotation takeoff attachment reference(s) "
-                    "during OST import: %s",
-                    len(cleared_annotation_refs),
-                    format_integrity_issues(cleared_annotation_refs),
-                )
-            if not self._validate_page_references(raw_data):
-                return False
-            collection = ResourceRef("project_bids", target_project_uid or "orphan")
-            if self._mutation_executor is None:
-                return self._mdb_writer.import_ost_data(
-                    target_db_path,
-                    raw_data,
-                    self._transform,
-                    target_project_uid,
-                )
-
-            def import_data(recorder):
-                success = self._mdb_writer.import_ost_data(
-                    target_db_path,
-                    raw_data,
-                    self._transform,
-                    target_project_uid,
-                )
-                if success:
-                    recorder.record(
-                        collection,
-                        ChangeOperation.BULK_REFRESH,
-                    )
-                return success
-
-            result = self._mutation_executor.execute(
-                DatabaseMutationRequest(
-                    database_id=target_db_path,
-                    session_id=(
-                        self._session_registry.get(target_db_path)
-                        if self._session_registry is not None
-                        else ""
-                    ),
-                    resources=(collection,),
-                ),
-                import_data,
-            )
-            return bool(result.success and result.value)
         except Exception:
             logger.exception("Failed to import OST file %s", ost_file_path)
             return False
+
+    def import_ost_mutation(
+        self,
+        ost_file_path: str,
+        target_db_path: str,
+        target_project_uid: Optional[str],
+        recorder,
+    ) -> dict[str, object]:
+        raw_data = self._validated_raw_data(ost_file_path)
+        value = self._mdb_writer.import_ost_data(
+            target_db_path,
+            raw_data,
+            self._transform,
+            target_project_uid,
+        )
+        if not isinstance(value, dict):
+            raise RuntimeError(
+                "The SQL import writer did not return authoritative identities."
+            )
+        bid_map = value.get("bid_uids")
+        if not isinstance(bid_map, dict) or len(bid_map) != 1:
+            raise RuntimeError(
+                "The SQL import writer did not return exactly one imported bid."
+            )
+        bid_uid = str(next(iter(bid_map.values())))
+        bid_value = int(bid_uid)
+        project_collection = ResourceRef("project_bids", target_project_uid or "orphan")
+        recorder.record(ResourceRef("bid", bid_uid, bid_value), ChangeOperation.CREATE)
+        recorder.record(project_collection, ChangeOperation.UPDATE)
+        for resource_type in (
+            "conditions_collection",
+            "areas_collection",
+            "pages_collection",
+            "layers_collection",
+            "takeoffs_collection",
+            "annotations_collection",
+        ):
+            recorder.record(
+                ResourceRef(resource_type, bid_uid, bid_value),
+                ChangeOperation.BULK_REFRESH,
+            )
+        recorder.record(
+            ResourceRef("cover_sheet", bid_uid, bid_value),
+            ChangeOperation.BULK_REFRESH,
+        )
+        for table_name, resource_type in (
+            ("CdnTypes", "condition_types_collection"),
+            ("JobStatuses", "job_statuses_collection"),
+            ("Employees", "employees_collection"),
+            ("PayClasses", "pay_classes_collection"),
+        ):
+            if raw_data.global_tables.get(table_name):
+                recorder.record(
+                    ResourceRef(resource_type, "database"),
+                    ChangeOperation.BULK_REFRESH,
+                )
+        return value
+
+    def _validated_raw_data(self, ost_file_path: str) -> RawBidData:
+        raw_data = self._parse_ost_xml(ost_file_path)
+        takeoff_graph = resolve_takeoff_graph(raw_data)
+        if takeoff_graph.fatal_issues:
+            raise ValueError(
+                "The imported takeoff graph is invalid: "
+                + format_integrity_issues(takeoff_graph.fatal_issues)
+            )
+        if takeoff_graph.skipped_count:
+            descendant_diagnostic = (
+                "; skipped dependent descendants: "
+                + format_integrity_issues(takeoff_graph.dependent_descendants)
+                if takeoff_graph.dependent_descendants
+                else ""
+            )
+            logger.warning(
+                "Skipping %d invalid takeoff(s) during OST import; "
+                "missing-parent roots: %s%s",
+                takeoff_graph.skipped_count,
+                format_integrity_issues(takeoff_graph.missing_parent_roots),
+                descendant_diagnostic,
+            )
+        cleared_selected_pages = clear_missing_selected_page_references(raw_data)
+        if cleared_selected_pages:
+            logger.warning(
+                "Cleared %d missing selected-page reference(s) during OST "
+                "import: %s",
+                len(cleared_selected_pages),
+                format_integrity_issues(cleared_selected_pages),
+            )
+        cleared_annotation_refs = clear_missing_annotation_takeoff_references(raw_data)
+        if cleared_annotation_refs:
+            logger.warning(
+                "Cleared %d missing annotation takeoff attachment reference(s) "
+                "during OST import: %s",
+                len(cleared_annotation_refs),
+                format_integrity_issues(cleared_annotation_refs),
+            )
+        if not self._validate_page_references(raw_data):
+            raise ValueError("The imported project contains invalid references.")
+        return raw_data
 
     def _transform(
         self,

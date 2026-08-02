@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Callable, List, Optional, Set
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...domain.entities.layer import BidLayer
 from ..config import (
     COMPACT_SPACING,
@@ -39,6 +40,12 @@ class LayersDialog(QtWidgets.QDialog):
         update_all_show_fn: Optional[Callable[[bool], bool]] = None,
         update_name_fn: Optional[Callable[[str, str], bool]] = None,
         move_fn: Optional[Callable[[str, str], bool]] = None,
+        insert_async_fn=None,
+        delete_many_async_fn=None,
+        update_name_async_fn=None,
+        move_async_fn=None,
+        update_show_async_fn=None,
+        update_all_show_async_fn=None,
         has_license: bool = True,
         mode: LayersDialogMode = LayersDialogMode.SELECT,
     ) -> None:
@@ -54,9 +61,16 @@ class LayersDialog(QtWidgets.QDialog):
         self._update_all_show_fn = update_all_show_fn
         self._update_name_fn = update_name_fn
         self._move_fn = move_fn
+        self._insert_async_fn = insert_async_fn
+        self._delete_many_async_fn = delete_many_async_fn
+        self._update_name_async_fn = update_name_async_fn
+        self._move_async_fn = move_async_fn
+        self._update_show_async_fn = update_show_async_fn
+        self._update_all_show_async_fn = update_all_show_async_fn
         self._selected_name: str = ""
         self._has_license = has_license
         self._is_interactive = has_license
+        self._operation_pending = False
         self._checkboxes: List[QtWidgets.QCheckBox] = []
         self._building = False
         self._pending_new_item: Optional[QtWidgets.QTreeWidgetItem] = None
@@ -346,6 +360,15 @@ class LayersDialog(QtWidgets.QDialog):
             show_warning(self, "Duplicate Layer", f"Layer {new_name} already exists.")
             self._set_item_text(item, layer.name)
             return
+        if self._update_name_async_fn is not None:
+            self._run_async_operation(
+                lambda completed: self._update_name_async_fn(
+                    layer.uid, new_name, completed
+                ),
+                lambda _value=None: self._reload_items(select_uid=layer.uid),
+                lambda: self._set_item_text(item, layer.name),
+            )
+            return
         try:
             success = self._update_name_fn(layer.uid, new_name)
         except Exception as exc:
@@ -366,6 +389,24 @@ class LayersDialog(QtWidgets.QDialog):
             show_warning(self, "Duplicate Layer", f"Layer {name} already exists.")
             return
         after_sequence = self._pending_new_after_sequence
+        if self._insert_async_fn is not None:
+            self._disconnect_pending_new_editor_signal()
+            self._pending_new_item = None
+            self._pending_new_prev_uid = None
+            self._pending_new_after_sequence = 0
+
+            def inserted(value) -> None:
+                new_uid = str(value or "")
+                if new_uid:
+                    self._reload_items(select_uid=new_uid, select_name=name)
+
+            self._run_async_operation(
+                lambda completed: self._insert_async_fn(
+                    name, after_sequence, completed
+                ),
+                inserted,
+            )
+            return
         try:
             new_uid = self._insert_fn(name, after_sequence)
         except Exception as exc:
@@ -406,6 +447,18 @@ class LayersDialog(QtWidgets.QDialog):
         if to_delete is None:
             return
         uids = [uid for _, uid in to_delete]
+        if self._delete_many_async_fn is not None:
+
+            def deleted(_value=None) -> None:
+                self._reload_items()
+                if self.tree.topLevelItemCount():
+                    self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
+
+            self._run_async_operation(
+                lambda completed: self._delete_many_async_fn(uids, completed),
+                deleted,
+            )
+            return
         try:
             result = self._delete_many_fn(uids)
             success = bool(result)
@@ -447,6 +500,15 @@ class LayersDialog(QtWidgets.QDialog):
             show_warning(self, "Layer Visibility", "Layer is no longer available.")
             return
         previous = bool(layer.show)
+        if self._update_show_async_fn is not None:
+            self._run_async_operation(
+                lambda completed: self._update_show_async_fn(
+                    layer_uid, checked, completed
+                ),
+                lambda _value=None: self._reload_items(select_uid=layer_uid),
+                lambda: self._set_layer_show_locally(layer_uid, previous),
+            )
+            return
         try:
             success = self._update_show_fn(layer_uid, checked)
         except Exception as exc:
@@ -460,6 +522,13 @@ class LayersDialog(QtWidgets.QDialog):
 
     def _set_all_show(self, show: bool) -> None:
         if not self._is_interactive:
+            return
+        if self._update_all_show_async_fn is not None:
+            self._run_async_operation(
+                lambda completed: self._update_all_show_async_fn(show, completed),
+                lambda _value=None: self._reload_items(),
+                lambda: self._reload_items(),
+            )
             return
         try:
             success = self._update_all_show_fn(show)
@@ -501,6 +570,15 @@ class LayersDialog(QtWidgets.QDialog):
         if not self._can_modify(layer) or target < 0 or target >= len(self._layers):
             return
         neighbor_uid = self._layers[target].uid
+        if self._move_async_fn is not None:
+            self._run_async_operation(
+                lambda completed: self._move_async_fn(
+                    layer.uid, neighbor_uid, completed
+                ),
+                lambda _value=None: self._reload_items(select_uid=layer.uid),
+                lambda: self._reload_items(select_uid=layer.uid),
+            )
+            return
         try:
             success = self._move_fn(layer.uid, neighbor_uid)
         except Exception as exc:
@@ -544,6 +622,42 @@ class LayersDialog(QtWidgets.QDialog):
         self._is_interactive = bool(enabled) and self._has_license
         self._set_controls_interactive(self._is_interactive)
 
+    def _run_async_operation(
+        self,
+        submit,
+        on_success,
+        on_failure=None,
+    ) -> None:
+        if self._operation_pending:
+            return
+        self._operation_pending = True
+        self.set_interactive(False)
+
+        def completed(success: bool, value=None) -> None:
+            if not isValid(self):
+                return
+            self._operation_pending = False
+            self.set_interactive(True)
+            if success:
+                on_success(value)
+            elif on_failure is not None:
+                on_failure()
+
+        try:
+            started = submit(completed)
+        except Exception as exc:
+            self._operation_pending = False
+            self.set_interactive(True)
+            if on_failure is not None:
+                on_failure()
+            show_warning(self, "Layer Update", str(exc))
+            return
+        if not started:
+            self._operation_pending = False
+            self.set_interactive(True)
+            if on_failure is not None:
+                on_failure()
+
     def _set_controls_interactive(self, enabled: bool) -> None:
         if not enabled and self._pending_new_item is not None:
             self._remove_pending_new_item()
@@ -572,6 +686,17 @@ class LayersDialog(QtWidgets.QDialog):
         super().showEvent(event)
         remove_minimize(self)
 
+    def closeEvent(self, event) -> None:
+        if self._operation_pending:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def done(self, result: int) -> None:
+        if self._operation_pending:
+            return
+        super().done(result)
+
     def cleanup(self) -> None:
         self._disconnect_pending_new_editor_signal()
         self.icon_provider = None
@@ -582,6 +707,12 @@ class LayersDialog(QtWidgets.QDialog):
         self._update_all_show_fn = None
         self._update_name_fn = None
         self._move_fn = None
+        self._insert_async_fn = None
+        self._delete_many_async_fn = None
+        self._update_name_async_fn = None
+        self._move_async_fn = None
+        self._update_show_async_fn = None
+        self._update_all_show_async_fn = None
         self._layers.clear()
         self._used_uids.clear()
         self._checkboxes.clear()

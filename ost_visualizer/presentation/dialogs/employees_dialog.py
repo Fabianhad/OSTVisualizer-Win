@@ -1,6 +1,7 @@
 from dataclasses import replace
 from typing import List, Optional, Set
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...domain.entities.employee import Employee, PayClass
 from ..config import (
     COMPACT_SPACING,
@@ -33,13 +34,17 @@ class EmployeesDialog(QtWidgets.QDialog):
         pay_classes: Optional[List[PayClass]] = None,
         initial_first_name: Optional[str] = None,
         save_fn=None,
+        save_async_fn=None,
         pay_classes_save_fn=None,
+        pay_classes_save_async_fn=None,
         menu_mode: bool = False,
     ):
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._save_fn = save_fn
+        self._save_async_fn = save_async_fn
         self._pay_classes_save_fn = pay_classes_save_fn
+        self._pay_classes_save_async_fn = pay_classes_save_async_fn
         self._menu_mode = menu_mode
         self._save_done: bool = False
         self._employees: List[EmployeeRecord] = []
@@ -48,6 +53,8 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._used_uids: Set[str] = used_uids or set()
         self._interactive: bool = True
         self._active_detail_dialog = None
+        self._operation_pending = False
+        self._deleted_uids: set[str] = set()
         self._pay_classes: List[PayClassRecord] = [
             PayClassRecord.from_pay_class(pc) for pc in (pay_classes or [])
         ]
@@ -241,13 +248,18 @@ class EmployeesDialog(QtWidgets.QDialog):
             parent=self,
             pay_classes=pay_classes,
             pay_classes_save_fn=self._pay_classes_save_fn,
+            pay_classes_save_async_fn=self._pay_classes_save_async_fn,
         )
         self._active_detail_dialog = form
         try:
             if form.exec() == QtWidgets.QDialog.DialogCode.Accepted:
                 results = form.get_results()
                 current_uid = form.get_current_uid()
-                persisted_uid = self._save_new_employee(results, current_uid)
+                persisted_uid = (
+                    current_uid
+                    if self._save_async_fn is not None
+                    else self._save_new_employee(results, current_uid)
+                )
                 if persisted_uid:
                     self._employees = results
                     self._populate(select_uid=persisted_uid)
@@ -310,7 +322,9 @@ class EmployeesDialog(QtWidgets.QDialog):
             if (uid := item.data(0, self._UID_ROLE)) in to_delete_uids
             and not str(uid).startswith("new_")
         ]
-        if real_deleted and self._save_fn:
+        if real_deleted and self._save_async_fn is not None:
+            self._deleted_uids.update(str(uid) for uid in real_deleted)
+        elif real_deleted and self._save_fn:
             result = self._save_fn(
                 {"new": [], "updated": [], "deleted_uids": real_deleted}
             )
@@ -328,6 +342,8 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._update_button_states()
 
     def _save_pending(self) -> bool:
+        if self._save_async_fn is not None:
+            return True
         if not self._save_fn or self._save_done:
             return True
         new_employees = [e for e in self._employees if e.is_new]
@@ -346,6 +362,57 @@ class EmployeesDialog(QtWidgets.QDialog):
         return True
 
     def done(self, result: int) -> None:
+        if self._operation_pending:
+            return
+        if (
+            result == QtWidgets.QDialog.DialogCode.Accepted
+            and self._save_async_fn is not None
+            and not self._save_done
+        ):
+            new_employees = [
+                employee for employee in self._employees if employee.is_new
+            ]
+            updated_employees = [
+                employee for employee in self._employees if not employee.is_new
+            ]
+            changes = {
+                "new": new_employees,
+                "updated": updated_employees,
+                "deleted_uids": sorted(self._deleted_uids),
+            }
+            if any(changes.values()):
+                self._operation_pending = True
+                self.set_interactive(False)
+
+                def completed(success: bool, mapping=None) -> None:
+                    if not isValid(self):
+                        return
+                    self._operation_pending = False
+                    self.set_interactive(True)
+                    if not success:
+                        return
+                    uid_map = mapping if isinstance(mapping, dict) else {}
+                    for employee in self._employees:
+                        if employee.uid in uid_map:
+                            employee.uid = str(uid_map[employee.uid])
+                        employee.is_new = False
+                    if self._selected_uid in uid_map:
+                        self._selected_uid = str(uid_map[self._selected_uid])
+                    self._deleted_uids.clear()
+                    self._save_done = True
+                    super(EmployeesDialog, self).done(result)
+
+                try:
+                    started = self._save_async_fn(changes, completed)
+                except Exception:
+                    self._operation_pending = False
+                    self.set_interactive(True)
+                    raise
+                if not started:
+                    self._operation_pending = False
+                    self.set_interactive(True)
+                return
+            self._save_done = True
         if result == QtWidgets.QDialog.DialogCode.Accepted:
             if self._save_pending() is False:
                 return
@@ -371,11 +438,17 @@ class EmployeesDialog(QtWidgets.QDialog):
     def cleanup(self) -> None:
         self.icon_provider = None
         self._save_fn = None
+        self._save_async_fn = None
         self._pay_classes_save_fn = None
+        self._pay_classes_save_async_fn = None
         self._active_detail_dialog = None
         self._employees.clear()
         self._pay_classes.clear()
         self._used_uids.clear()
+        self._deleted_uids.clear()
 
     def closeEvent(self, event) -> None:
+        if self._operation_pending:
+            event.ignore()
+            return
         super().closeEvent(event)

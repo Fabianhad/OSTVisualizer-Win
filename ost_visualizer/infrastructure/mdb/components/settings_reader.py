@@ -17,100 +17,126 @@ def _clean_optional_text(value):
 
 
 class SettingsReaderMixin:
+    def _parse_used_job_status_uids(self, connection) -> set[str]:
+        schema = self._schema(connection)
+        if schema.optional_table_missing("Bids") or not schema.column_exists(
+            "Bids", "JobStatusUID"
+        ):
+            return set()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT [JobStatusUID] FROM [Bids] "
+                "WHERE [JobStatusUID] IS NOT NULL"
+            )
+            return {str(row[0]) for row in cursor.fetchall() if row[0] is not None}
+
+    def _parse_used_employee_uids(self, connection) -> set[str]:
+        schema = self._schema(connection)
+        if schema.optional_table_missing("Bids") or not schema.column_exists(
+            "Bids", "EstimatorUID"
+        ):
+            return set()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT [EstimatorUID] FROM [Bids] "
+                "WHERE [EstimatorUID] IS NOT NULL"
+            )
+            return {str(row[0]) for row in cursor.fetchall() if row[0] is not None}
+
+    def _parse_job_statuses(self, connection) -> List[JobStatus]:
+        rows = self._select_all_unfiltered(connection, "JobStatuses")
+        return sorted(
+            [
+                JobStatus(
+                    uid=_clean_optional_text(row.get("UID", "")),
+                    name=_clean_optional_text(row.get("Name", "")),
+                    locked=row.get("Locked", "0") not in ("0", "False", ""),
+                    sequence=int(row.get("Sequence") or 0),
+                )
+                for row in rows
+            ],
+            key=lambda status: status.sequence,
+        )
+
+    def _parse_employees_and_pay_classes(
+        self, connection
+    ) -> Tuple[List[Employee], List[PayClass]]:
+        employee_rows = self._select_all_unfiltered(connection, "Employees")
+        pay_class_rows = self._select_all_unfiltered(connection, "PayClasses")
+        employees = [
+            Employee(
+                uid=_clean_optional_text(row.get("UID", "")),
+                employee_no=_clean_optional_text(row.get("EmployeeNo", "")),
+                first_name=_clean_optional_text(row.get("FirstName", "")),
+                last_name=_clean_optional_text(row.get("LastName", "")),
+                address1=_clean_optional_text(row.get("Address1", "")),
+                address2=_clean_optional_text(row.get("Address2", "")),
+                city=_clean_optional_text(row.get("City", "")),
+                state=_clean_optional_text(row.get("State", "")),
+                zip=_clean_optional_text(row.get("Zip", "")),
+                home_phone=_clean_optional_text(row.get("HomePhone", "")),
+                mobile_phone=_clean_optional_text(row.get("MobilePhone", "")),
+                email=_clean_optional_text(row.get("EMail", "")),
+                pay_class_uid=_clean_optional_text(row.get("PayClassUID", "")),
+            )
+            for row in employee_rows
+        ]
+        pay_classes = [
+            PayClass(
+                uid=_clean_optional_text(row.get("UID", "")),
+                name=_clean_optional_text(row.get("Name", "")),
+            )
+            for row in pay_class_rows
+        ]
+        return employees, pay_classes
+
     def get_cover_sheet_data(
         self, file_path: str, bid_uid: str
     ) -> Optional[CoverSheetData]:
         with self._connection(file_path) as connection:
-            bid_row = self._select_all_single(connection, "Bids", "UID", bid_uid)
-            if not bid_row:
-                return None
-            js_rows = self._select_all_unfiltered(connection, "JobStatuses")
-            job_statuses = sorted(
-                [
-                    JobStatus(
-                        uid=_clean_optional_text(r.get("UID", "")),
-                        name=_clean_optional_text(r.get("Name", "")),
-                        locked=r.get("Locked", "0") not in ("0", "False", ""),
-                        sequence=int(r.get("Sequence") or 0),
-                    )
-                    for r in js_rows
-                ],
-                key=lambda s: s.sequence,
-            )
-            emp_rows = self._select_all_unfiltered(connection, "Employees")
-            employees = [
-                Employee(
-                    uid=_clean_optional_text(r.get("UID", "")),
-                    employee_no=_clean_optional_text(r.get("EmployeeNo", "")),
-                    first_name=_clean_optional_text(r.get("FirstName", "")),
-                    last_name=_clean_optional_text(r.get("LastName", "")),
-                    address1=_clean_optional_text(r.get("Address1", "")),
-                    address2=_clean_optional_text(r.get("Address2", "")),
-                    city=_clean_optional_text(r.get("City", "")),
-                    state=_clean_optional_text(r.get("State", "")),
-                    zip=_clean_optional_text(r.get("Zip", "")),
-                    home_phone=_clean_optional_text(r.get("HomePhone", "")),
-                    mobile_phone=_clean_optional_text(r.get("MobilePhone", "")),
-                    email=_clean_optional_text(r.get("EMail", "")),
-                    pay_class_uid=_clean_optional_text(r.get("PayClassUID", "")),
-                )
-                for r in emp_rows
-            ]
-            pc_rows = self._select_all_unfiltered(connection, "PayClasses")
-            pay_classes = [
-                PayClass(
-                    uid=_clean_optional_text(r.get("UID", "")),
-                    name=_clean_optional_text(r.get("Name", "")),
-                )
-                for r in pc_rows
-            ]
-            used_job_status_uids: set = set()
+            return self._parse_cover_sheet_data(connection, bid_uid)
+
+    def _parse_cover_sheet_data(
+        self, connection, bid_uid: str
+    ) -> Optional[CoverSheetData]:
+        bid_row = self._select_all_single(connection, "Bids", "UID", bid_uid)
+        if not bid_row:
+            return None
+        job_statuses = self._parse_job_statuses(connection)
+        employees, pay_classes = self._parse_employees_and_pay_classes(connection)
+        folders, pages_without_folder = self._query_cover_sheet_pages(
+            connection, bid_uid
+        )
+
+        def safe_int(value, default):
             try:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT DISTINCT [JobStatusUID] FROM [Bids]"
-                        " WHERE [JobStatusUID] IS NOT NULL"
-                    )
-                    for row in cursor.fetchall():
-                        val = str(row[0]).strip() if row[0] is not None else ""
-                        if val and val != "NULL":
-                            used_job_status_uids.add(val)
-            except pyodbc.Error as exc:
-                if self._record_caught_read_error(exc):
-                    raise
-            folders, pages_without_folder = self._query_cover_sheet_pages(
-                connection, bid_uid
-            )
+                return int(value) if value not in (None, "", "NULL") else default
+            except (ValueError, TypeError):
+                return default
 
-            def _safe_int(val, default):
-                try:
-                    return int(val) if val not in (None, "", "NULL") else default
-                except (ValueError, TypeError):
-                    return default
-
-            return CoverSheetData(
-                bid_uid=bid_uid,
-                job_status_uid=_clean_optional_text(bid_row.get("JobStatusUID", "")),
-                job_name=_clean_optional_text(bid_row.get("JobName", "")),
-                estimator_uid=_clean_optional_text(bid_row.get("EstimatorUID", "")),
-                notes=_clean_optional_text(bid_row.get("Notes", "")),
-                bid_date=_clean_optional_text(bid_row.get("BidDate", "")),
-                bid_no=_clean_optional_text(bid_row.get("BidNo", "")),
-                job_id=_clean_optional_text(bid_row.get("JobID", "")),
-                measure_base=_safe_int(bid_row.get("MeasureBase"), 0),
-                takeoff_increments=parse_float(bid_row.get("TakeoffIncrements"), 1.0),
-                scale_style=_safe_int(bid_row.get("ScaleStyle"), 1),
-                scale_factor1=parse_float(bid_row.get("ScaleFactor1"), 0.25),
-                scale_factor2=parse_float(bid_row.get("ScaleFactor2"), 12.0),
-                page_width=parse_float(bid_row.get("PageWidth"), 42.0),
-                page_height=parse_float(bid_row.get("PageHeight"), 30.0),
-                folders=folders,
-                pages_without_folder=pages_without_folder,
-                job_statuses=job_statuses,
-                employees=employees,
-                pay_classes=pay_classes,
-                used_job_status_uids=used_job_status_uids,
-            )
+        return CoverSheetData(
+            bid_uid=bid_uid,
+            job_status_uid=_clean_optional_text(bid_row.get("JobStatusUID", "")),
+            job_name=_clean_optional_text(bid_row.get("JobName", "")),
+            estimator_uid=_clean_optional_text(bid_row.get("EstimatorUID", "")),
+            notes=_clean_optional_text(bid_row.get("Notes", "")),
+            bid_date=_clean_optional_text(bid_row.get("BidDate", "")),
+            bid_no=_clean_optional_text(bid_row.get("BidNo", "")),
+            job_id=_clean_optional_text(bid_row.get("JobID", "")),
+            measure_base=safe_int(bid_row.get("MeasureBase"), 0),
+            takeoff_increments=parse_float(bid_row.get("TakeoffIncrements"), 1.0),
+            scale_style=safe_int(bid_row.get("ScaleStyle"), 1),
+            scale_factor1=parse_float(bid_row.get("ScaleFactor1"), 0.25),
+            scale_factor2=parse_float(bid_row.get("ScaleFactor2"), 12.0),
+            page_width=parse_float(bid_row.get("PageWidth"), 42.0),
+            page_height=parse_float(bid_row.get("PageHeight"), 30.0),
+            folders=folders,
+            pages_without_folder=pages_without_folder,
+            job_statuses=job_statuses,
+            employees=employees,
+            pay_classes=pay_classes,
+            used_job_status_uids=self._parse_used_job_status_uids(connection),
+        )
 
     def _query_cover_sheet_pages(
         self, connection: "pyodbc.Connection", bid_uid: str
@@ -216,7 +242,17 @@ class SettingsReaderMixin:
             return {}, []
 
     def get_settings_defaults(self, file_path: str) -> Dict:
-        defaults = {
+        try:
+            with self._connection(file_path) as connection:
+                return self._parse_settings_defaults(connection)
+        except (pyodbc.Error, TypeError, ValueError) as exc:
+            if self._record_caught_read_error(exc, file_path):
+                raise
+            return self._settings_defaults()
+
+    @staticmethod
+    def _settings_defaults() -> Dict:
+        return {
             "scale_style": 1,
             "scale_factor1": 0.125,
             "scale_factor2": 12.0,
@@ -226,58 +262,42 @@ class SettingsReaderMixin:
             "takeoff_increments": 1.0,
             "next_bid_no": 1,
         }
-        try:
-            with self._connection(file_path) as conn:
-                schema = self._schema(conn)
-                if schema.optional_table_missing("Settings"):
-                    return defaults
-                settings_select = ", ".join(
-                    [
-                        schema.optional_column("Settings", "ScaleStyle", "1"),
-                        schema.optional_column("Settings", "ScaleFactor1", "0.125"),
-                        schema.optional_column("Settings", "ScaleFactor2", "12"),
-                        schema.optional_column("Settings", "PageWidth", "42"),
-                        schema.optional_column("Settings", "PageHeight", "30"),
-                        schema.optional_column("Settings", "MeasureBase", "0"),
-                        schema.optional_column("Settings", "TakeoffIncrements", "1"),
-                        schema.optional_column("Settings", "NextBidNo", "1"),
-                    ]
-                )
-                with conn.cursor() as cursor:
-                    cursor.execute(f"SELECT {settings_select} FROM [Settings]")
-                    row = cursor.fetchone()
-                    if row:
-                        defaults["scale_style"] = row.ScaleStyle or 1
-                        defaults["scale_factor1"] = row.ScaleFactor1 or 0.125
-                        defaults["scale_factor2"] = row.ScaleFactor2 or 12.0
-                        defaults["page_width"] = row.PageWidth or 42.0
-                        defaults["page_height"] = row.PageHeight or 30.0
-                        defaults["measure_base"] = row.MeasureBase or 0
-                        defaults["takeoff_increments"] = row.TakeoffIncrements or 1.0
-                        defaults["next_bid_no"] = (
-                            int(row.NextBidNo) if row.NextBidNo else 1
-                        )
-        except (pyodbc.Error, TypeError, ValueError) as exc:
-            if self._record_caught_read_error(exc, file_path):
-                raise
+
+    def _parse_settings_defaults(self, connection) -> Dict:
+        defaults = self._settings_defaults()
+        schema = self._schema(connection)
+        if schema.optional_table_missing("Settings"):
+            return defaults
+        settings_select = ", ".join(
+            [
+                schema.optional_column("Settings", "ScaleStyle", "1"),
+                schema.optional_column("Settings", "ScaleFactor1", "0.125"),
+                schema.optional_column("Settings", "ScaleFactor2", "12"),
+                schema.optional_column("Settings", "PageWidth", "42"),
+                schema.optional_column("Settings", "PageHeight", "30"),
+                schema.optional_column("Settings", "MeasureBase", "0"),
+                schema.optional_column("Settings", "TakeoffIncrements", "1"),
+                schema.optional_column("Settings", "NextBidNo", "1"),
+            ]
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT {settings_select} FROM [Settings]")
+            row = cursor.fetchone()
+            if row:
+                defaults["scale_style"] = row.ScaleStyle or 1
+                defaults["scale_factor1"] = row.ScaleFactor1 or 0.125
+                defaults["scale_factor2"] = row.ScaleFactor2 or 12.0
+                defaults["page_width"] = row.PageWidth or 42.0
+                defaults["page_height"] = row.PageHeight or 30.0
+                defaults["measure_base"] = row.MeasureBase or 0
+                defaults["takeoff_increments"] = row.TakeoffIncrements or 1.0
+                defaults["next_bid_no"] = int(row.NextBidNo) if row.NextBidNo else 1
         return defaults
 
     def get_job_statuses(self, file_path: str) -> List[JobStatus]:
         try:
             with self._connection(file_path) as conn:
-                rows = self._select_all_unfiltered(conn, "JobStatuses")
-            return sorted(
-                [
-                    JobStatus(
-                        uid=_clean_optional_text(r.get("UID", "")),
-                        name=_clean_optional_text(r.get("Name", "")),
-                        locked=r.get("Locked", "0") not in ("0", "False", ""),
-                        sequence=int(r.get("Sequence") or 0),
-                    )
-                    for r in rows
-                ],
-                key=lambda s: s.sequence,
-            )
+                return self._parse_job_statuses(conn)
         except Exception as exc:
             if self._record_caught_read_error(exc, file_path):
                 raise
@@ -289,34 +309,7 @@ class SettingsReaderMixin:
     ) -> Tuple[List[Employee], List[PayClass]]:
         try:
             with self._connection(file_path) as conn:
-                emp_rows = self._select_all_unfiltered(conn, "Employees")
-                pc_rows = self._select_all_unfiltered(conn, "PayClasses")
-            employees = [
-                Employee(
-                    uid=_clean_optional_text(r.get("UID", "")),
-                    employee_no=_clean_optional_text(r.get("EmployeeNo", "")),
-                    first_name=_clean_optional_text(r.get("FirstName", "")),
-                    last_name=_clean_optional_text(r.get("LastName", "")),
-                    address1=_clean_optional_text(r.get("Address1", "")),
-                    address2=_clean_optional_text(r.get("Address2", "")),
-                    city=_clean_optional_text(r.get("City", "")),
-                    state=_clean_optional_text(r.get("State", "")),
-                    zip=_clean_optional_text(r.get("Zip", "")),
-                    home_phone=_clean_optional_text(r.get("HomePhone", "")),
-                    mobile_phone=_clean_optional_text(r.get("MobilePhone", "")),
-                    email=_clean_optional_text(r.get("EMail", "")),
-                    pay_class_uid=_clean_optional_text(r.get("PayClassUID", "")),
-                )
-                for r in emp_rows
-            ]
-            pay_classes = [
-                PayClass(
-                    uid=_clean_optional_text(r.get("UID", "")),
-                    name=_clean_optional_text(r.get("Name", "")),
-                )
-                for r in pc_rows
-            ]
-            return employees, pay_classes
+                return self._parse_employees_and_pay_classes(conn)
         except Exception as exc:
             if self._record_caught_read_error(exc, file_path):
                 raise

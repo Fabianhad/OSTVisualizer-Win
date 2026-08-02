@@ -43,12 +43,19 @@ class RemoteBidContentChangedEvent:
     families: list = field(default_factory=list)
     resource_uids_by_family: dict = field(default_factory=dict)
     defer_plan_projection: bool = False
+    local_completion: bool = False
 
 
 @dataclass
 class RemoteHierarchyChangedEvent:
     database_id: str = ""
     defer_plan_projection: bool = False
+
+
+@dataclass
+class RemoteMasterDataChangedEvent:
+    database_id: str = ""
+    families: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -67,6 +74,16 @@ class CollaborationStateChangedEvent:
     database_id: str = ""
     state: str = ""
     message: str = ""
+
+
+@dataclass
+class CollaborationMutationStateChangedEvent:
+    database_id: str = ""
+    operation_id: str = ""
+    mutation_type: str = ""
+    state: str = ""
+    message: str = ""
+    pending_count: int = 0
 
 
 @dataclass
@@ -113,6 +130,13 @@ class AnnotationsChangedEvent:
     page_uids: list = field(default_factory=list)
     annotation_uids: list = field(default_factory=list)
     annotation_types: list = field(default_factory=list)
+
+
+@dataclass
+class PendingPlanMutationsChangedEvent:
+    database_id: str
+    takeoff_uids: list = field(default_factory=list)
+    pending: bool = True
 
 
 @dataclass
@@ -183,14 +207,17 @@ class AppEvents:
     REMOTE_AREAS_CHANGED = RemoteAreasChangedEvent
     REMOTE_BID_CONTENT_CHANGED = RemoteBidContentChangedEvent
     REMOTE_HIERARCHY_CHANGED = RemoteHierarchyChangedEvent
+    REMOTE_MASTER_DATA_CHANGED = RemoteMasterDataChangedEvent
     REMOTE_PLAN_PROJECTION_REQUESTED = RemotePlanProjectionRequestedEvent
     COLLABORATION_STATE_CHANGED = CollaborationStateChangedEvent
+    COLLABORATION_MUTATION_STATE_CHANGED = CollaborationMutationStateChangedEvent
     PRESENCE_CHANGED = PresenceChangedEvent
     SYNCHRONIZATION_CONFLICT = SynchronizationConflictEvent
     FULL_RECONCILIATION_REQUIRED = FullReconciliationRequiredEvent
     EDIT_LEASE_LOST = EditLeaseLostEvent
     TAKEOFFS_CHANGED = TakeoffsChangedEvent
     ANNOTATIONS_CHANGED = AnnotationsChangedEvent
+    PENDING_PLAN_MUTATIONS_CHANGED = PendingPlanMutationsChangedEvent
     FILE_UNLOADED = FileUnloadedEvent
     FILE_SELECTED = FileSelectedEvent
     APP_CONFIG_UPDATED = AppConfigUpdatedEvent
