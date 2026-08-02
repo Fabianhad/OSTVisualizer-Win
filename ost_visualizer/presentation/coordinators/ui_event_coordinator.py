@@ -2599,7 +2599,7 @@ class UIEventCoordinator:
             }
             and self._plan_view_handler is not None
         ):
-            self._plan_view_handler.invalidate_pending_takeoff_placements()
+            self._plan_view_handler.hide_pending_takeoff_placement_previews()
         if self._status_panel and database_id == selected:
             self._status_panel.set_collaboration_state(state, message)
 
@@ -2615,6 +2615,11 @@ class UIEventCoordinator:
         del operation_id, mutation_type
         selected = self.ui_state_manager.selected_file_path or ""
         if self._status_panel and database_id == selected:
+            collaboration_status = self._sql_collaboration.status(database_id)
+            self._status_panel.set_collaboration_state(
+                collaboration_status.state.value,
+                collaboration_status.message,
+            )
             self._status_panel.set_collaboration_mutation_state(
                 state,
                 pending_count,
@@ -3216,7 +3221,7 @@ class UIEventCoordinator:
                     prev_bid_ref.file_path, None, None
                 )
             if self._plan_view_handler is not None:
-                self._plan_view_handler.invalidate_pending_takeoff_placements()
+                self._plan_view_handler.hide_pending_takeoff_placement_previews()
             self._placement.force_exit()
             self.ui_state_manager.set_bid_selection(None)
             self.ui_state_manager.set_database_selected(False)
@@ -3291,7 +3296,7 @@ class UIEventCoordinator:
         if prev_bid_ref and bid_ref.file_path != prev_bid_ref.file_path:
             self._sql_collaboration.update_presence(prev_bid_ref.file_path, None, None)
         if self._plan_view_handler is not None:
-            self._plan_view_handler.invalidate_pending_takeoff_placements()
+            self._plan_view_handler.hide_pending_takeoff_placement_previews()
         self._placement.force_exit()
         self.ensure_select_mode()
         self.ui_state_manager.set_bid_selection(bid_ref)

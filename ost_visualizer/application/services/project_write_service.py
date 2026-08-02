@@ -1291,6 +1291,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
     def uses_sql_collaboration_mutations(self, database_id: str) -> bool:
         return self._sql_collaboration_provider().uses_sql_collaboration(database_id)
 
+    def cancel_queued_sql_mutation(self, database_id: str, operation_id: str) -> bool:
+        return self._sql_collaboration_provider().cancel_queued_mutation(
+            database_id, operation_id
+        )
+
     def request_plan_edit_lease(
         self,
         database_id: str,
@@ -2836,7 +2841,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                         )
                         for layer_uid, show in decoded
                     )
-                else: 
+                else:
                     raise ValueError("Unsupported page setting mutation")
                 if not success:
                     raise RuntimeError("The page setting update was incomplete.")
@@ -4683,6 +4688,18 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_uid = self._active_bid_uid_for(database_id)
         if bid_uid is None:
             return False
+        if (
+            setting_kind == "view_state"
+            and self._sql_collaboration_provider().is_resource_recovering(
+                database_id,
+                ResourceRef("page", str(page_uid), int(bid_uid)),
+            )
+        ):
+            self.logger.debug(
+                "Skipping best-effort page view persistence while page %s is recovering",
+                page_uid,
+            )
+            return True
 
         def complete(result: QueuedMutationResult) -> None:
             if setting_kind == "view_state" and result.outcome_status not in {

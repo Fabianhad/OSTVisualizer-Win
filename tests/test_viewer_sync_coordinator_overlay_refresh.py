@@ -6821,6 +6821,57 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(renderer.calls, [[pending_uid]])
         self.assertIn(pending_uid, view._current_takeoffs)
         self.assertIn(pending_uid, view._uid_to_items)
+        view.set_pending_mutation_uids({pending_uid})
+        self.assertFalse(view._is_selectable(pending_uid))
+        self.assertEqual(view._uid_to_items[pending_uid][0].opacity(), 0.35)
+        self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
+
+    def test_committed_takeoff_replaces_pending_identity_without_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        pending_uid = "pending:takeoff-placement:operation-1:0"
+        pending = Takeoff(
+            uid=pending_uid,
+            condition_uid="c1",
+            page_uid=page.uid,
+            position=[3.0, 4.0],
+        )
+        self.assertTrue(
+            view.refresh_current_page_overlays(
+                page=page,
+                takeoffs=[view._current_takeoffs["1"], pending],
+                conditions=view._current_conditions,
+                color_map=view._current_color_map,
+                bid_ref=bid_ref,
+                annotations=[],
+                page_area_selections={},
+                hidden_layer_uids=set(),
+                changed_takeoff_uids=[pending_uid],
+            )
+        )
+        calls.clear()
+        renderer.calls.clear()
+        view._refresh_overlays = lambda *_args: self.fail(
+            "authoritative identity replacement should be targeted"
+        )
+        committed = replace(pending, uid="501")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"], committed],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=[pending_uid, "501"],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [["501"]])
+        self.assertNotIn(pending_uid, view._current_takeoffs)
+        self.assertNotIn(pending_uid, view._uid_to_items)
+        self.assertIn("501", view._current_takeoffs)
+        self.assertIn("501", view._uid_to_items)
         self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
 
     def test_takeoff_insert_reorders_existing_overlay_z_values(self):
@@ -6882,7 +6933,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(all(item.scene() is None for item in old_items))
         self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
 
-    def test_takeoff_parent_with_hole_uses_full_dependency_refresh(self):
+    def test_takeoff_parent_with_hole_refreshes_only_dependency_graph(self):
         renderer = RecordingPathTakeoffRenderer()
         view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
         parent = replace(
@@ -6898,7 +6949,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view._current_takeoffs = {"1": parent, "2": hole}
         updated_parent = replace(parent, position=[1.0, 0.0, 21.0, 0.0, 21.0, 20.0])
-        view._refresh_overlays = lambda *_args: calls.append("full")
+        view._refresh_overlays = lambda *_args: self.fail(
+            "parent and hole graph should refresh without rebuilding all overlays"
+        )
         refreshed = view.refresh_current_page_overlays(
             page=page,
             takeoffs=[updated_parent, hole],
@@ -6911,8 +6964,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             changed_takeoff_uids=["1"],
         )
         self.assertTrue(refreshed)
-        self.assertEqual(renderer.calls, [])
-        self.assertEqual(calls, ["full", "sync", "scene_rect", "viewport.update"])
+        self.assertEqual(renderer.calls, [["1", "2"]])
+        self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
 
     def test_takeoff_delete_removes_only_changed_primary_overlay(self):
         renderer = RecordingPathTakeoffRenderer()
@@ -7097,10 +7150,12 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(renderer.calls, [])
         self.assertEqual(calls, [])
 
-    def test_hole_insert_keeps_full_overlay_refresh(self):
+    def test_hole_insert_refreshes_only_parent_dependency_graph(self):
         renderer = RecordingPathTakeoffRenderer()
         view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
-        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        view._refresh_overlays = lambda *_args: self.fail(
+            "hole insertion should refresh its dependency graph directly"
+        )
         incoming = [
             view._current_takeoffs["1"],
             Takeoff(
@@ -7123,8 +7178,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             changed_takeoff_uids=["2"],
         )
         self.assertTrue(refreshed)
-        self.assertEqual(renderer.calls, [])
-        self.assertIn("refresh_overlays", calls)
+        self.assertEqual(renderer.calls, [["1", "2"]])
+        self.assertNotIn("refresh_overlays", calls)
 
     def test_annotation_insert_refreshes_only_annotation_graphics(self):
         renderer = RecordingPathTakeoffRenderer()

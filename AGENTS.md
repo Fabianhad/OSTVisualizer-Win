@@ -156,8 +156,16 @@ Database backends:
   non-authoritative, affected resources remain non-editable until projection, and
   undo/redo history advances only after confirmed commit and successful
   main-thread projection. Geometry previews hold coordinator-owned edit leases
-  through gesture completion. Access mutation execution preserves the existing
-  MDB behavior and creates no collaboration session.
+  through gesture completion; selecting geometry must refresh its cursor
+  affordance immediately even while a SQL lease request is pending. A queued
+  mutation may be cancelled only before worker execution; if deletion is requested
+  after a takeoff placement starts, retain that intent and serialize an
+  authoritative delete after the placement identity commits so slow connections
+  cannot resurrect the item. Provisional takeoff identities are transient,
+  non-selectable pending resources; local reconciliation projects the provisional
+  and authoritative UIDs as one targeted replacement and preserves other queued
+  previews during unrelated remote refreshes. Access mutation execution preserves
+  the existing MDB behavior and creates no collaboration session.
 - SQL OST/OSP imports use one typed `PROJECT_IMPORT` mutation per file through
   the same bounded FIFO. File inspection/extraction, SQL DML, authoritative
   identity-map creation, and hydration stay off the Qt thread. Multi-file

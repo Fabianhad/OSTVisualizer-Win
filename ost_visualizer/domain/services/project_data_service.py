@@ -62,6 +62,7 @@ class ProjectDataService:
             tuple[str, str], frozenset[str]
         ] = {}
         self._settings_defaults_by_database: Dict[str, dict] = {}
+        self._transient_takeoffs: Dict[str, Takeoff] = {}
 
     def reset(self) -> None:
         self.model.clear_bid()
@@ -77,6 +78,7 @@ class ProjectDataService:
         self._cover_sheet_by_database_bid.clear()
         self._page_delete_content_by_database_bid.clear()
         self._settings_defaults_by_database.clear()
+        self._transient_takeoffs.clear()
 
     def replace_database_settings(
         self,
@@ -211,6 +213,7 @@ class ProjectDataService:
         self.model.clear_page_selection()
 
     def clear_bid(self) -> None:
+        self._transient_takeoffs.clear()
         self.model.clear_bid()
 
     def deselect_pages(self) -> None:
@@ -263,16 +266,28 @@ class ProjectDataService:
         if self.model.current_bid_ref != bid_ref:
             return False
         if "takeoffs" in families:
-            self.model.bid_takeoffs = list(bid_data.bid_takeoffs)
+            authoritative_takeoffs = list(bid_data.bid_takeoffs)
+            authoritative_uids = {
+                str(takeoff.uid) for takeoff in authoritative_takeoffs
+            }
+            transient_takeoffs = [
+                takeoff
+                for uid, takeoff in self._transient_takeoffs.items()
+                if uid not in authoritative_uids
+            ]
+            self.model.bid_takeoffs = authoritative_takeoffs + transient_takeoffs
             self.model.bid_takeoff_extras = dict(bid_data.takeoff_extras)
-            for page in self.model.get_all_pages():
-                refreshed = bid_data.pages.get(page.uid)
-                page.takeoffs = list(refreshed.takeoffs) if refreshed else []
         if "annotations" in families:
             self.model.set_annotations(list(bid_data.bid_annotations))
         if "pages" in families:
             self.model.set_pages(dict(bid_data.pages))
             self.model.page_area_selections = dict(bid_data.page_area_selections)
+        if "takeoffs" in families:
+            takeoffs_by_page: Dict[str, List[Takeoff]] = {}
+            for takeoff in self.model.bid_takeoffs:
+                takeoffs_by_page.setdefault(str(takeoff.page_uid), []).append(takeoff)
+            for page in self.model.get_all_pages():
+                page.takeoffs = list(takeoffs_by_page.get(str(page.uid), ()))
         if "layers" in families:
             self.set_bid_layer_visibility(bid_data.bid_layers)
         return True
@@ -597,6 +612,14 @@ class ProjectDataService:
             if page is not None:
                 page.takeoffs.append(takeoff)
 
+    def add_transient_takeoffs(self, takeoffs: List[Takeoff]) -> None:
+        for takeoff in takeoffs:
+            self._transient_takeoffs[str(takeoff.uid)] = takeoff
+        self.add_takeoffs(takeoffs)
+
+    def remove_transient_takeoffs(self, takeoff_uids: Iterable[str]) -> List[str]:
+        return self.remove_takeoffs(takeoff_uids)
+
     def get_page_uids_for_takeoffs(self, takeoff_uids: Iterable[str]) -> List[str]:
         wanted = {str(uid) for uid in takeoff_uids if uid}
         if not wanted:
@@ -754,6 +777,8 @@ class ProjectDataService:
         wanted = {str(uid) for uid in takeoff_uids if uid}
         if not wanted:
             return []
+        for uid in wanted:
+            self._transient_takeoffs.pop(uid, None)
         page_uids = self.get_page_uids_for_takeoffs(wanted)
         self.model.bid_takeoffs = [
             takeoff for takeoff in self.model.bid_takeoffs if takeoff.uid not in wanted

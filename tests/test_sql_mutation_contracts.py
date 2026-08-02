@@ -167,6 +167,9 @@ class SqlMutationContractTests(unittest.TestCase):
         service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _database_id: True,
             _active_bid_uid_for=lambda _database_id: "7",
+            _sql_collaboration_provider=lambda: SimpleNamespace(
+                is_resource_recovering=lambda *_args: False
+            ),
             queue_page_settings=lambda *args, **_kwargs: (
                 callbacks.append(args[4]) or 0
             ),
@@ -198,6 +201,33 @@ class SqlMutationContractTests(unittest.TestCase):
             )
         logger.warning.assert_not_called()
         self.assertEqual(logger.debug.call_count, 4)
+
+    def test_recovering_page_does_not_accumulate_best_effort_view_mutations(self):
+        logger = Mock()
+        queued = []
+        service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: True,
+            _active_bid_uid_for=lambda _database_id: "7",
+            _sql_collaboration_provider=lambda: SimpleNamespace(
+                is_resource_recovering=lambda database_id, resource: (
+                    database_id == "database"
+                    and resource == ResourceRef("page", "107", 7)
+                )
+            ),
+            queue_page_settings=lambda *args, **_kwargs: queued.append((args, kwargs)),
+            logger=logger,
+        )
+        self.assertTrue(
+            ProjectWriteService.queue_page_setting_if_sql(
+                service,
+                "database",
+                "107",
+                "view_state",
+                [2.0, 10.0, 20.0],
+            )
+        )
+        self.assertEqual(queued, [])
+        logger.debug.assert_called_once()
 
     def test_database_request_requires_canonical_identity_and_hash(self):
         operation_id = str(uuid.uuid4())

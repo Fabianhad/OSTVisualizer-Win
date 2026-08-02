@@ -39,6 +39,7 @@ from ..dtos.collaboration_dtos import (
     ResourceLock,
     ResourceRef,
     SynchronizationState,
+    queued_takeoff_preview_uid,
 )
 from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
 from ..events.app_events import AppEvents
@@ -87,6 +88,7 @@ class _DatabaseRuntime:
     mutation_requests: queue.Queue = field(
         default_factory=lambda: queue.Queue(maxsize=_MAX_QUEUED_MUTATIONS)
     )
+    cancelled_mutation_ids: set[str] = field(default_factory=set)
     pending_delivery: bool = False
     recovery_requested: bool = False
     recovery_ready: bool = False
@@ -544,6 +546,34 @@ class SqlCollaborationCoordinator:
             edit_lease_handle=request.edit_lease_handle,
         )
         return self._enqueue_mutation(runtime, queued)
+
+    def cancel_queued_mutation(self, database_id: str, operation_id: str) -> bool:
+        runtime = self._runtime(database_id)
+        if runtime is None:
+            return False
+        with runtime.lock:
+            pending = self._pending_mutations.get(operation_id)
+            if (
+                pending is None
+                or pending.runtime_generation != runtime.generation
+                or pending.state != PendingMutationState.QUEUED
+            ):
+                return False
+            runtime.cancelled_mutation_ids.add(operation_id)
+            runtime.command_event.set()
+            return True
+
+    def is_resource_recovering(self, database_id: str, resource: ResourceRef) -> bool:
+        return self._pending_mutations.has_resource_in_states(
+            database_id,
+            resource,
+            frozenset(
+                {
+                    PendingMutationState.RECOVERING,
+                    PendingMutationState.UNCERTAIN,
+                }
+            ),
+        )
 
     def drain_database_mutations_async(
         self,
@@ -1170,15 +1200,24 @@ class SqlCollaborationCoordinator:
         try:
             with runtime.lock:
                 session = runtime.session
-            if (
-                session is None
-                or request.runtime_generation != runtime.generation
-                or not runtime.healthy
-                or runtime.pending_delivery
-                or runtime.recovery_requested
-                or runtime.stop_event.is_set()
-                or not self._capabilities.is_editable(request.database_id)
-            ):
+                cancelled = request.operation_id in runtime.cancelled_mutation_ids
+                runtime.cancelled_mutation_ids.discard(request.operation_id)
+                ready = (
+                    session is not None
+                    and request.runtime_generation == runtime.generation
+                    and runtime.healthy
+                    and not runtime.pending_delivery
+                    and not runtime.recovery_requested
+                    and not runtime.stop_event.is_set()
+                    and self._capabilities.is_editable(request.database_id)
+                )
+                if ready and not cancelled:
+                    self._pending_mutations.transition(
+                        request.operation_id,
+                        PendingMutationState.EXECUTING,
+                        runtime_generation=runtime.generation,
+                    )
+            if cancelled or not ready:
                 self._dispatch_mutation_result(
                     request.callback,
                     QueuedMutationResult(
@@ -1186,15 +1225,14 @@ class SqlCollaborationCoordinator:
                         runtime_generation=request.runtime_generation,
                         operation_id=request.operation_id,
                         outcome_status=(MutationOutcomeStatus.CANCELLED_BEFORE_START),
-                        message="SQL collaboration is not ready for editing.",
+                        message=(
+                            "The queued SQL mutation was cancelled before execution."
+                            if cancelled
+                            else "SQL collaboration is not ready for editing."
+                        ),
                     ),
                 )
                 return
-            self._pending_mutations.transition(
-                request.operation_id,
-                PendingMutationState.EXECUTING,
-                runtime_generation=runtime.generation,
-            )
             if not self._transition_operation_record(
                 request.typed_request, PendingMutationState.EXECUTING
             ):
@@ -1694,6 +1732,17 @@ class SqlCollaborationCoordinator:
                 )
             )
             return
+        pending = self._pending_mutations.get(result.operation_id)
+        resource_uid_aliases_by_family: dict[str, tuple[str, ...]] = {}
+        if (
+            pending is not None
+            and pending.request.mutation_type
+            == CollaborationMutationType.TAKEOFF_PLACEMENT
+        ):
+            resource_uid_aliases_by_family["takeoffs"] = tuple(
+                queued_takeoff_preview_uid(result.operation_id, index)
+                for index in range(len(result.created_resource_ids))
+            )
         barrier = RemoteProjectionBarrier(
             database_id=result.database_id,
             runtime_generation=result.runtime_generation,
@@ -1703,6 +1752,7 @@ class SqlCollaborationCoordinator:
                 result,
                 applied,
             ),
+            resource_uid_aliases_by_family=resource_uid_aliases_by_family,
         )
         try:
             attempt = self._reconciliation.apply(

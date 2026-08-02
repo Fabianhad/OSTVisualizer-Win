@@ -297,7 +297,7 @@ class ComponentBuilder:
         viewer_container_layout = QtWidgets.QVBoxLayout(viewer_container)
         viewer_container_layout.setContentsMargins(*NO_MARGINS)
         viewer_container_layout.setSpacing(NO_SPACING)
-        view_toolbar = QtWidgets.QToolBar()
+        view_toolbar = QtWidgets.QToolBar(viewer_container)
         view_toolbar.setMovable(False)
         view_toolbar.setFloatable(False)
         view_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))

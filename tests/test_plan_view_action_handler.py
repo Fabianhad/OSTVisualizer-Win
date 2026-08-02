@@ -315,6 +315,9 @@ class FakeProjectData:
         for takeoff in takeoffs:
             self.takeoffs[takeoff.uid] = takeoff
 
+    def add_transient_takeoffs(self, takeoffs):
+        self.add_takeoffs(takeoffs)
+
     def get_current_bid_file_path(self):
         return "bid.mdb"
 
@@ -558,6 +561,8 @@ class FakeWriteService:
         self._next_uid_index = 0
         self.sql_collaboration_mutations = False
         self.queued_takeoff_callbacks = []
+        self.cancelled_mutations = []
+        self.cancel_queued_mutation_result = True
         self.queued_runtime_generation = 3
         self.queued_geometry = []
         self.queued_properties = []
@@ -585,6 +590,10 @@ class FakeWriteService:
         self.calls.append((database_id, bid_uid, specs, "queued"))
         self.queued_takeoff_callbacks.append((operation_id, callback))
         return self.queued_runtime_generation
+
+    def cancel_queued_sql_mutation(self, database_id, operation_id):
+        self.cancelled_mutations.append((database_id, operation_id))
+        return self.cancel_queued_mutation_result
 
     def queue_plan_geometry(self, database_id, bid_uid, callback, **updates):
         self.queued_geometry.append((database_id, bid_uid, updates, callback))
@@ -2505,6 +2514,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         pending_uids = tuple(data.takeoffs)
         self.assertEqual(len(pending_uids), 1)
         self.assertTrue(pending_uids[0].startswith("pending:takeoff-placement:"))
+        self.assertEqual(plan_view.pending_mutation_uids, set(pending_uids))
         self.assertEqual(undo.count, 0)
         self.assertEqual(plan_view.selected, set())
         data.add_takeoffs(
@@ -2528,12 +2538,232 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertNotIn(pending_uids[0], data.takeoffs)
         self.assertIn("501", data.takeoffs)
+        self.assertEqual(plan_view.pending_mutation_uids, set())
         self.assertEqual(plan_view.selected, {"501"})
         self.assertEqual(undo.count, 1)
         self.assertEqual(
-            [event[1]["takeoff_uids"] for event in events.events],
+            [
+                event[1]["takeoff_uids"]
+                for event in events.events
+                if event[0] == AppEvents.TAKEOFFS_CHANGED
+            ],
             [[pending_uids[0]]],
         )
+
+    def test_deleting_queued_takeoff_preview_cancels_before_execution(self):
+        plan_view = FakePlanView()
+        plan_view.current_page_uid = "9"
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        pending_uid = next(iter(data.takeoffs))
+        handler.on_elements_deleted([pending_uid])
+        self.assertNotIn(pending_uid, data.takeoffs)
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(
+            write.cancelled_mutations,
+            [("bid.mdb", operation_id)],
+        )
+        self.assertEqual(write.queued_deletes, [])
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.CANCELLED_BEFORE_START,
+            )
+        )
+        self.assertEqual(undo.count, 0)
+
+    def test_duplicate_pending_takeoff_delete_intent_does_not_repeat_side_effects(
+        self,
+    ):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        events = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=events,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        pending_uid = next(iter(data.takeoffs))
+        handler.on_elements_deleted([pending_uid])
+        self.assertEqual(
+            handler._request_pending_takeoff_deletions([pending_uid]),
+            [],
+        )
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in events.events
+                    if event[0] == AppEvents.TAKEOFFS_CHANGED
+                ]
+            ),
+            2,
+        )
+        self.assertEqual(len(write.cancelled_mutations), 1)
+
+    def test_rapid_sql_placements_keep_each_uncommitted_preview_pending(self):
+        plan_view = FakePlanView()
+        plan_view.current_page_uid = "9"
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        handler.on_takeoff_created("42", [3.0, 4.0], "9")
+        previews = set(data.takeoffs)
+        self.assertEqual(len(previews), 2)
+        self.assertEqual(plan_view.pending_mutation_uids, previews)
+        first_operation_id, first_callback = write.queued_takeoff_callbacks[0]
+        first_preview = next(uid for uid in previews if first_operation_id in uid)
+        data.add_takeoffs(
+            [
+                Takeoff(
+                    uid="501",
+                    condition_uid="42",
+                    page_uid="9",
+                    position=[1.0, 2.0],
+                )
+            ]
+        )
+        first_callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=first_operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertEqual(
+            plan_view.pending_mutation_uids,
+            previews - {first_preview},
+        )
+
+    def test_deleting_executing_takeoff_preview_queues_delete_after_commit(self):
+        plan_view = FakePlanView()
+        plan_view.current_page_uid = "9"
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        write.cancel_queued_mutation_result = False
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        pending_uid = next(iter(data.takeoffs))
+        handler.on_elements_deleted([pending_uid])
+        self.assertNotIn(pending_uid, data.takeoffs)
+        data.add_takeoffs(
+            [
+                Takeoff(
+                    uid="501",
+                    condition_uid="42",
+                    page_uid="9",
+                    position=[1.0, 2.0],
+                )
+            ]
+        )
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertEqual(len(write.queued_deletes), 1)
+        self.assertEqual(write.queued_deletes[0][2], ["501"])
+        self.assertEqual(plan_view.selected, set())
+        self.assertEqual(undo.count, 0)
+
+    def test_bid_switch_retains_delete_intent_for_committed_recovery(self):
+        plan_view = FakePlanView()
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        write.cancel_queued_mutation_result = False
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        pending_uid = next(iter(data.takeoffs))
+        handler.on_elements_deleted([pending_uid])
+        handler.hide_pending_takeoff_placement_previews()
+        handler._ui_state = SimpleNamespace(
+            active_page_uid=None,
+            get_selected_bid_ref=lambda: BidRef("other.mdb", "8"),
+        )
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertEqual(len(write.queued_deletes), 1)
+        self.assertEqual(write.queued_deletes[0][2], ["501"])
 
     def test_sql_placement_completion_does_not_select_on_another_page(self):
         plan_view = FakePlanView()

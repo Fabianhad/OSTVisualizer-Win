@@ -120,6 +120,8 @@ class SelectionManagerMixin:
             self.update_selection_visuals()
         for uid in affected:
             self._apply_pending_mutation_visual(uid)
+        if selected_changed:
+            self._update_cursor()
 
     def get_pending_mutation_uids(self) -> set[str]:
         return set(self._pending_mutation_uids)
@@ -357,6 +359,7 @@ class SelectionManagerMixin:
         self._selected_uids.clear()
         self._on_selection_changed()
         self.update_selection_visuals(emit=emit)
+        self._update_cursor()
 
     def get_selected_takeoff_uids(self) -> List[str]:
         return sorted(
@@ -369,10 +372,12 @@ class SelectionManagerMixin:
     def set_selected_uids(self, uids: set, emit: bool = True) -> None:
         uids = {uid for uid in uids if self._is_selectable(uid)}
         if self._selected_uids == uids:
+            self._update_cursor()
             return
         self._selected_uids = set(uids)
         self._on_selection_changed()
         self.update_selection_visuals(emit=emit)
+        self._update_cursor()
 
     def select_takeoffs_in_area(self, area_uid: Optional[str]) -> None:
         if not self._selection_enabled or self._cursor_mode != CURSOR_MODE_SELECT:

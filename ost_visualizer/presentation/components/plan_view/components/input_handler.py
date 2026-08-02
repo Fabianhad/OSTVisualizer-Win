@@ -784,6 +784,7 @@ class InputHandlerMixin:
                                 self._selected_uids = {hit_uid}
                                 self._on_selection_changed()
                                 self.update_selection_visuals()
+                                self._update_cursor(vp_pos)
                                 self._press_changed_selection = True
                                 _can_start_drag = True
                 if _can_start_drag:

@@ -48,6 +48,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     SynchronizationConflict,
     SynchronizationConflictKind,
     SynchronizationState,
+    queued_takeoff_preview_uid,
     session_identities_equal,
 )
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
@@ -134,6 +135,8 @@ from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
@@ -374,6 +377,7 @@ class _DelayedMutationDispatcher:
 class _Reconciliation:
     def __init__(self):
         self.batches = []
+        self.projection_barriers = []
         self.result = True
         self.failure_kind = None
 
@@ -386,6 +390,7 @@ class _Reconciliation:
         local_completion=False,
     ):
         self.batches.append(batch)
+        self.projection_barriers.append(projection_barrier)
         return ReconciliationResult(
             applied=self.result,
             failure_kind=self.failure_kind,
@@ -688,6 +693,7 @@ class _ProjectData:
         self.database_settings = {}
         self.cover_sheets = {}
         self.page_delete_content = {}
+        self.removed_transient_takeoff_uids = []
 
     def get_current_bid_ref(self):
         return self.bid_ref
@@ -712,6 +718,9 @@ class _ProjectData:
 
     def replace_remote_bid_families(self, *_args):
         return True
+
+    def remove_transient_takeoffs(self, takeoff_uids):
+        self.removed_transient_takeoff_uids.extend(takeoff_uids)
 
     def replace_database_settings(self, database_id, **values):
         self.database_settings[database_id] = values
@@ -2350,6 +2359,101 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(len(content_events), 1)
         self.assertEqual(content_events[0]["families"], ["takeoffs"])
         self.assertEqual(len(projection_events), 1)
+
+    def test_local_takeoff_projection_replaces_transient_identity_as_one_change(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        project_data.conditions = {"10": Condition(uid="10")}
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        operation_id = "54a05683-1032-431d-b57b-3552317fc74b"
+        preview_uid = queued_takeoff_preview_uid(operation_id, 0)
+        takeoff = Takeoff(uid="30", condition_uid="10", page_uid="20")
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (_change(database_id, ResourceRef("takeoff", "30", 8), 2),),
+            ),
+            conditions_by_bid={8: {"10": Condition(uid="10")}},
+            condition_folders_by_bid={8: {}},
+            bid_data_by_bid={
+                8: BidLoadResult(
+                    bid_takeoffs=[takeoff],
+                    pages={"20": Page(uid="20", name="Sheet", takeoffs=[takeoff])},
+                )
+            },
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+            resource_uid_aliases_by_family={"takeoffs": (preview_uid,)},
+        )
+        self.assertTrue(service.apply(hydrated, barrier, local_completion=True).applied)
+        self.assertEqual(project_data.removed_transient_takeoff_uids, [preview_uid])
+        content = next(
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_BID_CONTENT_CHANGED
+        )
+        projection = next(
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED
+        )
+        self.assertEqual(
+            content["resource_uids_by_family"]["takeoffs"],
+            sorted((preview_uid, "30")),
+        )
+        self.assertEqual(
+            projection["resource_uids_by_family"]["takeoffs"],
+            tuple(sorted((preview_uid, "30"))),
+        )
+
+    def test_unrelated_remote_takeoff_refresh_preserves_pending_preview(self):
+        database_id = "database"
+        aggregate = OstAggregate(None)
+        aggregate.current_bid_ref = BidRef(database_id, "8")
+        aggregate.set_pages({"20": Page(uid="20", name="Sheet")})
+        project_data = ProjectDataService(aggregate)
+        preview = Takeoff(
+            uid="pending:takeoff-placement:operation-1:0",
+            condition_uid="10",
+            page_uid="20",
+        )
+        project_data.add_transient_takeoffs([preview])
+        remote = Takeoff(uid="30", condition_uid="10", page_uid="20")
+        self.assertTrue(
+            project_data.replace_remote_bid_families(
+                BidRef(database_id, "8"),
+                BidLoadResult(
+                    bid_takeoffs=[remote],
+                    pages={
+                        "20": Page(
+                            uid="20",
+                            name="Sheet",
+                            takeoffs=[remote],
+                        )
+                    },
+                ),
+                {"takeoffs"},
+            )
+        )
+        self.assertEqual(
+            {takeoff.uid for takeoff in aggregate.bid_takeoffs},
+            {preview.uid, remote.uid},
+        )
+        self.assertEqual(
+            {takeoff.uid for takeoff in aggregate.get_page("20").takeoffs},
+            {preview.uid, remote.uid},
+        )
 
     def test_self_only_checkpoint_does_not_schedule_plan_projection(self):
         database_id = "database"
@@ -4046,6 +4150,64 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(drafts._drafts, {})
         _shutdown_coordinator(coordinator)
 
+    def test_queued_mutation_can_be_cancelled_before_worker_execution(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            _LockingStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
+        runtime.established = True
+        runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        calls = []
+        results = []
+        _queue_test_mutation(
+            coordinator,
+            descriptor.database_id,
+            (ResourceRef("takeoffs_collection", "8", 8),),
+            lambda: calls.append(True) or _committed_execution("501"),
+            results.append,
+            operation_id="cancel-placement",
+        )
+        operation_id = coordinator._pending_mutations.for_database(
+            descriptor.database_id
+        )[0].request.operation_id
+        self.assertTrue(
+            coordinator.cancel_queued_mutation(descriptor.database_id, operation_id)
+        )
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            [result.outcome_status for result in results],
+            [MutationOutcomeStatus.CANCELLED_BEFORE_START],
+        )
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(descriptor.database_id), ()
+        )
+        _shutdown_coordinator(coordinator)
+
     def test_caught_up_empty_runtime_does_not_wake_worker_again(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -4161,12 +4323,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         tokens, drafts = _token_service()
         store = _CanonicalLockStore()
         events = _EventBus()
+        reconciliation = _Reconciliation()
         coordinator = _coordinator(
             descriptors,
             store,
             _RemoteReader(),
             _Dispatcher(),
-            _Reconciliation(),
+            reconciliation,
             capabilities,
             sessions,
             tokens,
@@ -4203,6 +4366,10 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertTrue(completed.wait(2))
         self.assertEqual(results[0].outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            reconciliation.projection_barriers[-1].resource_uid_aliases_by_family,
+            {"takeoffs": (queued_takeoff_preview_uid(results[0].operation_id, 0),)},
+        )
         self.assertEqual(
             sessions.lock_tokens(descriptor.database_id, (requested,)),
             (),

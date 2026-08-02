@@ -127,6 +127,14 @@ class RemoteChangeReconciliationService:
                 for change in active_changes
                 if change.resource.resource_type in BID_CONTENT_FAMILY_BY_RESOURCE_TYPE
             }
+            if projection_barrier is not None and "takeoffs" in families:
+                transient_takeoff_uids = (
+                    projection_barrier.resource_uid_aliases_by_family.get(
+                        "takeoffs", ()
+                    )
+                )
+                if transient_takeoff_uids:
+                    self._project_data.remove_transient_takeoffs(transient_takeoff_uids)
             if families and not self._project_data.replace_remote_bid_families(
                 BidRef(batch.database_id, str(bid_uid)), bid_data, families
             ):
@@ -162,26 +170,34 @@ class RemoteChangeReconciliationService:
                 defer_plan_projection=projection_barrier is not None,
             )
         if families:
+            resource_uids_by_family = {
+                family: sorted(
+                    {
+                        change.resource.resource_id
+                        for change in active_changes
+                        if BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(
+                            change.resource.resource_type
+                        )
+                        == family
+                        and change.resource.resource_type
+                        in BID_CONTENT_ENTITY_RESOURCE_TYPES
+                    }
+                    | set(
+                        ()
+                        if projection_barrier is None
+                        else projection_barrier.resource_uid_aliases_by_family.get(
+                            family, ()
+                        )
+                    )
+                )
+                for family in families
+            }
             self._event_bus.publish(
                 AppEvents.REMOTE_BID_CONTENT_CHANGED,
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
                 families=sorted(families),
-                resource_uids_by_family={
-                    family: sorted(
-                        {
-                            change.resource.resource_id
-                            for change in active_changes
-                            if BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(
-                                change.resource.resource_type
-                            )
-                            == family
-                            and change.resource.resource_type
-                            in BID_CONTENT_ENTITY_RESOURCE_TYPES
-                        }
-                    )
-                    for family in families
-                },
+                resource_uids_by_family=resource_uids_by_family,
                 defer_plan_projection=projection_barrier is not None,
                 local_completion=local_completion,
             )
@@ -192,23 +208,6 @@ class RemoteChangeReconciliationService:
         )
         if projection_barrier is not None and plan_projection_required:
             projected_families = tuple(sorted(families))
-            resource_uids_by_family = {
-                family: tuple(
-                    sorted(
-                        {
-                            change.resource.resource_id
-                            for change in active_changes
-                            if BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(
-                                change.resource.resource_type
-                            )
-                            == family
-                            and change.resource.resource_type
-                            in BID_CONTENT_ENTITY_RESOURCE_TYPES
-                        }
-                    )
-                )
-                for family in projected_families
-            }
             self._event_bus.publish(
                 AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
                 database_id=batch.database_id,
@@ -216,7 +215,10 @@ class RemoteChangeReconciliationService:
                 runtime_generation=projection_barrier.runtime_generation,
                 families=projected_families,
                 condition_uids=tuple(sorted(conditions or ())),
-                resource_uids_by_family=resource_uids_by_family,
+                resource_uids_by_family={
+                    family: tuple(resource_uids_by_family[family])
+                    for family in projected_families
+                },
                 barrier=projection_barrier,
             )
         return ReconciliationResult(applied=True)

@@ -2403,6 +2403,49 @@ class CtrlDragTests(unittest.TestCase):
         )
         self.assertEqual(view._dirty_positions, {})
 
+    def test_sql_selection_refreshes_move_cursor_before_async_lease(self):
+        view = self._make_view(set())
+        viewport = FakeCursorViewport()
+        view.viewport = lambda: viewport
+        view.find_selected_movable_at = lambda _scene_pos: (
+            "t1" if "t1" in view._selected_uids else None
+        )
+        view._update_cursor = lambda vp_pos=None: InputHandlerMixin._update_cursor(
+            view, vp_pos
+        )
+        view.request_geometry_edit_lease = lambda _uids: False
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(view._selected_uids, {"t1"})
+        self.assertEqual(viewport.cursor, Qt.CursorShape.SizeAllCursor)
+
+    def test_programmatic_sql_selection_refreshes_cursor_without_mouse_move(self):
+        # Authoritative SQL hydration may rebuild the selected item while keeping
+        # the same UID, so the idempotent selection projection must also refresh.
+        view = self._make_view({"t1"})
+        view._annotation_only_selection = False
+        view._current_conditions = {
+            "c": Condition(
+                uid="c",
+                condition_type=Condition.TYPE_LINEAR,
+                layer_visible=True,
+            )
+        }
+        viewport = FakeCursorViewport()
+        view.viewport = lambda: viewport
+        view._last_mouse_vp_pos = QtCore.QPoint(10, 10)
+        view.find_selected_movable_at = lambda _scene_pos: (
+            "t1" if "t1" in view._selected_uids else None
+        )
+        view._update_cursor = lambda vp_pos=None: InputHandlerMixin._update_cursor(
+            view, vp_pos
+        )
+        SelectionManagerMixin.set_selected_uids(view, {"t1"})
+        self.assertEqual(viewport.cursor, Qt.CursorShape.SizeAllCursor)
+        SelectionManagerMixin.clear_selection(view)
+        self.assertEqual(viewport.cursor, Qt.CursorShape.ArrowCursor)
+
     def test_area_parent_arrow_move_preserves_hole_relative_position(self):
         view = self._make_view({"parent"})
         view._current_conditions = {

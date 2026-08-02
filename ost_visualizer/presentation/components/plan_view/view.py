@@ -5485,26 +5485,34 @@ class TakeoffPlanView(
             or db_uid_map != self._ann_db_uid_map
         ):
             return False
-        affected_current_uids = current_uids & changed_uids
-        affected_incoming_uids = incoming_uids & changed_uids
         if any(uid in self._current_annotations for uid in changed_uids):
             return False
+        dependency_root_uids = set()
+        for takeoff_by_uid in (current_by_uid, incoming_by_uid):
+            for uid in changed_uids:
+                takeoff = takeoff_by_uid.get(uid)
+                if takeoff is None:
+                    continue
+                dependency_root_uids.add(
+                    str(takeoff.parent_uid)
+                    if takeoff.is_hole and takeoff.parent_uid
+                    else uid
+                )
+        affected_current_uids = {
+            uid
+            for uid, takeoff in current_by_uid.items()
+            if uid in dependency_root_uids
+            or (takeoff.is_hole and str(takeoff.parent_uid) in dependency_root_uids)
+        }
+        affected_incoming_uids = {
+            uid
+            for uid, takeoff in incoming_by_uid.items()
+            if uid in dependency_root_uids
+            or (takeoff.is_hole and str(takeoff.parent_uid) in dependency_root_uids)
+        }
         affected_takeoffs = [
             incoming_by_uid[uid] for uid in sorted(affected_incoming_uids)
         ]
-        for takeoff in affected_takeoffs:
-            if takeoff.is_hole:
-                return False
-        for uid in affected_current_uids:
-            if current_by_uid[uid].is_hole:
-                return False
-        dependent_parent_uids = {
-            str(takeoff.parent_uid)
-            for takeoff in (*current_by_uid.values(), *incoming_by_uid.values())
-            if takeoff.is_hole and takeoff.parent_uid
-        }
-        if changed_uids & dependent_parent_uids:
-            return False
         new_items: List[QGraphicsItem] = []
         uid_to_items: Dict[str, List[QGraphicsItem]] = {}
         try:

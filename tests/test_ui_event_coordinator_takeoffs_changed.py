@@ -951,9 +951,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             selected_file_path="sql-database-id"
         )
         coordinator._status_panel = panel
-        invalidations = []
+        hidden_previews = []
         coordinator._plan_view_handler = SimpleNamespace(
-            invalidate_pending_takeoff_placements=lambda: invalidations.append(True)
+            hide_pending_takeoff_placement_previews=lambda: hidden_previews.append(True)
         )
         coordinator._on_collaboration_state_changed(
             database_id="sql-database-id",
@@ -964,7 +964,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             panel.states,
             [(SynchronizationState.DISCONNECTED.value, "server unavailable")],
         )
-        self.assertEqual(invalidations, [True])
+        self.assertEqual(hidden_previews, [True])
 
     def test_selected_sql_mutation_projects_pending_count(self):
         panel = _CollaborationStatusPanel()
@@ -973,6 +973,13 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             selected_file_path="sql-database-id"
         )
         coordinator._status_panel = panel
+        coordinator._sql_collaboration = SimpleNamespace(
+            status=lambda database_id: CollaborationStatus(
+                database_id,
+                SynchronizationState.HEALTHY,
+                "Connected",
+            )
+        )
         coordinator._on_collaboration_mutation_state_changed(
             database_id="sql-database-id",
             operation_id="operation-id",
@@ -984,6 +991,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(
             panel.mutation_states,
             [("uncertain", 1, "Commit status is unknown.")],
+        )
+        self.assertEqual(
+            panel.states,
+            [(SynchronizationState.HEALTHY.value, "Connected")],
         )
 
     def test_denied_collaboration_lease_reports_the_store_message(self):

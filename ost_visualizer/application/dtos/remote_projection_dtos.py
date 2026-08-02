@@ -21,9 +21,14 @@ class RemoteProjectionBarrier:
         runtime_generation: int,
         is_runtime_current: Callable[[str, int], bool],
         on_complete: Callable[[bool], None],
+        resource_uid_aliases_by_family: Optional[dict[str, tuple[str, ...]]] = None,
     ) -> None:
         self.database_id = database_id
         self.runtime_generation = runtime_generation
+        self.resource_uid_aliases_by_family = {
+            str(family): tuple(dict.fromkeys(str(uid) for uid in uids if uid))
+            for family, uids in (resource_uid_aliases_by_family or {}).items()
+        }
         self._is_runtime_current = is_runtime_current
         self._on_complete = on_complete
         self._lock = threading.Lock()

@@ -99,6 +99,7 @@ class _PendingTakeoffPlacement:
     pending_uids: tuple[str, ...]
     specs: tuple[InsertTakeoffSpec, ...]
     runtime_generation: Optional[int]
+    deleted_pending_uids: frozenset[str] = frozenset()
 
 
 class PlanViewActionHandler:
@@ -119,7 +120,6 @@ class PlanViewActionHandler:
         self._ui_state = ui_state_manager
         self._data_svc = project_data_svc
         self._write_svc = project_write_svc
-        self._ann_write_svc = annotation_write_svc
         self._page_settings_bar = page_settings_bar
         self._undo_svc = undo_svc
         self._event_bus = event_bus
@@ -1787,7 +1787,6 @@ class PlanViewActionHandler:
             runtime_generation=None,
         )
         self._pending_takeoff_placements[operation_id] = pending
-        self._add_inserted_takeoffs_to_model(list(pending_uids), specs)
         handler_reference = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1796,6 +1795,15 @@ class PlanViewActionHandler:
                 handler._complete_queued_takeoff_placement(result)
 
         try:
+            self._add_inserted_takeoffs_to_model(
+                list(pending_uids), specs, transient=True
+            )
+            self._set_plan_items_pending(
+                bid_ref.file_path,
+                set(pending_uids),
+                set(pending_uids),
+                True,
+            )
             self._publish_takeoffs_changed_for_pages(
                 self._takeoff_spec_page_uids(specs),
                 list(pending_uids),
@@ -1811,13 +1819,21 @@ class PlanViewActionHandler:
         except Exception:
             self._pending_takeoff_placements.pop(operation_id, None)
             self._data_svc.remove_takeoffs(pending_uids)
+            try:
+                self._set_plan_items_pending(
+                    bid_ref.file_path,
+                    set(pending_uids),
+                    set(pending_uids),
+                    False,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to publish queued-placement pending-state rollback"
+                )
             raise
         if operation_id in self._pending_takeoff_placements:
-            self._pending_takeoff_placements[operation_id] = _PendingTakeoffPlacement(
-                database_id=pending.database_id,
-                bid_uid=pending.bid_uid,
-                pending_uids=pending.pending_uids,
-                specs=pending.specs,
+            self._pending_takeoff_placements[operation_id] = replace(
+                self._pending_takeoff_placements[operation_id],
                 runtime_generation=runtime_generation,
             )
 
@@ -1834,13 +1850,12 @@ class PlanViewActionHandler:
             return
         self._pending_takeoff_placements.pop(result.operation_id, None)
         self._data_svc.remove_takeoffs(pending.pending_uids)
-        bid_ref = self._ui_state.get_selected_bid_ref()
-        if (
-            bid_ref is None
-            or bid_ref.file_path != pending.database_id
-            or bid_ref.bid_uid != pending.bid_uid
-        ):
-            return
+        self._set_plan_items_pending(
+            pending.database_id,
+            set(pending.pending_uids),
+            set(pending.pending_uids),
+            False,
+        )
         page_uids = self._takeoff_spec_page_uids(list(pending.specs))
         condition_uids = [str(spec.condition_uid) for spec in pending.specs]
         completion_matches = (
@@ -1851,6 +1866,11 @@ class PlanViewActionHandler:
             result.outcome_status != MutationOutcomeStatus.COMMITTED
             or not completion_matches
         ):
+            if (
+                result.outcome_status == MutationOutcomeStatus.CANCELLED_BEFORE_START
+                and pending.deleted_pending_uids == frozenset(pending.pending_uids)
+            ):
+                return
             self._publish_takeoffs_changed_for_pages(
                 page_uids,
                 list(pending.pending_uids),
@@ -1874,7 +1894,39 @@ class PlanViewActionHandler:
                 len(pending.specs),
             )
             return
-        specs = list(pending.specs)
+        deleted_created_uids = [
+            uid
+            for uid, pending_uid in zip(new_uids, pending.pending_uids)
+            if pending_uid in pending.deleted_pending_uids
+        ]
+        deleted_specs = [
+            spec
+            for spec, pending_uid in zip(pending.specs, pending.pending_uids)
+            if pending_uid in pending.deleted_pending_uids
+        ]
+        if deleted_created_uids:
+            self._queue_cancelled_takeoff_placement_delete(
+                pending,
+                deleted_created_uids,
+                deleted_specs,
+            )
+        retained = [
+            (uid, spec)
+            for uid, spec, pending_uid in zip(
+                new_uids,
+                pending.specs,
+                pending.pending_uids,
+            )
+            if pending_uid not in pending.deleted_pending_uids
+        ]
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if (
+            bid_ref is None
+            or bid_ref.file_path != pending.database_id
+            or bid_ref.bid_uid != pending.bid_uid
+        ):
+            self._mark_sql_completion_applied(result)
+            return
         missing_uids = [
             uid for uid in new_uids if self._data_svc.get_takeoff(uid) is None
         ]
@@ -1887,18 +1939,133 @@ class PlanViewActionHandler:
             self._plan_view.current_page_uid or self._ui_state.active_page_uid or ""
         )
         selected_uids = {
-            uid
-            for uid, spec in zip(new_uids, specs)
-            if str(spec.page_uid) == current_page_uid
+            uid for uid, spec in retained if str(spec.page_uid) == current_page_uid
         }
         if selected_uids:
             self._plan_view.set_selected_uids(selected_uids)
-        self._push_sql_takeoff_placement_history(
-            bid_ref,
-            specs,
-            new_uids,
-        )
+        if retained:
+            self._push_sql_takeoff_placement_history(
+                bid_ref,
+                [spec for _uid, spec in retained],
+                [uid for uid, _spec in retained],
+            )
         self._mark_sql_completion_applied(result)
+
+    def _request_pending_takeoff_deletions(self, uids: list) -> list:
+        requested = {str(uid) for uid in uids}
+        consumed: set[str] = set()
+        for operation_id, pending in tuple(self._pending_takeoff_placements.items()):
+            matched = requested.intersection(pending.pending_uids)
+            if not matched:
+                continue
+            consumed.update(matched)
+            newly_deleted = matched.difference(pending.deleted_pending_uids)
+            if not newly_deleted:
+                continue
+            deleted = pending.deleted_pending_uids.union(newly_deleted)
+            self._pending_takeoff_placements[operation_id] = replace(
+                pending,
+                deleted_pending_uids=frozenset(deleted),
+            )
+            self._data_svc.remove_takeoffs(newly_deleted)
+            self._set_plan_items_pending(
+                pending.database_id,
+                set(newly_deleted),
+                set(newly_deleted),
+                False,
+            )
+            matched_specs = [
+                spec
+                for pending_uid, spec in zip(pending.pending_uids, pending.specs)
+                if pending_uid in newly_deleted
+            ]
+            self._publish_takeoffs_changed_for_pages(
+                self._takeoff_spec_page_uids(matched_specs),
+                sorted(newly_deleted),
+                [str(spec.condition_uid) for spec in matched_specs],
+            )
+            if deleted == set(pending.pending_uids):
+                self._write_svc.cancel_queued_sql_mutation(
+                    pending.database_id,
+                    operation_id,
+                )
+        return [uid for uid in uids if str(uid) not in consumed]
+
+    def _queue_cancelled_takeoff_placement_delete(
+        self,
+        pending: _PendingTakeoffPlacement,
+        takeoff_uids: list[str],
+        specs: list[InsertTakeoffSpec],
+    ) -> None:
+        takeoff_uid_set = set(takeoff_uids)
+        page_uids = tuple(self._takeoff_spec_page_uids(specs))
+        dependencies = tuple(
+            sorted(
+                {
+                    ResourceRef(
+                        "condition",
+                        str(spec.condition_uid),
+                        int(pending.bid_uid),
+                    )
+                    for spec in specs
+                }
+            )
+        )
+        current_bid = self._ui_state.get_selected_bid_ref()
+        project_pending_state = bool(
+            current_bid is not None
+            and current_bid.file_path == pending.database_id
+            and current_bid.bid_uid == pending.bid_uid
+        )
+        if project_pending_state:
+            self._set_plan_items_pending(
+                pending.database_id,
+                takeoff_uid_set,
+                takeoff_uid_set,
+                True,
+            )
+        handler_ref = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_ref()
+            if handler is None or handler._sql_completion_was_applied(result):
+                return
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            if project_pending_state:
+                handler._set_plan_items_pending(
+                    pending.database_id,
+                    takeoff_uid_set,
+                    takeoff_uid_set,
+                    False,
+                )
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                handler._mark_sql_completion_applied(result)
+                return
+            current_bid = handler._ui_state.get_selected_bid_ref()
+            if (
+                current_bid is not None
+                and current_bid.file_path == pending.database_id
+                and current_bid.bid_uid == pending.bid_uid
+            ):
+                handler._restore_plan_selection_if_current(
+                    current_bid,
+                    page_uids,
+                    takeoff_uid_set,
+                )
+
+        self._write_svc.queue_plan_items_delete(
+            pending.database_id,
+            pending.bid_uid,
+            takeoff_uids,
+            [],
+            complete,
+            page_uids=page_uids,
+            dependency_resources=dependencies,
+        )
 
     def _push_sql_takeoff_placement_history(
         self,
@@ -1937,24 +2104,47 @@ class PlanViewActionHandler:
 
         self._undo_svc.push(undo_submit, redo_submit)
 
+    def hide_pending_takeoff_placement_previews(self) -> None:
+        self._remove_pending_takeoff_placement_previews(
+            tuple(self._pending_takeoff_placements.values())
+        )
+
     def invalidate_pending_takeoff_placements(self) -> None:
-        current_bid = self._ui_state.get_selected_bid_ref()
         pending = tuple(self._pending_takeoff_placements.values())
         self._pending_takeoff_placements.clear()
-        if current_bid is None:
-            return
+        self._remove_pending_takeoff_placement_previews(pending)
+
+    def _remove_pending_takeoff_placement_previews(
+        self, pending: tuple[_PendingTakeoffPlacement, ...]
+    ) -> None:
+        current_bid = self._ui_state.get_selected_bid_ref()
         current_pending = tuple(
             placement
             for placement in pending
-            if placement.database_id == current_bid.file_path
-            and placement.bid_uid == current_bid.bid_uid
+            if current_bid is None
+            or (
+                placement.database_id == current_bid.file_path
+                and placement.bid_uid == current_bid.bid_uid
+            )
         )
         removed_uids = [
-            uid for placement in current_pending for uid in placement.pending_uids
+            uid
+            for placement in current_pending
+            for uid in placement.pending_uids
+            if (
+                self._data_svc.get_takeoff(uid) is not None
+                or uid in self._pending_plan_mutation_uids
+            )
         ]
         if not removed_uids:
             return
         self._data_svc.remove_takeoffs(removed_uids)
+        self._set_plan_items_pending(
+            current_bid.file_path if current_bid is not None else "",
+            set(removed_uids),
+            set(removed_uids),
+            False,
+        )
         page_uids = self._takeoff_spec_page_uids(
             [spec for placement in current_pending for spec in placement.specs]
         )
@@ -2428,7 +2618,11 @@ class PlanViewActionHandler:
         self._undo_svc.push_local(_undo_insert, _redo_insert)
 
     def _add_inserted_takeoffs_to_model(
-        self, new_uids: List[str], specs: List[InsertTakeoffSpec]
+        self,
+        new_uids: List[str],
+        specs: List[InsertTakeoffSpec],
+        *,
+        transient: bool = False,
     ) -> None:
         takeoffs = []
         for uid, spec in zip(new_uids, specs):
@@ -2445,7 +2639,10 @@ class PlanViewActionHandler:
             )
             self._apply_takeoff_raw_extras(takeoff, spec.raw_extras)
             takeoffs.append(takeoff)
-        self._data_svc.add_takeoffs(takeoffs)
+        if transient:
+            self._data_svc.add_transient_takeoffs(takeoffs)
+        else:
+            self._data_svc.add_takeoffs(takeoffs)
 
     @staticmethod
     def _int_extra_or_none(extras: dict, key: str, *, abs_value: bool = False):
@@ -2485,6 +2682,9 @@ class PlanViewActionHandler:
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not uids:
+            return
+        uids = self._request_pending_takeoff_deletions(uids)
+        if not uids:
             return
         db_path = bid_ref.file_path
         saved_takeoffs = []
