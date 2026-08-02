@@ -1988,7 +1988,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                         ],
                     )
                     changed_fields = ("style",)
-                else:  # pragma: no cover - DTO validation owns this invariant.
+                else:
                     raise ValueError("Unsupported plan property mutation")
                 if not success:
                     raise RuntimeError("The plan property update was incomplete.")
@@ -2836,7 +2836,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                         )
                         for layer_uid, show in decoded
                     )
-                else:  # pragma: no cover - DTO validation owns this invariant.
+                else: 
                     raise ValueError("Unsupported page setting mutation")
                 if not success:
                     raise RuntimeError("The page setting update was incomplete.")
@@ -4679,9 +4679,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if not self.uses_sql_collaboration_mutations(database_id):
             return None
         if setting_kind == "bid_selected_page":
-            # SQL navigation is session-local and already projected through
-            # collaboration presence.  Do not overwrite shared bid state or
-            # create a durable project mutation for a user's current page.
             return True
         bid_uid = self._active_bid_uid_for(database_id)
         if bid_uid is None:

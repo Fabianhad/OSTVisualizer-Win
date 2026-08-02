@@ -550,11 +550,6 @@ class SqlCollaborationCoordinator:
         database_id: str,
         callback: Callable[[bool, str], None],
     ) -> None:
-        """Stop accepting writes and finish lifecycle-critical mutations.
-        Uncertain and projection-recovery operations are durable in the local
-        operation journal and therefore do not require the UI lifecycle to wait
-        indefinitely.  Queued, executing, and projecting critical mutations do.
-        """
         with self._lock:
             callbacks = self._mutation_drain_callbacks.setdefault(database_id, [])
             callbacks.append(callback)

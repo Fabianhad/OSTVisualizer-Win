@@ -300,7 +300,6 @@ class InputHandlerMixin:
         return True
 
     def prepare_for_modal_mutation_error(self) -> None:
-        """Release pointer interaction state before a modal mutation error."""
         self._cancel_active_drag_interaction(restore_preview=True)
         self._cancel_rotation_drag_interaction()
         if self._panning:

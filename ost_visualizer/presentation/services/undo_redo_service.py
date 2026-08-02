@@ -91,7 +91,6 @@ class UndoRedoService:
         undo_action: Callable[[], bool],
         redo_action: Callable[[], bool],
     ) -> None:
-        """Adapt immediate MDB history actions to the typed completion contract."""
 
         def submit(
             action: Callable[[], bool],

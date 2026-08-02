@@ -2866,7 +2866,6 @@ class UIEventCoordinator:
         self.main_window.project_view.build_complete_structure(loaded_files)
 
     def refresh_hierarchy_projection(self) -> None:
-        """Rebuild the tree from the last authoritative hierarchy snapshot."""
         if not self._is_cleaning_up:
             self._do_file_refresh()
 

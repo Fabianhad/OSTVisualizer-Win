@@ -44,8 +44,6 @@ _ALLOWED_TRANSITIONS = {
 
 
 class PendingMutationRegistry:
-    """Thread-safe owner for non-terminal collaboration mutation state."""
-
     def __init__(self) -> None:
         self._mutations: dict[str, PendingMutation] = {}
         self._lock = threading.Lock()

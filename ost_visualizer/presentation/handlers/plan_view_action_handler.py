@@ -763,8 +763,6 @@ class PlanViewActionHandler:
         dependency_resources: tuple[ResourceRef, ...] = (),
         restore=None,
     ) -> None:
-        # A property mutation owns a fresh, short-lived queue lease.  Do not
-        # leave a geometry-preview lease active for the same selected objects.
         self._release_geometry_edit_lease()
         self._set_plan_items_pending(
             bid_ref.file_path,

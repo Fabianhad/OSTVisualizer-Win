@@ -43,8 +43,6 @@ class _NavigationReadRequest(Generic[T]):
 
 
 class NavigationLoadService:
-    """Latest-request-wins read worker for the active navigation context."""
-
     def __init__(
         self,
         descriptor_registry: IDatabaseDescriptorRegistry,

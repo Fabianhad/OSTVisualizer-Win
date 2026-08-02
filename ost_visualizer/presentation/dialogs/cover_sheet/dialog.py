@@ -1737,8 +1737,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _populate_imported_pages(
         self, file_sizes: List[Tuple[str, List[PdfPageSize]]]
     ) -> None:
-        # Cover-sheet drawings remain user-owned external references. Importing,
-        # duplicating, and deleting rows must never copy, move, or delete them.
         parent_item, folder_uid, insertion_index = self._resolve_insertion_point()
         def_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
         last_item = None

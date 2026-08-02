@@ -56,7 +56,6 @@ ALL_SCALES: List[Tuple[float, float, str]] = ARCH_SCALES + CIVIL_SCALES + METRIC
 
 
 def format_custom_scale(sf1: float, sf2: float) -> str:
-    """Return a readable label for a valid scale not listed in ``ALL_SCALES``."""
     try:
         drawing_units = float(sf1)
         real_units = float(sf2)
