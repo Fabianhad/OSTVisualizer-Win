@@ -806,10 +806,10 @@ class ConditionActionHandler:
     def _finish_condition_duplicate(
         self, new_uids: list, sidebar, *, refresh_conditions: bool = True
     ) -> None:
-        if self._coordinator._is_takeoff_2d_view_active():
-            self._coordinator.placement.enter(new_uids[-1], new_uids)
         if refresh_conditions:
             self._coordinator.refresh_conditions_ui()
+        if self._coordinator._is_takeoff_2d_view_active():
+            self._coordinator.placement.enter(new_uids[-1], new_uids)
         if sidebar:
             self._coordinator.highlight_sidebar(set(new_uids), reveal=False)
 

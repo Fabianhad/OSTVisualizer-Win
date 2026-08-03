@@ -1262,17 +1262,11 @@ class PlacementModeMixin:
         QtCore.QTimer.singleShot(220, _restore)
 
     def _condition_preview_color_and_opacity(
-        self, condition_uid: str, condition: Condition, default_opacity: float = 1.0
+        self, condition_uid: str
     ) -> tuple[str, float]:
-        color_entry = self._current_color_map.get(condition_uid)
-        if color_entry is not None:
-            return self._color_service.as_hex_with_opacity(color_entry)
-        color_hex = (
-            self._color_service.int_to_hex(condition.color_fill)
-            if condition.color_fill
-            else "#808080"
+        return self._color_service.as_hex_with_opacity(
+            self._current_color_map[condition_uid]
         )
-        return color_hex, default_opacity
 
     def update_place_preview(self, cursor_scene: QtCore.QPointF) -> None:
         self.clear_place_preview()
@@ -1281,9 +1275,7 @@ class PlacementModeMixin:
         condition = self._current_conditions.get(active_uid)
         if not condition:
             return
-        color_hex, base_opacity = self._condition_preview_color_and_opacity(
-            active_uid, condition
-        )
+        color_hex, base_opacity = self._condition_preview_color_and_opacity(active_uid)
         preview_opacity = base_opacity
         qcolor = QColor(color_hex)
         cond_type = condition.condition_type
@@ -1316,7 +1308,6 @@ class PlacementModeMixin:
             self._add_secondary_condition_previews(
                 path,
                 page_transform,
-                preview_opacity,
                 linear_endpoints=(x1, y1, x2, y2),
             )
             handle_pts = [(x1, y1), (x2, y2)]
@@ -1368,9 +1359,7 @@ class PlacementModeMixin:
                         preview_opacity,
                         page_transform,
                     )
-                    self._add_secondary_condition_previews(
-                        rect_path, page_transform, preview_opacity
-                    )
+                    self._add_secondary_condition_previews(rect_path, page_transform)
                 self._add_dashed_path_preview(
                     rect_path, QColor(0, 0, 0), 11, page_transform
                 )
@@ -1434,9 +1423,7 @@ class PlacementModeMixin:
                     page_transform,
                 )
                 if not self._backout_parent_uid:
-                    self._add_secondary_condition_previews(
-                        path, page_transform, preview_opacity
-                    )
+                    self._add_secondary_condition_previews(path, page_transform)
             self._add_dashed_path_preview(path, QColor(0, 0, 0), 11, page_transform)
             if endpoint.right_angle_indicator_active:
                 indicator_pen = QPen(QColor("#1f9d45"))
@@ -1558,7 +1545,7 @@ class PlacementModeMixin:
                     candidate = self._place_points + [(ost_x, ost_y)]
                     if polyline_self_intersects(candidate):
                         flash_hex, _ = self._condition_preview_color_and_opacity(
-                            active_uid, condition
+                            active_uid
                         )
                         self._flash_invalid_preview(QColor(flash_hex))
                     elif not self._backout_parent_uid or (
@@ -1758,7 +1745,6 @@ class PlacementModeMixin:
         self,
         path: QPainterPath,
         page_transform,
-        base_opacity: float,
         linear_endpoints=None,
     ) -> None:
         if not self._place_all_condition_uids:
@@ -1768,9 +1754,7 @@ class PlacementModeMixin:
             cond = self._current_conditions.get(cond_uid)
             if not cond:
                 continue
-            color_hex, opacity = self._condition_preview_color_and_opacity(
-                cond_uid, cond, default_opacity=base_opacity
-            )
+            color_hex, opacity = self._condition_preview_color_and_opacity(cond_uid)
             qcolor = QColor(color_hex)
             if linear_endpoints and cs:
                 x1, y1, x2, y2 = linear_endpoints

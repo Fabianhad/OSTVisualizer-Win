@@ -22,6 +22,10 @@
 
 ### Fixed
 
+- Fixed duplicating a condition while placement was active sometimes leaving the
+  plan bound to the original condition and rendering its drag preview as solid;
+  refreshed duplicates and secondary placement conditions now retain their
+  configured transparent pattern previews before any takeoff can be placed.
 - Fixed multi-condition sidebar highlights occasionally starting placement with
   a different condition than the focused row, which could make a focused linear
   condition use an area-style drag preview.

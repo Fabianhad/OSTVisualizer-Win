@@ -573,6 +573,7 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
                 },
             )()
             place_condition_uid = None
+            place_condition_uids = []
 
             def get_selected_bid_ref(self):
                 return BidRef("bid.mdb", "bid")

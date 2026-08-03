@@ -1325,6 +1325,7 @@ class UIEventCoordinator:
 
     def refresh_conditions_ui(self) -> None:
         self._sidebar.refresh_conditions_from_memory()
+        self._viewer.update_plan_view_for_active()
 
     def request_collaboration_edit(
         self,

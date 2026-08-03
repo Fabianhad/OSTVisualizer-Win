@@ -268,8 +268,8 @@ class PatternPreviewSceneBuilder(FakeSceneBuilder):
 
 
 class FakeColorService:
-    def int_to_hex(self, _value):
-        return "#808080"
+    def as_hex_with_opacity(self, color_entry):
+        return color_entry
 
 
 class PreviewHarness(PlacementHarness):
@@ -286,7 +286,9 @@ class PreviewHarness(PlacementHarness):
         self._place_area_rect_dragging = False
         self._backout_last_valid_ost = None
         self._uid_to_items = {}
-        self._current_color_map = {}
+        self._current_color_map = {
+            uid: ("#808080", 1.0) for uid in ("linear", "area", "count")
+        }
         self._color_service = FakeColorService()
         self.handle_points = []
         self.pattern_angles = []

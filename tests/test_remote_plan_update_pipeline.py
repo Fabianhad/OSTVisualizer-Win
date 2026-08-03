@@ -357,6 +357,7 @@ class _ViewerState:
     def __init__(self) -> None:
         self.active_page_uid = "page-1"
         self.place_condition_uid = None
+        self.place_condition_uids = []
         self.state = SimpleNamespace(
             display_mode_2d="condition", grayscale_enabled=False
         )

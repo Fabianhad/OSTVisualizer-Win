@@ -22,6 +22,7 @@ from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
@@ -34,6 +35,12 @@ from ost_visualizer.presentation.components import (
 )
 from ost_visualizer.presentation.components.area_combo import AreaComboBox
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
+    PlacementModeMixin,
+)
+from ost_visualizer.presentation.coordinators.placement_coordinator import (
+    PlacementCoordinator,
+)
 from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
     SidebarCoordinator,
 )
@@ -57,6 +64,9 @@ from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer im
     TakeoffRenderer,
 )
 from ost_visualizer.presentation.visualization.pdf.renderers import pattern_renderer
+from ost_visualizer.presentation.visualization.services.color_service import (
+    ColorService,
+)
 
 
 def _app():
@@ -579,6 +589,120 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertFalse(sidebar._folder_items["f1"].isExpanded())
         self.assertFalse(sidebar._folder_items["f2"].isExpanded())
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c3"])
+
+    def test_duplicate_refreshes_plan_before_replacing_active_placement(self):
+        original_uid = "condition-original"
+        duplicate_uid = "condition-duplicate"
+        conditions = {
+            original_uid: Condition(
+                uid=original_uid,
+                condition_type=Condition.TYPE_LINEAR,
+                color_fill=0x336699,
+                layer_visible=True,
+            )
+        }
+
+        class UiState:
+            active_page_uid = "page-1"
+            place_condition_uid = None
+            state = SimpleNamespace(
+                display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
+                grayscale_enabled=False,
+            )
+
+            def __init__(self):
+                self.place_condition_uids = []
+
+            def set_place_condition_uids(self, uids):
+                self.place_condition_uids = list(uids)
+
+            def clear_place_condition(self):
+                self.place_condition_uid = None
+                self.place_condition_uids = []
+
+        class PlanView(PlacementModeMixin):
+            def __init__(self, color_service):
+                self._color_service = color_service
+                self._current_conditions = dict(conditions)
+                self._current_color_map = {}
+                self._place_session_uid = None
+                self._backout_mode_active = False
+                self._backout_parent_uid = None
+                self._backout_active_uid = None
+
+            def activate_place_for_condition(self, condition_uid, _condition_uids):
+                return self.enter_place_mode_for_condition(condition_uid)
+
+            def update_color_map(self, color_map):
+                self._current_color_map = dict(color_map)
+
+            def cancel_place_mode(self):
+                self._place_session_uid = None
+
+            def clear_place_preview(self):
+                pass
+
+            def _set_area_placement_in_progress(self, _active):
+                pass
+
+            def refresh_conditions(self):
+                self._current_conditions = dict(conditions)
+
+            def active_preview_opacity(self):
+                _color, opacity = self._condition_preview_color_and_opacity(
+                    self._place_session_uid
+                )
+                return opacity
+
+        color_service = ColorService()
+        ui_state = UiState()
+        plan_view = PlanView(color_service)
+        placement = PlacementCoordinator(
+            ui_state_manager=ui_state,
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
+                set_area_placement_active=lambda _active, *, surface_id: None,
+            ),
+            color_service=color_service,
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions,
+                get_page_takeoffs=lambda _page_uid: [],
+            ),
+        )
+        placement._plan_view = plan_view
+        self.assertTrue(placement.enter(original_uid, [original_uid]))
+        self.assertEqual(plan_view.active_preview_opacity(), 0.5)
+        conditions[duplicate_uid] = Condition(
+            uid=duplicate_uid,
+            condition_type=Condition.TYPE_LINEAR,
+            color_fill=0x336699,
+            layer_visible=True,
+        )
+        calls = []
+        coordinator = SimpleNamespace(
+            placement=placement,
+            _is_takeoff_2d_view_active=lambda: True,
+            refresh_conditions_ui=lambda: (
+                calls.append("refresh"),
+                plan_view.refresh_conditions(),
+            ),
+            highlight_sidebar=lambda uids, reveal=True: calls.append(
+                ("highlight", set(uids), reveal)
+            ),
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=None,
+            project_read_service=None,
+            project_data=None,
+            ui_state_manager=None,
+        )
+        handler._finish_condition_duplicate([duplicate_uid], sidebar=object())
+        self.assertEqual(calls[0], "refresh")
+        self.assertEqual(plan_view._place_session_uid, duplicate_uid)
+        self.assertEqual(ui_state.place_condition_uid, duplicate_uid)
+        self.assertEqual(plan_view.active_preview_opacity(), 0.5)
+        self.assertEqual(calls[-1], ("highlight", {duplicate_uid}, False))
 
     def test_condition_sidebar_delete_replacement_selects_previous_logical_condition(
         self,

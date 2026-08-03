@@ -689,6 +689,18 @@ class ImmediateNavigationOperations:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_condition_refresh_updates_sidebar_and_active_plan(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._sidebar = SimpleNamespace(
+            refresh_conditions_from_memory=lambda: calls.append("sidebar")
+        )
+        coordinator._viewer = SimpleNamespace(
+            update_plan_view_for_active=lambda: calls.append("plan")
+        )
+        coordinator.refresh_conditions_ui()
+        self.assertEqual(calls, ["sidebar", "plan"])
+
     def test_native_page_visibility_rebuilds_the_canonical_selected_page_texture(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         embedded = FakeMeshReceiver()
@@ -893,6 +905,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._sidebar = SimpleNamespace(
             refresh_conditions_from_memory=lambda: None
         )
+        coordinator._viewer = SimpleNamespace(update_plan_view_for_active=lambda: None)
         coordinator._on_remote_hierarchy_changed(database_id)
         self.assertEqual(project_view.builds, 1)
         self.assertEqual(

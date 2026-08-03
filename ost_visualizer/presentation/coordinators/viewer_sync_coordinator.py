@@ -29,7 +29,7 @@ class _PlanUpdateSnapshot:
     annotations: tuple
     display_mode: str
     grayscale_enabled: bool
-    place_condition_uid: Optional[str]
+    place_condition_uids: tuple[str, ...]
     bid_ref: Optional[BidRef]
     page_area_selections: tuple
     hidden_layer_uids: frozenset[str]
@@ -188,10 +188,6 @@ class ViewerSyncCoordinator:
         page = self._project_data.get_page(page_uid)
         if not page:
             return None
-        # Keep the plan's rendered condition state independent from the mutable
-        # project model. Condition edits update those model instances in place;
-        # sharing them with the view makes its unchanged-overlay comparison miss
-        # visual changes such as count display size.
         conditions = deepcopy(self._project_data.get_bid_conditions())
         page_takeoffs = self._project_data.get_page_takeoffs(page_uid)
         page_annotations = self._project_data.get_page_annotations(page_uid)
@@ -202,7 +198,6 @@ class ViewerSyncCoordinator:
             page_annotations = deepcopy(page_annotations)
         display_mode = self._ui_state.state.display_mode_2d
         grayscale_enabled = self._ui_state.state.grayscale_enabled
-        place_uid = self._ui_state.place_condition_uid
         bid_ref = self._ui_state.get_selected_bid_ref()
         bid = self._project_data.get_bid(bid_ref) if bid_ref else None
         return _PlanUpdateSnapshot(
@@ -212,7 +207,7 @@ class ViewerSyncCoordinator:
             annotations=tuple(page_annotations),
             display_mode=display_mode,
             grayscale_enabled=grayscale_enabled,
-            place_condition_uid=place_uid,
+            place_condition_uids=tuple(self._ui_state.place_condition_uids),
             bid_ref=bid_ref,
             page_area_selections=tuple(
                 (
@@ -238,13 +233,13 @@ class ViewerSyncCoordinator:
         self, snapshot: _PlanUpdateSnapshot
     ) -> _PreparedPlanUpdate:
         conditions = dict(snapshot.conditions)
-        extra = {snapshot.place_condition_uid} if snapshot.place_condition_uid else None
+        placement_condition_uids = set(snapshot.place_condition_uids)
         _, color_map = self._color_service.get_color_mapping(
             conditions,
             snapshot.takeoffs,
             snapshot.display_mode,
             snapshot.grayscale_enabled,
-            extra,
+            placement_condition_uids,
         )
         annotation_types = snapshot.changed_annotation_types
         if snapshot.changed_annotation_uids and not annotation_types:

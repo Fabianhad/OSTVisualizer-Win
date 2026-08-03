@@ -67,6 +67,7 @@ class PlacementCoordinator:
             condition_uid, condition_uids
         )
         if not activated:
+            self.force_exit()
             self._ui_state.clear_place_condition()
             return False
         self._ui_state.place_condition_uid = condition_uid
@@ -141,13 +142,10 @@ class PlacementCoordinator:
 
     def _ensure_color_map_includes(self, condition_uids: list) -> None:
         conditions = self._project_data.get_bid_conditions()
-        extra_condition_uids = {uid for uid in condition_uids if uid in conditions}
-        if not extra_condition_uids:
-            return
-        page_uid = self._ui_state.active_page_uid
-        if not page_uid:
-            return
-        page_takeoffs = self._project_data.get_page_takeoffs(page_uid)
+        extra_condition_uids = set(condition_uids)
+        page_takeoffs = self._project_data.get_page_takeoffs(
+            self._ui_state.active_page_uid
+        )
         display_mode = self._ui_state.state.display_mode_2d
         grayscale_enabled = self._ui_state.state.grayscale_enabled
         _, color_map = self._color_service.get_color_mapping(

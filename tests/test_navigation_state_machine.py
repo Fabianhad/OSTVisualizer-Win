@@ -9,6 +9,7 @@ from ost_visualizer.presentation.coordinators.navigation_state_machine import (
 )
 from ost_visualizer.presentation.coordinators.placement_coordinator import (
     PlacementCoordinator,
+    PlacementState,
 )
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
     ToolbarStateCoordinator,
@@ -333,6 +334,76 @@ class NavigationStateMachineTests(unittest.TestCase):
         self.assertEqual(plan_view.place_calls, [("c2", ["c1", "c2"])])
         self.assertEqual(color_map_requests, [{"c1", "c2"}])
         self.assertEqual(ui_state.place_condition_uid, "c2")
+
+    def test_failed_placement_replacement_cancels_previous_plan_session(self):
+        class UiState:
+            active_page_uid = "p1"
+            place_condition_uid = None
+            state = SimpleNamespace(
+                display_mode_2d="condition",
+                grayscale_enabled=False,
+            )
+
+            def __init__(self):
+                self.place_condition_uids = []
+
+            def set_place_condition_uids(self, uids):
+                self.place_condition_uids = list(uids)
+
+            def clear_place_condition(self):
+                self.place_condition_uid = None
+                self.place_condition_uids = []
+
+        class PlanView:
+            def __init__(self):
+                self.session_uid = None
+                self.available_uids = {"original"}
+                self.cancel_calls = 0
+
+            def activate_place_for_condition(self, condition_uid, _condition_uids):
+                if condition_uid not in self.available_uids:
+                    return False
+                self.session_uid = condition_uid
+                return True
+
+            def update_color_map(self, _color_map):
+                pass
+
+            def cancel_place_mode(self):
+                self.cancel_calls += 1
+                self.session_uid = None
+
+        conditions = {
+            uid: Condition(
+                uid=uid,
+                layer_visible=True,
+                condition_type=Condition.TYPE_LINEAR,
+            )
+            for uid in ("original", "duplicate")
+        }
+        ui_state = UiState()
+        plan_view = PlanView()
+        placement = PlacementCoordinator(
+            ui_state_manager=ui_state,
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
+                set_area_placement_active=lambda _active, *, surface_id: None,
+            ),
+            color_service=SimpleNamespace(
+                get_color_mapping=lambda *_args, **_options: ({}, {})
+            ),
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions,
+                get_page_takeoffs=lambda _page_uid: [],
+            ),
+        )
+        placement._plan_view = plan_view
+        self.assertTrue(placement.enter("original", ["original"]))
+        self.assertFalse(placement.enter("duplicate", ["duplicate"]))
+        self.assertIsNone(plan_view.session_uid)
+        self.assertEqual(plan_view.cancel_calls, 1)
+        self.assertIsNone(ui_state.place_condition_uid)
+        self.assertEqual(placement.state, PlacementState.IDLE)
 
     def test_placement_coordinator_enters_with_active_2d_page_unchecked_for_3d(self):
         class UiState:

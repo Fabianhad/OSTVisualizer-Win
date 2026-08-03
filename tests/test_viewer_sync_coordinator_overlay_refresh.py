@@ -45,6 +45,7 @@ from ost_visualizer.domain.entities.annotation import (
 )
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -75,6 +76,9 @@ from ost_visualizer.presentation.managers.ui_access_manager import (
 )
 from ost_visualizer.presentation.modes.cursor import CURSOR_MODE_SELECT
 from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
+from ost_visualizer.presentation.visualization.services.color_service import (
+    ColorService,
+)
 from ost_visualizer.presentation.windows.annotation_view_window import (
     _ANNOTATION_WINDOW_CONFIG,
 )
@@ -94,6 +98,7 @@ class FakeUiState:
         },
     )()
     place_condition_uid = None
+    place_condition_uids = []
 
     def get_selected_bid_ref(self):
         return BidRef(file_path="bid.mdb", bid_uid="bid-1")
@@ -540,6 +545,32 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
             plan_view.overlay_options[1]["conditions"][condition.uid].display_size,
             175.0,
         )
+
+    def test_plan_refresh_keeps_all_placement_conditions_in_transparent_color_map(
+        self,
+    ):
+        plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
+        coordinator = self._make_coordinator(plan_view)
+        conditions = {
+            uid: Condition(
+                uid=uid,
+                condition_type=Condition.TYPE_LINEAR,
+                color_fill=0x336699,
+            )
+            for uid in ("primary", "secondary")
+        }
+        coordinator._project_data.get_bid_conditions = lambda: conditions
+        coordinator._ui_state.place_condition_uids = ["primary", "secondary"]
+        coordinator._ui_state.state = SimpleNamespace(
+            display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
+            grayscale_enabled=False,
+        )
+        coordinator._color_service = ColorService()
+        coordinator.update_plan_view("page-1")
+        color_map = plan_view.overlay_options[0]["color_map"]
+        self.assertEqual(set(color_map), {"primary", "secondary"})
+        self.assertEqual(color_map["primary"].opacity, 0.5)
+        self.assertEqual(color_map["secondary"].opacity, 0.5)
 
     def test_same_loaded_page_passes_annotation_change_metadata(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
