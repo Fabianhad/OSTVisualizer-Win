@@ -3979,7 +3979,6 @@ class TakeoffPlanView(
             or self._place_area_rect_dragging
             or self._dirty_positions
             or self._dirty_ann_positions
-            or self._place_preview_items
             or self._paste_backout_preview_items
         )
 

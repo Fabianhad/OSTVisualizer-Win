@@ -89,6 +89,11 @@ class ConditionActionHandler:
                 if on_committed is not None:
                     on_committed(result)
                 return
+            if (
+                result.outcome_status
+                == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+            ):
+                return
             handler._coordinator.present_queued_mutation_error(
                 bid_ref.file_path,
                 title,

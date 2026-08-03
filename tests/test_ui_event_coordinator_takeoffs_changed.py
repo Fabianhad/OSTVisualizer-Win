@@ -3173,6 +3173,26 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(calls[0], "memory")
         self.assertEqual(calls[1], ("sql-database", "Layer Update", result))
 
+    def test_projection_recovery_does_not_open_a_premature_modal_error(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator._prepare_for_modal_mutation_error = lambda _database_id: self.fail(
+            "Automatic projection recovery must not normalize for a modal dialog"
+        )
+        result = SimpleNamespace(
+            outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            message="recovering",
+        )
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.show_warning",
+            side_effect=AssertionError("recovery must not show a warning yet"),
+        ):
+            coordinator.present_queued_mutation_error(
+                "sql-database",
+                "Layer Update",
+                result,
+            )
+
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._placement = None

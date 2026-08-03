@@ -233,6 +233,11 @@ class SqlCollaborationCoordinator:
             runtime.recovery_attempted = True
             runtime.recovery_ready = True
             runtime.command_event.set()
+        self._set_state(
+            database_id,
+            SynchronizationState.CONNECTING,
+            "Recovering the authoritative SQL state.",
+        )
         return True
 
     def _on_database_capabilities_changed(self, file_path: str, **_event_data) -> None:
@@ -1088,9 +1093,9 @@ class SqlCollaborationCoordinator:
                         break
                     next_heartbeat = time.monotonic()
                     reconnect_attempt = 0
+                self._process_release_requests(runtime)
                 self._process_mutation_requests(runtime)
                 self._process_edit_requests(runtime)
-                self._process_release_requests(runtime)
                 now = time.monotonic()
                 if now >= next_heartbeat:
                     self._heartbeat(runtime)
@@ -1175,8 +1180,6 @@ class SqlCollaborationCoordinator:
             except ValueError as exc:
                 self._handle_worker_failure(runtime, str(exc))
                 with runtime.lock:
-                    runtime.recovery_requested = True
-                    runtime.recovery_ready = False
                     runtime.pending_delivery = True
                 self._dispatcher.dispatch(
                     self._on_reconciliation_required,
@@ -1326,6 +1329,7 @@ class SqlCollaborationCoordinator:
             )
             failure: DatabaseCatalogError | OSError | None = None
             local_hydrated = None
+            consumed_lock_tokens: tuple[str, ...] = ()
             try:
                 all_resources = request.resources + request.dependency_resources
                 self._concurrency_tokens.ensure_resources_loaded(
@@ -1338,15 +1342,14 @@ class SqlCollaborationCoordinator:
                             request.database_id, all_resources
                         ),
                     )
-                    for resource in request.resources:
-                        acquired.append(
-                            self._store.acquire_lock(
-                                request.database_id,
-                                session.session_id,
-                                resource,
-                                request.operation_id,
-                            )
+                    acquired.extend(
+                        self._store.acquire_locks(
+                            request.database_id,
+                            session.session_id,
+                            request.resources,
+                            request.operation_id,
                         )
+                    )
                     self._local_drafts.activate(
                         draft.draft_id,
                         tuple(acquired),
@@ -1358,6 +1361,7 @@ class SqlCollaborationCoordinator:
                         )
                 work_result = request.operation()
                 created_resource_ids = work_result.created_resource_ids
+                consumed_lock_tokens = work_result.consumed_lock_tokens
                 validation_error = (
                     request.result_validator(work_result)
                     if request.result_validator is not None
@@ -1500,10 +1504,15 @@ class SqlCollaborationCoordinator:
                         runtime,
                         session,
                         lease_handle,
+                        consumed_lock_tokens,
                     )
                 else:
                     cleanup_failure = self._release_queued_mutation_resources(
-                        runtime, session, draft.draft_id, tuple(acquired)
+                        runtime,
+                        session,
+                        draft.draft_id,
+                        tuple(acquired),
+                        consumed_lock_tokens,
                     )
                 if cleanup_failure is not None:
                     failure = cleanup_failure
@@ -1597,6 +1606,7 @@ class SqlCollaborationCoordinator:
         runtime: _DatabaseRuntime,
         session: DatabaseSession,
         handle: EditLeaseHandle,
+        consumed_lock_tokens: tuple[str, ...] = (),
     ) -> DatabaseCatalogError | OSError | ValueError | None:
         resource_key = frozenset(
             resource.lease_identity for resource in handle.resources
@@ -1625,6 +1635,7 @@ class SqlCollaborationCoordinator:
             session,
             handle.draft_id,
             handle.locks,
+            consumed_lock_tokens,
         )
 
     def _release_queued_mutation_resources(
@@ -1633,10 +1644,14 @@ class SqlCollaborationCoordinator:
         session: DatabaseSession,
         draft_id: str,
         locks: tuple[ResourceLock, ...],
+        consumed_lock_tokens: tuple[str, ...] = (),
     ) -> DatabaseCatalogError | OSError | ValueError | None:
         cleanup_failure: DatabaseCatalogError | OSError | ValueError | None = None
+        consumed = {token.casefold() for token in consumed_lock_tokens}
         for lock in locks:
             self._sessions.remove_lock(runtime.database_id, lock.resource)
+            if lock.lock_token.casefold() in consumed:
+                continue
             try:
                 self._store.release_lock(
                     runtime.database_id, session.session_id, lock.lock_token
@@ -1714,23 +1729,15 @@ class SqlCollaborationCoordinator:
             result.database_id,
             result.runtime_generation,
         ):
-            self._complete_mutation_request(
-                (
-                    callback,
-                    QueuedMutationResult(
-                        database_id=result.database_id,
-                        runtime_generation=result.runtime_generation,
-                        operation_id=result.operation_id,
-                        outcome_status=(
-                            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
-                        ),
-                        message=(
-                            "The SQL mutation committed after its UI runtime changed."
-                        ),
-                        commit_attempted=True,
-                    ),
-                )
+            stale_result = QueuedMutationResult(
+                database_id=result.database_id,
+                runtime_generation=result.runtime_generation,
+                operation_id=result.operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                message="The SQL mutation committed after its UI runtime changed.",
+                commit_attempted=True,
             )
+            self._complete_mutation_request((callback, stale_result))
             return
         pending = self._pending_mutations.get(result.operation_id)
         resource_uid_aliases_by_family: dict[str, tuple[str, ...]] = {}
@@ -1776,23 +1783,17 @@ class SqlCollaborationCoordinator:
         if applied:
             self._complete_mutation_request((callback, result))
             return
-        self._complete_mutation_request(
-            (
-                callback,
-                QueuedMutationResult(
-                    database_id=result.database_id,
-                    runtime_generation=result.runtime_generation,
-                    operation_id=result.operation_id,
-                    created_resource_ids=result.created_resource_ids,
-                    authoritative_result=result.authoritative_result,
-                    outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                    message=(
-                        "The SQL mutation committed, but its local projection failed."
-                    ),
-                    commit_attempted=True,
-                ),
-            )
+        failed_result = QueuedMutationResult(
+            database_id=result.database_id,
+            runtime_generation=result.runtime_generation,
+            operation_id=result.operation_id,
+            created_resource_ids=result.created_resource_ids,
+            authoritative_result=result.authoritative_result,
+            outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            message="The SQL mutation committed, but its local projection failed.",
+            commit_attempted=True,
         )
+        self._complete_mutation_request((callback, failed_result))
 
     def _complete_mutation_request(self, payload) -> None:
         callback, result = payload
@@ -1803,7 +1804,6 @@ class SqlCollaborationCoordinator:
                 trusted = (
                     not runtime.recovery_requested and not runtime.stop_event.is_set()
                 )
-            trusted = trusted and self._capabilities.is_editable(result.database_id)
         if result.outcome_status == MutationOutcomeStatus.COMMITTED and not trusted:
             result = QueuedMutationResult(
                 database_id=result.database_id,
@@ -1868,10 +1868,12 @@ class SqlCollaborationCoordinator:
                     PendingMutationState.RECOVERING,
                 )
                 state = PendingMutationState.RECOVERING
-                self._event_bus.publish(
-                    AppEvents.FULL_RECONCILIATION_REQUIRED,
-                    database_id=result.database_id,
-                    reason=("A committed SQL mutation could not be projected locally."),
+                self._on_reconciliation_required(
+                    (
+                        result.database_id,
+                        result.runtime_generation,
+                        "A committed SQL mutation could not be projected locally.",
+                    )
                 )
             else:
                 self._pending_mutations.finish(result.operation_id)
@@ -1941,15 +1943,14 @@ class SqlCollaborationCoordinator:
                         request.database_id, request.resources
                     ),
                 )
-                for resource in request.resources:
-                    acquired.append(
-                        self._store.acquire_lock(
-                            request.database_id,
-                            session.session_id,
-                            resource,
-                            request.operation_id,
-                        )
+                acquired.extend(
+                    self._store.acquire_locks(
+                        request.database_id,
+                        session.session_id,
+                        request.resources,
+                        request.operation_id,
                     )
+                )
                 self._local_drafts.activate(
                     draft_id,
                     tuple(acquired),
@@ -2188,14 +2189,8 @@ class SqlCollaborationCoordinator:
             page_uid = runtime.page_uid
             mode = runtime.mode
             owned_locks = tuple(runtime.owned_locks.values())
-            healthy = runtime.healthy
         if session is None:
             return
-        if healthy and not self._capabilities.mark_connected(runtime.database_id):
-            raise DatabaseCatalogError(
-                "SQL edit permissions changed. Reconnect before editing.",
-                read_only_required=True,
-            )
         updated = self._store.heartbeat(
             runtime.database_id,
             session.session_id,
@@ -2682,17 +2677,19 @@ class SqlCollaborationCoordinator:
         runtime = self._runtime(database_id, generation)
         if runtime is None:
             return
-        self._set_state(
-            database_id,
-            SynchronizationState.RECONCILIATION_REQUIRED,
-            reason,
-        )
         with runtime.lock:
+            if runtime.recovery_requested:
+                return
             runtime.healthy = False
             runtime.pending_delivery = True
             runtime.recovery_requested = True
             runtime.recovery_ready = False
             runtime.command_event.set()
+        self._set_state(
+            database_id,
+            SynchronizationState.RECONCILIATION_REQUIRED,
+            reason,
+        )
         self._event_bus.publish(
             AppEvents.FULL_RECONCILIATION_REQUIRED,
             database_id=database_id,

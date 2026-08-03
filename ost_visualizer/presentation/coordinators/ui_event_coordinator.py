@@ -2177,11 +2177,10 @@ class UIEventCoordinator:
     ) -> None:
         if self._is_cleaning_up:
             return
+        if result.outcome_status == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED:
+            return
         self._prepare_for_modal_mutation_error(database_id)
-        if result.outcome_status in {
-            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
-        }:
+        if result.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN:
             show_warning(
                 self.main_window,
                 "SQL Synchronization",

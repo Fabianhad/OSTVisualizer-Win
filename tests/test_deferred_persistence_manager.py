@@ -400,6 +400,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         manager.begin_shutdown()
         self.assertTrue(manager.cleanup())
         self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(self.service.calls, [])
 
     def test_failed_page_view_state_is_silently_abandoned_during_shutdown(self):
         self.service.fail_methods.add("save_page_view_state")
@@ -410,6 +411,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(manager.cleanup())
         self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(self.service.calls, [])
         self.assertFalse(
             manager.schedule(
                 "critical_data",
@@ -421,7 +423,10 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
 
     def test_stopped_sql_page_view_queue_does_not_block_shutdown(self):
         self.service.queue_sql_settings = True
-        self.service.queue_page_setting_if_sql = lambda *_args, **_kwargs: False
+        attempts = []
+        self.service.queue_page_setting_if_sql = (
+            lambda *_args, **_kwargs: attempts.append("queue") or False
+        )
         logger = logging.getLogger("tests.deferred_sql_page_view_shutdown")
         manager = DeferredPersistenceManager(self.service, logger_=logger)
         manager.schedule_page_view_state("sql-db", "107", 2.0, 10.0, 20.0)
@@ -429,6 +434,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(manager.cleanup())
         self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(attempts, [])
 
     def test_rejected_sql_page_view_is_terminal_and_not_retried(self):
         attempts = []
@@ -494,7 +500,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertEqual(self.manager.pending_count, 0)
 
-    def test_cleanup_flushes_all_pending_deferred_operation_kinds(self):
+    def test_cleanup_abandons_noncritical_and_flushes_critical_writes(self):
         self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
         self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
         self.manager.schedule_layer_show("a.mdb", "l1", False)
@@ -507,8 +513,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.assertEqual(
             self.service.calls,
             [
-                ("page_view_state", "a.mdb", "p1", 2.0, 10.0, 20.0),
-                ("bid_selected_page", "a.mdb", "b1", "p1"),
                 ("layer_show", "a.mdb", "l1", False, False),
                 ("page_show_mode", "a.mdb", "p1", 2, False),
                 ("page_area", "a.mdb", "p1", "area-1", False),

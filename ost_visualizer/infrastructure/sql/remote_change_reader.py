@@ -190,6 +190,31 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             and not cover_sheet_bids
         ):
             return HydratedDatabaseChangeBatch(batch=batch)
+        takeoff_only = (
+            isinstance(self._reader, SqlProjectReader)
+            and bool(takeoff_bids)
+            and condition_bids == takeoff_bids
+            and bid_data_bids == takeoff_bids
+            and not area_bids
+            and not needs_hierarchy
+            and not needs_default_layers
+            and not master_resource_types
+            and not cover_sheet_bids
+            and all(
+                change.resource.resource_type
+                in {
+                    CollaborationResourceType.TAKEOFF.value,
+                    CollaborationResourceType.TAKEOFFS_COLLECTION.value,
+                }
+                for change in batch.changes
+            )
+        )
+        if takeoff_only:
+            return self._hydrate_takeoff_only_batch(
+                batch,
+                connection,
+                tuple(sorted(takeoff_bids)),
+            )
         conditions_by_bid = {}
         folders_by_bid = {}
         areas_by_bid = {}
@@ -378,6 +403,193 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             page_delete_content_uids_by_bid=page_delete_content_uids_by_bid,
             settings_defaults=settings_defaults,
         )
+
+    def _hydrate_takeoff_only_batch(
+        self,
+        batch: DatabaseChangeBatch,
+        connection,
+        bid_uids: tuple[int, ...],
+    ) -> HydratedDatabaseChangeBatch:
+        schema = self._reader._schema(connection)
+        recording = _QueryRecordingConnection(schema.get_columns("BidTakeoffs"))
+        self._reader._parse_cdn_types(recording)
+        for bid_uid in bid_uids:
+            bid_key = str(bid_uid)
+            layers = self._reader._parse_bid_layers_for_bid(recording, bid_key)
+            self._reader._parse_bid_conditions_for_bid(
+                recording,
+                bid_key,
+                layers,
+                {},
+                schema,
+            )
+            self._reader._parse_bid_condition_folders_for_bid(
+                recording,
+                bid_key,
+                schema,
+            )
+        for bid_uid in bid_uids:
+            bid_key = str(bid_uid)
+            self._reader._parse_bid_takeoffs_for_bid(recording, bid_key, schema)
+            self._reader._parse_bid_pages_for_bid(recording, bid_key, {}, schema)
+        replay = _execute_recorded_queries(connection, recording.queries)
+        cdn_types = self._reader._parse_cdn_types(replay)
+        conditions_by_bid = {}
+        folders_by_bid = {}
+        bid_data_by_bid = {}
+        for bid_uid in bid_uids:
+            bid_key = str(bid_uid)
+            layers = self._reader._parse_bid_layers_for_bid(replay, bid_key)
+            conditions_by_bid[bid_uid] = self._reader._parse_bid_conditions_for_bid(
+                replay,
+                bid_key,
+                layers,
+                cdn_types,
+                schema,
+            )
+            folders_by_bid[bid_uid] = self._reader._parse_bid_condition_folders_for_bid(
+                replay,
+                bid_key,
+                schema,
+            )
+        for bid_uid in bid_uids:
+            bid_key = str(bid_uid)
+            takeoffs, takeoff_extras = self._reader._parse_bid_takeoffs_for_bid(
+                replay,
+                bid_key,
+                schema,
+            )
+            pages = self._reader._parse_bid_pages_for_bid(
+                replay,
+                bid_key,
+                {},
+                schema,
+            )
+            bid_data_by_bid[bid_uid] = BidLoadResult(
+                bid_takeoffs=takeoffs,
+                bid_pages=pages,
+                pages=build_pages_from_bid_data(pages, takeoffs),
+                takeoff_extras=takeoff_extras,
+            )
+        replay.assert_consumed()
+        return HydratedDatabaseChangeBatch(
+            batch=batch,
+            conditions_by_bid=conditions_by_bid,
+            condition_folders_by_bid=folders_by_bid,
+            bid_data_by_bid=bid_data_by_bid,
+        )
+
+
+class _QueryRecordingCursor:
+    def __init__(self, owner, takeoff_columns: frozenset[str]) -> None:
+        self._owner = owner
+        self._takeoff_columns = takeoff_columns
+        self.description = ()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        return False
+
+    def execute(self, sql, *parameters):
+        self._owner.queries.append((str(sql), tuple(parameters)))
+        if "FROM [BidTakeoffs]" in str(sql):
+            self.description = tuple(
+                (column,) for column in sorted(self._takeoff_columns)
+            )
+        else:
+            self.description = ()
+        return self
+
+    @staticmethod
+    def fetchall():
+        return ()
+
+
+class _QueryRecordingConnection:
+    def __init__(self, takeoff_columns: frozenset[str]) -> None:
+        self._takeoff_columns = takeoff_columns
+        self.queries: list[tuple[str, tuple[object, ...]]] = []
+
+    def cursor(self):
+        return _QueryRecordingCursor(self, self._takeoff_columns)
+
+
+class _QueryReplayCursor:
+    def __init__(self, owner) -> None:
+        self._owner = owner
+        self.description = ()
+        self._rows = ()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        return False
+
+    def execute(self, sql, *parameters):
+        expected_sql, expected_parameters, description, rows = self._owner.pop()
+        if (
+            _normalized_sql(sql) != _normalized_sql(expected_sql)
+            or tuple(parameters) != expected_parameters
+        ):
+            raise RuntimeError("The SQL hydration replay query order changed.")
+        self.description = description
+        self._rows = rows
+        return self
+
+    def fetchall(self):
+        return self._rows
+
+
+class _QueryReplayConnection:
+    def __init__(self, results) -> None:
+        self._results = list(results)
+
+    def cursor(self):
+        return _QueryReplayCursor(self)
+
+    def pop(self):
+        if not self._results:
+            raise RuntimeError("The SQL hydration replay has no result set remaining.")
+        return self._results.pop(0)
+
+    def assert_consumed(self) -> None:
+        if self._results:
+            raise RuntimeError("The SQL hydration replay left unused result sets.")
+
+
+def _execute_recorded_queries(connection, queries):
+    if not queries:
+        return _QueryReplayConnection(())
+    sql = "; ".join(query.rstrip().rstrip(";") for query, _parameters in queries)
+    parameters = tuple(
+        parameter
+        for _query, query_parameters in queries
+        for parameter in query_parameters
+    )
+    results = []
+    with connection.cursor() as cursor:
+        cursor.execute(sql, *parameters)
+        for index, (query, query_parameters) in enumerate(queries):
+            results.append(
+                (
+                    query,
+                    query_parameters,
+                    tuple(cursor.description or ()),
+                    tuple(cursor.fetchall()),
+                )
+            )
+            if index + 1 < len(queries) and not cursor.nextset():
+                raise RuntimeError(
+                    "The SQL takeoff hydration batch returned too few result sets."
+                )
+    return _QueryReplayConnection(results)
+
+
+def _normalized_sql(sql) -> str:
+    return " ".join(str(sql).split())
 
 
 def _rollback(connection) -> None:

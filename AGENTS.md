@@ -106,6 +106,10 @@ Database backends:
   projection of the shared capability service. The current bid/page is
   session-local SQL presence; navigation must not overwrite shared bid settings
   or create a durable mutation transaction.
+- Collaboration heartbeats update session presence and renew owned leases; they
+  must not open a second connection to repeat the complete schema/permission
+  probe. Reconnection establishes capability state, and every mutation repeats
+  canonical write authorization inside its transaction.
 - Normal SQL client/editor users must be explicit members of the built-in
   `db_datareader` and `db_datawriter` database roles. Schema visibility and
   collaboration permissions use the canonical definition in
@@ -164,8 +168,24 @@ Database backends:
   cannot resurrect the item. Provisional takeoff identities are transient,
   non-selectable pending resources; local reconciliation projects the provisional
   and authoritative UIDs as one targeted replacement and preserves other queued
-  previews during unrelated remote refreshes. Access mutation execution preserves
-  the existing MDB behavior and creates no collaboration session.
+  previews during unrelated remote refreshes. A committed projection failure
+  enters one idempotent controlled-recovery request; presentation callbacks must
+  wait for the recovered completion instead of showing a premature failure or
+  compensating committed data. Recovered authoritative results may project while
+  editing remains disabled during catch-up, and only a failed recovery may remain
+  refresh-required. Access mutation execution preserves the existing MDB behavior
+  and creates no collaboration session.
+- Canonical SQL validation uses parameterized set-based batches for permission/context checks,
+  ordered application locks, edit-lock and rowversion validation, entity versions,
+  `ChangeLog`, and the durable marker. Successfully consumed edit leases are
+  deleted in the same transaction; pre-commit failure and uncertain-commit paths
+  retain explicit cleanup/recovery. Takeoff-only local and remote reconciliation
+  uses one snapshot multi-result hydration batch while constructing the existing
+  validated DTO graph. Do not reintroduce per-resource SQL loops, a post-commit
+  release connection for consumed leases, or manual optimistic projection.
+  A queued edit-lease release is serviced before the next mutation so an action
+  submitted immediately after selection cleanup cannot conflict with its own
+  local draft; server lock and rowversion checks remain authoritative.
 - SQL OST/OSP imports use one typed `PROJECT_IMPORT` mutation per file through
   the same bounded FIFO. File inspection/extraction, SQL DML, authoritative
   identity-map creation, and hydration stay off the Qt thread. Multi-file

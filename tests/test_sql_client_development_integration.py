@@ -216,12 +216,12 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
                 PresenceMode.VIEWING,
             )
             resource = ResourceRef("database", descriptor.database_id)
-            lock = store.acquire_lock(
+            lock = store.acquire_locks(
                 descriptor.database_id,
                 session.session_id,
-                resource,
+                (resource,),
                 "persistent client verification",
-            )
+            )[0]
             manager = SqlConnectionManager()
             request = SqlConnectionRequest(
                 location,

@@ -82,6 +82,11 @@ class ProjectWriteHandler:
                 if on_committed is not None:
                     on_committed(result)
                 return
+            if (
+                result.outcome_status
+                == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+            ):
+                return
             handler._ui_event_coordinator.refresh_hierarchy_projection()
             handler._ui_event_coordinator.present_queued_mutation_error(
                 database_id,

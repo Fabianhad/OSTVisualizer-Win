@@ -31,7 +31,6 @@ from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 from .schema_lock import (
     acquire_operation_transaction_lock,
-    acquire_resource_transaction_lock,
 )
 from .remote_change_reader import SqlRemoteChangeReader
 
@@ -267,79 +266,170 @@ class SqlCollaborationStore(ICollaborationStore):
             for row in rows
         )
 
-    def acquire_lock(
+    def acquire_locks(
         self,
         database_id: str,
         session_id: str,
-        resource: ResourceRef,
+        resources: tuple[ResourceRef, ...],
         operation_description: str,
-    ) -> ResourceLock:
+    ) -> tuple[ResourceLock, ...]:
+        resources = tuple(sorted(set(resources)))
+        if not resources:
+            return ()
         request = self._requests.request(database_id, read_only=False)
-        token = str(uuid.uuid4())
+        payload = json.dumps(
+            [
+                {
+                    "ordinal": ordinal,
+                    "resource_type": resource.resource_type,
+                    "resource_id": resource.resource_id,
+                    "bid_uid": resource.bid_uid,
+                    "lock_token": str(uuid.uuid4()),
+                }
+                for ordinal, resource in enumerate(resources)
+            ],
+            separators=(",", ":"),
+        )
         with self._connections.connection(request, autocommit=False) as lease:
             committed = False
             try:
                 with lease.cursor() as cursor:
-                    acquire_resource_transaction_lock(cursor, resource)
-                    self._cleanup(cursor)
-                    _require_active_session(cursor, session_id)
                     cursor.execute(
-                        "SELECT l.[OwnerSessionId], s.[DisplayName], l.[LockToken] "
-                        "FROM [ostv].[Locks] l JOIN [ostv].[Sessions] s "
-                        "ON s.[SessionId]=l.[OwnerSessionId] "
-                        "WHERE l.[ResourceType]=? AND l.[ResourceId]=? AND "
-                        "l.[ExpiresAt] > SYSUTCDATETIME()",
-                        resource.resource_type,
-                        resource.resource_id,
+                        "SET NOCOUNT ON; DECLARE @Requested TABLE ("
+                        "[Ordinal] int NOT NULL PRIMARY KEY, "
+                        "[ResourceType] nvarchar(64) NOT NULL, "
+                        "[ResourceId] nvarchar(128) NOT NULL, [BidUID] int NULL, "
+                        "[LockToken] uniqueidentifier NOT NULL); INSERT INTO "
+                        "@Requested SELECT [Ordinal], [ResourceType], [ResourceId], "
+                        "[BidUID], [LockToken] FROM OPENJSON(?) WITH ("
+                        "[Ordinal] int '$.ordinal', "
+                        "[ResourceType] nvarchar(64) '$.resource_type', "
+                        "[ResourceId] nvarchar(128) '$.resource_id', "
+                        "[BidUID] int '$.bid_uid', "
+                        "[LockToken] uniqueidentifier '$.lock_token'); "
+                        "DECLARE @LockResults TABLE ([Ordinal] int NOT NULL "
+                        "PRIMARY KEY, [Result] int NOT NULL); DECLARE @Ordinal int=0, "
+                        "@Count int, @Resource nvarchar(255), @Result int; "
+                        "SELECT @Count=COUNT(*) FROM @Requested; WHILE @Ordinal<@Count "
+                        "BEGIN SELECT @Resource=N'OSTV:' + [ResourceType] + N':' + "
+                        "[ResourceId] FROM @Requested WHERE [Ordinal]=@Ordinal; "
+                        "EXEC @Result=sys.sp_getapplock @Resource=@Resource, "
+                        "@LockMode=N'Exclusive', @LockOwner=N'Transaction', "
+                        "@LockTimeout=10000; INSERT INTO @LockResults VALUES "
+                        "(@Ordinal, @Result); IF @Result<0 BREAK; "
+                        "SET @Ordinal=@Ordinal+1; END; "
+                        "IF EXISTS (SELECT 1 FROM @LockResults WHERE [Result]<0) "
+                        "SELECT -1 AS [Status], -1 AS [Ordinal], NULL AS [Owner], "
+                        "NULL AS [LockToken]; ELSE BEGIN UPDATE [ostv].[Sessions] "
+                        "SET [DisconnectedAt]=SYSUTCDATETIME(), "
+                        "[CloseReason]=N'expired' WHERE [DisconnectedAt] IS NULL "
+                        f"AND [LastHeartbeatAt]<DATEADD(second, {-COLLABORATION_STALE_SECONDS}, "
+                        "SYSUTCDATETIME()); DELETE presence FROM [ostv].[Presence] "
+                        "presence JOIN [ostv].[Sessions] sessions ON "
+                        "sessions.[SessionId]=presence.[SessionId] WHERE "
+                        "sessions.[DisconnectedAt] IS NOT NULL; DELETE locks FROM "
+                        "[ostv].[Locks] locks LEFT JOIN [ostv].[Sessions] sessions "
+                        "ON sessions.[SessionId]=locks.[OwnerSessionId] WHERE "
+                        "locks.[ExpiresAt]<=SYSUTCDATETIME() OR "
+                        "sessions.[DisconnectedAt] IS NOT NULL; DELETE FROM "
+                        "[ostv].[Sessions] WHERE [DisconnectedAt]<DATEADD(day, -30, "
+                        "SYSUTCDATETIME()); IF NOT EXISTS (SELECT 1 FROM "
+                        "[ostv].[Sessions] WHERE [SessionId]=? AND "
+                        "[DisconnectedAt] IS NULL AND [LastHeartbeatAt]>=DATEADD("
+                        f"second, {-COLLABORATION_STALE_SECONDS}, SYSUTCDATETIME())) "
+                        "SELECT -2, -1, NULL, NULL; ELSE IF EXISTS (SELECT 1 FROM "
+                        "@Requested requested JOIN [ostv].[Locks] locks ON "
+                        "locks.[ResourceType]=requested.[ResourceType] AND "
+                        "locks.[ResourceId]=requested.[ResourceId] JOIN "
+                        "[ostv].[Sessions] sessions ON "
+                        "sessions.[SessionId]=locks.[OwnerSessionId] WHERE "
+                        "locks.[OwnerSessionId]<>? AND "
+                        "locks.[ExpiresAt]>SYSUTCDATETIME()) SELECT TOP (1) -3, "
+                        "requested.[Ordinal], sessions.[DisplayName], NULL FROM "
+                        "@Requested requested JOIN [ostv].[Locks] locks ON "
+                        "locks.[ResourceType]=requested.[ResourceType] AND "
+                        "locks.[ResourceId]=requested.[ResourceId] JOIN "
+                        "[ostv].[Sessions] sessions ON "
+                        "sessions.[SessionId]=locks.[OwnerSessionId] WHERE "
+                        "locks.[OwnerSessionId]<>? AND "
+                        "locks.[ExpiresAt]>SYSUTCDATETIME() ORDER BY "
+                        "requested.[Ordinal]; ELSE BEGIN UPDATE locks SET "
+                        "[LastRenewedAt]=SYSUTCDATETIME(), "
+                        f"[ExpiresAt]=DATEADD(second, {COLLABORATION_LOCK_SECONDS}, "
+                        "SYSUTCDATETIME()) FROM [ostv].[Locks] locks JOIN @Requested "
+                        "requested ON requested.[ResourceType]=locks.[ResourceType] "
+                        "AND requested.[ResourceId]=locks.[ResourceId] WHERE "
+                        "locks.[OwnerSessionId]=?; INSERT INTO [ostv].[Locks] "
+                        "([ResourceType], [ResourceId], [BidUID], [OwnerSessionId], "
+                        "[LockToken], [OperationDescription], [LastRenewedAt], "
+                        "[ExpiresAt]) SELECT requested.[ResourceType], "
+                        "requested.[ResourceId], requested.[BidUID], ?, "
+                        "requested.[LockToken], ?, SYSUTCDATETIME(), DATEADD(second, "
+                        f"{COLLABORATION_LOCK_SECONDS}, SYSUTCDATETIME()) FROM "
+                        "@Requested requested WHERE NOT EXISTS (SELECT 1 FROM "
+                        "[ostv].[Locks] locks WHERE "
+                        "locks.[ResourceType]=requested.[ResourceType] AND "
+                        "locks.[ResourceId]=requested.[ResourceId]); SELECT 0, "
+                        "requested.[Ordinal], NULL, CONVERT(nvarchar(36), "
+                        "locks.[LockToken]) FROM @Requested requested JOIN "
+                        "[ostv].[Locks] locks ON "
+                        "locks.[ResourceType]=requested.[ResourceType] AND "
+                        "locks.[ResourceId]=requested.[ResourceId] ORDER BY "
+                        "requested.[Ordinal]; END END",
+                        payload,
+                        session_id,
+                        session_id,
+                        session_id,
+                        session_id,
+                        session_id,
+                        operation_description[:256],
                     )
-                    existing = cursor.fetchone()
-                    if existing is not None and str(existing[0]) != session_id:
+                    rows = tuple(cursor.fetchall())
+                    if not rows:
+                        raise RuntimeError(
+                            "SQL edit-lock acquisition returned no result."
+                        )
+                    status = int(rows[0][0])
+                    if status == -1:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.LOCKED,
+                                "Another session is changing the same SQL resource.",
+                            )
+                        )
+                    if status == -2:
+                        raise _session_error(
+                            "The SQL collaboration session expired. Reconnect before editing."
+                        )
+                    if status == -3:
+                        ordinal = int(rows[0][1])
+                        resource = resources[ordinal]
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.LOCKED,
                                 f"{resource.resource_type} {resource.resource_id} "
-                                f"is being edited by {existing[1]}.",
+                                f"is being edited by {rows[0][2]}.",
                             )
                         )
-                    if existing is not None:
-                        cursor.execute(
-                            "UPDATE [ostv].[Locks] SET "
-                            "[LastRenewedAt]=SYSUTCDATETIME(), "
-                            "[ExpiresAt]=DATEADD(second, ?, SYSUTCDATETIME()) "
-                            "OUTPUT INSERTED.[LockToken] WHERE [ResourceType]=? AND "
-                            "[ResourceId]=? AND [OwnerSessionId]=?",
-                            COLLABORATION_LOCK_SECONDS,
-                            resource.resource_type,
-                            resource.resource_id,
-                            session_id,
-                        )
-                        saved = cursor.fetchone()
-                        token = str(saved[0])
-                    else:
-                        cursor.execute(
-                            "INSERT INTO [ostv].[Locks] "
-                            "([ResourceType], [ResourceId], [BidUID], "
-                            "[OwnerSessionId], "
-                            "[LockToken], [OperationDescription], [LastRenewedAt], "
-                            "[ExpiresAt]) VALUES (?, ?, ?, ?, ?, ?, "
-                            "SYSUTCDATETIME(), DATEADD(second, ?, SYSUTCDATETIME()))",
-                            resource.resource_type,
-                            resource.resource_id,
-                            resource.bid_uid,
-                            session_id,
-                            token,
-                            operation_description[:256],
-                            COLLABORATION_LOCK_SECONDS,
+                    if len(rows) != len(resources) or any(
+                        int(row[0]) != 0 or int(row[1]) != index
+                        for index, row in enumerate(rows)
+                    ):
+                        raise RuntimeError(
+                            "SQL edit-lock acquisition returned an incomplete result."
                         )
                 lease.commit()
                 committed = True
             finally:
                 if not committed:
                     _rollback(lease)
-        return ResourceLock(
-            database_id=database_id,
-            resource=resource,
-            lock_token=token,
+        return tuple(
+            ResourceLock(
+                database_id=database_id,
+                resource=resource,
+                lock_token=str(rows[index][3]),
+            )
+            for index, resource in enumerate(resources)
         )
 
     def renew_lock(
@@ -570,35 +660,41 @@ class SqlCollaborationStore(ICollaborationStore):
                 begin_snapshot_transaction(lease)
                 with lease.cursor() as cursor:
                     cursor.execute(
-                        "SELECT CONVERT(nvarchar(36), [TransactionId]) FROM "
-                        "[ostv].[ChangeTransactions] WHERE [TransactionId]=?",
+                        "DECLARE @CommitVersion bigint="
+                        "CHANGE_TRACKING_CURRENT_VERSION(); SELECT @CommitVersion, "
+                        "CONVERT(nvarchar(36), feed.[FeedEpoch]), "
+                        "CONVERT(nvarchar(36), marker.[TransactionId]), "
+                        "changes.[Sequence], @CommitVersion, "
+                        "CONVERT(nvarchar(36), changes.[TransactionId]), "
+                        "CONVERT(nvarchar(36), changes.[SourceSessionId]), "
+                        "changes.[BidUID], changes.[ResourceType], "
+                        "changes.[ResourceId], changes.[Operation], "
+                        "changes.[ResultVersion], changes.[ChangedFields], "
+                        "changes.[Payload], changes.[SourceKind] FROM "
+                        "[ostv].[ChangeFeedState] feed LEFT JOIN "
+                        "[ostv].[ChangeTransactions] marker ON "
+                        "marker.[TransactionId]=? LEFT JOIN [ostv].[ChangeLog] "
+                        "changes ON changes.[TransactionId]=marker.[TransactionId] "
+                        "WHERE feed.[SingletonId]=1 ORDER BY changes.[Sequence]",
                         operation_id,
                     )
-                    if cursor.fetchone() is None:
+                    snapshot_rows = tuple(cursor.fetchall())
+                    if not snapshot_rows or snapshot_rows[0][0] is None:
+                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                    if snapshot_rows[0][2] is None:
                         raise ValueError(
                             "The committed SQL operation marker is missing."
                         )
-                    cursor.execute(
-                        "SELECT CONVERT(nvarchar(36), [FeedEpoch]) FROM "
-                        "[ostv].[ChangeFeedState] WHERE [SingletonId]=1"
-                    )
-                    feed_row = cursor.fetchone()
-                    cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
-                    version_row = cursor.fetchone()
-                    if (
-                        feed_row is None
-                        or version_row is None
-                        or version_row[0] is None
-                    ):
-                        raise ValueError("SQL Change Tracking metadata is unavailable.")
-                    version = int(version_row[0])
-                    rows = self._load_transaction_changes(
-                        cursor,
+                    feed_epoch = str(snapshot_rows[0][1])
+                    version = int(snapshot_rows[0][0])
+                    rows = tuple(row[3:] for row in snapshot_rows if row[3] is not None)
+                    self._validate_transaction_change_rows(
+                        rows,
                         ((operation_id, version),),
                     )
                 batch = DatabaseChangeBatch(
                     database_id=database_id,
-                    feed_epoch=str(feed_row[0]),
+                    feed_epoch=feed_epoch,
                     minimum_valid_version=version,
                     high_water_version=version,
                     delivered_through_version=version,
@@ -635,6 +731,13 @@ class SqlCollaborationStore(ICollaborationStore):
             *parameters,
         )
         rows = tuple(cursor.fetchall())
+        SqlCollaborationStore._validate_transaction_change_rows(rows, markers)
+        return rows
+
+    @staticmethod
+    def _validate_transaction_change_rows(
+        rows, markers: tuple[tuple[str, int], ...]
+    ) -> None:
         transaction_ids = {
             _canonical_uuid_text(row[2]) for row in rows if row[0] is not None
         }
@@ -654,7 +757,6 @@ class SqlCollaborationStore(ICollaborationStore):
             raise ValueError(
                 "A committed SQL transaction contains duplicate resource payloads."
             )
-        return rows
 
     @staticmethod
     def _cleanup(cursor) -> None:

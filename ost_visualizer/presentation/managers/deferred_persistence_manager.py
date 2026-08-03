@@ -407,6 +407,16 @@ class DeferredPersistenceManager(QtCore.QObject):
         if not self._shutdown_started:
             self.begin_shutdown()
         self._timer.stop()
+        for key, item in list(self._pending.items()):
+            if item.blocks_shutdown:
+                continue
+            if self._pending.get(key) is item:
+                self._pending.pop(key, None)
+            self._logger.debug(
+                "Abandoning noncritical deferred persistence during shutdown: %s (%s)",
+                item.description,
+                item.key,
+            )
         self._flushing = True
         try:
             failed = self._flush_keys(
@@ -417,21 +427,6 @@ class DeferredPersistenceManager(QtCore.QObject):
         blocking_failed = {
             key: item for key, item in failed.items() if item.blocks_shutdown
         }
-        for key, item in failed.items():
-            if item.blocks_shutdown:
-                continue
-            if self._pending.get(key) is item:
-                self._pending.pop(key, None)
-            log = (
-                self._logger.debug
-                if item.kind in SILENT_BEST_EFFORT_UI_STATE_KINDS
-                else self._logger.warning
-            )
-            log(
-                "Abandoning noncritical deferred persistence during shutdown: %s (%s)",
-                item.description,
-                item.key,
-            )
         if blocking_failed:
             self._shutdown_started = False
             if self._pending:

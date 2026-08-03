@@ -663,6 +663,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         conditions = self._make_conditions(4)
         sidebar.load_conditions(conditions, {}, "Project")
         queued = {}
+        errors = []
 
         class Access:
             @staticmethod
@@ -699,7 +700,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 set(uids), reveal=reveal
             ),
             ensure_select_mode=lambda: None,
-            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+            present_queued_mutation_error=lambda *_args, **_kwargs: errors.append(
+                _args
+            ),
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,
@@ -720,6 +723,16 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(queued["condition_uids"], ["c3"])
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000001",
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(errors, [])
         conditions.pop("c3")
         sidebar.load_conditions(conditions, {}, "Project")
         queued["callback"](

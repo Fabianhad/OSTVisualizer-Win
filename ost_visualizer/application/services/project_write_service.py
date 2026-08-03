@@ -1394,6 +1394,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 ),
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
+                consumed_lock_tokens=mutation.consumed_lock_tokens,
             )
 
         request = QueuedMutationRequest(
@@ -1543,6 +1544,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 ),
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
+                consumed_lock_tokens=mutation.consumed_lock_tokens,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -1675,6 +1677,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ),
             conflict=mutation.conflict,
             commit_attempted=mutation.commit_attempted,
+            consumed_lock_tokens=mutation.consumed_lock_tokens,
         )
 
     def queue_plan_geometry(
@@ -1858,6 +1861,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 ),
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
+                consumed_lock_tokens=mutation.consumed_lock_tokens,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -2038,6 +2042,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 ),
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
+                consumed_lock_tokens=mutation.consumed_lock_tokens,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -2358,6 +2363,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 ),
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
+                consumed_lock_tokens=mutation.consumed_lock_tokens,
             )
 
         expected_count = len(payload.takeoff_specs) + len(payload.annotation_specs)
@@ -2671,6 +2677,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ),
             conflict=mutation.conflict,
             commit_attempted=mutation.commit_attempted,
+            consumed_lock_tokens=mutation.consumed_lock_tokens,
         )
 
     def queue_page_settings(
@@ -2886,6 +2893,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 ),
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
+                consumed_lock_tokens=mutation.consumed_lock_tokens,
             )
 
         return self._sql_collaboration_provider().queue_request(
@@ -2960,6 +2968,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 ),
                 conflict=mutation.conflict,
                 commit_attempted=mutation.commit_attempted,
+                consumed_lock_tokens=mutation.consumed_lock_tokens,
             )
 
         return self._sql_collaboration_provider().queue_request(

@@ -653,6 +653,7 @@ class MutationExecutionResult:
     message: str = ""
     conflict: Optional[SynchronizationConflict] = None
     commit_attempted: bool = False
+    consumed_lock_tokens: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -841,6 +842,7 @@ class DatabaseMutationResult(Generic[T]):
     )
     conflict: Optional[SynchronizationConflict] = None
     commit_attempted: bool = False
+    consumed_lock_tokens: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         try:

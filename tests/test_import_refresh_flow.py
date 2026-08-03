@@ -599,11 +599,21 @@ class ImportRefreshFlowTests(unittest.TestCase):
             self.assertEqual(len(service.queued_imports), 1)
             queued = service.queued_imports[0]
             self.assertEqual(queued[:4], ("source.ost", "ost", "target.mdb", None))
+            operation_id = str(uuid.uuid4())
             queued[4](
                 QueuedMutationResult(
                     database_id="target.mdb",
                     runtime_generation=1,
-                    operation_id=str(uuid.uuid4()),
+                    operation_id=operation_id,
+                    outcome_status=(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED),
+                )
+            )
+            self.assertEqual(messages, [])
+            queued[4](
+                QueuedMutationResult(
+                    database_id="target.mdb",
+                    runtime_generation=1,
+                    operation_id=operation_id,
                     outcome_status=MutationOutcomeStatus.COMMITTED,
                 )
             )

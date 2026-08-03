@@ -31,6 +31,7 @@ class _FakeCursor:
     def __init__(self, counts: _LifecycleCounts) -> None:
         self._counts = counts
         self._closed = False
+        self.rowcount = -1
         counts.cursors_created += 1
         counts.active_cursors += 1
         counts.max_active_cursors = max(

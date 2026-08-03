@@ -33,7 +33,7 @@ from ...application.dtos.collaboration_dtos import (
 )
 from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...domain.dtos.raw_bid_data_dto import RawBidData
-from ..mdb.components.constants import BID_TABLES_WRITE_ORDER
+from ..mdb.components.constants import BID_TABLES_WRITE_ORDER, TAKEOFF_REFERENCE_TABLES
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
@@ -50,8 +50,7 @@ from .errors import (
 )
 from .schema_definition import SQL_SCHEMA_V1
 from .schema_lock import (
-    acquire_operation_transaction_lock,
-    acquire_resource_transaction_lock,
+    acquire_resource_transaction_locks,
 )
 from .write_schema import CurrentSqlWriteSchema
 
@@ -191,69 +190,149 @@ class SqlProjectWriter(MdbWriter):
     ) -> None:
         with self._connection(database_id) as connection:
             schema = self._schema(connection)
-            cursor = connection.cursor()
-            try:
-                normalized_takeoffs = tuple(
-                    dict.fromkeys(int(uid) for uid in takeoff_uids)
+            schema.require_column("BidTakeoffs", "UID")
+            schema.require_column("BidTakeoffs", "ParentUID")
+            normalized_takeoffs = tuple(dict.fromkeys(int(uid) for uid in takeoff_uids))
+            normalized_annotations: dict[tuple[str, int], dict[str, object]] = {}
+            for uid, annotation_type in annotations:
+                table = self._ANNOTATION_TABLE.get(str(annotation_type))
+                if not table:
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.CONFLICT,
+                            "An annotation changed or was deleted before this "
+                            "operation started.",
+                        )
+                    )
+                schema.require_column(table, "UID")
+                annotation_uid = int(uid)
+                normalized_annotations[(table, annotation_uid)] = {
+                    "table": table,
+                    "uid": annotation_uid,
+                }
+            annotation_tables = tuple(
+                sorted({table for table, _uid in normalized_annotations})
+            )
+            missing_annotation_predicate = (
+                " OR ".join(
+                    "(requested.[TableName]=N'"
+                    + table
+                    + "' AND NOT EXISTS (SELECT 1 FROM ["
+                    + table
+                    + "] target WITH (UPDLOCK, HOLDLOCK) "
+                    "WHERE target.[UID]=requested.[UID]))"
+                    for table in annotation_tables
                 )
-                for uid in normalized_takeoffs:
-                    cursor.execute(
-                        "SELECT 1 FROM [BidTakeoffs] WITH (UPDLOCK, HOLDLOCK) "
-                        "WHERE [UID]=?",
-                        uid,
+                or "1=0"
+            )
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SET NOCOUNT ON; DECLARE @RequestedTakeoffs TABLE "
+                    "([UID] bigint NOT NULL PRIMARY KEY); INSERT INTO "
+                    "@RequestedTakeoffs ([UID]) SELECT source.[UID] FROM "
+                    "OPENJSON(?) WITH ([UID] bigint '$') source; DECLARE "
+                    "@RequestedAnnotations TABLE ([TableName] nvarchar(128) "
+                    "NOT NULL, [UID] bigint NOT NULL, PRIMARY KEY "
+                    "([TableName], [UID])); INSERT INTO @RequestedAnnotations "
+                    "([TableName], [UID]) SELECT source.[TableName], source.[UID] "
+                    "FROM OPENJSON(?) WITH ([TableName] nvarchar(128) '$.table', "
+                    "[UID] bigint '$.uid') source; DECLARE @Status int=0; "
+                    "IF EXISTS (SELECT 1 FROM @RequestedTakeoffs requested "
+                    "LEFT JOIN [BidTakeoffs] target WITH (UPDLOCK, HOLDLOCK) "
+                    "ON target.[UID]=requested.[UID] WHERE target.[UID] IS NULL) "
+                    "SET @Status=1; ELSE IF EXISTS (SELECT 1 FROM [BidTakeoffs] "
+                    "child WITH (UPDLOCK, HOLDLOCK) JOIN @RequestedTakeoffs parent "
+                    "ON parent.[UID]=child.[ParentUID] LEFT JOIN "
+                    "@RequestedTakeoffs selected ON selected.[UID]=child.[UID] "
+                    "WHERE selected.[UID] IS NULL) SET @Status=2; ELSE IF EXISTS "
+                    "(SELECT 1 FROM @RequestedAnnotations requested WHERE "
+                    f"{missing_annotation_predicate}) SET @Status=3; "
+                    "SELECT @Status",
+                    json.dumps(normalized_takeoffs, separators=(",", ":")),
+                    json.dumps(
+                        tuple(normalized_annotations.values()),
+                        separators=(",", ":"),
+                    ),
+                )
+                row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("SQL plan-item validation returned no result.")
+            status = int(row[0])
+            if status == 1:
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.CONFLICT,
+                        "A takeoff changed or was deleted before this operation "
+                        "started.",
                     )
-                    if cursor.fetchone() is None:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.CONFLICT,
-                                "A takeoff changed or was deleted before this "
-                                "operation started.",
-                            )
-                        )
-                if normalized_takeoffs and schema.column_exists(
-                    "BidTakeoffs", "ParentUID"
-                ):
-                    placeholders = ",".join("?" for _uid in normalized_takeoffs)
-                    cursor.execute(
-                        "SELECT TOP (1) [UID] FROM [BidTakeoffs] WITH "
-                        "(UPDLOCK, HOLDLOCK) WHERE [ParentUID] IN "
-                        f"({placeholders}) AND [UID] NOT IN ({placeholders})",
-                        *normalized_takeoffs,
-                        *normalized_takeoffs,
+                )
+            if status == 2:
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.CONFLICT,
+                        "The takeoff relationship graph changed before deletion.",
                     )
-                    if cursor.fetchone() is not None:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.CONFLICT,
-                                "The takeoff relationship graph changed before "
-                                "deletion.",
-                            )
-                        )
-                for uid, annotation_type in annotations:
-                    table = self._ANNOTATION_TABLE.get(str(annotation_type))
-                    if not table or schema.optional_table_missing(table):
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.CONFLICT,
-                                "An annotation changed or was deleted before this "
-                                "operation started.",
-                            )
-                        )
-                    cursor.execute(
-                        f"SELECT 1 FROM [{table}] WITH (UPDLOCK, HOLDLOCK) "
-                        "WHERE [UID]=?",
-                        int(uid),
+                )
+            if status == 3:
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.CONFLICT,
+                        "An annotation changed or was deleted before this "
+                        "operation started.",
                     )
-                    if cursor.fetchone() is None:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.CONFLICT,
-                                "An annotation changed or was deleted before this "
-                                "operation started.",
-                            )
-                        )
-            finally:
-                cursor.close()
+                )
+            if status != 0:
+                raise RuntimeError(
+                    "SQL plan-item validation returned an invalid result."
+                )
+
+    def _run_delete_takeoffs(
+        self, database_id: str, uids: list[int], chunk_size: int
+    ) -> None:
+        del chunk_size
+        if not uids:
+            return
+        with self._connection(database_id) as connection:
+            schema = self._schema(connection)
+            schema.require_column("BidTakeoffs", "UID")
+            schema.require_column("BidTakeoffs", "ParentUID")
+            schema.require_column("BidPercents", "BidTakeoffUID")
+            for table in TAKEOFF_REFERENCE_TABLES:
+                schema.require_column(table, "BidTakeoffFromUID")
+                schema.require_column(table, "BidTakeoffToUID")
+            reference_deletes = " ".join(
+                "DELETE target FROM ["
+                + table
+                + "] target WHERE EXISTS (SELECT 1 FROM @Requested requested "
+                "WHERE requested.[UID]=target.[BidTakeoffFromUID] OR "
+                "requested.[UID]=target.[BidTakeoffToUID]); SET @Affected+="
+                "@@ROWCOUNT;"
+                for table in TAKEOFF_REFERENCE_TABLES
+            )
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SET NOCOUNT ON; DECLARE @Requested TABLE ([UID] bigint "
+                    "NOT NULL PRIMARY KEY); INSERT INTO @Requested ([UID]) "
+                    "SELECT source.[UID] FROM OPENJSON(?) WITH ([UID] bigint '$') "
+                    f"source; DECLARE @Affected int=0; {reference_deletes} "
+                    "DELETE target FROM [BidPercents] target WHERE EXISTS "
+                    "(SELECT 1 FROM @Requested requested WHERE requested.[UID]="
+                    "target.[BidTakeoffUID]); SET @Affected+=@@ROWCOUNT; UPDATE "
+                    "child SET [ParentUID]=NULL "
+                    "FROM [BidTakeoffs] child WHERE EXISTS (SELECT 1 FROM "
+                    "@Requested requested WHERE requested.[UID]=child.[ParentUID]); "
+                    "SET @Affected+=@@ROWCOUNT; "
+                    "DECLARE @Expected int=(SELECT COUNT(*) FROM @Requested); "
+                    "DELETE target FROM [BidTakeoffs] target JOIN @Requested "
+                    "requested ON requested.[UID]=target.[UID]; DECLARE @Deleted "
+                    "int=@@ROWCOUNT; SET @Affected+=@Deleted; IF @Deleted<>"
+                    "@Expected THROW 51000, 'The takeoff deletion was incomplete.', "
+                    "1; SELECT @Affected",
+                    json.dumps(tuple(dict.fromkeys(uids)), separators=(",", ":")),
+                )
+                affected = cursor.fetchone()
+            if affected is None:
+                raise RuntimeError("SQL takeoff deletion returned no result.")
 
     def execute(
         self,
@@ -328,9 +407,8 @@ class SqlProjectWriter(MdbWriter):
             transaction_finished = False
             commit_attempted = False
             try:
-                self._require_sql_client_editability(lease)
                 state = _SqlMutationState(request.database_id, lease, request)
-                self._set_session_context(state)
+                self._require_sql_client_editability(lease, state)
                 recovered = self._prepare_mutation(state)
                 if recovered is not None:
                     lease.rollback()
@@ -365,6 +443,7 @@ class SqlProjectWriter(MdbWriter):
                     value=value,
                     resulting_versions=versions,
                     commit_attempted=True,
+                    consumed_lock_tokens=tuple(request.required_lock_tokens),
                 )
             finally:
                 if not transaction_finished and not commit_attempted:
@@ -375,26 +454,12 @@ class SqlProjectWriter(MdbWriter):
                 self._clear_session_context(lease)
 
     @staticmethod
-    def _set_session_context(state: _SqlMutationState) -> None:
-        with state.lease.cursor() as cursor:
-            cursor.execute(
-                "EXEC sys.sp_set_session_context @key=N'ostv_session_id', @value=?",
-                state.request.session_id,
-            )
-            cursor.execute(
-                "EXEC sys.sp_set_session_context @key=N'ostv_transaction_id', @value=?",
-                state.transaction_id,
-            )
-
-    @staticmethod
     def _clear_session_context(lease: SqlConnectionLease) -> None:
         try:
             with lease.cursor() as cursor:
                 cursor.execute(
                     "EXEC sys.sp_set_session_context "
-                    "@key=N'ostv_session_id', @value=NULL"
-                )
-                cursor.execute(
+                    "@key=N'ostv_session_id', @value=NULL; "
                     "EXEC sys.sp_set_session_context "
                     "@key=N'ostv_transaction_id', @value=NULL"
                 )
@@ -406,24 +471,35 @@ class SqlProjectWriter(MdbWriter):
     ) -> Optional[DatabaseMutationResult]:
         cursor = state.lease.cursor()
         try:
-            acquire_operation_transaction_lock(cursor, state.request.operation_id)
             cursor.execute(
-                "SELECT [OperationType], [RequestHash], [ResultFormatVersion], "
-                "[ResultPayload] FROM [ostv].[ChangeTransactions] "
-                "WHERE [TransactionId]=?",
-                state.request.operation_id,
-            )
-            operation_row = cursor.fetchone()
-            if operation_row is not None:
-                return self._recovered_operation_result(state, operation_row)
-            cursor.execute(
-                "SELECT 1 FROM [ostv].[Sessions] WHERE [SessionId]=? AND "
-                "[DisconnectedAt] IS NULL AND [LastHeartbeatAt] >= "
-                "DATEADD(second, ?, SYSUTCDATETIME())",
+                "DECLARE @LockResult int; EXEC @LockResult=sys.sp_getapplock "
+                "@Resource=?, @LockMode=N'Exclusive', "
+                "@LockOwner=N'Transaction', @LockTimeout=10000; SELECT "
+                "@LockResult, marker.[OperationType], marker.[RequestHash], "
+                "marker.[ResultFormatVersion], marker.[ResultPayload], "
+                "CASE WHEN EXISTS (SELECT 1 FROM [ostv].[Sessions] sessions "
+                "WHERE sessions.[SessionId]=? AND "
+                "sessions.[DisconnectedAt] IS NULL AND "
+                "sessions.[LastHeartbeatAt]>=DATEADD(second, ?, "
+                "SYSUTCDATETIME())) THEN 1 ELSE 0 END FROM (VALUES (1)) "
+                "seed([Value]) LEFT JOIN [ostv].[ChangeTransactions] marker "
+                "ON marker.[TransactionId]=?",
+                f"OSTV:operation:{state.request.operation_id}",
                 state.request.session_id,
                 -COLLABORATION_STALE_SECONDS,
+                state.request.operation_id,
             )
-            if cursor.fetchone() is None:
+            operation_context = cursor.fetchone()
+            if operation_context is None or int(operation_context[0]) < 0:
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.LOCKED,
+                        "Another session is resolving the same SQL operation.",
+                    )
+                )
+            if operation_context[1] is not None:
+                return self._recovered_operation_result(state, operation_context[1:5])
+            if int(operation_context[5]) != 1:
                 raise SqlInfrastructureError(
                     SqlErrorDetails(
                         SqlErrorCode.SESSION_EXPIRED,
@@ -446,262 +522,353 @@ class SqlProjectWriter(MdbWriter):
             for resource in resources:
                 if resource.resource_type == CollaborationResourceType.BID.value:
                     lock_modes[resource] = "Exclusive"
-            for resource in sorted(
-                lock_modes,
-                key=lambda item: (
-                    (
-                        0
-                        if item.resource_type == CollaborationResourceType.BID.value
-                        else 1
+            ordered_locks = tuple(
+                (resource, lock_modes[resource])
+                for resource in sorted(
+                    lock_modes,
+                    key=lambda item: (
+                        (
+                            0
+                            if item.resource_type == CollaborationResourceType.BID.value
+                            else 1
+                        ),
+                        item.resource_type,
+                        item.resource_id,
                     ),
-                    item.resource_type,
-                    item.resource_id,
-                ),
-            ):
-                acquire_resource_transaction_lock(
-                    cursor, resource, lock_modes[resource]
                 )
-            for resource in sorted(resources):
-                cursor.execute(
-                    "SELECT s.[DisplayName] FROM [ostv].[Locks] l JOIN "
-                    "[ostv].[Sessions] s ON s.[SessionId]=l.[OwnerSessionId] "
-                    "WHERE l.[ResourceType]=? AND l.[ResourceId]=? AND "
-                    "l.[OwnerSessionId]<>? AND l.[ExpiresAt] > SYSUTCDATETIME()",
-                    resource.resource_type,
-                    resource.resource_id,
-                    state.request.session_id,
-                )
-                lock_owner = cursor.fetchone()
-                if lock_owner is not None:
-                    raise SqlInfrastructureError(
-                        SqlErrorDetails(
-                            SqlErrorCode.LOCKED,
-                            f"This item is being edited by {lock_owner[0]}.",
-                        )
-                    )
-                if (
-                    resource.bid_uid is not None
-                    and resource.resource_type != CollaborationResourceType.BID.value
-                ):
-                    cursor.execute(
-                        "SELECT s.[DisplayName] FROM [ostv].[Locks] l JOIN "
-                        "[ostv].[Sessions] s ON "
-                        "s.[SessionId]=l.[OwnerSessionId] WHERE "
-                        "l.[ResourceType]=? AND l.[ResourceId]=? AND "
-                        "l.[OwnerSessionId]<>? AND "
-                        "l.[ExpiresAt] > SYSUTCDATETIME()",
-                        CollaborationResourceType.BID.value,
-                        str(resource.bid_uid),
-                        state.request.session_id,
-                    )
-                    bid_lock_owner = cursor.fetchone()
-                    if bid_lock_owner is not None:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.LOCKED,
-                                f"This bid is being changed by {bid_lock_owner[0]}.",
-                            )
-                        )
-                if (
-                    state.request.block_bid_child_locks
-                    and resource.resource_type == CollaborationResourceType.BID.value
-                ):
-                    cursor.execute(
-                        "SELECT TOP (1) s.[DisplayName] FROM [ostv].[Locks] l "
-                        "JOIN [ostv].[Sessions] s ON "
-                        "s.[SessionId]=l.[OwnerSessionId] WHERE l.[BidUID]=? "
-                        "AND l.[OwnerSessionId]<>? AND "
-                        "l.[ExpiresAt] > SYSUTCDATETIME()",
-                        resource.bid_uid,
-                        state.request.session_id,
-                    )
-                    child_lock_owner = cursor.fetchone()
-                    if child_lock_owner is not None:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.LOCKED,
-                                "This bid contains an item being edited by "
-                                f"{child_lock_owner[0]}.",
-                            )
-                        )
-                if (
-                    state.request.block_bid_active_editors
-                    and resource.resource_type == CollaborationResourceType.BID.value
-                ):
-                    cursor.execute(
-                        "SELECT TOP (1) s.[DisplayName] FROM [ostv].[Presence] p "
-                        "JOIN [ostv].[Sessions] s ON "
-                        "s.[SessionId]=p.[SessionId] WHERE p.[BidUID]=? AND "
-                        "p.[ActivityMode]=N'editing' AND p.[SessionId]<>? AND "
-                        "s.[DisconnectedAt] IS NULL AND s.[LastHeartbeatAt] >= "
-                        "DATEADD(second, ?, SYSUTCDATETIME())",
-                        resource.bid_uid,
-                        state.request.session_id,
-                        -COLLABORATION_STALE_SECONDS,
-                    )
-                    active_editor = cursor.fetchone()
-                    if active_editor is not None:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.LOCKED,
-                                "This bid is actively being edited by "
-                                f"{active_editor[0]}.",
-                            )
-                        )
-            requested_keys = {
-                (resource.resource_type, resource.resource_id) for resource in resources
-            }
-            required_tokens = {
-                lock_token.casefold()
-                for lock_token in state.request.required_lock_tokens
-            }
-            for lock_token in required_tokens:
-                cursor.execute(
-                    "SELECT [ResourceType], [ResourceId] FROM [ostv].[Locks] "
-                    "WHERE [LockToken]=? AND "
-                    "[OwnerSessionId]=? AND [ExpiresAt] > SYSUTCDATETIME()",
-                    lock_token,
-                    state.request.session_id,
-                )
-                lock_row = cursor.fetchone()
-                if lock_row is None:
-                    raise SqlInfrastructureError(
-                        SqlErrorDetails(
-                            SqlErrorCode.LOCKED,
-                            "A required SQL edit lock expired before the write.",
-                        )
-                    )
-                if (str(lock_row[0]), str(lock_row[1])) not in requested_keys:
-                    raise SqlInfrastructureError(
-                        SqlErrorDetails(
-                            SqlErrorCode.LOCKED,
-                            "A SQL edit lock does not belong to this mutation.",
-                        )
-                    )
-            for resource in sorted(resources):
-                cursor.execute(
-                    "SELECT CONVERT(nvarchar(36), [LockToken]) FROM "
-                    "[ostv].[Locks] WHERE [ResourceType]=? AND [ResourceId]=? "
-                    "AND [OwnerSessionId]=? AND [ExpiresAt] > SYSUTCDATETIME()",
-                    resource.resource_type,
-                    resource.resource_id,
-                    state.request.session_id,
-                )
-                owned_lock = cursor.fetchone()
-                if (
-                    owned_lock is not None
-                    and str(owned_lock[0]).casefold() not in required_tokens
-                ):
-                    raise SqlInfrastructureError(
-                        SqlErrorDetails(
-                            SqlErrorCode.LOCKED,
-                            "The mutation did not present its owned SQL edit lock.",
-                        )
-                    )
-            for expected in state.request.expected_versions:
-                cursor.execute(
-                    "SELECT [Token] FROM [ostv].[EntityVersions] WITH "
-                    "(UPDLOCK, HOLDLOCK) WHERE [ResourceType]=? AND [ResourceId]=?",
-                    expected.resource.resource_type,
-                    expected.resource.resource_id,
-                )
-                row = cursor.fetchone()
-                actual = (
-                    ConcurrencyToken.from_database(row[0]) if row is not None else None
-                )
-                if actual != expected.expected:
-                    raise _OptimisticConflict(
-                        expected.resource,
-                        expected.expected,
-                        actual,
-                    )
+            )
+            acquire_resource_transaction_locks(cursor, ordered_locks)
+            self._validate_mutation_locks(state, cursor, resources)
         finally:
             cursor.close()
         return None
 
+    @staticmethod
+    def _validate_mutation_locks(state, cursor, resources) -> None:
+        resource_payload = json.dumps(
+            [
+                {
+                    "ordinal": ordinal,
+                    "resource_type": resource.resource_type,
+                    "resource_id": resource.resource_id,
+                    "bid_uid": resource.bid_uid,
+                }
+                for ordinal, resource in enumerate(sorted(resources))
+            ],
+            separators=(",", ":"),
+        )
+        token_payload = json.dumps(
+            sorted({token.casefold() for token in state.request.required_lock_tokens}),
+            separators=(",", ":"),
+        )
+        expected_versions = tuple(state.request.expected_versions)
+        expected_version_payload = json.dumps(
+            [
+                {
+                    "ordinal": ordinal,
+                    "resource_type": expected.resource.resource_type,
+                    "resource_id": expected.resource.resource_id,
+                    "expected_token": str(expected.expected),
+                }
+                for ordinal, expected in enumerate(expected_versions)
+            ],
+            separators=(",", ":"),
+        )
+        cursor.execute(
+            "SET NOCOUNT ON; DECLARE @MutationResources TABLE ("
+            "[Ordinal] int NOT NULL PRIMARY KEY, "
+            "[ResourceType] nvarchar(64) NOT NULL, "
+            "[ResourceId] nvarchar(128) NOT NULL, [BidUID] int NULL); "
+            "INSERT INTO @MutationResources SELECT [Ordinal], [ResourceType], "
+            "[ResourceId], [BidUID] FROM OPENJSON(?) WITH ("
+            "[Ordinal] int '$.ordinal', "
+            "[ResourceType] nvarchar(64) '$.resource_type', "
+            "[ResourceId] nvarchar(128) '$.resource_id', "
+            "[BidUID] int '$.bid_uid'); "
+            "DECLARE @RequiredTokens TABLE ([LockToken] nvarchar(36) NOT NULL "
+            "PRIMARY KEY); INSERT INTO @RequiredTokens SELECT LOWER([value]) "
+            "FROM OPENJSON(?); DECLARE @ExpectedVersions TABLE ("
+            "[Ordinal] int NOT NULL PRIMARY KEY, "
+            "[ResourceType] nvarchar(64) NOT NULL, "
+            "[ResourceId] nvarchar(128) NOT NULL, "
+            "[ExpectedToken] varbinary(8) NOT NULL); "
+            "INSERT INTO @ExpectedVersions SELECT [Ordinal], [ResourceType], "
+            "[ResourceId], CONVERT(varbinary(8), [ExpectedTokenHex], 2) FROM "
+            "OPENJSON(?) WITH ([Ordinal] int '$.ordinal', "
+            "[ResourceType] nvarchar(64) '$.resource_type', "
+            "[ResourceId] nvarchar(128) '$.resource_id', "
+            "[ExpectedTokenHex] varchar(16) '$.expected_token'); "
+            "WITH Violations AS ("
+            "SELECT resources.[Ordinal]*10 AS [Priority], N'item_owner' AS [Kind], "
+            "sessions.[DisplayName] AS [Owner], NULL AS [ExpectedOrdinal], "
+            "CONVERT(varbinary(8), NULL) AS [ActualToken] "
+            "FROM @MutationResources resources "
+            "JOIN [ostv].[Locks] locks ON "
+            "locks.[ResourceType]=resources.[ResourceType] AND "
+            "locks.[ResourceId]=resources.[ResourceId] JOIN [ostv].[Sessions] "
+            "sessions ON sessions.[SessionId]=locks.[OwnerSessionId] WHERE "
+            "locks.[OwnerSessionId]<>? AND locks.[ExpiresAt]>SYSUTCDATETIME() "
+            "UNION ALL SELECT resources.[Ordinal]*10+1, N'bid_owner', "
+            "sessions.[DisplayName], NULL, NULL FROM @MutationResources resources "
+            "JOIN [ostv].[Locks] locks ON locks.[ResourceType]=N'bid' AND "
+            "locks.[ResourceId]=CONVERT(nvarchar(128), resources.[BidUID]) "
+            "JOIN [ostv].[Sessions] sessions ON "
+            "sessions.[SessionId]=locks.[OwnerSessionId] WHERE "
+            "resources.[BidUID] IS NOT NULL AND resources.[ResourceType]<>N'bid' "
+            "AND locks.[OwnerSessionId]<>? AND "
+            "locks.[ExpiresAt]>SYSUTCDATETIME() "
+            "UNION ALL SELECT resources.[Ordinal]*10+2, N'child_owner', "
+            "sessions.[DisplayName], NULL, NULL FROM @MutationResources resources "
+            "JOIN [ostv].[Locks] locks ON locks.[BidUID]=resources.[BidUID] "
+            "JOIN [ostv].[Sessions] sessions ON "
+            "sessions.[SessionId]=locks.[OwnerSessionId] WHERE ?=1 AND "
+            "resources.[ResourceType]=N'bid' AND locks.[OwnerSessionId]<>? "
+            "AND locks.[ExpiresAt]>SYSUTCDATETIME() "
+            "UNION ALL SELECT resources.[Ordinal]*10+3, N'active_editor', "
+            "sessions.[DisplayName], NULL, NULL FROM @MutationResources resources "
+            "JOIN [ostv].[Presence] presence ON "
+            "presence.[BidUID]=resources.[BidUID] JOIN [ostv].[Sessions] sessions "
+            "ON sessions.[SessionId]=presence.[SessionId] WHERE ?=1 AND "
+            "resources.[ResourceType]=N'bid' AND "
+            "presence.[ActivityMode]=N'editing' AND presence.[SessionId]<>? "
+            "AND sessions.[DisconnectedAt] IS NULL AND "
+            "sessions.[LastHeartbeatAt]>=DATEADD(second, ?, SYSUTCDATETIME()) "
+            "UNION ALL SELECT 100000, N'token_expired', NULL, NULL, NULL FROM "
+            "@RequiredTokens tokens LEFT JOIN [ostv].[Locks] locks ON "
+            "LOWER(CONVERT(nvarchar(36), locks.[LockToken]))=tokens.[LockToken] "
+            "AND locks.[OwnerSessionId]=? AND "
+            "locks.[ExpiresAt]>SYSUTCDATETIME() WHERE locks.[LockToken] IS NULL "
+            "UNION ALL SELECT 100001, N'token_resource', NULL, NULL, NULL FROM "
+            "@RequiredTokens tokens JOIN [ostv].[Locks] locks ON "
+            "LOWER(CONVERT(nvarchar(36), locks.[LockToken]))=tokens.[LockToken] "
+            "AND locks.[OwnerSessionId]=? AND locks.[ExpiresAt]>SYSUTCDATETIME() "
+            "WHERE NOT EXISTS (SELECT 1 FROM @MutationResources resources "
+            "WHERE resources.[ResourceType]=locks.[ResourceType] AND "
+            "resources.[ResourceId]=locks.[ResourceId]) "
+            "UNION ALL SELECT 100010+resources.[Ordinal], N'owned_omitted', "
+            "NULL, NULL, NULL "
+            "FROM @MutationResources resources JOIN [ostv].[Locks] locks ON "
+            "locks.[ResourceType]=resources.[ResourceType] AND "
+            "locks.[ResourceId]=resources.[ResourceId] AND "
+            "locks.[OwnerSessionId]=? AND locks.[ExpiresAt]>SYSUTCDATETIME() "
+            "LEFT JOIN @RequiredTokens tokens ON tokens.[LockToken]="
+            "LOWER(CONVERT(nvarchar(36), locks.[LockToken])) "
+            "WHERE tokens.[LockToken] IS NULL "
+            "UNION ALL SELECT 200000+expected.[Ordinal], N'rowversion', NULL, "
+            "expected.[Ordinal], versions.[Token] FROM @ExpectedVersions expected "
+            "LEFT JOIN [ostv].[EntityVersions] versions WITH (UPDLOCK, HOLDLOCK) "
+            "ON versions.[ResourceType]=expected.[ResourceType] AND "
+            "versions.[ResourceId]=expected.[ResourceId] WHERE "
+            "versions.[Token] IS NULL OR versions.[Token]<>expected.[ExpectedToken]) "
+            "SELECT TOP (1) [Kind], [Owner], [ExpectedOrdinal], [ActualToken] "
+            "FROM Violations ORDER BY [Priority]",
+            resource_payload,
+            token_payload,
+            expected_version_payload,
+            state.request.session_id,
+            state.request.session_id,
+            state.request.block_bid_child_locks,
+            state.request.session_id,
+            state.request.block_bid_active_editors,
+            state.request.session_id,
+            -COLLABORATION_STALE_SECONDS,
+            state.request.session_id,
+            state.request.session_id,
+            state.request.session_id,
+        )
+        violation = cursor.fetchone()
+        if violation is None:
+            return
+        kind = str(violation[0])
+        if kind == "rowversion":
+            ordinal = int(violation[2])
+            if ordinal < 0 or ordinal >= len(expected_versions):
+                raise RuntimeError(
+                    "The SQL rowversion validation batch returned an invalid ordinal."
+                )
+            expected = expected_versions[ordinal]
+            actual = (
+                ConcurrencyToken.from_database(violation[3])
+                if violation[3] is not None
+                else None
+            )
+            raise _OptimisticConflict(expected.resource, expected.expected, actual)
+        owner = str(violation[1]) if violation[1] is not None else ""
+        messages = {
+            "item_owner": f"This item is being edited by {owner}.",
+            "bid_owner": f"This bid is being changed by {owner}.",
+            "child_owner": f"This bid contains an item being edited by {owner}.",
+            "active_editor": f"This bid is actively being edited by {owner}.",
+            "token_expired": "A required SQL edit lock expired before the write.",
+            "token_resource": "A SQL edit lock does not belong to this mutation.",
+            "owned_omitted": "The mutation did not present its owned SQL edit lock.",
+        }
+        raise SqlInfrastructureError(
+            SqlErrorDetails(
+                SqlErrorCode.LOCKED,
+                messages.get(kind, "SQL edit-lock validation failed."),
+            )
+        )
+
     def _finish_mutation(self, state: _SqlMutationState, value=None):
-        versions = {}
+        entity_records = self._deduplicate_records(state.records)
+        feed_records = self._coalesce_records(entity_records)
+        version_records = self._deduplicate_records([*entity_records, *feed_records])
+        feed_by_resource = {record.resource: record for record in feed_records}
+        changes = [
+            {
+                "ordinal": ordinal,
+                "resource_type": record.resource.resource_type,
+                "resource_id": record.resource.resource_id,
+                "bid_uid": record.resource.bid_uid,
+                "is_deleted": record.operation == ChangeOperation.DELETE,
+                "is_feed": record.resource in feed_by_resource,
+                "operation": feed_by_resource.get(
+                    record.resource, record
+                ).operation.value,
+                "changed_fields": (
+                    json.dumps(feed_by_resource[record.resource].changed_fields)
+                    if record.resource in feed_by_resource
+                    and feed_by_resource[record.resource].changed_fields
+                    else None
+                ),
+                "payload": (
+                    feed_by_resource[record.resource].payload or None
+                    if record.resource in feed_by_resource
+                    else None
+                ),
+            }
+            for ordinal, record in enumerate(version_records)
+        ]
+        resource_families = sorted(
+            {
+                coalesced_resource_type(record.resource.resource_type)
+                for record in feed_records
+            }
+        )
+        result_payload = self._serialize_operation_result(value)
         cursor = state.lease.cursor()
         try:
             cursor.execute(
-                "SELECT TOP (1) [DatabaseGuid] " "FROM [ostv].[DatabaseMetadata]"
-            )
-            database_guid = cursor.fetchone()[0]
-            entity_records = self._deduplicate_records(state.records)
-            feed_records = self._coalesce_records(entity_records)
-            version_records = self._deduplicate_records(
-                [*entity_records, *feed_records]
-            )
-            for record in version_records:
-                cursor.execute(
-                    "MERGE [ostv].[EntityVersions] WITH (HOLDLOCK) AS target "
-                    "USING (SELECT ? AS [ResourceType], ? AS [ResourceId]) AS source "
-                    "ON target.[ResourceType]=source.[ResourceType] AND "
-                    "target.[ResourceId]=source.[ResourceId] "
-                    "WHEN MATCHED THEN UPDATE SET [BidUID]=?, [IsDeleted]=?, "
-                    "[ModifiedAt]=SYSUTCDATETIME(), [ModifiedBySessionId]=? "
-                    "WHEN NOT MATCHED THEN INSERT ([ResourceType], [ResourceId], "
-                    "[BidUID], [IsDeleted], [ModifiedBySessionId]) "
-                    "VALUES (?, ?, ?, ?, ?) OUTPUT INSERTED.[Token];",
-                    record.resource.resource_type,
-                    record.resource.resource_id,
-                    record.resource.bid_uid,
-                    record.operation == ChangeOperation.DELETE,
-                    state.request.session_id,
-                    record.resource.resource_type,
-                    record.resource.resource_id,
-                    record.resource.bid_uid,
-                    record.operation == ChangeOperation.DELETE,
-                    state.request.session_id,
-                )
-                version = ConcurrencyToken.from_database(cursor.fetchone()[0])
-                versions[record.resource] = version
-            for record in feed_records:
-                version = versions[record.resource]
-                cursor.execute(
-                    "INSERT INTO [ostv].[ChangeLog] ([TransactionId], "
-                    "[SourceSessionId], [DatabaseGuid], [BidUID], [ResourceType], "
-                    "[ResourceId], [Operation], [ResultVersion], [ChangedFields], "
-                    "[Payload], [SourceKind]) VALUES "
-                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, N'ost_visualizer')",
-                    state.transaction_id,
-                    state.request.session_id,
-                    database_guid,
-                    record.resource.bid_uid,
-                    record.resource.resource_type,
-                    record.resource.resource_id,
-                    record.operation.value,
-                    version.value,
-                    (
-                        json.dumps(record.changed_fields)
-                        if record.changed_fields
-                        else None
-                    ),
-                    record.payload or None,
-                )
-            resource_families = sorted(
-                {
-                    coalesced_resource_type(record.resource.resource_type)
-                    for record in feed_records
-                }
-            )
-            cursor.execute(
+                "SET NOCOUNT ON; "
+                "DECLARE @Changes TABLE ("
+                "[Ordinal] int NOT NULL PRIMARY KEY, "
+                "[ResourceType] nvarchar(64) NOT NULL, "
+                "[ResourceId] nvarchar(128) NOT NULL, "
+                "[BidUID] int NULL, [IsDeleted] bit NOT NULL, "
+                "[IsFeed] bit NOT NULL, [Operation] nvarchar(32) NOT NULL, "
+                "[ChangedFields] nvarchar(1024) NULL, "
+                "[Payload] nvarchar(4000) NULL); "
+                "INSERT INTO @Changes SELECT [Ordinal], [ResourceType], "
+                "[ResourceId], [BidUID], [IsDeleted], [IsFeed], [Operation], "
+                "[ChangedFields], [Payload] FROM OPENJSON(?) WITH ("
+                "[Ordinal] int '$.ordinal', "
+                "[ResourceType] nvarchar(64) '$.resource_type', "
+                "[ResourceId] nvarchar(128) '$.resource_id', "
+                "[BidUID] int '$.bid_uid', [IsDeleted] bit '$.is_deleted', "
+                "[IsFeed] bit '$.is_feed', "
+                "[Operation] nvarchar(32) '$.operation', "
+                "[ChangedFields] nvarchar(1024) '$.changed_fields', "
+                "[Payload] nvarchar(4000) '$.payload'); "
+                "DECLARE @Versions TABLE ("
+                "[ResourceType] nvarchar(64) NOT NULL, "
+                "[ResourceId] nvarchar(128) NOT NULL, "
+                "[Token] varbinary(8) NOT NULL, "
+                "PRIMARY KEY ([ResourceType], [ResourceId])); "
+                "UPDATE target WITH (UPDLOCK, HOLDLOCK) SET "
+                "[BidUID]=source.[BidUID], [IsDeleted]=source.[IsDeleted], "
+                "[ModifiedAt]=SYSUTCDATETIME(), [ModifiedBySessionId]=? "
+                "OUTPUT INSERTED.[ResourceType], INSERTED.[ResourceId], "
+                "INSERTED.[Token] INTO @Versions "
+                "FROM [ostv].[EntityVersions] target JOIN @Changes source "
+                "ON target.[ResourceType]=source.[ResourceType] AND "
+                "target.[ResourceId]=source.[ResourceId]; "
+                "INSERT INTO [ostv].[EntityVersions] "
+                "([ResourceType], [ResourceId], [BidUID], [IsDeleted], "
+                "[ModifiedBySessionId]) OUTPUT INSERTED.[ResourceType], "
+                "INSERTED.[ResourceId], INSERTED.[Token] INTO @Versions "
+                "SELECT source.[ResourceType], source.[ResourceId], "
+                "source.[BidUID], source.[IsDeleted], ? FROM @Changes source "
+                "WHERE NOT EXISTS (SELECT 1 FROM [ostv].[EntityVersions] target "
+                "WITH (UPDLOCK, HOLDLOCK) WHERE "
+                "target.[ResourceType]=source.[ResourceType] AND "
+                "target.[ResourceId]=source.[ResourceId]); "
+                "DECLARE @DatabaseGuid uniqueidentifier=(SELECT TOP (1) "
+                "[DatabaseGuid] FROM [ostv].[DatabaseMetadata]); "
+                "INSERT INTO [ostv].[ChangeLog] ([TransactionId], "
+                "[SourceSessionId], [DatabaseGuid], [BidUID], [ResourceType], "
+                "[ResourceId], [Operation], [ResultVersion], [ChangedFields], "
+                "[Payload], [SourceKind]) SELECT ?, ?, @DatabaseGuid, "
+                "source.[BidUID], source.[ResourceType], source.[ResourceId], "
+                "source.[Operation], versions.[Token], source.[ChangedFields], "
+                "source.[Payload], N'ost_visualizer' FROM @Changes source "
+                "JOIN @Versions versions ON "
+                "versions.[ResourceType]=source.[ResourceType] AND "
+                "versions.[ResourceId]=source.[ResourceId] "
+                "WHERE source.[IsFeed]=1 ORDER BY source.[Ordinal]; "
+                "DECLARE @ConsumedTokens TABLE ([LockToken] nvarchar(36) "
+                "NOT NULL PRIMARY KEY); INSERT INTO @ConsumedTokens SELECT "
+                "LOWER([value]) FROM OPENJSON(?); DELETE locks FROM "
+                "[ostv].[Locks] locks JOIN @ConsumedTokens tokens ON "
+                "tokens.[LockToken]=LOWER(CONVERT(nvarchar(36), "
+                "locks.[LockToken])) WHERE locks.[OwnerSessionId]=?; "
+                "IF @@ROWCOUNT<>(SELECT COUNT(*) FROM @ConsumedTokens) "
+                "THROW 51000, 'A validated SQL edit lock could not be "
+                "consumed.', 1; "
                 "INSERT INTO [ostv].[ChangeTransactions] "
                 "([TransactionId], [SourceSessionId], [DatabaseGuid], "
                 "[ResourceFamilySummary], [OperationType], [RequestHash], "
-                "[ResultFormatVersion], [ResultPayload]) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "[ResultFormatVersion], [ResultPayload]) VALUES "
+                "(?, ?, @DatabaseGuid, ?, ?, ?, ?, ?); "
+                "SELECT changes.[Ordinal], versions.[Token] FROM @Changes changes "
+                "JOIN @Versions versions ON "
+                "versions.[ResourceType]=changes.[ResourceType] AND "
+                "versions.[ResourceId]=changes.[ResourceId] "
+                "ORDER BY changes.[Ordinal];",
+                json.dumps(changes, separators=(",", ":")),
+                state.request.session_id,
+                state.request.session_id,
                 state.transaction_id,
                 state.request.session_id,
-                database_guid,
+                json.dumps(
+                    sorted(
+                        token.casefold() for token in state.request.required_lock_tokens
+                    ),
+                    separators=(",", ":"),
+                ),
+                state.request.session_id,
+                state.transaction_id,
+                state.request.session_id,
                 json.dumps(resource_families),
                 state.request.mutation_type,
                 state.request.request_hash,
                 state.request.result_format_version,
-                self._serialize_operation_result(value),
+                result_payload,
             )
+            version_rows = cursor.fetchall()
         finally:
             cursor.close()
+        if len(version_rows) != len(version_records):
+            raise RuntimeError(
+                "The SQL version/feed batch returned an incomplete authoritative result."
+            )
+        versions = {}
+        for ordinal, token in version_rows:
+            index = int(ordinal)
+            if index < 0 or index >= len(version_records):
+                raise RuntimeError(
+                    "The SQL version/feed batch returned an invalid resource ordinal."
+                )
+            resource = version_records[index].resource
+            if resource in versions:
+                raise RuntimeError(
+                    "The SQL version/feed batch returned a duplicate resource ordinal."
+                )
+            versions[resource] = ConcurrencyToken.from_database(token)
+        if len(versions) != len(version_records):
+            raise RuntimeError(
+                "The SQL version/feed batch returned duplicate resource identities."
+            )
         return versions
 
     @staticmethod
@@ -812,10 +979,16 @@ class SqlProjectWriter(MdbWriter):
             ) from None
 
     @staticmethod
-    def _require_sql_client_editability(lease) -> None:
+    def _require_sql_client_editability(
+        lease, state: Optional[_SqlMutationState] = None
+    ) -> None:
         cursor = lease.cursor()
         try:
-            require_sql_client_editability(cursor)
+            require_sql_client_editability(
+                cursor,
+                session_id=state.request.session_id if state is not None else "",
+                transaction_id=state.transaction_id if state is not None else "",
+            )
         finally:
             cursor.close()
 

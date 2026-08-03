@@ -1,6 +1,10 @@
 import json
+import hashlib
+import math
 import secrets
+import statistics
 import tempfile
+import time
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -9,7 +13,9 @@ from pathlib import Path
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     CollaborationMutationType,
+    ConcurrencyToken,
     DatabaseMutationRequest,
+    ExpectedResourceVersion,
     MutationOutcomeStatus,
     PresenceMode,
     ResourceRef,
@@ -496,12 +502,12 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                         scenario=scenario,
                         resource_type=resource.resource_type,
                     ):
-                        lock = stores[0].acquire_lock(
+                        lock = stores[0].acquire_locks(
                             descriptor.database_id,
                             sessions[0].session_id,
-                            resource,
+                            (resource,),
                             "integration test",
-                        )
+                        )[0]
                         session_registries[0].register_lock(
                             descriptor.database_id,
                             lock.resource,
@@ -509,10 +515,10 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                         )
                         try:
                             with self.assertRaises(DatabaseCatalogError) as conflict:
-                                stores[1].acquire_lock(
+                                stores[1].acquire_locks(
                                     descriptor.database_id,
                                     sessions[1].session_id,
-                                    resource,
+                                    (resource,),
                                     "conflicting integration test",
                                 )
                             self.assertNotIn(
@@ -547,12 +553,12 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                                 lock.lock_token,
                             )
                 expiring_resource = ResourceRef("takeoff", "expired-48", 8)
-                expired_lock = stores[0].acquire_lock(
+                expired_lock = stores[0].acquire_locks(
                     descriptor.database_id,
                     sessions[0].session_id,
-                    expiring_resource,
+                    (expiring_resource,),
                     "expiration integration test",
-                )
+                )[0]
                 with database.connections.connection(
                     SqlConnectionRequest(
                         database.location,
@@ -569,12 +575,12 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                             "WHERE [LockToken]=?",
                             expired_lock.lock_token,
                         )
-                replacement = stores[1].acquire_lock(
+                replacement = stores[1].acquire_locks(
                     descriptor.database_id,
                     sessions[1].session_id,
-                    expiring_resource,
+                    (expiring_resource,),
                     "replacement after expiration",
-                )
+                )[0]
                 try:
                     self.assertNotEqual(
                         replacement.lock_token,
@@ -701,12 +707,12 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                 session = session_rows[client_index]
                 session_registry = session_registries[client_index]
                 writer = writers[client_index]
-                lock = store.acquire_lock(
+                lock = store.acquire_locks(
                     descriptor.database_id,
                     session.session_id,
-                    collection,
+                    (collection,),
                     "two-session placement convergence",
-                )
+                )[0]
                 session_registry.register_lock(
                     descriptor.database_id,
                     lock.resource,
@@ -850,12 +856,12 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                 )
                 self.assertEqual(own_second.remote_batch.batch.changes, ())
                 first_resource = ResourceRef("takeoff", first_uid, bid_uid)
-                delete_lock = store.acquire_lock(
+                delete_lock = store.acquire_locks(
                     descriptor.database_id,
                     session_rows[0].session_id,
-                    first_resource,
+                    (first_resource,),
                     "two-session delete convergence",
-                )
+                )[0]
                 session_registries[0].register_lock(
                     descriptor.database_id,
                     delete_lock.resource,
@@ -926,12 +932,12 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     },
                     {second_uid},
                 )
-                stale_lock = store.acquire_lock(
+                stale_lock = store.acquire_locks(
                     descriptor.database_id,
                     session_rows[1].session_id,
-                    first_resource,
+                    (first_resource,),
                     "stale edit after remote delete",
-                )
+                )[0]
                 session_registries[1].register_lock(
                     descriptor.database_id,
                     stale_lock.resource,
@@ -971,6 +977,330 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                 )
             finally:
                 for session in session_rows:
+                    store.close_session(
+                        descriptor.database_id,
+                        session.session_id,
+                        "integration-test-complete",
+                    )
+
+    def test_bounded_two_session_stability_has_no_stranded_collaboration_state(self):
+        configuration = DisposableSqlConfiguration.from_environment()
+        with DisposableSqlDatabase(configuration) as database:
+            with database.connections.connection(
+                SqlConnectionRequest(
+                    database.location,
+                    password=configuration.password,
+                ),
+                autocommit=True,
+            ) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO [dbo].[Bids] OUTPUT INSERTED.[UID] "
+                        "DEFAULT VALUES"
+                    )
+                    bid_uid = int(cursor.fetchone()[0])
+                    cursor.execute(
+                        "INSERT INTO [dbo].[BidConditions] ([BidUID]) "
+                        "OUTPUT INSERTED.[UID] VALUES (?)",
+                        bid_uid,
+                    )
+                    condition_uid = int(cursor.fetchone()[0])
+                    cursor.execute(
+                        "INSERT INTO [dbo].[BidPages] ([BidUID]) "
+                        "OUTPUT INSERTED.[UID] VALUES (?)",
+                        bid_uid,
+                    )
+                    page_uid = int(cursor.fetchone()[0])
+            (
+                descriptor,
+                registry,
+                credentials,
+                admin,
+                windows_master,
+                login,
+            ) = self._create_test_client(database, configuration, "STABILITY")
+            self.addCleanup(self._drop_test_login, admin, windows_master, login)
+            store = SqlCollaborationStore(
+                registry,
+                credentials,
+                SqlRemoteChangeReader(registry, credentials, database.connections),
+                database.connections,
+            )
+            sessions = tuple(
+                store.start_session(
+                    descriptor.database_id,
+                    str(uuid.uuid4()),
+                    str(uuid.uuid4()),
+                    f"stability-client-{index}",
+                    "test-machine",
+                    "integration-test",
+                )
+                for index in (1, 2)
+            )
+            registries = (DatabaseSessionRegistry(), DatabaseSessionRegistry())
+            writers = []
+            for session_registry, session in zip(registries, sessions):
+                session_registry.register(descriptor.database_id, session.session_id)
+                writers.append(
+                    SqlProjectWriter(
+                        registry,
+                        credentials,
+                        session_registry,
+                        database.connections,
+                    )
+                )
+            bid_key = str(bid_uid)
+            condition_key = str(condition_uid)
+            page_key = str(page_uid)
+            collection = ResourceRef("takeoffs_collection", bid_key, bid_uid)
+            dependencies = (
+                ResourceRef("condition", condition_key, bid_uid),
+                ResourceRef("page", page_key, bid_uid),
+            )
+            operation_ids = []
+            retained_uids = set()
+            placement_seconds = []
+            deletion_seconds = []
+
+            def request_hash(operation_id):
+                return hashlib.sha256(operation_id.encode("ascii")).hexdigest()
+
+            try:
+                for index in range(100):
+                    client_index = index % 2
+                    session = sessions[client_index]
+                    session_registry = registries[client_index]
+                    writer = writers[client_index]
+                    started = time.perf_counter()
+                    lock = store.acquire_locks(
+                        descriptor.database_id,
+                        session.session_id,
+                        (collection,),
+                        "bounded stability placement",
+                    )[0]
+                    session_registry.register_lock(
+                        descriptor.database_id,
+                        lock.resource,
+                        lock.lock_token,
+                    )
+                    operation_id = str(uuid.uuid4())
+
+                    def place(recorder):
+                        created = writer.insert_takeoffs(
+                            descriptor.database_id,
+                            bid_key,
+                            [
+                                InsertTakeoffSpec(
+                                    condition_uid=condition_key,
+                                    page_uid=page_key,
+                                    area_uid="0",
+                                    position=[float(index), 20.0],
+                                )
+                            ],
+                        )
+                        recorder.record(
+                            ResourceRef("takeoff", str(created[0]), bid_uid),
+                            ChangeOperation.CREATE,
+                        )
+                        recorder.record(collection, ChangeOperation.UPDATE)
+                        return created
+
+                    try:
+                        placed = writer.execute(
+                            DatabaseMutationRequest(
+                                database_id=descriptor.database_id,
+                                session_id=session.session_id,
+                                operation_id=operation_id,
+                                mutation_type=(
+                                    CollaborationMutationType.TAKEOFF_PLACEMENT.value
+                                ),
+                                request_hash=request_hash(operation_id),
+                                resources=(collection, *dependencies),
+                                required_lock_tokens=session_registry.lock_tokens(
+                                    descriptor.database_id,
+                                    (collection,),
+                                ),
+                            ),
+                            place,
+                        )
+                    finally:
+                        session_registry.remove_lock(
+                            descriptor.database_id,
+                            collection,
+                        )
+                        store.release_lock(
+                            descriptor.database_id,
+                            session.session_id,
+                            lock.lock_token,
+                        )
+                    placement_seconds.append(time.perf_counter() - started)
+                    self.assertEqual(
+                        placed.outcome_status,
+                        MutationOutcomeStatus.COMMITTED,
+                    )
+                    created_uid = str((placed.value or ())[0])
+                    retained_uids.add(created_uid)
+                    operation_ids.append(operation_id)
+                    if index % 5 != 4:
+                        continue
+                    started = time.perf_counter()
+                    takeoff_resource = ResourceRef("takeoff", created_uid, bid_uid)
+                    delete_lock = store.acquire_locks(
+                        descriptor.database_id,
+                        session.session_id,
+                        (takeoff_resource,),
+                        "bounded stability immediate delete",
+                    )[0]
+                    session_registry.register_lock(
+                        descriptor.database_id,
+                        delete_lock.resource,
+                        delete_lock.lock_token,
+                    )
+                    delete_operation_id = str(uuid.uuid4())
+
+                    def delete(recorder):
+                        writer.verify_plan_items_exist(
+                            descriptor.database_id,
+                            (created_uid,),
+                            (),
+                        )
+                        deleted = writer.delete_takeoffs(
+                            descriptor.database_id,
+                            (created_uid,),
+                        )
+                        recorder.record(takeoff_resource, ChangeOperation.DELETE)
+                        recorder.record(collection, ChangeOperation.UPDATE)
+                        return deleted
+
+                    try:
+                        deleted = writer.execute(
+                            DatabaseMutationRequest(
+                                database_id=descriptor.database_id,
+                                session_id=session.session_id,
+                                operation_id=delete_operation_id,
+                                mutation_type=(
+                                    CollaborationMutationType.PLAN_ITEMS_DELETE.value
+                                ),
+                                request_hash=request_hash(delete_operation_id),
+                                resources=(
+                                    takeoff_resource,
+                                    collection,
+                                    *dependencies,
+                                ),
+                                required_lock_tokens=session_registry.lock_tokens(
+                                    descriptor.database_id,
+                                    (takeoff_resource,),
+                                ),
+                            ),
+                            delete,
+                        )
+                    finally:
+                        session_registry.remove_lock(
+                            descriptor.database_id,
+                            takeoff_resource,
+                        )
+                        store.release_lock(
+                            descriptor.database_id,
+                            session.session_id,
+                            delete_lock.lock_token,
+                        )
+                    deletion_seconds.append(time.perf_counter() - started)
+                    self.assertEqual(
+                        deleted.outcome_status,
+                        MutationOutcomeStatus.COMMITTED,
+                    )
+                    retained_uids.remove(created_uid)
+                    operation_ids.append(delete_operation_id)
+                for session in sessions:
+                    observed = store.poll_changes(
+                        descriptor.database_id,
+                        session.last_acknowledged_version,
+                        450,
+                        session.session_id,
+                    )
+                    self.assertEqual(
+                        len(
+                            {
+                                change.transaction_id
+                                for change in observed.observed_batch.changes
+                            }
+                        ),
+                        len(operation_ids),
+                    )
+                    self.assertTrue(observed.remote_batch.batch.changes)
+                hydrated = store.hydrate_operation(
+                    descriptor.database_id,
+                    operation_ids[-1],
+                )
+                hydrated_uids = {
+                    takeoff.uid
+                    for takeoff in hydrated.bid_data_by_bid[bid_uid].bid_takeoffs
+                }
+                self.assertEqual(hydrated_uids, retained_uids)
+                with database.connections.connection(
+                    SqlConnectionRequest(
+                        database.location,
+                        password=configuration.password,
+                        read_only=True,
+                    ),
+                    autocommit=True,
+                ) as verification:
+                    with verification.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT (SELECT COUNT(*) FROM [ostv].[ChangeTransactions]), "
+                            "(SELECT COUNT(*) FROM [ostv].[ChangeLog]), "
+                            "(SELECT COUNT(*) FROM [dbo].[BidTakeoffs]), "
+                            "(SELECT COUNT(*) FROM [ostv].[ChangeTransactions] marker "
+                            "WHERE NOT EXISTS (SELECT 1 FROM [ostv].[ChangeLog] changes "
+                            "WHERE changes.[TransactionId]=marker.[TransactionId])), "
+                            "(SELECT COUNT(*) FROM [ostv].[ChangeTransactions] "
+                            "WHERE ISJSON([ResultPayload])<>1), "
+                            "(SELECT COUNT(*) FROM [ostv].[Locks])"
+                        )
+                        self.assertEqual(
+                            tuple(int(value) for value in cursor.fetchone()),
+                            (120, 240, 80, 0, 0, 0),
+                        )
+                ordered = sorted(placement_seconds)
+                p95_index = max(0, math.ceil(0.95 * len(ordered)) - 1)
+                ordered_deletions = sorted(deletion_seconds)
+                deletion_p95_index = max(
+                    0,
+                    math.ceil(0.95 * len(ordered_deletions)) - 1,
+                )
+                print(
+                    json.dumps(
+                        {
+                            "stability_deletions": len(deletion_seconds),
+                            "stability_deletion_max_ms": round(
+                                max(ordered_deletions) * 1000.0,
+                                1,
+                            ),
+                            "stability_deletion_median_ms": round(
+                                statistics.median(ordered_deletions) * 1000.0,
+                                1,
+                            ),
+                            "stability_deletion_p95_ms": round(
+                                ordered_deletions[deletion_p95_index] * 1000.0,
+                                1,
+                            ),
+                            "stability_operations": len(operation_ids),
+                            "stability_placement_max_ms": round(
+                                max(ordered) * 1000.0, 1
+                            ),
+                            "stability_placement_median_ms": round(
+                                statistics.median(ordered) * 1000.0, 1
+                            ),
+                            "stability_placement_p95_ms": round(
+                                ordered[p95_index] * 1000.0, 1
+                            ),
+                            "stability_placements": len(placement_seconds),
+                        },
+                        sort_keys=True,
+                    )
+                )
+            finally:
+                for session in sessions:
                     store.close_session(
                         descriptor.database_id,
                         session.session_id,
@@ -1149,12 +1479,34 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     ResourceRef("condition", condition_key, bid_uid),
                     ResourceRef("page", page_key, bid_uid),
                 )
-                lock = store.acquire_lock(
+                with database.connections.connection(
+                    SqlConnectionRequest(
+                        client_location,
+                        password=password,
+                    ),
+                    autocommit=True,
+                ) as seed_versions:
+                    with seed_versions.cursor() as cursor:
+                        cursor.execute(
+                            "INSERT INTO [ostv].[EntityVersions] "
+                            "([ResourceType], [ResourceId], [BidUID], "
+                            "[ModifiedBySessionId]) OUTPUT INSERTED.[Token] "
+                            "VALUES (?, ?, ?, ?)",
+                            requested_resource.resource_type,
+                            requested_resource.resource_id,
+                            requested_resource.bid_uid,
+                            session.session_id,
+                        )
+                        expected_collection_version = ConcurrencyToken.from_database(
+                            cursor.fetchone()[0]
+                        )
+                operation_id = "859945fa-fbf8-4b90-bafe-735976033238"
+                lock = store.acquire_locks(
                     descriptor.database_id,
                     session.session_id,
-                    stored_resource,
+                    (stored_resource,),
                     "takeoff placement integration test",
-                )
+                )[0]
                 sessions.register_lock(
                     descriptor.database_id,
                     lock.resource,
@@ -1188,15 +1540,22 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     recorder.record(requested_resource, ChangeOperation.UPDATE)
                     return new_uids
 
-                operation_id = "859945fa-fbf8-4b90-bafe-735976033238"
                 result = writer.execute(
                     DatabaseMutationRequest(
                         database_id=descriptor.database_id,
                         session_id=session.session_id,
                         operation_id=operation_id,
-                        mutation_type=CollaborationMutationType.TAKEOFF_PLACEMENT.value,
+                        mutation_type=(
+                            CollaborationMutationType.TAKEOFF_PLACEMENT.value
+                        ),
                         request_hash="a" * 64,
                         resources=(requested_resource, *dependencies),
+                        expected_versions=(
+                            ExpectedResourceVersion(
+                                requested_resource,
+                                expected_collection_version,
+                            ),
+                        ),
                         required_lock_tokens=sessions.lock_tokens(
                             descriptor.database_id,
                             (requested_resource, *dependencies),
@@ -1224,12 +1583,14 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                             "SELECT (SELECT COUNT(*) FROM [ostv].[ChangeTransactions] "
                             "WHERE [TransactionId]=?), (SELECT COUNT(*) FROM "
                             "[ostv].[ChangeLog] WHERE [TransactionId]=?), "
-                            "(SELECT COUNT(*) FROM [dbo].[BidTakeoffs] WHERE [UID]=?)",
+                            "(SELECT COUNT(*) FROM [dbo].[BidTakeoffs] WHERE [UID]=?), "
+                            "(SELECT COUNT(*) FROM [ostv].[Locks] WHERE [LockToken]=?)",
                             operation_id,
                             operation_id,
                             int((result.value or ())[0]),
+                            lock.lock_token,
                         )
-                        self.assertEqual(tuple(cursor.fetchone()), (1, 2, 1))
+                        self.assertEqual(tuple(cursor.fetchone()), (1, 2, 1, 0))
                         cursor.execute(
                             "SELECT CONVERT(nvarchar(36), [TransactionId]) FROM "
                             "[ostv].[ChangeLog] WHERE [TransactionId]=?",
@@ -1288,12 +1649,12 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     lock.lock_token,
                 )
                 takeoff_resource = ResourceRef("takeoff", created_uid, bid_uid)
-                delete_lock = store.acquire_lock(
+                delete_lock = store.acquire_locks(
                     descriptor.database_id,
                     session.session_id,
-                    takeoff_resource,
+                    (takeoff_resource,),
                     "takeoff deletion integration test",
-                )
+                )[0]
                 sessions.register_lock(
                     descriptor.database_id,
                     delete_lock.resource,
@@ -1322,11 +1683,13 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                         database_id=descriptor.database_id,
                         session_id=session.session_id,
                         operation_id=delete_operation_id,
-                        mutation_type=(
-                            CollaborationMutationType.PLAN_ITEMS_DELETE.value
-                        ),
+                        mutation_type=CollaborationMutationType.PLAN_ITEMS_DELETE.value,
                         request_hash="b" * 64,
-                        resources=(takeoff_resource, requested_resource, *dependencies),
+                        resources=(
+                            takeoff_resource,
+                            requested_resource,
+                            *dependencies,
+                        ),
                         required_lock_tokens=sessions.lock_tokens(
                             descriptor.database_id,
                             (takeoff_resource,),
@@ -1367,6 +1730,17 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                         for change in deleted_hydrated.batch.changes
                     },
                     {delete_operation_id},
+                )
+                repeated_delete_lock = store.acquire_locks(
+                    descriptor.database_id,
+                    session.session_id,
+                    (takeoff_resource,),
+                    "repeated takeoff deletion integration test",
+                )[0]
+                sessions.register_lock(
+                    descriptor.database_id,
+                    repeated_delete_lock.resource,
+                    repeated_delete_lock.lock_token,
                 )
                 repeated_delete_operation_id = "5ee50afb-b47a-49b0-b9fd-a9c6b4ddc573"
                 repeated_delete = writer.execute(
@@ -1413,7 +1787,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                 store.release_lock(
                     descriptor.database_id,
                     session.session_id,
-                    delete_lock.lock_token,
+                    repeated_delete_lock.lock_token,
                 )
                 store.close_session(
                     descriptor.database_id,

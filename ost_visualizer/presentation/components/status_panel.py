@@ -71,11 +71,36 @@ class StatusPanel(QtWidgets.QWidget):
         self._render_collaboration_state()
 
     def _render_collaboration_state(self) -> None:
+        if self._collaboration_state in {"", "stopped"}:
+            self.collaboration_label.clear()
+            self.collaboration_label.hide()
+            return
+        if self._pending_mutation_count and self._mutation_state == "uncertain":
+            self.collaboration_label.setText("SQL: COMMIT UNKNOWN")
+            self.collaboration_label.setToolTip(
+                self._mutation_message or self._collaboration_message
+            )
+            self.collaboration_label.show()
+            return
+        if self._collaboration_state in {
+            "credential_required",
+            "disconnected",
+            "read_only",
+            "conflicted",
+            "reconciliation_required",
+        }:
+            self.collaboration_label.setText(
+                _COLLABORATION_STATE_LABELS[self._collaboration_state]
+            )
+            self.collaboration_label.setToolTip(self._collaboration_message)
+            self.collaboration_label.show()
+            return
         if self._pending_mutation_count:
             labels = {
-                "uncertain": "SQL: COMMIT UNKNOWN",
                 "recovering": "SQL: RECOVERING",
-                "projecting": "SQL: APPLYING",
+                "projecting": "SQL: COMMITTED, SYNCING",
+                "queued": "SQL: SAVING",
+                "executing": "SQL: SAVING",
             }
             self.collaboration_label.setText(
                 labels.get(
@@ -87,10 +112,6 @@ class StatusPanel(QtWidgets.QWidget):
                 self._mutation_message or self._collaboration_message
             )
             self.collaboration_label.show()
-            return
-        if self._collaboration_state in {"", "stopped"}:
-            self.collaboration_label.clear()
-            self.collaboration_label.hide()
             return
         if self._collaboration_state not in {"healthy", "catching_up"}:
             self.collaboration_label.setText(

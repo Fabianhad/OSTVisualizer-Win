@@ -2928,15 +2928,20 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs, {})
         handler.on_takeoff_created("42", [3.0, 4.0], "9")
         operation_id, callback = write.queued_takeoff_callbacks[1]
-        callback(
-            QueuedMutationResult(
-                database_id="bid.mdb",
-                runtime_generation=3,
-                operation_id=operation_id,
-                outcome_status=MutationOutcomeStatus.REJECTED,
-                message="conflict",
+        with self.assertLogs(
+            "ost_visualizer.presentation.handlers.plan_view_action_handler",
+            level="WARNING",
+        ) as captured:
+            callback(
+                QueuedMutationResult(
+                    database_id="bid.mdb",
+                    runtime_generation=3,
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.CONFLICT,
+                    message="conflict",
+                )
             )
-        )
+        self.assertIn("SQL takeoff placement failed: conflict", captured.output[0])
         self.assertEqual(data.takeoffs, {})
 
     def test_stale_runtime_completion_removes_preview_without_projecting_commit(self):

@@ -1,4 +1,5 @@
 import contextlib
+import json
 import logging
 import os
 import unittest
@@ -61,7 +62,9 @@ from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     CollaborationMutationType,
+    ConcurrencyToken,
     DatabaseMutationRequest as _DatabaseMutationRequest,
+    ExpectedResourceVersion,
     MutationOutcomeStatus,
     ResourceRef,
 )
@@ -80,6 +83,7 @@ from ost_visualizer.infrastructure.sql.schema_validator import (
     SqlSchemaValidator,
 )
 from ost_visualizer.infrastructure.sql.writer import (
+    _OptimisticConflict,
     SqlProjectWriter,
     _RecordedMutation,
     _SqlMutationState,
@@ -98,6 +102,35 @@ def DatabaseMutationRequest(*args, **kwargs):
     kwargs.setdefault("mutation_type", CollaborationMutationType.PROJECT_WRITE.value)
     kwargs.setdefault("request_hash", "a" * 64)
     return _DatabaseMutationRequest(*args, **kwargs)
+
+
+def _canonical_writer_permission_snapshot(
+    *,
+    roles=(1, 1, 1, 1, 1),
+    metadata=None,
+    collaboration=None,
+    marker=(1, 1, 0, 0, 1),
+):
+    return (
+        *roles,
+        *(
+            metadata
+            or (
+                SQL_SCHEMA_V1.version,
+                SQL_SCHEMA_V1.checksum,
+                "READ_WRITE",
+                "ost_visualizer_only",
+                "disabled",
+                None,
+                1,
+                1,
+                1,
+                1,
+            )
+        ),
+        *(collaboration or (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0)),
+        *marker,
+    )
 
 
 class _CredentialStore:
@@ -166,6 +199,7 @@ class _AccessTransactionConnections:
 class _InspectionCursor:
     def __init__(self):
         self._last_sql = ""
+        self._last_params = ()
         self.executed = []
 
     def execute(self, sql, *_params):
@@ -183,6 +217,8 @@ class _InspectionCursor:
         self.close()
 
     def fetchone(self):
+        if "ostv_permission_snapshot" in self._last_sql:
+            return _canonical_writer_permission_snapshot()
         if "database_guid" in self._last_sql:
             return ("00000000-0000-0000-0000-000000000001",)
         return None
@@ -226,6 +262,7 @@ class _CreationCursor:
 
     def execute(self, sql, *params):
         self._last_sql = sql
+        self._last_params = params
         self.executed.append(sql)
         if "INSERT INTO [ostv].[SchemaMigrations]" in sql:
             self.schema_record = (params[0], params[2])
@@ -310,6 +347,12 @@ class _WriterCursor(_CreationCursor):
         self.close_count = 0
 
     def fetchone(self):
+        if "DECLARE @MutationResources TABLE" in self._last_sql:
+            return None
+        if "DECLARE @LockResult int" in self._last_sql:
+            return (0, None, None, None, None, 1)
+        if "ostv_permission_snapshot" in self._last_sql:
+            return _canonical_writer_permission_snapshot()
         if "IS_ROLEMEMBER" in self._last_sql:
             return (1, 1, 1, 1, 1)
         if "SchemaMigrations" in self._last_sql:
@@ -340,6 +383,24 @@ class _WriterCursor(_CreationCursor):
         if "OUTPUT INSERTED.[Token]" in self._last_sql:
             return (b"\x00\x00\x00\x00\x00\x00\x00\x01",)
         return None
+
+    def fetchall(self):
+        if "DECLARE @RequestedLocks TABLE" in self._last_sql:
+            requested = json.loads(self._last_params[0])
+            return [(row["ordinal"], 0) for row in requested]
+        if "DECLARE @Changes TABLE" in self._last_sql:
+            changes = json.loads(self._last_params[0])
+            return [
+                (row["ordinal"], int(row["ordinal"] + 1).to_bytes(8, "big"))
+                for row in changes
+            ]
+        if "DECLARE @ExpectedVersions TABLE" in self._last_sql:
+            expected = json.loads(self._last_params[0])
+            return [
+                (row["ordinal"], b"\x00\x00\x00\x00\x00\x00\x00\x01")
+                for row in expected
+            ]
+        return []
 
     def close(self):
         self.close_count += 1
@@ -394,8 +455,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         source = Path("ost_visualizer/infrastructure/sql/writer.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("OUTPUT INSERTED.[Token]", source)
+        self.assertIn("INSERTED.[Token] INTO @Versions", source)
         self.assertNotIn("OUTPUT INSERTED.[Version]", source)
+        self.assertNotIn("MERGE [ostv].[EntityVersions]", source)
 
     def test_sql_edit_probe_requires_built_in_roles_and_collaboration_permissions(
         self,
@@ -423,6 +485,13 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 return self
 
             def fetchone(self):
+                if "ostv_permission_snapshot" in self._last_sql:
+                    return (
+                        *self._role_result,
+                        *self._metadata_result,
+                        *self._collaboration_result,
+                        *self._marker_result,
+                    )
                 if "IS_ROLEMEMBER" in self._last_sql:
                     return self._role_result
                 if "s.[name]=N'ostv'" in self._last_sql:
@@ -1316,6 +1385,49 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertTrue(all(conn.close_count == 1 for conn in connections))
         self.assertTrue(all(conn.raw_cursor.close_count == 1 for conn in connections))
 
+    def test_sql_lock_validation_batches_expected_rowversions(self):
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        expected = ConcurrencyToken(b"\x01" * 8)
+        actual = b"\x02" * 8
+
+        class _Cursor:
+            def __init__(self):
+                self.sql = ""
+                self.parameters = ()
+                self.execute_count = 0
+
+            def execute(self, sql, *parameters):
+                self.sql = sql
+                self.parameters = parameters
+                self.execute_count += 1
+                return self
+
+            @staticmethod
+            def fetchone():
+                return ("rowversion", None, 0, actual)
+
+        request = _DatabaseMutationRequest(
+            database_id="database",
+            session_id="session-1",
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.TAKEOFF_PLACEMENT.value,
+            request_hash="a" * 64,
+            resources=(resource,),
+            expected_versions=(ExpectedResourceVersion(resource, expected),),
+        )
+        state = SimpleNamespace(request=request)
+        cursor = _Cursor()
+        with self.assertRaises(_OptimisticConflict) as raised:
+            SqlProjectWriter._validate_mutation_locks(state, cursor, {resource})
+        self.assertEqual(cursor.execute_count, 1)
+        self.assertIn("@RequiredTokens", cursor.sql)
+        self.assertIn("@ExpectedVersions", cursor.sql)
+        expected_payload = json.loads(cursor.parameters[2])
+        self.assertEqual(expected_payload[0]["expected_token"], str(expected))
+        self.assertEqual(raised.exception.resource, resource)
+        self.assertEqual(raised.exception.expected, expected)
+        self.assertEqual(raised.exception.actual, ConcurrencyToken(actual))
+
     def test_sql_write_failure_rolls_back_and_closes_all_cursors(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1414,18 +1526,21 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connection_manager=manager,
             session_registry=sessions,
         )
-        result = writer.execute(
-            DatabaseMutationRequest(
-                database_id=descriptor.database_id,
-                session_id="session-1",
-                resources=(resource,),
-                required_lock_tokens=(lock_token,),
-            ),
-            lambda recorder: (
-                recorder.record(resource, ChangeOperation.UPDATE),
-                True,
-            )[1],
-        )
+        with self.assertNoLogs(
+            "ost_visualizer.infrastructure.sql.writer", level="DEBUG"
+        ):
+            result = writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                    resources=(resource,),
+                    required_lock_tokens=(lock_token,),
+                ),
+                lambda recorder: (
+                    recorder.record(resource, ChangeOperation.UPDATE),
+                    True,
+                )[1],
+            )
         self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertEqual(manager.lease.commits, 1)
         self.assertEqual(manager.lease.rollbacks, 0)
@@ -2081,13 +2196,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         statements = [
             sql for cursor in manager.lease.cursors for sql in cursor.executed
         ]
-        version_writes = [
-            sql for sql in statements if "MERGE [ostv].[EntityVersions]" in sql
+        version_feed_batches = [
+            sql for sql in statements if "DECLARE @Changes TABLE" in sql
         ]
         change_rows = [
             sql for sql in statements if "INSERT INTO [ostv].[ChangeLog]" in sql
         ]
-        self.assertEqual(len(version_writes), 452)
+        self.assertEqual(len(version_feed_batches), 1)
+        self.assertNotIn("MERGE [ostv].[EntityVersions]", version_feed_batches[0])
         self.assertTrue(all(resource in versions for resource in resources))
         self.assertIn(ResourceRef("takeoffs_collection", "8", 8), versions)
         self.assertEqual(len(change_rows), 1)
@@ -2286,18 +2402,20 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_writer_guard_rejects_stale_database_metadata(self):
         class _StaleMetadataCursor(_WriterCursor):
             def fetchone(self):
-                if "DatabaseMetadata" in self._last_sql:
-                    return (
-                        2,
-                        SQL_SCHEMA_V1.checksum,
-                        "READ_WRITE",
-                        "ost_visualizer_only",
-                        "disabled",
-                        None,
-                        1,
-                        1,
-                        1,
-                        1,
+                if "ostv_permission_snapshot" in self._last_sql:
+                    return _canonical_writer_permission_snapshot(
+                        metadata=(
+                            2,
+                            SQL_SCHEMA_V1.checksum,
+                            "READ_WRITE",
+                            "ost_visualizer_only",
+                            "disabled",
+                            None,
+                            1,
+                            1,
+                            1,
+                            1,
+                        )
                     )
                 return super().fetchone()
 
@@ -2315,18 +2433,20 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_writer_guard_rejects_disabled_change_tracking(self):
         class _TrackingDisabledCursor(_WriterCursor):
             def fetchone(self):
-                if "DatabaseMetadata" in self._last_sql:
-                    return (
-                        SQL_SCHEMA_V1.version,
-                        SQL_SCHEMA_V1.checksum,
-                        "READ_WRITE",
-                        "ost_visualizer_only",
-                        "disabled",
-                        None,
-                        0,
-                        0,
-                        1,
-                        1,
+                if "ostv_permission_snapshot" in self._last_sql:
+                    return _canonical_writer_permission_snapshot(
+                        metadata=(
+                            SQL_SCHEMA_V1.version,
+                            SQL_SCHEMA_V1.checksum,
+                            "READ_WRITE",
+                            "ost_visualizer_only",
+                            "disabled",
+                            None,
+                            0,
+                            0,
+                            1,
+                            1,
+                        )
                     )
                 return super().fetchone()
 
@@ -2342,8 +2462,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_writer_guard_rejects_missing_builtin_client_role(self):
         class _MissingRoleCursor(_WriterCursor):
             def fetchone(self):
-                if "IS_ROLEMEMBER" in self._last_sql:
-                    return (1, 0)
+                if "ostv_permission_snapshot" in self._last_sql:
+                    return _canonical_writer_permission_snapshot(roles=(1, 0, 1, 1, 1))
                 return super().fetchone()
 
         class _MissingRoleLease(_WriterLease):
@@ -2358,8 +2478,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_writer_guard_rejects_missing_collaboration_marker_permission(self):
         class _MissingMarkerPermissionCursor(_WriterCursor):
             def fetchone(self):
-                if "VIEW CHANGE TRACKING" in self._last_sql:
-                    return (1, 1, 0, 0, 0)
+                if "ostv_permission_snapshot" in self._last_sql:
+                    return _canonical_writer_permission_snapshot(marker=(1, 1, 0, 0, 0))
                 return super().fetchone()
 
         class _MissingMarkerPermissionLease(_WriterLease):

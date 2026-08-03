@@ -148,12 +148,6 @@ class ImportHandler:
             )
             return
         if result.outcome_status == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED:
-            show_warning(
-                self.window,
-                "Import Synchronization",
-                f"'{filename}' was committed, but its local projection is being "
-                "recovered. Do not import the file again.",
-            )
             return
         if result.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN:
             show_warning(

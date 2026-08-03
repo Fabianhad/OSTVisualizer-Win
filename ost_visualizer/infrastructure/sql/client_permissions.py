@@ -39,20 +39,102 @@ def _sql_integer_values_match(row, expected: tuple[int, ...]) -> bool:
     return values == expected
 
 
-def require_sql_client_editability(cursor) -> None:
+def require_sql_client_editability(
+    cursor, *, session_id: str = "", transaction_id: str = ""
+) -> None:
+    if bool(session_id) != bool(transaction_id):
+        raise ValueError("SQL mutation context requires both session identities")
+    context_sql = ""
+    context_parameters: tuple[str, ...] = ()
+    if session_id:
+        context_sql = (
+            "EXEC sys.sp_set_session_context "
+            "@key=N'ostv_session_id', @value=?; "
+            "EXEC sys.sp_set_session_context "
+            "@key=N'ostv_transaction_id', @value=?; "
+        )
+        context_parameters = (session_id, transaction_id)
+    writable_placeholders = ", ".join(
+        "?" for _ in SQL_CLIENT_COLLABORATION_WRITE_TABLES
+    )
+    protected_placeholders = ", ".join("?" for _ in SQL_CLIENT_PROTECTED_OSTV_TABLES)
+    marker_name = "N'ostv.' + QUOTENAME(?)"
     cursor.execute(
-        "SELECT "
+        context_sql + "/* ostv_permission_snapshot */ SELECT "
         "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0), "
         "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0), "
         "COALESCE(HAS_PERMS_BY_NAME(?, N'SCHEMA', N'VIEW DEFINITION'), 0), "
         "COALESCE(HAS_PERMS_BY_NAME(?, N'SCHEMA', N'VIEW DEFINITION'), 0), "
         "CASE WHEN COALESCE((SELECT p.[default_schema_name] "
         "FROM sys.database_principals p WHERE p.[name]=USER_NAME()), N'')="
-        "N'dbo' THEN 1 ELSE 0 END",
+        "N'dbo' THEN 1 ELSE 0 END, "
+        "m.[SchemaVersion], sm.[Checksum], "
+        "CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), N'Updateability')), "
+        "m.[WriterMode], a.[AdapterState], a.[ResourceCatalogChecksum], "
+        "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_databases "
+        "WHERE database_id=DB_ID()) THEN 1 ELSE 0 END, "
+        "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_tables "
+        "WHERE object_id=OBJECT_ID(N'ostv.ChangeTransactions')) THEN 1 ELSE 0 END, "
+        "CASE WHEN EXISTS (SELECT 1 FROM sys.databases WHERE "
+        "database_id=DB_ID() AND snapshot_isolation_state=1) THEN 1 ELSE 0 END, "
+        "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_databases "
+        "WHERE database_id=DB_ID() "
+        f"AND retention_period={SQL_CHANGE_TRACKING_RETENTION_DAYS} AND "
+        "retention_period_units_desc=N'DAYS' AND is_auto_cleanup_on=1) "
+        "THEN 1 ELSE 0 END, permissions.[WritableCount], "
+        "permissions.[InvalidWritableCount], permissions.[ProtectedWriteCount], "
+        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'SELECT'), 0), "
+        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'INSERT'), 0), "
+        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'UPDATE'), 0), "
+        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'DELETE'), 0), "
+        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', "
+        "N'VIEW CHANGE TRACKING'), 0) "
+        "FROM [ostv].[DatabaseMetadata] m "
+        "JOIN [ostv].[SchemaMigrations] sm ON sm.[Version]=m.[SchemaVersion] "
+        "JOIN [ostv].[ExternalAdapterState] a ON a.[SingletonId]=1 "
+        "CROSS JOIN (SELECT "
+        f"COALESCE(SUM(CASE WHEN t.[name] IN ({writable_placeholders}) "
+        "THEN 1 ELSE 0 END), 0) AS [WritableCount], "
+        f"COALESCE(SUM(CASE WHEN t.[name] IN ({writable_placeholders}) AND NOT ("
+        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+        "N'OBJECT', N'SELECT'), 0)=1 AND "
+        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+        "N'OBJECT', N'INSERT'), 0)=1 AND "
+        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+        "N'OBJECT', N'UPDATE'), 0)=1 AND "
+        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+        "N'OBJECT', N'DELETE'), 0)=1) THEN 1 ELSE 0 END), 0) "
+        "AS [InvalidWritableCount], "
+        f"COALESCE(SUM(CASE WHEN t.[name] IN ({protected_placeholders}) AND ("
+        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+        "N'OBJECT', N'INSERT'), 0)=1 OR "
+        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+        "N'OBJECT', N'UPDATE'), 0)=1 OR "
+        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+        "N'OBJECT', N'DELETE'), 0)=1) THEN 1 ELSE 0 END), 0) "
+        "AS [ProtectedWriteCount] FROM sys.tables t JOIN sys.schemas s "
+        "ON s.[schema_id]=t.[schema_id] WHERE s.[name]=N'ostv' AND "
+        f"t.[name] IN ({writable_placeholders}, {protected_placeholders})) "
+        "permissions WHERE m.[Product]=N'OST Visualizer'",
+        *context_parameters,
         *SQL_CLIENT_DATABASE_ROLES,
         *SQL_CLIENT_SCHEMA_VISIBILITY,
+        *(SQL_CLIENT_TRANSACTION_MARKER_TABLE for _ in range(5)),
+        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+        *SQL_CLIENT_PROTECTED_OSTV_TABLES,
+        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+        *SQL_CLIENT_PROTECTED_OSTV_TABLES,
     )
-    role_row = cursor.fetchone()
+    snapshot = cursor.fetchone()
+    if snapshot is None or len(snapshot) != 23:
+        raise SqlInfrastructureError(
+            SqlErrorDetails(
+                SqlErrorCode.SCHEMA_MISMATCH,
+                "This SQL database is not writable by this OST Visualizer version.",
+            )
+        )
+    role_row = snapshot[:5]
     if not _sql_integer_values_match(role_row, (1, 1, 1, 1, 1)):
         raise SqlInfrastructureError(
             SqlErrorDetails(
@@ -62,29 +144,7 @@ def require_sql_client_editability(cursor) -> None:
                 "and have the canonical schema visibility grants.",
             )
         )
-    cursor.execute(
-        "SELECT m.[SchemaVersion], sm.[Checksum], "
-        "CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), N'Updateability')), "
-        "m.[WriterMode], a.[AdapterState], a.[ResourceCatalogChecksum], "
-        "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_databases "
-        "WHERE database_id=DB_ID()) THEN 1 ELSE 0 END, "
-        "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_tables "
-        "WHERE object_id=OBJECT_ID(N'ostv.ChangeTransactions')) "
-        "THEN 1 ELSE 0 END, "
-        "CASE WHEN EXISTS (SELECT 1 FROM sys.databases WHERE "
-        "database_id=DB_ID() AND snapshot_isolation_state=1) "
-        "THEN 1 ELSE 0 END, "
-        "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_databases "
-        "WHERE database_id=DB_ID() "
-        f"AND retention_period={SQL_CHANGE_TRACKING_RETENTION_DAYS} AND "
-        "retention_period_units_desc=N'DAYS' AND is_auto_cleanup_on=1) "
-        "THEN 1 ELSE 0 END "
-        "FROM [ostv].[DatabaseMetadata] m "
-        "JOIN [ostv].[SchemaMigrations] sm ON sm.[Version]=m.[SchemaVersion] "
-        "JOIN [ostv].[ExternalAdapterState] a ON a.[SingletonId]=1 "
-        "WHERE m.[Product]=N'OST Visualizer'"
-    )
-    metadata_row = cursor.fetchone()
+    metadata_row = snapshot[5:15]
     metadata_complete = metadata_row is not None and len(metadata_row) == 10
     writer_mode_valid = bool(
         metadata_complete
@@ -113,52 +173,8 @@ def require_sql_client_editability(cursor) -> None:
                 "This SQL database is not writable by this OST Visualizer version.",
             )
         )
-    writable_placeholders = ", ".join(
-        "?" for _ in SQL_CLIENT_COLLABORATION_WRITE_TABLES
-    )
-    protected_placeholders = ", ".join("?" for _ in SQL_CLIENT_PROTECTED_OSTV_TABLES)
-    cursor.execute(
-        "SELECT "
-        f"COALESCE(SUM(CASE WHEN t.[name] IN ({writable_placeholders}) "
-        "THEN 1 ELSE 0 END), 0), "
-        f"COALESCE(SUM(CASE WHEN t.[name] IN ({writable_placeholders}) AND NOT ("
-        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-        "N'OBJECT', N'SELECT'), 0)=1 AND "
-        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-        "N'OBJECT', N'INSERT'), 0)=1 AND "
-        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-        "N'OBJECT', N'UPDATE'), 0)=1 AND "
-        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-        "N'OBJECT', N'DELETE'), 0)=1) THEN 1 ELSE 0 END), 0), "
-        f"COALESCE(SUM(CASE WHEN t.[name] IN ({protected_placeholders}) AND ("
-        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-        "N'OBJECT', N'INSERT'), 0)=1 OR "
-        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-        "N'OBJECT', N'UPDATE'), 0)=1 OR "
-        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-        "N'OBJECT', N'DELETE'), 0)=1) THEN 1 ELSE 0 END), 0) "
-        "FROM sys.tables t JOIN sys.schemas s ON s.[schema_id]=t.[schema_id] "
-        "WHERE s.[name]=N'ostv' "
-        f"AND t.[name] IN ({writable_placeholders}, {protected_placeholders})",
-        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
-        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
-        *SQL_CLIENT_PROTECTED_OSTV_TABLES,
-        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
-        *SQL_CLIENT_PROTECTED_OSTV_TABLES,
-    )
-    collaboration_row = cursor.fetchone()
-    marker_name = "N'ostv.' + QUOTENAME(?)"
-    cursor.execute(
-        "SELECT "
-        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'SELECT'), 0), "
-        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'INSERT'), 0), "
-        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'UPDATE'), 0), "
-        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', N'DELETE'), 0), "
-        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', "
-        "N'VIEW CHANGE TRACKING'), 0)",
-        *(SQL_CLIENT_TRANSACTION_MARKER_TABLE for _ in range(5)),
-    )
-    marker_row = cursor.fetchone()
+    collaboration_row = snapshot[15:18]
+    marker_row = snapshot[18:23]
     if not _sql_integer_values_match(
         collaboration_row,
         (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0),

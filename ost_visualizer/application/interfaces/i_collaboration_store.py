@@ -41,13 +41,13 @@ class ICollaborationStore(Protocol):
         excluding_session_id: str,
         bid_uid: Optional[int] = None,
     ) -> tuple[ResourceLock, ...]: ...
-    def acquire_lock(
+    def acquire_locks(
         self,
         database_id: str,
         session_id: str,
-        resource: ResourceRef,
+        resources: tuple[ResourceRef, ...],
         operation_description: str,
-    ) -> ResourceLock: ...
+    ) -> tuple[ResourceLock, ...]: ...
     def renew_lock(
         self, database_id: str, session_id: str, lock_token: str
     ) -> ResourceLock: ...

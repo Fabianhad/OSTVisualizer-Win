@@ -83,6 +83,38 @@ def _preview_paths(view) -> list[QGraphicsPathItem]:
     ]
 
 
+class RemoteProjectionBlockerTests(unittest.TestCase):
+    @staticmethod
+    def _plan_state(**overrides):
+        state = {
+            "_editing_annotation_uids": lambda: set(),
+            "_drag_plan_item_uid": None,
+            "_rotation_drag_active": False,
+            "_overlay_move_dragging": False,
+            "_annotation_place_dragging": False,
+            "_annotation_area_rect_dragging": False,
+            "_place_linear_dragging": False,
+            "_place_area_rect_dragging": False,
+            "_dirty_positions": {},
+            "_dirty_ann_positions": {},
+            "_place_preview_items": [],
+            "_paste_backout_preview_items": [],
+        }
+        state.update(overrides)
+        return SimpleNamespace(**state)
+
+    def test_passive_placement_hover_preview_does_not_block_projection(self):
+        view = self._plan_state(_place_preview_items=[object()])
+        self.assertFalse(TakeoffPlanView.has_active_remote_projection_blocker(view))
+
+    def test_active_placement_gesture_still_blocks_projection(self):
+        view = self._plan_state(
+            _place_preview_items=[object()],
+            _place_linear_dragging=True,
+        )
+        self.assertTrue(TakeoffPlanView.has_active_remote_projection_blocker(view))
+
+
 class BaseKeyHandler:
     def keyPressEvent(self, _event):
         pass

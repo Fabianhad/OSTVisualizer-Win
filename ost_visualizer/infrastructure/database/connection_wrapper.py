@@ -35,6 +35,9 @@ class CursorLease:
     def fetchall(self):
         return self._cursor.fetchall()
 
+    def nextset(self) -> bool:
+        return bool(self._cursor.nextset())
+
     def close(self) -> None:
         if self._closed:
             return

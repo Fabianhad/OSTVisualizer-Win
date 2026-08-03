@@ -206,9 +206,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 self.assertFalse(history.can_undo())
                 self.assertTrue(history.can_redo())
 
-    def test_noncritical_page_view_failure_never_blocks_shutdown_for_either_backend(
-        self,
-    ):
+    def test_noncritical_page_view_is_abandoned_on_shutdown_for_either_backend(self):
         for backend in ("mdb", "sql"):
             with self.subTest(backend=backend):
                 writes = _PageViewWriteService(sql=backend == "sql")
@@ -227,10 +225,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 )
                 self.assertTrue(manager.cleanup())
                 self.assertEqual(manager.pending_count, 0)
-                self.assertEqual(
-                    writes.local_write_calls,
-                    1 if backend == "mdb" else 0,
-                )
+                self.assertEqual(writes.local_write_calls, 0)
 
     @staticmethod
     def _local_composite_service():
