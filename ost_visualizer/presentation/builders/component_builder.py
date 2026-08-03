@@ -640,8 +640,8 @@ class ComponentBuilder:
             )
             placement = ui_event_handler.placement
             if selected:
-                uid = selected[-1]
-                if placement.enter(uid, selected):
+                active_uid = conditions_sidebar.get_active_condition_uid()
+                if active_uid and placement.enter(active_uid, selected):
                     return
             selected_takeoff_condition_uid = plan_view.selected_takeoff_condition_uid()
             if selected_takeoff_condition_uid:

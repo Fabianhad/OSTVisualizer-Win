@@ -272,8 +272,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
 
     def _emit_selected_conditions(self) -> None:
         self._sync_button_states()
-        if self._selected_condition_uids:
-            self.condition_selected.emit(self._selected_condition_uids[-1])
+        active_uid = self.get_active_condition_uid()
+        if active_uid:
+            self.condition_selected.emit(active_uid)
         else:
             self.condition_selected.emit("")
 
@@ -306,6 +307,16 @@ class ConditionsSidebar(QtWidgets.QWidget):
 
     def get_selected_condition_uids(self) -> List[str]:
         return self._selected_condition_uids[:]
+
+    def get_active_condition_uid(self) -> Optional[str]:
+        current = self.tree.currentItem()
+        if current is not None and current.isSelected():
+            data = current.data(_COL_NO, _ITEM_ROLE)
+            if data and data[0] == _TYPE_CONDITION:
+                return data[1]
+        return (
+            self._selected_condition_uids[-1] if self._selected_condition_uids else None
+        )
 
     def save_header_state(self) -> QtCore.QByteArray:
         return self.tree.header().saveState()

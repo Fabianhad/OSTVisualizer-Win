@@ -406,6 +406,40 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertTrue(cdn_type.isExpanded())
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
 
+    def test_programmatic_multi_highlight_uses_focused_condition_as_active(self):
+        class OrderedUidSet(set):
+            def __iter__(self):
+                return iter(("linear", "area"))
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = {
+            "linear": Condition(
+                uid="linear",
+                name="Linear",
+                ref_no=1,
+                condition_type=Condition.TYPE_LINEAR,
+            ),
+            "area": Condition(
+                uid="area",
+                name="Area",
+                ref_no=2,
+                condition_type=Condition.TYPE_AREA,
+            ),
+        }
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.highlight_conditions(OrderedUidSet(("linear", "area")))
+        current_data = sidebar.tree.currentItem().data(
+            0, QtCore.Qt.ItemDataRole.UserRole
+        )
+        self.assertEqual(current_data, ("condition", "linear"))
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["linear", "area"])
+        self.assertEqual(sidebar.get_active_condition_uid(), "linear")
+        emitted = []
+        sidebar.condition_selected.connect(emitted.append)
+        sidebar._emit_selected_conditions()
+        self.assertEqual(emitted, ["linear"])
+
     def test_condition_sidebar_passive_restore_does_not_expand_condition_path(self):
         sidebar = ConditionsSidebar(None)
         self.addCleanup(sidebar.close)

@@ -519,6 +519,28 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.snap_settings, [(2.0, 0)])
 
+    def test_local_plan_update_snapshots_mutable_condition_display_size(self):
+        plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
+        coordinator = self._make_coordinator(plan_view)
+        condition = Condition(
+            uid="count-1",
+            condition_type=Condition.TYPE_COUNT,
+            display_size=100.0,
+        )
+        coordinator._project_data.get_bid_conditions = lambda: {
+            condition.uid: condition
+        }
+        coordinator.update_plan_view("page-1")
+        rendered_condition = plan_view.overlay_options[0]["conditions"][condition.uid]
+        condition.display_size = 175.0
+        self.assertIsNot(rendered_condition, condition)
+        self.assertEqual(rendered_condition.display_size, 100.0)
+        coordinator.update_plan_view("page-1")
+        self.assertEqual(
+            plan_view.overlay_options[1]["conditions"][condition.uid].display_size,
+            175.0,
+        )
+
     def test_same_loaded_page_passes_annotation_change_metadata(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
         coordinator = self._make_coordinator(plan_view)

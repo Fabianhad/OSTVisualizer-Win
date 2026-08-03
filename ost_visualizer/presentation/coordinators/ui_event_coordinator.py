@@ -766,13 +766,13 @@ class UIEventCoordinator:
     def _reset_takeoff_workspace_state(self, clear_sidebars: bool = True) -> None:
         self._takeoff_workspace_bid_ref = None
         self._clear_staged_takeoff_restore()
-        self._selected_takeoff_uids = ()
-        self._selected_takeoff_condition_uids = set()
-        self._selection_projected_condition_uids = set()
         if clear_sidebars:
+            self._selected_takeoff_uids = ()
+            self._selected_takeoff_condition_uids = set()
+            self._selection_projected_condition_uids = set()
             self._sidebar.clear_sidebars()
-        if clear_sidebars and self._page_settings_bar:
-            self._page_settings_bar.clear_bid()
+            if self._page_settings_bar:
+                self._page_settings_bar.clear_bid()
 
     def _stage_takeoff_restore(
         self,

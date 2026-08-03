@@ -2967,6 +2967,66 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(coordinator.conditions_sidebar.highlights, [{"c1"}, {"c2"}])
 
+    def test_same_bid_refresh_does_not_restore_original_condition_after_duplicate(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+
+        class UiState:
+            def __init__(self):
+                self.highlighted_condition_uids = set()
+
+            def set_highlighted_conditions(self, uids):
+                self.highlighted_condition_uids = set(uids)
+
+        class ProjectData:
+            def get_all_takeoffs(self):
+                return [type("Takeoff", (), {"uid": "t1", "condition_uid": "c1"})()]
+
+        class Sidebar:
+            def __init__(self):
+                self.highlights = []
+
+            def highlight_conditions(self, uids, reveal=True):
+                self.highlights.append(set(uids))
+
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.conditions_sidebar = Sidebar()
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._placement = FakePlacement()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=1)
+        coordinator._nav = type("Nav", (), {"is_refreshing": False})()
+        sidebar_clears = []
+        coordinator._sidebar = SimpleNamespace(
+            clear_sidebars=lambda: sidebar_clears.append(True)
+        )
+        coordinator._page_settings_bar = None
+        coordinator._takeoff_workspace_bid_ref = BidRef("db.mdb", "bid-1")
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._pending_takeoff_active_page_uid = None
+        coordinator._pending_takeoff_selected_area_uid = ""
+        coordinator._pending_takeoff_place_condition_uid = None
+        coordinator._pending_takeoff_place_condition_uids = []
+        coordinator._selected_takeoff_uids = ()
+        coordinator._selected_takeoff_condition_uids = set()
+        coordinator._selection_projected_condition_uids = set()
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
+        coordinator._reset_takeoff_workspace_state(clear_sidebars=False)
+        coordinator.highlight_sidebar({"c2"})
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c2"}
+        )
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [{"c1"}, {"c2"}])
+        self.assertEqual(sidebar_clears, [])
+        coordinator._reset_takeoff_workspace_state(clear_sidebars=True)
+        self.assertEqual(coordinator._selected_takeoff_uids, ())
+        self.assertEqual(coordinator._selected_takeoff_condition_uids, set())
+        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(sidebar_clears, [True])
+
     def test_repeated_takeoff_click_restores_highlight_after_reload_clears_it(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
 
@@ -3948,9 +4008,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._finish_refresh()
         self.assertEqual(coordinator._sidebar.clears, 0)
         self.assertIsNone(coordinator._takeoff_workspace_bid_ref)
-        self.assertEqual(coordinator._selected_takeoff_uids, ())
-        self.assertEqual(coordinator._selected_takeoff_condition_uids, set())
-        self.assertEqual(coordinator._selection_projected_condition_uids, set())
+        self.assertEqual(coordinator._selected_takeoff_uids, ("t1",))
+        self.assertEqual(coordinator._selected_takeoff_condition_uids, {"c1"})
+        self.assertEqual(coordinator._selection_projected_condition_uids, {"c1"})
 
     def test_database_refresh_drops_deleted_project_selection_and_hides_takeoff(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

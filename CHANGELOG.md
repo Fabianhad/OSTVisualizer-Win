@@ -22,6 +22,12 @@
 
 ### Fixed
 
+- Fixed multi-condition sidebar highlights occasionally starting placement with
+  a different condition than the focused row, which could make a focused linear
+  condition use an area-style drag preview.
+- Fixed count display-size edits remaining visually stale in the plan view until
+  the affected takeoff was moved; local plan projections now compare against an
+  immutable condition snapshot before skipping an unchanged overlay refresh.
 - Fixed custom page scales appearing blank in the page settings control; the
   current scale now remains visible after edits, refreshes, and page changes.
 - Fixed the 2D/3D view selector occupying space when workspace settings leave
@@ -93,7 +99,8 @@
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.
 - Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
 - Fixed takeoff selection synchronization so 2D and 3D share one canonical
-  takeoff-to-condition projection while preserving explicit sidebar ownership;
+  takeoff-to-condition projection while preserving explicit sidebar ownership,
+  including a duplicated condition selected during a same-bid refresh;
   cursor-toolbar and radio-menu synchronization also preserve exclusive QAction
   group ownership.
 - Fixed hidden-layer line, arrow, and dimension annotations remaining selectable through geometric fallback hit-testing.

@@ -188,14 +188,17 @@ class ViewerSyncCoordinator:
         page = self._project_data.get_page(page_uid)
         if not page:
             return None
-        conditions = self._project_data.get_bid_conditions()
+        # Keep the plan's rendered condition state independent from the mutable
+        # project model. Condition edits update those model instances in place;
+        # sharing them with the view makes its unchanged-overlay comparison miss
+        # visual changes such as count display size.
+        conditions = deepcopy(self._project_data.get_bid_conditions())
         page_takeoffs = self._project_data.get_page_takeoffs(page_uid)
         page_annotations = self._project_data.get_page_annotations(page_uid)
         copy_for_worker = remote_identity is not None
         if copy_for_worker:
             page = deepcopy(page)
             page_takeoffs = deepcopy(page_takeoffs)
-            conditions = deepcopy(conditions)
             page_annotations = deepcopy(page_annotations)
         display_mode = self._ui_state.state.display_mode_2d
         grayscale_enabled = self._ui_state.state.grayscale_enabled
