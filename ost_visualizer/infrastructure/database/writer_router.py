@@ -238,6 +238,15 @@ class DatabaseProjectWriter(SqlProjectWriter):
             selected_value,
         )
 
+    def _run_delete_takeoffs(
+        self, database_id: str, uids: list[int], chunk_size: int
+    ) -> None:
+        if self._is_sql(database_id):
+            return SqlProjectWriter._run_delete_takeoffs(
+                self, database_id, uids, chunk_size
+            )
+        return MdbWriter._run_delete_takeoffs(self, database_id, uids, chunk_size)
+
     def create_project(self, db_path: str, name: str) -> Optional[str]:
         with self._backend_scope(db_path) as backend:
             if backend == DatabaseBackend.SQL_SERVER:

@@ -29,6 +29,9 @@ from .connection_manager import SqlConnectionManager, begin_snapshot_transaction
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .reader import SqlProjectReader
 
+_MAX_HYDRATION_BATCH_PARAMETERS = 2000
+_MAX_HYDRATION_BATCH_QUERIES = 400
+
 
 class SqlRemoteChangeReader(IRemoteChangeReader):
     def __init__(
@@ -563,6 +566,35 @@ class _QueryReplayConnection:
 def _execute_recorded_queries(connection, queries):
     if not queries:
         return _QueryReplayConnection(())
+    results = []
+    for batch in _recorded_query_batches(queries):
+        results.extend(_execute_recorded_query_batch(connection, batch))
+    return _QueryReplayConnection(results)
+
+
+def _recorded_query_batches(queries):
+    batch = []
+    parameter_count = 0
+    for query in queries:
+        query_parameter_count = len(query[1])
+        if query_parameter_count > _MAX_HYDRATION_BATCH_PARAMETERS:
+            raise ValueError(
+                "A SQL hydration query exceeds the safe parameter batch limit."
+            )
+        if batch and (
+            len(batch) >= _MAX_HYDRATION_BATCH_QUERIES
+            or parameter_count + query_parameter_count > _MAX_HYDRATION_BATCH_PARAMETERS
+        ):
+            yield tuple(batch)
+            batch = []
+            parameter_count = 0
+        batch.append(query)
+        parameter_count += query_parameter_count
+    if batch:
+        yield tuple(batch)
+
+
+def _execute_recorded_query_batch(connection, queries):
     sql = "; ".join(query.rstrip().rstrip(";") for query, _parameters in queries)
     parameters = tuple(
         parameter
@@ -585,7 +617,7 @@ def _execute_recorded_queries(connection, queries):
                 raise RuntimeError(
                     "The SQL takeoff hydration batch returned too few result sets."
                 )
-    return _QueryReplayConnection(results)
+    return results
 
 
 def _normalized_sql(sql) -> str:

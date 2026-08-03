@@ -27,6 +27,9 @@ from ost_visualizer.infrastructure.database.descriptor_registry import (
 )
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.database.reader_router import DatabaseProjectReader
+from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
+    ACCESS_BULK_CHUNK_SIZE,
+)
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.providers import RepositoryProvider
 from ost_visualizer.infrastructure.sql.reader import SqlProjectReader
@@ -1700,6 +1703,71 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertFalse(result.value)
         self.assertEqual(connections.connection_value.commits, 1)
+
+    def test_access_router_dispatches_valid_takeoff_delete_to_mdb_helper(self):
+        connections = _AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with (
+            patch.object(
+                MdbWriter,
+                "_run_delete_takeoffs",
+                autospec=True,
+            ) as access_delete,
+            patch.object(
+                SqlProjectWriter,
+                "_run_delete_takeoffs",
+                autospec=True,
+            ) as sql_delete,
+        ):
+            result = writer.execute(
+                DatabaseMutationRequest(database_id="example.mdb", session_id=None),
+                lambda _recorder: writer.delete_takeoffs("example.mdb", ["42"]),
+            )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertTrue(result.value)
+        access_delete.assert_called_once_with(
+            writer, "example.mdb", [42], ACCESS_BULK_CHUNK_SIZE
+        )
+        sql_delete.assert_not_called()
+        self.assertEqual(connections.connection_value.commits, 1)
+
+    def test_sql_router_dispatches_takeoff_delete_to_sql_helper(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with (
+            patch.object(
+                MdbWriter,
+                "_run_delete_takeoffs",
+                autospec=True,
+            ) as access_delete,
+            patch.object(
+                SqlProjectWriter,
+                "_run_delete_takeoffs",
+                autospec=True,
+            ) as sql_delete,
+        ):
+            writer._run_delete_takeoffs(
+                descriptor.database_id, [42], ACCESS_BULK_CHUNK_SIZE
+            )
+        sql_delete.assert_called_once_with(
+            writer, descriptor.database_id, [42], ACCESS_BULK_CHUNK_SIZE
+        )
+        access_delete.assert_not_called()
 
     def test_sql_router_scopes_preconnection_validation_as_sql(self):
         registry = DatabaseDescriptorRegistry()

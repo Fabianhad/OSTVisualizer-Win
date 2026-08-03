@@ -1868,12 +1868,9 @@ class SqlCollaborationCoordinator:
                     PendingMutationState.RECOVERING,
                 )
                 state = PendingMutationState.RECOVERING
-                self._on_reconciliation_required(
-                    (
-                        result.database_id,
-                        result.runtime_generation,
-                        "A committed SQL mutation could not be projected locally.",
-                    )
+                self._request_committed_projection_recovery(
+                    result.database_id,
+                    "A committed SQL mutation could not be projected locally.",
                 )
             else:
                 self._pending_mutations.finish(result.operation_id)
@@ -2671,6 +2668,19 @@ class SqlCollaborationCoordinator:
         except Exception:
             logger.exception("SQL main-thread reconciliation failed")
             return ReconciliationResult(applied=False)
+
+    def _request_committed_projection_recovery(
+        self, database_id: str, reason: str
+    ) -> None:
+        runtime = self._runtime(database_id)
+        if runtime is None:
+            self._event_bus.publish(
+                AppEvents.FULL_RECONCILIATION_REQUIRED,
+                database_id=database_id,
+                reason=reason,
+            )
+            return
+        self._on_reconciliation_required((database_id, runtime.generation, reason))
 
     def _on_reconciliation_required(self, payload) -> None:
         database_id, generation, reason = payload

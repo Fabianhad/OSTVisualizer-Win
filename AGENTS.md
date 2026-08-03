@@ -180,9 +180,10 @@ Database backends:
   `ChangeLog`, and the durable marker. Successfully consumed edit leases are
   deleted in the same transaction; pre-commit failure and uncertain-commit paths
   retain explicit cleanup/recovery. Takeoff-only local and remote reconciliation
-  uses one snapshot multi-result hydration batch while constructing the existing
-  validated DTO graph. Do not reintroduce per-resource SQL loops, a post-commit
-  release connection for consumed leases, or manual optimistic projection.
+  uses one snapshot with bounded multi-result hydration batches that stay below
+  SQL driver parameter limits while constructing the existing validated DTO graph.
+  Do not reintroduce per-resource SQL loops, a post-commit release connection for
+  consumed leases, or manual optimistic projection.
   A queued edit-lease release is serviced before the next mutation so an action
   submitted immediately after selection cleanup cannot conflict with its own
   local draft; server lock and rowversion checks remain authoritative.

@@ -158,6 +158,10 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlInfrastructureError,
 )
 from ost_visualizer.infrastructure.sql.remote_change_reader import (
+    _MAX_HYDRATION_BATCH_PARAMETERS,
+    _MAX_HYDRATION_BATCH_QUERIES,
+    _execute_recorded_queries,
+    _recorded_query_batches,
     SqlRemoteChangeReader,
 )
 from ost_visualizer.infrastructure.sql.collaboration_store import (
@@ -1085,6 +1089,96 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         hydrated = reader.hydrate_connection(batch, object())
         self.assertEqual(set(hydrated.conditions_by_bid[8]), {"10"})
         self.assertEqual(calls, [("condition-layers", "8")])
+
+    def test_takeoff_hydration_batches_bound_parameters_and_query_count(self):
+        parameter_queries = tuple(
+            (f"SELECT {index}", tuple(range(10))) for index in range(201)
+        )
+        parameter_batches = tuple(_recorded_query_batches(parameter_queries))
+        self.assertEqual(
+            tuple(item for batch in parameter_batches for item in batch),
+            parameter_queries,
+        )
+        self.assertGreater(len(parameter_batches), 1)
+        self.assertTrue(
+            all(
+                sum(len(parameters) for _query, parameters in batch)
+                <= _MAX_HYDRATION_BATCH_PARAMETERS
+                for batch in parameter_batches
+            )
+        )
+        query_count_queries = tuple(
+            (f"SELECT {index}", ()) for index in range(_MAX_HYDRATION_BATCH_QUERIES + 1)
+        )
+        query_count_batches = tuple(_recorded_query_batches(query_count_queries))
+        self.assertEqual(
+            tuple(item for batch in query_count_batches for item in batch),
+            query_count_queries,
+        )
+        self.assertEqual(
+            tuple(len(batch) for batch in query_count_batches),
+            (_MAX_HYDRATION_BATCH_QUERIES, 1),
+        )
+
+    def test_takeoff_hydration_replay_preserves_order_across_bounded_batches(self):
+        class _BatchCursor:
+            def __init__(self, owner):
+                self._owner = owner
+                self._result_index = 0
+                self._results = ()
+                self.description = (("Value",),)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, *parameters):
+                query_count = str(sql).count(";") + 1
+                start = self._owner.next_result
+                self._owner.next_result += query_count
+                self._owner.executions.append((query_count, len(parameters)))
+                self._results = tuple(
+                    ((start + index,),) for index in range(query_count)
+                )
+                self._result_index = 0
+                return self
+
+            def fetchall(self):
+                return self._results[self._result_index]
+
+            def nextset(self):
+                self._result_index += 1
+                return self._result_index < len(self._results)
+
+        class _BatchConnection:
+            def __init__(self):
+                self.executions = []
+                self.next_result = 0
+
+            def cursor(self):
+                return _BatchCursor(self)
+
+        queries = tuple(
+            ("SELECT ?", (index,)) for index in range(_MAX_HYDRATION_BATCH_QUERIES + 1)
+        )
+        connection = _BatchConnection()
+        replay = _execute_recorded_queries(connection, queries)
+        replayed = []
+        for query, parameters in queries:
+            with replay.cursor() as cursor:
+                cursor.execute(query, *parameters)
+                replayed.extend(row[0] for row in cursor.fetchall())
+        replay.assert_consumed()
+        self.assertEqual(replayed, list(range(len(queries))))
+        self.assertEqual(
+            connection.executions,
+            [
+                (_MAX_HYDRATION_BATCH_QUERIES, _MAX_HYDRATION_BATCH_QUERIES),
+                (1, 1),
+            ],
+        )
 
     def test_initial_reconciliation_uses_one_snapshot_without_advancing_checkpoint(
         self,
@@ -4939,6 +5033,49 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         _shutdown_coordinator(coordinator)
 
+    def test_committed_projection_failure_without_runtime_still_notifies_ui(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+        )
+        coordinator._request_committed_projection_recovery(
+            descriptor.database_id,
+            "The committed projection could not be attached to a runtime.",
+        )
+        self.assertEqual(
+            [
+                payload
+                for event, payload in events.published
+                if event is AppEvents.FULL_RECONCILIATION_REQUIRED
+            ],
+            [
+                {
+                    "database_id": descriptor.database_id,
+                    "reason": (
+                        "The committed projection could not be attached to a runtime."
+                    ),
+                }
+            ],
+        )
+        _shutdown_coordinator(coordinator)
+
     def test_recovery_cancels_queued_noncritical_page_state_exactly_once(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -5629,6 +5766,86 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
         )
         self.assertEqual(results[0].created_resource_ids, ())
+        _shutdown_coordinator(coordinator)
+
+    def test_stale_committed_projection_recovers_through_replacement_runtime(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id,
+            SynchronizationState.HEALTHY,
+        )
+        pending = PendingMutationRegistry()
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+            pending_mutations=pending,
+        )
+        first_runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        first_runtime.session = DatabaseSession(descriptor.database_id, "session-1")
+        first_runtime.established = True
+        first_runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = first_runtime
+        results = []
+        _queue_test_mutation(
+            coordinator,
+            descriptor.database_id,
+            (ResourceRef("takeoffs_collection", "8", 8),),
+            lambda: _committed_execution("501"),
+            results.append,
+            operation_id="stale-projection-recovery",
+        )
+        request = pending.for_database(descriptor.database_id)[0].request
+        replacement_runtime = _DatabaseRuntime(descriptor.database_id, 2)
+        coordinator._runtimes[descriptor.database_id] = replacement_runtime
+        recovery_started = []
+        events.subscribe(
+            AppEvents.FULL_RECONCILIATION_REQUIRED,
+            lambda database_id="", **_payload: recovery_started.append(
+                coordinator.resume_controlled_recovery(database_id)
+            ),
+        )
+        coordinator._complete_mutation_request(
+            (
+                results.append,
+                QueuedMutationResult(
+                    database_id=descriptor.database_id,
+                    runtime_generation=first_runtime.generation,
+                    operation_id=request.operation_id,
+                    outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                    message="The committed projection arrived after reconnecting.",
+                    commit_attempted=True,
+                ),
+            )
+        )
+        self.assertEqual(
+            [result.outcome_status for result in results],
+            [MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED],
+        )
+        self.assertEqual(
+            pending.get(request.operation_id).state,
+            PendingMutationState.RECOVERING,
+        )
+        self.assertEqual(recovery_started, [True])
+        self.assertTrue(replacement_runtime.recovery_requested)
+        self.assertTrue(replacement_runtime.recovery_ready)
         _shutdown_coordinator(coordinator)
 
     def test_trust_loss_before_ui_delivery_rejects_committed_projection(self):
