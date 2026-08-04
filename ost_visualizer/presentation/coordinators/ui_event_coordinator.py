@@ -595,6 +595,14 @@ class UIEventCoordinator:
             )
             self._clear_mesh_replay_buffer()
             return False
+        pending_identity = self.visualization_service.get_pending_mesh_scene_identity()
+        if (
+            pending_identity is not None
+            and pending_identity.bid_ref == scene_identity.bid_ref
+            and pending_identity.page_uids == scene_identity.page_uids
+            and pending_identity.generation > scene_identity.generation
+        ):
+            return False
         surface.prepare_scene_refresh(active_bid_ref, active_pages)
         surface.apply_mesh_data(*publication.args, **publication.options)
         return True
@@ -669,6 +677,16 @@ class UIEventCoordinator:
         if bid_ref is None:
             self._clear_mesh_views_for_scene_update()
             return
+        affected_pages = pages
+        if dirty_page_uids is not None and pages:
+            selected_page_uids = set(pages)
+            affected_pages = [
+                page_uid
+                for page_uid in normalize_scene_page_uids(dirty_page_uids)
+                if page_uid in selected_page_uids
+            ]
+            if not affected_pages:
+                return
         self._clear_mesh_replay_buffer()
         for view in self._native_3d_views():
             view.prepare_scene_refresh(bid_ref, pages)
@@ -680,7 +698,7 @@ class UIEventCoordinator:
             self._pending_dirty_mesh_refresh = self._mesh_scene_dirty
             self.visualization_service.refresh_mesh_view(pages)
             return
-        self._mark_mesh_scene_dirty(dirty_page_uids or pages)
+        self._mark_mesh_scene_dirty(affected_pages)
 
     def _flush_dirty_mesh_refresh_if_needed(self) -> None:
         if (
@@ -867,6 +885,7 @@ class UIEventCoordinator:
                 self._load_takeoff_sidebar(bid_ref)
                 self._sidebar.load_bid_layers_sidebar()
                 self._sidebar.load_conditions_sidebar()
+                self._sidebar.update_conditions_quantities()
             self._load_condition_summary()
             highlighted = self._validate_condition_uids(
                 self.ui_state_manager.highlighted_condition_uids
@@ -881,8 +900,13 @@ class UIEventCoordinator:
         )
         if should_restore_selection:
             page_uids, active_uid = self._resolve_takeoff_selection()
+            active_page_changed = False
             if page_uids or self._pending_takeoff_page_uids is not None:
-                self.takeoff_sidebar.restore_selection(page_uids, active_uid)
+                active_page_changed = self.takeoff_sidebar.restore_selection(
+                    page_uids, active_uid
+                )
+            if not active_page_changed:
+                self.handle_active_page_changed(active_uid)
         else:
             self._sidebar.update_conditions_quantities()
             self._sync_page_info_status()
@@ -3189,6 +3213,18 @@ class UIEventCoordinator:
         if (
             scene_identity.bid_ref != bid_ref
             or scene_identity.page_uids != selected_pages
+        ):
+            return
+        cached_identity = (
+            self._last_mesh_scene.options.get("scene_identity")
+            if self._last_mesh_scene is not None
+            else None
+        )
+        if (
+            isinstance(cached_identity, MeshSceneIdentity)
+            and cached_identity.bid_ref == scene_identity.bid_ref
+            and cached_identity.page_uids == scene_identity.page_uids
+            and cached_identity.generation >= scene_identity.generation
         ):
             return
         if scene_failed:

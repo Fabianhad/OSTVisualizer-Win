@@ -2337,7 +2337,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.visualization_service.mesh_pages, [["page-1"]])
         self.assertFalse(coordinator._mesh_scene_dirty)
 
-    def test_hidden_2d_takeoff_changes_aggregate_dirty_pages_and_flush_on_3d(self):
+    def test_hidden_2d_takeoff_changes_only_invalidate_rendered_pages(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = FakeUiState()
         coordinator.project_data = FakeProjectData()
@@ -2359,7 +2359,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])
         coordinator._on_takeoffs_changed(page_uid="page-2", takeoff_uids=["t-2"])
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
-        self.assertEqual(coordinator._dirty_mesh_page_uids, {"page-1", "page-2"})
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"page-1"})
         coordinator._view_stack.setCurrentIndex(0)
         coordinator._on_view_stack_changed(0)
         self.assertEqual(coordinator.visualization_service.mesh_pages, [["page-1"]])
@@ -2373,6 +2373,41 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertFalse(coordinator._mesh_scene_dirty)
         self.assertFalse(coordinator._pending_dirty_mesh_refresh)
+
+    def test_unrendered_page_change_preserves_current_scene_without_rebuild(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.project_data = FakeProjectData()
+        coordinator.takeoff_sidebar = FakeTakeoffSidebar()
+        coordinator._page_settings_bar = FakePageSettingsBar()
+        coordinator._viewer = FakeViewer()
+        coordinator._sidebar = FakeSidebar()
+        coordinator._toolbar = FakeToolbar()
+        coordinator.main_window = FakeMainWindow()
+        cached_scene = _MeshScenePublication(
+            ("vertices", "normals", "indices", "colors"),
+            {
+                "scene_identity": scene_identity(BidRef("test.mdb", "bid-1"), 7),
+                "page_floor_elevations": {"page-1": 7.0},
+            },
+        )
+        embedded = FakeMeshReceiver()
+        configure_mesh_state(
+            coordinator,
+            view_index=0,
+            opengl_viewer=embedded,
+            last_mesh_scene=cached_scene,
+        )
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+        coordinator._on_takeoffs_changed(
+            page_uid="page-2",
+            takeoff_uids=["takeoff-on-unrendered-page"],
+        )
+        self.assertIs(coordinator._last_mesh_scene, cached_scene)
+        self.assertEqual(embedded.scene_refreshes, [])
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+        self.assertFalse(coordinator._mesh_scene_dirty)
 
     def test_opening_detached_mesh_window_with_dirty_state_requests_fresh_mesh(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -2436,6 +2471,48 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             ui_event_coordinator.MeshViewWindow = original
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
         self.assertEqual(len(coordinator._mesh_window.mesh_calls), 1)
+
+    def test_opening_detached_mesh_waits_for_newer_matching_generation(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        active_ref = BidRef("test.mdb", "bid-1")
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator.project_data = FakeProjectData()
+        coordinator._icon_provider = None
+        coordinator._color_service = None
+        coordinator._plan_view_handler = None
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator.main_window = FakeMainWindow()
+        cached_scene = _MeshScenePublication(
+            ("old-vertices", "old-normals", "old-indices", "old-colors"),
+            {
+                "scene_identity": scene_identity(active_ref, 7),
+                "page_floor_elevations": {"page-1": 7.0},
+            },
+        )
+        configure_mesh_state(
+            coordinator,
+            last_mesh_scene=cached_scene,
+            visualization=FakeVisualization(
+                pending_mesh_scene_identity=scene_identity(active_ref, 8)
+            ),
+        )
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        original = ui_event_coordinator.MeshViewWindow
+        ui_event_coordinator.MeshViewWindow = FakeConstructedMeshWindow
+        try:
+            coordinator.set_mesh_window_visible(True)
+        finally:
+            ui_event_coordinator.MeshViewWindow = original
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+        self.assertEqual(coordinator._mesh_window.mesh_calls, [])
+        self.assertEqual(
+            coordinator._mesh_window.scene_refreshes,
+            [(active_ref, ("page-1",))],
+        )
+        self.assertIs(coordinator._last_mesh_scene, cached_scene)
 
     def test_opening_detached_mesh_window_with_stale_cache_requests_fresh_mesh(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -2707,6 +2784,41 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._last_mesh_scene.options, mesh_options)
         self.assertEqual(mesh_window.mesh_calls, opengl_viewer.mesh_calls)
         self.assertEqual(1, coordinator._plan_view_signaler.requests)
+
+    def test_older_scene_callback_cannot_replace_cached_authoritative_generation(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = FakeNav()
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.project_data = FakeProjectData()
+        embedded = FakeMeshReceiver()
+        detached = FakeMeshReceiver()
+        coordinator._plan_view_signaler = FakeMeshPlanSignaler()
+        active_ref = BidRef("test.mdb", "bid-1")
+        current_scene = _MeshScenePublication(
+            ("new-vertices", "new-normals", "new-indices", "new-colors"),
+            {
+                "scene_identity": scene_identity(active_ref, 12),
+                "page_floor_elevations": {"page-1": 12.0},
+            },
+        )
+        configure_mesh_state(
+            coordinator,
+            view_index=0,
+            opengl_viewer=embedded,
+            mesh_window=detached,
+            last_mesh_scene=current_scene,
+        )
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator._on_native_scene_updated(
+            geometries=[mesh_geometry("page-1", 7.0)],
+            scene_identity=scene_identity(active_ref, 7),
+            scene_failed=False,
+        )
+        self.assertIs(coordinator._last_mesh_scene, current_scene)
+        self.assertEqual(embedded.mesh_calls, [])
+        self.assertEqual(detached.mesh_calls, [])
+        self.assertEqual(coordinator._plan_view_signaler.requests, 0)
 
     def test_scene_publication_fans_out_page_uid_elevations_identically(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -3294,6 +3406,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             def load_conditions_sidebar(self):
                 pass
 
+            def update_conditions_quantities(self):
+                pass
+
         class MainWindow:
             def notify_takeoff_workspace_activated(self):
                 pass
@@ -3320,6 +3435,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.highlight_sidebar = lambda _uids, reveal=True: reveal_args.append(
             reveal
         )
+        coordinator.handle_active_page_changed = lambda _page_uid: None
         coordinator._activate_takeoff_workspace()
         self.assertEqual(reveal_args, [False])
 

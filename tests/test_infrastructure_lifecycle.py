@@ -884,6 +884,50 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             ).fetchone()[0]
         )
 
+    def test_delete_pages_preserves_conditions_uoms_and_remaining_takeoffs(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER PRIMARY KEY, BidUID INTEGER)")
+        conn.execute(
+            "CREATE TABLE BidConditions ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, UOM1 INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE BidTakeoffs ("
+            "UID INTEGER PRIMARY KEY, BidPageUID INTEGER, BidConditionUID INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidPages (UID, BidUID) VALUES (?, 1)",
+            ((10,), (11,), (12,)),
+        )
+        conn.executemany(
+            "INSERT INTO BidConditions (UID, BidUID, UOM1) VALUES (?, 1, ?)",
+            ((20, 7), (21, 9)),
+        )
+        conn.executemany(
+            "INSERT INTO BidTakeoffs (UID, BidPageUID, BidConditionUID) "
+            "VALUES (?, ?, ?)",
+            (
+                (30, 10, 20),
+                (31, 11, 20),
+                (32, 12, 21),
+            ),
+        )
+        self.assertTrue(_SqliteMdbOps(conn).delete_pages("bid.mdb", ["10", "12"]))
+        self.assertEqual(
+            conn.execute("SELECT UID, UOM1 FROM BidConditions ORDER BY UID").fetchall(),
+            [(20, 7), (21, 9)],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidPageUID, BidConditionUID FROM BidTakeoffs"
+            ).fetchall(),
+            [(31, 11, 20)],
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidPages ORDER BY UID").fetchall(),
+            [(11,)],
+        )
+
     def test_delete_page_removes_indexed_annotation_shape_rows(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")

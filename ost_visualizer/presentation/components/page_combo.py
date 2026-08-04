@@ -334,7 +334,7 @@ class PageComboBox(TreePopupComboBoxBase):
 
     def restore_selection(
         self, page_uids: List[str], active_uid: Optional[str] = None
-    ) -> None:
+    ) -> bool:
         old_selected = list(self._selected_uids)
         old_active = self._active_uid
         self._block_signals = True
@@ -356,8 +356,10 @@ class PageComboBox(TreePopupComboBoxBase):
         self._block_signals = False
         if self._selected_uids != old_selected:
             self.page_selection_changed.emit(list(self._selected_uids))
-        if self._active_uid != old_active:
+        active_changed = self._active_uid != old_active
+        if active_changed:
             self.active_page_changed.emit(self._active_uid)
+        return active_changed
 
     def get_selected_page_uids(self) -> List[str]:
         return list(self._selected_uids)
