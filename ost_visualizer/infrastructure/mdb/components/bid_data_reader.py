@@ -5,6 +5,7 @@ from ....domain.entities.area import UNASSIGNED_AREA_UID, BidArea
 from ....domain.entities.cdn_type import CdnType
 from ....domain.entities.condition import Condition
 from ....domain.entities.condition_folder import BidConditionFolder
+from ....domain.entities.cover_sheet import CoverSheetData
 from ....domain.entities.layer import (
     IMAGE_LAYER_NAME,
     BidLayer,
@@ -54,6 +55,8 @@ class BidDataReaderMixin:
         BidConditionFolders,
         Optional[str],
         Dict[str, Dict[str, Any]],
+        Optional[CoverSheetData],
+        Optional[frozenset[str]],
     ]:
         with self._connection(file_path) as connection:
             schema = self._schema(connection)
@@ -90,6 +93,13 @@ class BidDataReaderMixin:
                 connection, bid_uid, schema
             )
             selected_page_uid = self._parse_bid_selected_page(connection, bid_uid)
+            cover_sheet_data = None
+            page_delete_content_uids = None
+            if self._hydrates_bid_navigation_snapshots():
+                cover_sheet_data = self._parse_cover_sheet_data(connection, bid_uid)
+                page_delete_content_uids = frozenset(
+                    self._parse_pages_with_delete_content(connection, bid_uid)
+                )
             return (
                 bid_conditions,
                 bid_takeoffs,
@@ -101,6 +111,8 @@ class BidDataReaderMixin:
                 bid_condition_folders,
                 selected_page_uid,
                 takeoff_extras,
+                cover_sheet_data,
+                page_delete_content_uids,
             )
 
     def _parse_bid_selected_page(self, connection, bid_uid: str) -> Optional[str]:

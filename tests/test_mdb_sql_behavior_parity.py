@@ -51,8 +51,26 @@ class _PageViewWriteService:
         self.local_write_calls += 1
         return False
 
+    def save_bid_selected_page(self, *_args, **_kwargs):
+        return False
+
     def is_expected_deferred_write_blocked(self, _database_id: str) -> bool:
         return False
+
+
+class _SqlWorkspaceService:
+    def __init__(self, *, sql: bool) -> None:
+        self.sql = sql
+        self.write_calls = 0
+
+    def uses_sql_workspace(self, _database_id: str) -> bool:
+        return self.sql
+
+    def save_page_view(self, *_args, **_kwargs):
+        self.write_calls += 1
+
+    def save_active_page(self, *_args, **_kwargs):
+        self.write_calls += 1
 
 
 class _SequenceUseCase:
@@ -210,14 +228,17 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         for backend in ("mdb", "sql"):
             with self.subTest(backend=backend):
                 writes = _PageViewWriteService(sql=backend == "sql")
+                workspace = _SqlWorkspaceService(sql=backend == "sql")
                 manager = DeferredPersistenceManager(
                     writes,
+                    workspace,
                     logger_=logging.getLogger(
                         f"tests.mdb_sql_behavior_parity.{backend}"
                     ),
                 )
                 manager.schedule_page_view_state(
                     "database",
+                    "7",
                     "107",
                     2.0,
                     10.0,
@@ -226,6 +247,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 self.assertTrue(manager.cleanup())
                 self.assertEqual(manager.pending_count, 0)
                 self.assertEqual(writes.local_write_calls, 0)
+                self.assertEqual(workspace.write_calls, 1 if backend == "sql" else 0)
 
     @staticmethod
     def _local_composite_service():

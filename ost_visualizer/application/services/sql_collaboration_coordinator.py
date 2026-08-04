@@ -568,18 +568,6 @@ class SqlCollaborationCoordinator:
             runtime.command_event.set()
             return True
 
-    def is_resource_recovering(self, database_id: str, resource: ResourceRef) -> bool:
-        return self._pending_mutations.has_resource_in_states(
-            database_id,
-            resource,
-            frozenset(
-                {
-                    PendingMutationState.RECOVERING,
-                    PendingMutationState.UNCERTAIN,
-                }
-            ),
-        )
-
     def drain_database_mutations_async(
         self,
         database_id: str,

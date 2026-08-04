@@ -54,6 +54,9 @@ class DatabaseProjectReader(SqlProjectReader):
             return SqlProjectReader._schema(self, connection)
         return MdbReader._schema(self, connection)
 
+    def _hydrates_bid_navigation_snapshots(self) -> bool:
+        return self._current_backend() == DatabaseBackend.SQL_SERVER
+
     def _record_caught_read_error(
         self, exc: BaseException, locator: Optional[str] = None
     ) -> bool:

@@ -66,6 +66,8 @@ class MdbFileParser(IFileParser):
             bid_condition_folders,
             selected_page_uid,
             takeoff_extras,
+            cover_sheet_data,
+            page_delete_content_uids,
         ) = self.parser.get_bid_data(file_path, bid_uid)
         pages = build_pages_from_bid_data(bid_pages, bid_takeoffs)
         bid_layers = self._load_bid_layers(file_path, bid_uid)
@@ -81,6 +83,8 @@ class MdbFileParser(IFileParser):
             bid_condition_folders=bid_condition_folders,
             selected_page_uid=selected_page_uid,
             takeoff_extras=takeoff_extras,
+            cover_sheet_data=cover_sheet_data,
+            page_delete_content_uids=page_delete_content_uids,
         )
 
     def get_bid_layers_for_sidebar(self, file_path: str, bid_uid: str):

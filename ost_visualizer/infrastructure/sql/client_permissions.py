@@ -18,13 +18,21 @@ SQL_CLIENT_COLLABORATION_WRITE_TABLES = (
     "EntityVersions",
     "ChangeLog",
 )
+SQL_CLIENT_WORKSPACE_WRITE_TABLES = (
+    "UserBidWorkspaceState",
+    "UserPageWorkspaceState",
+)
+SQL_CLIENT_DIRECT_WRITE_TABLES = (
+    *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+    *SQL_CLIENT_WORKSPACE_WRITE_TABLES,
+)
 SQL_CLIENT_TRANSACTION_MARKER_TABLE = "ChangeTransactions"
 SQL_CLIENT_PROTECTED_OSTV_TABLES = tuple(
     table.name
     for table in SQL_SCHEMA_V1.tables
     if table.name
     not in {
-        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+        *SQL_CLIENT_DIRECT_WRITE_TABLES,
         SQL_CLIENT_TRANSACTION_MARKER_TABLE,
     }
 )
@@ -54,9 +62,7 @@ def require_sql_client_editability(
             "@key=N'ostv_transaction_id', @value=?; "
         )
         context_parameters = (session_id, transaction_id)
-    writable_placeholders = ", ".join(
-        "?" for _ in SQL_CLIENT_COLLABORATION_WRITE_TABLES
-    )
+    writable_placeholders = ", ".join("?" for _ in SQL_CLIENT_DIRECT_WRITE_TABLES)
     protected_placeholders = ", ".join("?" for _ in SQL_CLIENT_PROTECTED_OSTV_TABLES)
     marker_name = "N'ostv.' + QUOTENAME(?)"
     cursor.execute(
@@ -120,10 +126,10 @@ def require_sql_client_editability(
         *SQL_CLIENT_DATABASE_ROLES,
         *SQL_CLIENT_SCHEMA_VISIBILITY,
         *(SQL_CLIENT_TRANSACTION_MARKER_TABLE for _ in range(5)),
-        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
-        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+        *SQL_CLIENT_DIRECT_WRITE_TABLES,
+        *SQL_CLIENT_DIRECT_WRITE_TABLES,
         *SQL_CLIENT_PROTECTED_OSTV_TABLES,
-        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+        *SQL_CLIENT_DIRECT_WRITE_TABLES,
         *SQL_CLIENT_PROTECTED_OSTV_TABLES,
     )
     snapshot = cursor.fetchone()
@@ -173,16 +179,17 @@ def require_sql_client_editability(
                 "This SQL database is not writable by this OST Visualizer version.",
             )
         )
-    collaboration_row = snapshot[15:18]
+    direct_write_row = snapshot[15:18]
     marker_row = snapshot[18:23]
     if not _sql_integer_values_match(
-        collaboration_row,
-        (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0),
+        direct_write_row,
+        (len(SQL_CLIENT_DIRECT_WRITE_TABLES), 0, 0),
     ) or not _sql_integer_values_match(marker_row, (1, 1, 0, 0, 1)):
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.PERMISSION_DENIED,
-                "SQL editing requires the canonical collaboration permissions.",
+                "SQL editing requires the canonical collaboration permissions and "
+                "workspace permissions.",
             )
         )
 

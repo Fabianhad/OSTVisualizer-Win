@@ -51,7 +51,7 @@ from ost_visualizer.infrastructure.sql.errors import (
 )
 from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionProbe
 from ost_visualizer.infrastructure.sql.client_permissions import (
-    SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+    SQL_CLIENT_DIRECT_WRITE_TABLES,
     SQL_CLIENT_DATABASE_ROLES,
     _sql_integer_values_match,
     apply_sql_client_permissions,
@@ -131,7 +131,7 @@ def _canonical_writer_permission_snapshot(
                 1,
             )
         ),
-        *(collaboration or (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0)),
+        *(collaboration or (len(SQL_CLIENT_DIRECT_WRITE_TABLES), 0, 0)),
         *marker,
     )
 
@@ -302,7 +302,7 @@ class _CreationCursor:
         if "COUNT(*) FROM sys.tables" in self._last_sql:
             return (0,)
         if "FROM sys.tables" in self._last_sql:
-            return (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0)
+            return (len(SQL_CLIENT_DIRECT_WRITE_TABLES), 0, 0)
         if "VIEW CHANGE TRACKING" in self._last_sql:
             return (1, 1, 0, 0, 1)
         if "sp_getapplock" in self._last_sql:
@@ -372,7 +372,7 @@ class _WriterCursor(_CreationCursor):
                 1,
             )
         if "FROM sys.tables" in self._last_sql:
-            return (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0)
+            return (len(SQL_CLIENT_DIRECT_WRITE_TABLES), 0, 0)
         if "VIEW CHANGE TRACKING" in self._last_sql:
             return (1, 1, 0, 0, 1)
         if "sp_getapplock" in self._last_sql:
@@ -471,7 +471,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 role_result,
                 metadata_result,
                 collaboration_result=(
-                    len(SQL_CLIENT_COLLABORATION_WRITE_TABLES),
+                    len(SQL_CLIENT_DIRECT_WRITE_TABLES),
                     0,
                     0,
                 ),
@@ -515,7 +515,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 role_result,
                 metadata_result,
                 collaboration_result=(
-                    len(SQL_CLIENT_COLLABORATION_WRITE_TABLES),
+                    len(SQL_CLIENT_DIRECT_WRITE_TABLES),
                     0,
                     0,
                 ),
@@ -581,7 +581,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connection_manager=_PermissionManager(
                 (1, 1, 1, 1, 1),
                 current,
-                (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 1, 0),
+                (len(SQL_CLIENT_DIRECT_WRITE_TABLES), 1, 0),
             ),
         )
         self.assertFalse(denied_change_log.can_edit(descriptor.database_id))
@@ -591,7 +591,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connection_manager=_PermissionManager(
                 (1, 1, 1, 1, 1),
                 current,
-                (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 1),
+                (len(SQL_CLIENT_DIRECT_WRITE_TABLES), 0, 1),
             ),
         )
         self.assertFalse(writable_schema_ledger.can_edit(descriptor.database_id))
@@ -872,6 +872,34 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertIsInstance(uid, int)
         with self.assertRaisesRegex(RuntimeError, "has not been generated"):
             str(uid)
+
+    def test_sql_writer_rejects_shared_page_navigation_and_view_state_paths(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "per-user workspace"):
+            writer.save_page_view_state(
+                descriptor.database_id,
+                "107",
+                2.0,
+                10.0,
+                20.0,
+            )
+        with self.assertRaisesRegex(RuntimeError, "per-user workspace"):
+            writer.save_bid_selected_page(
+                descriptor.database_id,
+                "7",
+                "107",
+            )
 
     def test_writer_router_error_policy_uses_backend_not_sql_context_presence(self):
         registry = DatabaseDescriptorRegistry()

@@ -1,4 +1,5 @@
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.file_results import FileLoadResult
@@ -10,6 +11,9 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 from ost_visualizer.infrastructure.persistence.repositories import (
     file_project_repository,
 )
+from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
+    BidDataReaderMixin,
+)
 
 FileProjectRepository = file_project_repository.FileProjectRepository
 MdbFileParser = file_project_repository.MdbFileParser
@@ -17,7 +21,7 @@ MdbFileParser = file_project_repository.MdbFileParser
 
 class FakeMdbReaderWithLayerFailure:
     def get_bid_data(self, file_path, bid_uid):
-        return ({}, [], {}, {}, {}, {}, [], {}, None, {})
+        return ({}, [], {}, {}, {}, {}, [], {}, None, {}, None, None)
 
     def get_bid_layers_for_sidebar(self, file_path, bid_uid):
         raise ValueError("bad layer sequence")
@@ -39,6 +43,83 @@ class FakeLifecycleParser:
 
 
 class MdbFileParserTests(unittest.TestCase):
+    def test_sql_bid_read_hydrates_cover_sheet_snapshots_in_navigation_result(self):
+        cover_sheet = object()
+        connection = object()
+
+        class Reader(BidDataReaderMixin):
+            @contextmanager
+            def _connection(self, _file_path):
+                yield connection
+
+            @staticmethod
+            def _schema(_connection):
+                return SimpleNamespace(require_column=lambda *_args: None)
+
+            @staticmethod
+            def _hydrates_bid_navigation_snapshots():
+                return True
+
+            @staticmethod
+            def _parse_cdn_types(_connection):
+                return {}
+
+            @staticmethod
+            def _parse_bid_layers_for_bid(_connection, _bid_uid):
+                return []
+
+            @staticmethod
+            def _parse_bid_pages_for_bid(_connection, _bid_uid, _bid_layers, _schema):
+                return {}
+
+            @staticmethod
+            def _parse_bid_areas_for_bid(_connection, _bid_uid, _schema):
+                return {}
+
+            @staticmethod
+            def _parse_page_area_selections_for_bid(_connection, _bid_pages, _schema):
+                return {}
+
+            @staticmethod
+            def _parse_bid_conditions_for_bid(
+                _connection, _bid_uid, _bid_layers, _cdn_types, _schema
+            ):
+                return {}
+
+            @staticmethod
+            def _parse_bid_takeoffs_for_bid(_connection, _bid_uid, _schema):
+                return [], {}
+
+            @staticmethod
+            def _parse_bid_annotations_for_bid(
+                _connection, _bid_uid, _bid_layers, _schema
+            ):
+                return []
+
+            @staticmethod
+            def _parse_bid_condition_folders_for_bid(_connection, _bid_uid, _schema):
+                return {}
+
+            @staticmethod
+            def _parse_bid_selected_page(_connection, _bid_uid):
+                return None
+
+            @staticmethod
+            def _parse_cover_sheet_data(actual_connection, bid_uid):
+                self.assertIs(actual_connection, connection)
+                self.assertEqual(bid_uid, "bid-1")
+                return cover_sheet
+
+            @staticmethod
+            def _parse_pages_with_delete_content(actual_connection, bid_uid):
+                self.assertIs(actual_connection, connection)
+                self.assertEqual(bid_uid, "bid-1")
+                return {"page-1"}
+
+        result = Reader().get_bid_data("sql-database", "bid-1")
+        self.assertIs(result[-2], cover_sheet)
+        self.assertEqual(result[-1], frozenset({"page-1"}))
+
     def test_project_file_lookup_requires_context_when_local_ids_collide(self):
         hierarchy = HierarchyData(
             loaded_files=[

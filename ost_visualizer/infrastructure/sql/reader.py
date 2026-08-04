@@ -93,3 +93,6 @@ class SqlProjectReader(MdbReader):
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         del connection
         return self._schema_contract
+
+    def _hydrates_bid_navigation_snapshots(self) -> bool:
+        return True

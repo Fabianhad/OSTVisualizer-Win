@@ -163,6 +163,36 @@ class FakeProjectWriteService:
         )
 
 
+class FakeSqlWorkspaceService:
+    def __init__(self, write_service):
+        self._write_service = write_service
+
+    def uses_sql_workspace(self, _db_path):
+        return self._write_service.queue_sql_settings
+
+    def save_page_view(
+        self, db_path, bid_uid, page_uid, zoom_fac, current_x, current_y
+    ):
+        self._write_service.queued_settings.append(
+            (
+                db_path,
+                bid_uid,
+                page_uid,
+                "view_state",
+                [zoom_fac, current_x, current_y],
+            )
+        )
+
+    def save_active_page(self, db_path, bid_uid, page_uid):
+        self._write_service.queued_settings.append(
+            (db_path, bid_uid, page_uid, "bid_selected_page", [])
+        )
+
+
+def _workspace_service(write_service):
+    return FakeSqlWorkspaceService(write_service)
+
+
 class DeferredPersistenceManagerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -172,20 +202,22 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.service = FakeProjectWriteService()
         self.logger = logging.getLogger("tests.deferred_persistence_manager")
         self.logger.disabled = True
-        self.manager = DeferredPersistenceManager(self.service, logger_=self.logger)
+        self.manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service), logger_=self.logger
+        )
 
     def tearDown(self):
         self.manager.cleanup()
         self.logger.disabled = False
 
     def test_queues_without_immediate_write(self):
-        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         self.assertEqual(self.service.calls, [])
         self.assertEqual(self.manager.pending_count, 1)
 
     def test_coalesces_repeated_writes_by_key_and_last_write_wins(self):
-        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
-        self.manager.schedule_page_view_state("a.mdb", "p1", 4.0, 30.0, 40.0)
+        self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
+        self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 4.0, 30.0, 40.0)
         self.assertTrue(self.manager.flush())
         self.assertEqual(
             self.service.calls,
@@ -237,15 +269,17 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertEqual(self.manager.pending_count, 0)
 
-    def test_sql_selected_page_uses_presence_while_layer_visibility_is_queued(self):
+    def test_sql_selected_page_uses_workspace_service_while_layer_is_mutation(self):
         self.service.queue_sql_settings = True
         self.manager.schedule_bid_selected_page("sql-db", "7", "p2")
         self.manager.schedule_layer_show("sql-db", "layer-1", False)
+        self.assertEqual(self.service.queued_settings, [])
         self.assertTrue(self.manager.flush())
         self.assertEqual(self.service.calls, [])
         self.assertEqual(
             self.service.queued_settings,
             [
+                ("sql-db", "7", "p2", "bid_selected_page", []),
                 ("sql-db", "layer-1", "layer_show", [False]),
             ],
         )
@@ -292,9 +326,11 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_expected_blocked_visual_write_is_skipped_without_warning(self):
         self.service.expected_deferred_write_blocked = True
         logger = logging.getLogger("tests.deferred_persistence_expected_block")
-        manager = DeferredPersistenceManager(self.service, logger_=logger)
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service), logger_=logger
+        )
         self.addCleanup(manager.cleanup)
-        manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(manager.flush())
         self.assertEqual(manager.pending_count, 0)
@@ -303,9 +339,11 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_expected_blocked_visual_write_does_not_block_cleanup(self):
         self.service.expected_deferred_write_blocked = True
         manager = DeferredPersistenceManager(
-            self.service, logger_=logging.getLogger(__name__)
+            self.service,
+            _workspace_service(self.service),
+            logger_=logging.getLogger(__name__),
         )
-        manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         self.assertTrue(manager.cleanup())
         self.assertEqual(manager.pending_count, 0)
         self.assertEqual(self.service.calls, [])
@@ -313,7 +351,9 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_expected_block_does_not_skip_critical_deferred_write(self):
         self.service.expected_deferred_write_blocked = True
         logger = logging.getLogger("tests.deferred_persistence_critical_block")
-        manager = DeferredPersistenceManager(self.service, logger_=logger)
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service), logger_=logger
+        )
         self.addCleanup(manager.cleanup)
         manager.schedule(
             "critical_data",
@@ -339,7 +379,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_cancel_bid_selected_pages_removes_only_matching_bid_writes(self):
         self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
         self.manager.schedule_bid_selected_page("a.mdb", "b2", "p2")
-        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         self.manager.cancel_bid_selected_pages("a.mdb", ["b1"])
         self.assertEqual(self.manager.pending_count, 2)
         self.assertTrue(self.manager.flush())
@@ -354,7 +394,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_cancel_bid_selected_pages_for_file_uses_expected_key_only(self):
         self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
         self.manager.schedule_bid_selected_page("b.mdb", "b1", "p2")
-        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         self.manager.cancel_bid_selected_pages_for_file("a.mdb")
         self.assertEqual(self.manager.pending_count, 2)
         self.assertTrue(self.manager.flush())
@@ -369,7 +409,9 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_failed_bid_selected_page_is_resolved_without_warning(self):
         self.service.fail_methods.add("save_bid_selected_page")
         logger = logging.getLogger("tests.deferred_selected_page_failure")
-        manager = DeferredPersistenceManager(self.service, logger_=logger)
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service), logger_=logger
+        )
         self.addCleanup(manager.cleanup)
         manager.schedule_bid_selected_page(
             r"C:\OCS Documents\OST\OST Projects.mdb", "13245", "15477"
@@ -394,7 +436,9 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_failed_bid_selected_page_does_not_block_shutdown_cleanup(self):
         self.service.fail_methods.add("save_bid_selected_page")
         manager = DeferredPersistenceManager(
-            self.service, logger_=logging.getLogger(__name__)
+            self.service,
+            _workspace_service(self.service),
+            logger_=logging.getLogger(__name__),
         )
         manager.schedule_bid_selected_page("a.mdb", "b1", "missing-page")
         manager.begin_shutdown()
@@ -405,8 +449,10 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_failed_page_view_state_is_silently_abandoned_during_shutdown(self):
         self.service.fail_methods.add("save_page_view_state")
         logger = logging.getLogger("tests.deferred_page_view_shutdown")
-        manager = DeferredPersistenceManager(self.service, logger_=logger)
-        manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service), logger_=logger
+        )
+        manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         manager.begin_shutdown()
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(manager.cleanup())
@@ -421,42 +467,113 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             )
         )
 
-    def test_stopped_sql_page_view_queue_does_not_block_shutdown(self):
+    def test_sql_page_view_flushes_to_client_state_during_shutdown(self):
         self.service.queue_sql_settings = True
         attempts = []
         self.service.queue_page_setting_if_sql = (
             lambda *_args, **_kwargs: attempts.append("queue") or False
         )
         logger = logging.getLogger("tests.deferred_sql_page_view_shutdown")
-        manager = DeferredPersistenceManager(self.service, logger_=logger)
-        manager.schedule_page_view_state("sql-db", "107", 2.0, 10.0, 20.0)
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service), logger_=logger
+        )
+        manager.schedule_page_view_state("sql-db", "7", "107", 2.0, 10.0, 20.0)
         manager.begin_shutdown()
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(manager.cleanup())
         self.assertEqual(manager.pending_count, 0)
         self.assertEqual(attempts, [])
+        self.assertEqual(
+            self.service.queued_settings,
+            [("sql-db", "7", "107", "view_state", [2.0, 10.0, 20.0])],
+        )
 
-    def test_rejected_sql_page_view_is_terminal_and_not_retried(self):
-        attempts = []
+    def test_sql_page_view_uses_workspace_service_without_mutation_queue(self):
         self.service.queue_sql_settings = True
+        attempts = []
         self.service.queue_page_setting_if_sql = (
             lambda *_args, **_kwargs: attempts.append("queue") or False
         )
         manager = DeferredPersistenceManager(
             self.service,
+            _workspace_service(self.service),
             logger_=logging.getLogger("tests.rejected_sql_page_view"),
         )
-        manager.schedule_page_view_state("sql-db", "107", 2.0, 10.0, 20.0)
+        manager.schedule_page_view_state("sql-db", "7", "107", 2.0, 10.0, 20.0)
         with self.assertNoLogs("tests.rejected_sql_page_view", level="WARNING"):
             self.assertTrue(manager.flush())
             self.assertTrue(manager.flush())
-        self.assertEqual(attempts, ["queue"])
+        self.assertEqual(attempts, [])
+        self.assertEqual(
+            self.service.queued_settings,
+            [("sql-db", "7", "107", "view_state", [2.0, 10.0, 20.0])],
+        )
         self.assertEqual(manager.pending_count, 0)
+
+    def test_delayed_view_writes_keep_the_bid_captured_at_schedule_time(self):
+        self.service.queue_sql_settings = True
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service)
+        )
+        self.addCleanup(manager.cleanup)
+        manager.schedule_page_view_state(
+            "sql-db", "bid-a", "shared-page", 2.0, 10.0, 20.0
+        )
+        manager.schedule_page_view_state(
+            "sql-db", "bid-b", "shared-page", 3.0, 30.0, 40.0
+        )
+        self.assertTrue(manager.flush())
+        self.assertEqual(
+            self.service.queued_settings,
+            [
+                (
+                    "sql-db",
+                    "bid-a",
+                    "shared-page",
+                    "view_state",
+                    [2.0, 10.0, 20.0],
+                ),
+                (
+                    "sql-db",
+                    "bid-b",
+                    "shared-page",
+                    "view_state",
+                    [3.0, 30.0, 40.0],
+                ),
+            ],
+        )
+
+    def test_connection_block_does_not_drop_sql_workspace_state(self):
+        self.service.queue_sql_settings = True
+        self.service.expected_deferred_write_blocked = True
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service)
+        )
+        self.addCleanup(manager.cleanup)
+        manager.schedule_bid_selected_page("sql-db", "7", "107")
+        self.assertTrue(manager.flush())
+        self.assertEqual(
+            self.service.queued_settings,
+            [("sql-db", "7", "107", "bid_selected_page", [])],
+        )
+
+    def test_deleting_sql_bid_cancels_pending_workspace_write(self):
+        self.service.queue_sql_settings = True
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service)
+        )
+        self.addCleanup(manager.cleanup)
+        manager.schedule_bid_selected_page("sql-db", "7", "107")
+        manager.cancel_bid_selected_pages("sql-db", ["7"])
+        self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(self.service.queued_settings, [])
 
     def test_selected_page_failure_does_not_drop_real_data_write(self):
         self.service.fail_methods.add("save_bid_selected_page")
         manager = DeferredPersistenceManager(
-            self.service, logger_=logging.getLogger(__name__)
+            self.service,
+            _workspace_service(self.service),
+            logger_=logging.getLogger(__name__),
         )
         self.addCleanup(manager.cleanup)
         critical_calls = []
@@ -501,7 +618,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.assertEqual(self.manager.pending_count, 0)
 
     def test_cleanup_abandons_noncritical_and_flushes_critical_writes(self):
-        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
         self.manager.schedule_layer_show("a.mdb", "l1", False)
         self.manager.schedule_page_show_mode("a.mdb", "p1", 2)
@@ -623,9 +740,11 @@ class RecordingDeferredPersistence:
         self.layer_calls.append((db_path, layer_uid, show))
 
     def schedule_page_view_state(
-        self, db_path, page_uid, zoom_fac, current_x, current_y
+        self, db_path, bid_uid, page_uid, zoom_fac, current_x, current_y
     ):
-        self.page_view_calls.append((db_path, page_uid, zoom_fac, current_x, current_y))
+        self.page_view_calls.append(
+            (db_path, bid_uid, page_uid, zoom_fac, current_x, current_y)
+        )
 
     def schedule_bid_selected_page(self, db_path, bid_uid, page_uid):
         self.selected_page_calls.append((db_path, bid_uid, page_uid))
@@ -740,6 +859,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         service.fail_methods.add("save_page_view_state")
         manager = DeferredPersistenceManager(
             service,
+            _workspace_service(service),
             logger_=logging.getLogger("tests.close_pending_page_view"),
         )
         shutdown_requests = []
@@ -755,7 +875,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window.handlers = SimpleNamespace(
             ui_event=SimpleNamespace(
                 capture_current_page_state_for_shutdown=lambda: (
-                    manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+                    manager.schedule_page_view_state(
+                        "a.mdb", "b1", "p1", 2.0, 10.0, 20.0
+                    )
                 )
             )
         )
@@ -1314,7 +1436,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(pages["p1"].current_y, 40.0)
         self.assertEqual(
             coordinator._deferred_persistence.page_view_calls,
-            [("a.mdb", "p1", 3.0, 30.0, 40.0)],
+            [("a.mdb", "bid-1", "p1", 3.0, 30.0, 40.0)],
         )
         self.assertEqual(direct_writes, [])
 
@@ -1324,7 +1446,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(pages["p1"].zoom_fac, 2.5)
         self.assertEqual(
             coordinator._deferred_persistence.page_view_calls,
-            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+            [("a.mdb", "bid-1", "p1", 2.5, 10.0, 20.0)],
         )
 
     def test_active_page_switch_defers_selected_page_and_outgoing_view_state(self):
@@ -1337,7 +1459,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             update_conditions_quantities=lambda: None
         )
         coordinator._placement = SimpleNamespace(is_active=False)
-        coordinator._update_page_info_status = lambda: None
+        coordinator._sync_page_info_status = lambda: None
         coordinator._update_export_menu_state = lambda: None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
@@ -1345,7 +1467,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.handle_active_page_changed("p2")
         self.assertEqual(
             coordinator._deferred_persistence.page_view_calls,
-            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+            [("a.mdb", "bid-1", "p1", 2.5, 10.0, 20.0)],
         )
         self.assertEqual(
             coordinator._deferred_persistence.selected_page_calls,
@@ -1378,7 +1500,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             is_active=True,
             force_exit=lambda: force_exit_calls.append("force_exit"),
         )
-        coordinator._update_page_info_status = lambda: None
+        coordinator._sync_page_info_status = lambda: None
         coordinator._update_export_menu_state = lambda: None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
@@ -1412,7 +1534,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(pages["p1"].current_y, 20.0)
         self.assertEqual(
             coordinator._deferred_persistence.page_view_calls,
-            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+            [("a.mdb", "bid-1", "p1", 2.5, 10.0, 20.0)],
         )
         self.assertEqual(
             coordinator._deferred_persistence.selected_page_calls,
@@ -1429,7 +1551,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.capture_current_page_state_for_shutdown()
         self.assertEqual(
             coordinator._deferred_persistence.page_view_calls,
-            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+            [("a.mdb", "bid-1", "p1", 2.5, 10.0, 20.0)],
         )
         self.assertEqual(
             coordinator._deferred_persistence.selected_page_calls,
@@ -1440,10 +1562,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         service = FakeProjectWriteService()
         service.fail_methods.add("save_page_view_state")
         logger = logging.getLogger("tests.failed_close_time_page_view")
-        manager = DeferredPersistenceManager(service, logger_=logger)
+        manager = DeferredPersistenceManager(
+            service, _workspace_service(service), logger_=logger
+        )
         self.addCleanup(manager.cleanup)
         self.addCleanup(lambda: service.fail_methods.clear())
-        manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(manager.flush())
             self.assertTrue(manager.flush())
@@ -1886,7 +2010,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_repeated_layer_toggles_coalesce_to_last_write(self):
         service = FakeProjectWriteService()
         manager = DeferredPersistenceManager(
-            service, logger_=logging.getLogger(__name__)
+            service,
+            _workspace_service(service),
+            logger_=logging.getLogger(__name__),
         )
         self.addCleanup(manager.cleanup)
         manager.schedule_layer_show("a.mdb", "l1", False)

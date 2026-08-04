@@ -13,6 +13,7 @@ from ...application.dtos.remote_projection_dtos import (
     RemoteProjectionToken,
 )
 from ...application.dtos.collaboration_dtos import (
+    CollaborationStatus,
     EditLeaseHandle,
     EditLeaseLoss,
     EditLeaseResult,
@@ -79,6 +80,7 @@ from .toolbar_state_coordinator import ToolbarStateCoordinator
 from .viewer_sync_coordinator import ViewerSyncCoordinator
 
 logger = logging.getLogger(__name__)
+_BID_PAGES_LOADING_STATUS = "Loading bid pages…"
 MeshRenderBuffers = Tuple[
     List[List[float]],
     List[List[float]],
@@ -431,7 +433,7 @@ class UIEventCoordinator:
                 and self.opengl_viewer
             ):
                 self._replay_mesh_if_current(self.opengl_viewer)
-        self._update_page_info_status()
+        self._sync_page_info_status()
         self._toolbar.refresh()
 
     def set_opengl_viewer(self, viewer) -> None:
@@ -883,7 +885,7 @@ class UIEventCoordinator:
                 self.takeoff_sidebar.restore_selection(page_uids, active_uid)
         else:
             self._sidebar.update_conditions_quantities()
-            self._update_page_info_status()
+            self._sync_page_info_status()
         if (
             self._pending_takeoff_place_condition_uid
             and self._pending_takeoff_place_condition_uid
@@ -909,12 +911,14 @@ class UIEventCoordinator:
         if index == TAB_INDEX_TAKEOFF:
             self._activate_takeoff_workspace()
             self._update_export_menu_state()
+            self._sync_page_info_status()
             return
         if index == TAB_INDEX_SUMMARY:
             self._load_condition_summary()
             self._update_export_menu_state()
+            self._sync_page_info_status()
             return
-        self._clear_page_info_status()
+        self._sync_page_info_status()
         self._update_export_menu_state()
 
     def navigate_to_takeoff_page(self, page_uid: str, named_view_uid: str = "") -> None:
@@ -984,10 +988,20 @@ class UIEventCoordinator:
             page.zoom_fac = zoom_fac
             page.current_x = current_x
             page.current_y = current_y
-        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+        can_persist = self.ui_access_manager.is_allowed(
+            Feature.EDIT_PAGE_SETTINGS
+        ) or self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
+        if not can_persist:
             return
         self._deferred_persistence.schedule_page_view_state(
-            bid_ref.file_path, page_uid, zoom_fac, current_x, current_y
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            page_uid,
+            zoom_fac,
+            current_x,
+            current_y,
         )
 
     def _apply_pending_hotlink_named_view_focus(self, require_stable: bool) -> bool:
@@ -2225,6 +2239,9 @@ class UIEventCoordinator:
             return
         self._is_cleaning_up = True
         self.project_operations.cancel_navigation_load()
+        if self._status_panel:
+            self._status_panel.set_page_info("")
+        self._sync_collaboration_status("", reset_mutation=True)
         self._invalidate_mesh_scene_request()
         if self._plan_view_handler is not None:
             self._plan_view_handler.invalidate_pending_takeoff_placements()
@@ -2296,6 +2313,7 @@ class UIEventCoordinator:
         self.plan_view = None
         self._condition_handler = None
         self._deferred_persistence = None
+        self._status_panel = None
 
     def capture_current_page_state_for_shutdown(self) -> None:
         self._save_current_page_view_state()
@@ -2653,6 +2671,27 @@ class UIEventCoordinator:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected == BidRef(database_id, bid_uid):
             self._status_panel.set_collaboration_presence(users or [])
+
+    def _sync_collaboration_status(
+        self,
+        database_id: str,
+        *,
+        reset_mutation: bool,
+    ) -> Optional[CollaborationStatus]:
+        if not self._status_panel:
+            return None
+        self._status_panel.set_collaboration_presence([])
+        if reset_mutation:
+            self._status_panel.set_collaboration_mutation_state("", 0)
+        if not database_id:
+            self._status_panel.set_collaboration_state("stopped")
+            return None
+        collaboration_status = self._sql_collaboration.status(database_id)
+        self._status_panel.set_collaboration_state(
+            collaboration_status.state.value,
+            collaboration_status.message,
+        )
+        return collaboration_status
 
     def _on_full_reconciliation_required(
         self, database_id: str = "", reason: str = ""
@@ -3038,10 +3077,8 @@ class UIEventCoordinator:
         self._set_takeoff_tab_visible(False)
         self._refresh_project_tree_after_file_unload()
         self._update_export_menu_state()
-        if self._status_panel:
-            self._status_panel.set_collaboration_presence([])
-            self._status_panel.set_collaboration_mutation_state("", 0)
-            self._status_panel.set_collaboration_state("stopped")
+        self._sync_page_info_status()
+        self._sync_collaboration_status("", reset_mutation=True)
         self.main_window.refresh_window_title()
 
     def _refresh_project_tree_after_file_unload(self) -> None:
@@ -3080,16 +3117,12 @@ class UIEventCoordinator:
         self._viewer.clear_plan_view()
         self._clear_mesh_views_for_scene_update()
         self._update_export_menu_state()
-        if self._status_panel:
-            self._status_panel.set_collaboration_presence([])
-            self._status_panel.set_collaboration_mutation_state("", 0)
-        if file_path:
-            collaboration_status = self._sql_collaboration.status(file_path)
-            if self._status_panel:
-                self._status_panel.set_collaboration_state(
-                    collaboration_status.state.value,
-                    collaboration_status.message,
-                )
+        self._sync_page_info_status()
+        collaboration_status = self._sync_collaboration_status(
+            file_path or "",
+            reset_mutation=True,
+        )
+        if collaboration_status is not None:
             if (
                 collaboration_status.state
                 == SynchronizationState.RECONCILIATION_REQUIRED
@@ -3242,11 +3275,11 @@ class UIEventCoordinator:
             self._clear_mesh_views_for_scene_update()
             self._set_takeoff_tab_visible(False)
             self._update_export_menu_state()
+            self._sync_page_info_status()
+            self._sync_collaboration_status("", reset_mutation=True)
             self.main_window.refresh_window_title()
             return
         prev_current_file_path = self.project_data.get_current_file_path()
-        if self._status_panel:
-            self._status_panel.set_page_info("Loading bid pages…")
         try:
             self.project_operations.request_load_bid(
                 bid_ref,
@@ -3258,6 +3291,7 @@ class UIEventCoordinator:
                     message,
                 ),
             )
+            self._sync_page_info_status()
         except DatabaseCatalogError as exc:
             logger.warning("Failed to start the selected SQL bid load", exc_info=True)
             self._complete_bid_navigation_load(
@@ -3297,7 +3331,7 @@ class UIEventCoordinator:
             self._restore_project_tree_bid_selection_if_needed()
             if load_error:
                 show_warning(self.main_window, "Open SQL Bid", load_error)
-            self._update_page_info_status()
+            self._sync_page_info_status()
             return
         if prev_bid_ref and bid_ref.file_path != prev_bid_ref.file_path:
             self._sql_collaboration.update_presence(prev_bid_ref.file_path, None, None)
@@ -3306,6 +3340,12 @@ class UIEventCoordinator:
         self._placement.force_exit()
         self.ensure_select_mode()
         self.ui_state_manager.set_bid_selection(bid_ref)
+        self._sync_collaboration_status(
+            bid_ref.file_path,
+            reset_mutation=bool(
+                prev_bid_ref and prev_bid_ref.file_path != bid_ref.file_path
+            ),
+        )
         self._sql_collaboration.update_presence(
             bid_ref.file_path, bid_ref.bid_uid, None
         )
@@ -3323,6 +3363,7 @@ class UIEventCoordinator:
         self._set_takeoff_tab_visible(True)
         if self._tab_widget and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
             self._activate_takeoff_workspace()
+        self._sync_page_info_status()
 
     def handle_page_selection(self, page_uids: List[str]) -> None:
         if self._nav.is_refreshing:
@@ -3364,7 +3405,7 @@ class UIEventCoordinator:
                 self.plan_view.cursor_mode,
             )
             self._placement.force_exit()
-        self._update_page_info_status()
+        self._sync_page_info_status()
         self._update_export_menu_state()
 
     def _sync_navigation_for_active_page(
@@ -3383,16 +3424,21 @@ class UIEventCoordinator:
         if self._nav.current_state != NavState.BID_ACTIVE_PAGES_SELECTED:
             self._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
 
-    def _clear_page_info_status(self) -> None:
-        if self._status_panel:
-            self._status_panel.set_page_info("")
-
-    def _update_page_info_status(self) -> None:
+    def _sync_page_info_status(self) -> None:
         if not self._status_panel:
+            return
+        if self.project_operations.navigation_load_in_progress():
+            self._status_panel.set_page_info(_BID_PAGES_LOADING_STATUS)
+            return
+        if not self._tab_widget or self._tab_widget.currentIndex() not in (
+            TAB_INDEX_TAKEOFF,
+            TAB_INDEX_SUMMARY,
+        ):
+            self._status_panel.set_page_info("")
             return
         selected = self.ui_state_manager.selected_page_uids
         if not selected:
-            self._clear_page_info_status()
+            self._status_panel.set_page_info("")
             return
         on_3d = self._view_stack is not None and self._view_stack.currentIndex() == 0
         if on_3d:
@@ -3455,7 +3501,7 @@ class UIEventCoordinator:
                 self._flush_dirty_mesh_refresh_if_needed()
         self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()
-        self._update_page_info_status()
+        self._sync_page_info_status()
 
     def _cache_bid_data(self, loaded_files: List[LoadedFile]) -> None:
         if self._bid_data_cache:
@@ -3490,7 +3536,11 @@ class UIEventCoordinator:
             return
         active_page_uid = self.ui_state_manager.active_page_uid
         page_uid = self.plan_view.current_page_uid if self.plan_view else None
-        can_persist = self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+        can_persist = self.ui_access_manager.is_allowed(
+            Feature.EDIT_PAGE_SETTINGS
+        ) or self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
         if page_uid and self.plan_view.is_view_state_stable:
             zoom_fac, cx, cy = self.plan_view.get_view_state()
             if zoom_fac > 0:
@@ -3501,7 +3551,12 @@ class UIEventCoordinator:
                     page.current_y = cy
                 if can_persist:
                     self._deferred_persistence.schedule_page_view_state(
-                        bid_ref.file_path, page_uid, zoom_fac, cx, cy
+                        bid_ref.file_path,
+                        bid_ref.bid_uid,
+                        page_uid,
+                        zoom_fac,
+                        cx,
+                        cy,
                     )
         if not can_persist:
             return

@@ -42,7 +42,11 @@ from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.config import (
+    TAB_INDEX_PROJECTS,
+    TAB_INDEX_SUMMARY,
+    TAB_INDEX_TAKEOFF,
+)
 from ost_visualizer.presentation.coordinators.navigation_state_machine import (
     NavigationStateMachine,
     NavState,
@@ -225,6 +229,12 @@ class _CollaborationStatusPanel:
         self.states = []
         self.mutation_states = []
         self.presence_states = []
+        self.page_info = ""
+        self.page_info_states = []
+
+    def set_page_info(self, message):
+        self.page_info = message
+        self.page_info_states.append(message)
 
     def set_collaboration_state(self, state, message=""):
         self.states.append((state, message))
@@ -686,6 +696,114 @@ class ImmediateNavigationOperations:
             return False
         completion(bool(success), "")
         return False
+
+
+class DeferredNavigationOperations:
+    def __init__(self):
+        self.loading = False
+        self.completion = None
+
+    def navigation_load_in_progress(self):
+        return self.loading
+
+    def cancel_navigation_load(self, _database_id=""):
+        self.loading = False
+        self.completion = None
+
+    def request_load_bid(self, _bid_ref, completion):
+        self.loading = True
+        self.completion = completion
+        return True
+
+    def complete(self, success, message=""):
+        completion = self.completion
+        self.loading = False
+        self.completion = None
+        completion(success, message)
+
+
+class NavigationStatusUiState:
+    def __init__(self):
+        self.bid_ref = None
+        self.selected_page_uids = []
+        self.active_page_uid = None
+        self.selected_file_path = "sql-database"
+
+    def get_selected_bid_ref(self):
+        return self.bid_ref
+
+    def set_bid_selection(self, bid_ref):
+        self.bid_ref = bid_ref
+
+    def set_database_selected(self, _selected, file_path=None):
+        self.selected_file_path = file_path
+
+    def set_file_path(self, file_path):
+        self.selected_file_path = file_path
+
+    def set_page_selection(self, page_uids):
+        self.selected_page_uids = list(page_uids)
+
+    def reset_selections(self):
+        self.bid_ref = None
+        self.selected_page_uids = []
+        self.active_page_uid = None
+
+    def set_project_uid(self, _project_uid):
+        pass
+
+
+class NavigationStatusProjectData:
+    def __init__(self):
+        self.current_file_path = "sql-database"
+        self.pages = {"page-1": SimpleNamespace(name="Page One")}
+
+    def get_current_file_path(self):
+        return self.current_file_path
+
+    def set_current_file(self, file_path):
+        self.current_file_path = file_path
+
+    def clear_bid(self):
+        pass
+
+    def deselect_pages(self):
+        pass
+
+    def get_page(self, page_uid):
+        return self.pages.get(page_uid)
+
+
+def navigation_status_coordinator(tab_index=TAB_INDEX_PROJECTS):
+    coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+    coordinator._is_cleaning_up = False
+    coordinator.project_operations = DeferredNavigationOperations()
+    coordinator._status_panel = _CollaborationStatusPanel()
+    coordinator._tab_widget = FakeTabWidget(index=tab_index)
+    coordinator._view_stack = FakeViewStack(index=1)
+    coordinator.opengl_viewer = None
+    coordinator.ui_state_manager = NavigationStatusUiState()
+    coordinator.project_data = NavigationStatusProjectData()
+    coordinator.main_window = FakeUnloadMainWindow()
+    coordinator._sql_collaboration = FakeSqlCollaboration()
+    coordinator._plan_view_handler = None
+    coordinator._placement = FakePlacement()
+    coordinator._viewer = FakeUnloadViewer()
+    coordinator._nav = FakeNav()
+    coordinator.ui_access_manager = FakeAccess()
+    coordinator._save_current_page_view_state = lambda: None
+    coordinator._sync_undo_bid = lambda: None
+    coordinator._clear_mesh_views_for_scene_update = lambda **_options: None
+    coordinator._reset_takeoff_workspace_state = lambda: None
+    coordinator._update_export_menu_state = lambda: None
+    coordinator._update_menu_state = lambda: None
+    coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+    coordinator._begin_mesh_views_for_bid_load = lambda _bid_ref: None
+    coordinator._resolve_bid_lock_state = lambda _bid_ref: None
+    coordinator.ensure_select_mode = lambda: None
+    coordinator._activate_takeoff_workspace = coordinator._sync_page_info_status
+    coordinator._load_condition_summary = lambda: None
+    return coordinator
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
@@ -1359,7 +1477,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             {"update_conditions_quantities": lambda _self: None},
         )()
         coordinator._update_export_menu_state = lambda: None
-        coordinator._update_page_info_status = lambda: None
+        coordinator._sync_page_info_status = lambda: None
         return coordinator
 
     def _make_3d_page_selection_coordinator(self):
@@ -1401,7 +1519,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             update_conditions_quantities=lambda: None
         )
         coordinator._update_export_menu_state = lambda: None
-        coordinator._update_page_info_status = lambda: None
+        coordinator._sync_page_info_status = lambda: None
         coordinator._plan_view_signaler = FakeMeshPlanSignaler()
         embedded = FakeMeshReceiver()
         detached = FakeMeshReceiver()
@@ -2237,7 +2355,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         configure_mesh_state(coordinator, opengl_viewer=FakeMeshReceiver())
         coordinator._pending_hotlink_page_uid = None
         coordinator._pending_hotlink_named_view = None
-        coordinator._update_page_info_status = lambda: None
+        coordinator._sync_page_info_status = lambda: None
         coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])
         coordinator._on_takeoffs_changed(page_uid="page-2", takeoff_uids=["t-2"])
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
@@ -2518,7 +2636,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._toolbar = FakeToolbar()
         coordinator._sidebar = FakeSidebar()
         coordinator.plan_view = None
-        coordinator._update_page_info_status = lambda: None
+        coordinator._sync_page_info_status = lambda: None
         publication = _MeshScenePublication(
             ("vertices", "normals", "indices", "colors"),
             {
@@ -3312,9 +3430,19 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.condition_summary_tab = None
         coordinator._condition_handler = None
         coordinator._deferred_persistence = None
+        status_panel = _CollaborationStatusPanel()
+        status_panel.set_page_info("Loading bid pages…")
+        status_panel.set_collaboration_state("healthy", "Connected")
+        status_panel.set_collaboration_mutation_state("recovering", 1, "Recovering")
+        coordinator._status_panel = status_panel
         coordinator.cleanup()
         coordinator.cleanup()
         self.assertEqual(visualization.cancelled_mesh_refreshes, 1)
+        self.assertEqual(status_panel.page_info, "")
+        self.assertEqual(status_panel.presence_states[-1], [])
+        self.assertEqual(status_panel.mutation_states[-1], ("", 0, ""))
+        self.assertEqual(status_panel.states[-1], ("stopped", ""))
+        self.assertIsNone(coordinator._status_panel)
 
     def test_clearing_takeoff_selection_keeps_placement_owned_highlight(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -3372,7 +3500,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._selected_takeoff_condition_uids = {"c1", "c2"}
         coordinator._selection_projected_condition_uids = {"c1", "c2"}
         configure_mesh_state(coordinator)
-        coordinator._update_page_info_status = lambda: None
+        coordinator._sync_page_info_status = lambda: None
         coordinator._on_view_stack_changed(0)
         self.assertEqual(coordinator._placement.force_exit_count, 1)
         self.assertIsNone(coordinator.ui_state_manager.place_condition_uid)
@@ -3390,6 +3518,120 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.ui_state_manager = None
         coordinator.plan_view = None
         coordinator._on_view_stack_changed(0)
+
+    def test_completed_background_bid_load_clears_loading_status_on_projects_tab(self):
+        coordinator = navigation_status_coordinator()
+        coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        coordinator.project_operations.complete(True)
+        self.assertEqual(coordinator._status_panel.page_info, "")
+
+    def test_failed_background_bid_load_clears_loading_status(self):
+        coordinator = navigation_status_coordinator()
+        coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.show_warning"
+        ) as warning:
+            coordinator.project_operations.complete(False, "Schema mismatch")
+        warning.assert_called_once_with(
+            coordinator.main_window,
+            "Open SQL Bid",
+            "Schema mismatch",
+        )
+        self.assertEqual(coordinator._status_panel.page_info, "")
+
+    def test_loading_and_page_status_remain_consistent_while_switching_tabs(self):
+        coordinator = navigation_status_coordinator()
+        coordinator._status_panel.set_collaboration_state("healthy", "Connected")
+        coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
+        for tab_index in (TAB_INDEX_SUMMARY, TAB_INDEX_PROJECTS, TAB_INDEX_TAKEOFF):
+            coordinator._tab_widget.setCurrentIndex(tab_index)
+            coordinator._on_tab_changed(tab_index)
+            self.assertEqual(
+                coordinator._status_panel.page_info,
+                "Loading bid pages…",
+            )
+        self.assertEqual(
+            coordinator._status_panel.states,
+            [("healthy", "Connected")],
+        )
+        coordinator._tab_widget.setCurrentIndex(TAB_INDEX_PROJECTS)
+        coordinator.project_operations.complete(True)
+        self.assertEqual(coordinator._status_panel.page_info, "")
+        connection_states_after_load = list(coordinator._status_panel.states)
+        coordinator.ui_state_manager.selected_page_uids = ["page-1"]
+        coordinator.ui_state_manager.active_page_uid = "page-1"
+        for tab_index in (TAB_INDEX_TAKEOFF, TAB_INDEX_SUMMARY):
+            coordinator._tab_widget.setCurrentIndex(tab_index)
+            coordinator._on_tab_changed(tab_index)
+            self.assertEqual(coordinator._status_panel.page_info, "Page One")
+        coordinator._tab_widget.setCurrentIndex(TAB_INDEX_PROJECTS)
+        coordinator._on_tab_changed(TAB_INDEX_PROJECTS)
+        self.assertEqual(coordinator._status_panel.page_info, "")
+        self.assertEqual(
+            coordinator._status_panel.states,
+            connection_states_after_load,
+        )
+
+    def test_2d_and_3d_page_information_use_the_same_tab_aware_projection(self):
+        coordinator = navigation_status_coordinator(tab_index=TAB_INDEX_TAKEOFF)
+        coordinator.project_data.pages["page-2"] = SimpleNamespace(name="Page Two")
+        coordinator.ui_state_manager.selected_page_uids = ["page-1", "page-2"]
+        coordinator.ui_state_manager.active_page_uid = "page-2"
+        coordinator._view_stack.setCurrentIndex(1)
+        coordinator._sync_page_info_status()
+        self.assertEqual(coordinator._status_panel.page_info, "Page Two")
+        coordinator._view_stack.setCurrentIndex(0)
+        coordinator._sync_page_info_status()
+        self.assertEqual(coordinator._status_panel.page_info, "Page One, Page Two")
+        coordinator._tab_widget.setCurrentIndex(TAB_INDEX_PROJECTS)
+        coordinator._sync_page_info_status()
+        self.assertEqual(coordinator._status_panel.page_info, "")
+
+    def test_cancelling_bid_load_clears_loading_status(self):
+        coordinator = navigation_status_coordinator()
+        coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        coordinator.handle_bid_selection(None)
+        self.assertFalse(coordinator.project_operations.navigation_load_in_progress())
+        self.assertEqual(coordinator._status_panel.page_info, "")
+
+    def test_bid_deselection_clears_ready_page_information(self):
+        coordinator = navigation_status_coordinator(tab_index=TAB_INDEX_TAKEOFF)
+        coordinator.ui_state_manager.bid_ref = BidRef("sql-database", "bid-1")
+        coordinator.ui_state_manager.selected_page_uids = ["page-1"]
+        coordinator.ui_state_manager.active_page_uid = "page-1"
+        coordinator._sync_page_info_status()
+        self.assertEqual(coordinator._status_panel.page_info, "Page One")
+        coordinator.handle_bid_selection(None)
+        self.assertEqual(coordinator._status_panel.page_info, "")
+        self.assertEqual(coordinator._status_panel.presence_states[-1], [])
+        self.assertEqual(coordinator._status_panel.mutation_states[-1], ("", 0, ""))
+        self.assertEqual(coordinator._status_panel.states[-1], ("stopped", ""))
+
+    def test_synchronous_mdb_bid_load_never_leaves_loading_status(self):
+        coordinator = navigation_status_coordinator(tab_index=TAB_INDEX_PROJECTS)
+        operations = ImmediateNavigationOperations()
+        operations.load_bid = lambda _bid_ref: True
+        coordinator.project_operations = operations
+        coordinator.handle_bid_selection(BidRef("project.mdb", "bid-1"))
+        self.assertNotIn(
+            "Loading bid pages…",
+            coordinator._status_panel.page_info_states,
+        )
+        self.assertEqual(coordinator._status_panel.page_info, "")
+
+    def test_selecting_database_while_bid_load_is_pending_clears_loading_status(self):
+        coordinator = navigation_status_coordinator()
+        coordinator.handle_bid_selection(BidRef("sql-database", "bid-1"))
+        self.assertEqual(coordinator._status_panel.page_info, "Loading bid pages…")
+        coordinator._on_file_selected(
+            file_path="other-sql-database",
+            is_database_root=True,
+        )
+        self.assertFalse(coordinator.project_operations.navigation_load_in_progress())
+        self.assertEqual(coordinator._status_panel.page_info, "")
 
     def test_failed_bid_switch_preserves_old_selection_and_undo_owner(self):
         old_ref = type("BidRefLike", (), {})()
@@ -3843,6 +4085,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         embedded = FakeMeshReceiver()
         coordinator.opengl_viewer = embedded
+        status_panel = _CollaborationStatusPanel()
+        status_panel.set_page_info("Page One")
+        status_panel.set_collaboration_state("healthy", "Connected")
+        status_panel.set_collaboration_mutation_state("recovering", 1, "Recovering")
+        coordinator._status_panel = status_panel
         coordinator._on_file_unloaded(
             file_path="active.mdb",
             active_context_removed=True,
@@ -3858,6 +4105,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             embedded.discarded_camera_states,
             [(None, "active.mdb")],
         )
+        self.assertEqual(status_panel.page_info, "")
+        self.assertEqual(status_panel.presence_states[-1], [])
+        self.assertEqual(status_panel.mutation_states[-1], ("", 0, ""))
+        self.assertEqual(status_panel.states[-1], ("stopped", ""))
 
     def test_database_refresh_restores_database_root_selection_and_hides_takeoff(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

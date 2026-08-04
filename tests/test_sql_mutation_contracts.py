@@ -139,95 +139,27 @@ class SqlMutationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported queued project write"):
             ProjectWritePayload.from_values("legacy_write", {})
 
-    def test_sql_selected_page_is_presence_state_not_a_durable_mutation(self):
-        service = SimpleNamespace(
-            uses_sql_collaboration_mutations=lambda _database_id: True,
-            queue_page_settings=lambda *_args, **_kwargs: self.fail(
-                "Selected-page navigation must not enter the SQL mutation queue."
-            ),
-        )
-        self.assertTrue(
-            ProjectWriteService.queue_page_setting_if_sql(
-                service,
-                "database",
-                "8",
-                "bid_selected_page",
-                ["22"],
-            )
-        )
+    def test_sql_selected_page_is_not_a_collaboration_mutation_payload(self):
         with self.assertRaisesRegex(ValueError, "Unsupported page setting"):
             PageSettingsPayload.from_updates(
                 "bid_selected_page",
                 [["8", "22"]],
             )
 
-    def test_failed_view_state_outcomes_are_terminal_best_effort_persistence(self):
-        callbacks = []
-        logger = Mock()
+    def test_client_page_state_kinds_are_rejected_by_sql_mutation_queue(self):
         service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _database_id: True,
-            _active_bid_uid_for=lambda _database_id: "7",
-            _sql_collaboration_provider=lambda: SimpleNamespace(
-                is_resource_recovering=lambda *_args: False
-            ),
-            queue_page_settings=lambda *args, **_kwargs: (
-                callbacks.append(args[4]) or 0
-            ),
-            logger=logger,
         )
-        self.assertTrue(
-            ProjectWriteService.queue_page_setting_if_sql(
-                service,
-                "database",
-                "107",
-                "view_state",
-                [2.0, 10.0, 20.0],
-            )
-        )
-        for outcome in (
-            MutationOutcomeStatus.REJECTED,
-            MutationOutcomeStatus.CONFLICT,
-            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
-            MutationOutcomeStatus.CANCELLED_BEFORE_START,
-        ):
-            callbacks[0](
-                QueuedMutationResult(
-                    database_id="database",
-                    runtime_generation=1,
-                    operation_id=str(uuid.uuid4()),
-                    outcome_status=outcome,
-                    message="Best-effort page-view persistence did not run.",
-                )
-            )
-        logger.warning.assert_not_called()
-        self.assertEqual(logger.debug.call_count, 4)
-
-    def test_recovering_page_does_not_accumulate_best_effort_view_mutations(self):
-        logger = Mock()
-        queued = []
-        service = SimpleNamespace(
-            uses_sql_collaboration_mutations=lambda _database_id: True,
-            _active_bid_uid_for=lambda _database_id: "7",
-            _sql_collaboration_provider=lambda: SimpleNamespace(
-                is_resource_recovering=lambda database_id, resource: (
-                    database_id == "database"
-                    and resource == ResourceRef("page", "107", 7)
-                )
-            ),
-            queue_page_settings=lambda *args, **_kwargs: queued.append((args, kwargs)),
-            logger=logger,
-        )
-        self.assertTrue(
-            ProjectWriteService.queue_page_setting_if_sql(
-                service,
-                "database",
-                "107",
-                "view_state",
-                [2.0, 10.0, 20.0],
-            )
-        )
-        self.assertEqual(queued, [])
-        logger.debug.assert_called_once()
+        for setting_kind in ("bid_selected_page", "view_state"):
+            with self.subTest(setting_kind=setting_kind):
+                with self.assertRaisesRegex(ValueError, "must not enter the SQL queue"):
+                    ProjectWriteService.queue_page_setting_if_sql(
+                        service,
+                        "database",
+                        "107",
+                        setting_kind,
+                        [],
+                    )
 
     def test_database_request_requires_canonical_identity_and_hash(self):
         operation_id = str(uuid.uuid4())

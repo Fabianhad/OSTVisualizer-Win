@@ -255,6 +255,86 @@ SQL_SCHEMA_V1 = SqlSchemaDefinition(
         ),
         SqlTableDefinition(
             "ostv",
+            "UserBidWorkspaceState",
+            (
+                _column("DatabaseGuid", "uniqueidentifier"),
+                _column("UserSid", "varbinary(85)"),
+                _column("BidUID", "int"),
+                _column("ActivePageUID", "int", nullable=True),
+                _column("UserPrincipal", "nvarchar(256)"),
+                _column("UpdatedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
+                _column("Version", "rowversion"),
+            ),
+            ("DatabaseGuid", "UserSid", "BidUID"),
+            foreign_keys=(
+                SqlForeignKeyDefinition(
+                    "FK_ostv_UserBidWorkspaceState_DatabaseMetadata",
+                    ("DatabaseGuid",),
+                    "ostv",
+                    "DatabaseMetadata",
+                    ("DatabaseGuid",),
+                ),
+                SqlForeignKeyDefinition(
+                    "FK_ostv_UserBidWorkspaceState_Bids",
+                    ("BidUID",),
+                    "dbo",
+                    "Bids",
+                    ("UID",),
+                    on_delete="CASCADE",
+                ),
+            ),
+            indexes=(
+                SqlIndexDefinition(
+                    "IX_ostv_UserBidWorkspaceState_UserUpdated",
+                    ("UserSid", "UpdatedAt"),
+                ),
+            ),
+        ),
+        SqlTableDefinition(
+            "ostv",
+            "UserPageWorkspaceState",
+            (
+                _column("DatabaseGuid", "uniqueidentifier"),
+                _column("UserSid", "varbinary(85)"),
+                _column("BidUID", "int"),
+                _column("PageUID", "int"),
+                _column("ZoomFac", "float"),
+                _column("CurrentX", "float"),
+                _column("CurrentY", "float"),
+                _column("UserPrincipal", "nvarchar(256)"),
+                _column("UpdatedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
+                _column("Version", "rowversion"),
+            ),
+            ("DatabaseGuid", "UserSid", "BidUID", "PageUID"),
+            foreign_keys=(
+                SqlForeignKeyDefinition(
+                    "FK_ostv_UserPageWorkspaceState_DatabaseMetadata",
+                    ("DatabaseGuid",),
+                    "ostv",
+                    "DatabaseMetadata",
+                    ("DatabaseGuid",),
+                ),
+                SqlForeignKeyDefinition(
+                    "FK_ostv_UserPageWorkspaceState_BidPages",
+                    ("PageUID",),
+                    "dbo",
+                    "BidPages",
+                    ("UID",),
+                    on_delete="CASCADE",
+                ),
+            ),
+            indexes=(
+                SqlIndexDefinition(
+                    "IX_ostv_UserPageWorkspaceState_UserUpdated",
+                    ("UserSid", "UpdatedAt"),
+                ),
+            ),
+            check_constraints=(
+                ("CK_ostv_UserPageWorkspaceState_Zoom", "[ZoomFac]>(0)"),
+            ),
+        ),
+        SqlTableDefinition(
+            "ostv",
             "Locks",
             (
                 _column("LockId", "bigint", identity=True),

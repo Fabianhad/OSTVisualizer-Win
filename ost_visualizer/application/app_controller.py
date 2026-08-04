@@ -279,6 +279,7 @@ class AppControllerBuilder:
         orchestrators.visualization.set_visualization_service(visualization_service)
         cleanup_hooks: List[Callable[[], None]] = []
         cleanup_hooks.append(self.container.get("navigation_load_service").cleanup)
+        cleanup_hooks.append(self.container.get("sql_workspace_state_service").cleanup)
         if shared_conn_manager is not None:
             cleanup_hooks.append(shared_conn_manager.close)
         controller = AppController(

@@ -430,7 +430,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
         self.assertEqual(SQL_SCHEMA_V1.version, 1)
         self.assertEqual(
             SQL_SCHEMA_V1.checksum,
-            "27460ffeedd5dfa47dc532968c1db7445bee3423c718aa4ef2aca2b063297dd7",
+            "0cecca4baced14d54832a90ead0bac84e743875abca98b0eb173903491dec23c",
         )
         self.assertIn(
             "ALLOW_SNAPSHOT_ISOLATION=ON",
@@ -450,6 +450,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
                 "SchemaMigrations",
                 "Sessions",
                 "Presence",
+                "UserBidWorkspaceState",
+                "UserPageWorkspaceState",
                 "Locks",
                 "EntityVersions",
                 "ChangeLog",

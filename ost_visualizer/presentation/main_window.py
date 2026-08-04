@@ -206,6 +206,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._deferred_persistence_manager = DeferredPersistenceManager(
             self._project_write_service,
+            app_controller.get_service("sql_workspace_state_service"),
             parent=self,
         )
         self.icon_provider = QtWindowIconProvider()

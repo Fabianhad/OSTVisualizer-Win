@@ -132,10 +132,16 @@ Database backends:
   immutable result off the Qt thread, reject stale database/bid generations,
   and project only the accepted result through `QtCallbackBridge`. Do not route
   reads through the mutation queue or expose a synchronous SQL bid-load API.
-- Deferred page-view and selected-page persistence is noncritical UI state. It
-  may be coalesced or abandoned once during shutdown, must never prevent the
-  application from closing, and must not own or clear live UID-based page
-  navigation. Other deferred project settings retain strict failure handling.
+- SQL selected-page and precise page-view state are per-user workspace rows keyed
+  by the authenticated SQL principal SID, database GUID, bid UID, and page UID.
+  They use the dedicated asynchronous SQL workspace repository, never presence,
+  local JSON, the collaboration coordinator, edit locks, mutation markers, or
+  `ChangeLog`. Capture database, bid, and page identities when scheduling writes,
+  restore only through an accepted navigation generation, coalesce with latest
+  state winning, and bound best-effort shutdown flushes. MDB retains synchronous
+  database persistence. This noncritical UI state must never prevent closing or
+  own or clear live UID-based page navigation. Other deferred project settings
+  retain strict failure handling.
 - Long-lived SQL edit leases are requested and released through the coordinator's
   worker command queue; presentation code must not call the collaboration store
   or wait for SQL on the Qt thread. Access receives an immediate local grant.

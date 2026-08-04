@@ -19,6 +19,9 @@ from ..application.services.remote_change_reconciliation_service import (
 from ..application.services.sql_collaboration_coordinator import (
     SqlCollaborationCoordinator,
 )
+from ..application.services.sql_workspace_state_service import (
+    SqlWorkspaceStateService,
+)
 from ..application.service_container import ServiceContainer
 from ..infrastructure.app_paths import get_app_data_dir
 from ..infrastructure.events.event_bus import EventBus
@@ -29,6 +32,9 @@ from ..infrastructure.sql.collaboration_store import SqlCollaborationStore
 from ..infrastructure.sql.connection_manager import SqlConnectionManager
 from ..infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ..infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from ..infrastructure.sql.workspace_state_repository import (
+    SqlWorkspaceStateRepository,
+)
 from ..infrastructure.database.entity_version_reader import (
     DatabaseEntityVersionReader,
 )
@@ -66,6 +72,18 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     pending_mutations = PendingMutationRegistry()
     conflict_resolution = ConflictResolutionService()
     sql_connections = SqlConnectionManager()
+    sql_workspace_repository = SqlWorkspaceStateRepository(
+        descriptor_registry,
+        credential_store,
+        sql_connections,
+        logger=logger.getChild("SqlWorkspaceStateRepository"),
+    )
+    sql_workspace_service = SqlWorkspaceStateService(
+        descriptor_registry,
+        sql_workspace_repository,
+        logger=logger.getChild("SqlWorkspaceStateService"),
+    )
+    container.register_instance("sql_workspace_state_service", sql_workspace_service)
     concurrency_tokens = DatabaseConcurrencyTokenService(
         DatabaseEntityVersionReader(
             descriptor_registry, credential_store, sql_connections

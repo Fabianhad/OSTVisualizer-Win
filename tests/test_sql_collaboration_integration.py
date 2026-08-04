@@ -48,6 +48,12 @@ from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChan
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
+from ost_visualizer.infrastructure.sql.workspace_state_repository import (
+    SqlWorkspaceStateRepository,
+)
+from ost_visualizer.application.dtos.user_workspace_state_dtos import (
+    UserPageViewState,
+)
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from tests.sql_integration_support import (
     DisposableSqlConfiguration,
@@ -98,6 +104,119 @@ class _CommitResponseLostManager:
 
 
 class SqlCollaborationIntegrationTests(unittest.TestCase):
+    def test_two_users_store_independent_workspace_without_feed_records(self):
+        configuration = DisposableSqlConfiguration.from_environment()
+        with DisposableSqlDatabase(configuration) as database:
+            clients = tuple(
+                self._create_test_client(database, configuration, label)
+                for label in ("WORKSPACE_A", "WORKSPACE_B")
+            )
+            for _descriptor, _registry, _credentials, admin, master, login in clients:
+                self.addCleanup(self._drop_test_login, admin, master, login)
+            request = SqlConnectionRequest(
+                database.location, password=configuration.password
+            )
+            with database.connections.connection(request, autocommit=True) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO [dbo].[Bids] OUTPUT INSERTED.[UID] "
+                        "DEFAULT VALUES"
+                    )
+                    bid_uid = int(cursor.fetchone()[0])
+                    page_uids = []
+                    for _index in range(2):
+                        cursor.execute(
+                            "INSERT INTO [dbo].[BidPages] ([BidUID]) "
+                            "OUTPUT INSERTED.[UID] VALUES (?)",
+                            bid_uid,
+                        )
+                        page_uids.append(int(cursor.fetchone()[0]))
+                    cursor.execute(
+                        "SELECT (SELECT COUNT(*) FROM [ostv].[ChangeLog]), "
+                        "(SELECT COUNT(*) FROM [ostv].[ChangeTransactions])"
+                    )
+                    baseline_feed = tuple(map(int, cursor.fetchone()))
+            repositories = tuple(
+                SqlWorkspaceStateRepository(
+                    registry,
+                    credentials,
+                    database.connections,
+                )
+                for _descriptor, registry, credentials, *_rest in clients
+            )
+            for index, (repository, page_uid, zoom) in enumerate(
+                zip(repositories, page_uids, (2.125, 4.25))
+            ):
+                descriptor = clients[index][0]
+                repository.save_active_page(
+                    descriptor.database_id, str(bid_uid), str(page_uid)
+                )
+                repository.save_page_view(
+                    descriptor.database_id,
+                    str(bid_uid),
+                    str(page_uid),
+                    UserPageViewState(zoom, 10.1250000001, 20.8750000001),
+                )
+            restored = tuple(
+                repository.load_bid_state(clients[index][0].database_id, str(bid_uid))
+                for index, repository in enumerate(repositories)
+            )
+            self.assertEqual(
+                tuple(state.active_page_uid for state in restored),
+                tuple(map(str, page_uids)),
+            )
+            self.assertEqual(
+                tuple(
+                    state.page_views[str(page_uid)].zoom_fac
+                    for state, page_uid in zip(restored, page_uids)
+                ),
+                (2.125, 4.25),
+            )
+            same_user_restart = SqlWorkspaceStateRepository(
+                clients[0][1], clients[0][2], database.connections
+            )
+            self.assertEqual(
+                same_user_restart.load_bid_state(
+                    clients[0][0].database_id, str(bid_uid)
+                ).active_page_uid,
+                str(page_uids[0]),
+            )
+            with database.connections.connection(request, autocommit=True) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COUNT(*), COUNT(DISTINCT [UserSid]) FROM "
+                        "[ostv].[UserBidWorkspaceState] WHERE [BidUID]=?",
+                        bid_uid,
+                    )
+                    self.assertEqual(tuple(map(int, cursor.fetchone())), (2, 2))
+                    cursor.execute(
+                        "SELECT COUNT(*), COUNT(DISTINCT [UserSid]) FROM "
+                        "[ostv].[UserPageWorkspaceState] WHERE [BidUID]=?",
+                        bid_uid,
+                    )
+                    self.assertEqual(tuple(map(int, cursor.fetchone())), (2, 2))
+                    cursor.execute(
+                        "SELECT (SELECT COUNT(*) FROM [ostv].[ChangeLog]), "
+                        "(SELECT COUNT(*) FROM [ostv].[ChangeTransactions])"
+                    )
+                    self.assertEqual(tuple(map(int, cursor.fetchone())), baseline_feed)
+                    cursor.execute(
+                        "DELETE FROM [dbo].[BidPages] WHERE [UID]=?",
+                        page_uids[0],
+                    )
+            first_after_page_delete = repositories[0].load_bid_state(
+                clients[0][0].database_id, str(bid_uid)
+            )
+            second_after_page_delete = repositories[1].load_bid_state(
+                clients[1][0].database_id, str(bid_uid)
+            )
+            self.assertIsNone(first_after_page_delete.active_page_uid)
+            self.assertNotIn(str(page_uids[0]), first_after_page_delete.page_views)
+            self.assertEqual(
+                second_after_page_delete.active_page_uid,
+                str(page_uids[1]),
+            )
+
     def test_project_import_commits_complete_feed_and_two_sessions_hydrate(self):
         configuration = DisposableSqlConfiguration.from_environment()
         with DisposableSqlDatabase(

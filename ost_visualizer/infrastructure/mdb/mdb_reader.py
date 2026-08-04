@@ -61,6 +61,9 @@ class MdbReader(
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)
 
+    def _hydrates_bid_navigation_snapshots(self) -> bool:
+        return False
+
     def parse_file(self, file_path: str) -> Tuple[ParsedHierarchy, CdnTypes]:
         with self._connection(file_path) as connection:
             hierarchy = self._parse_hierarchy(connection, file_path)

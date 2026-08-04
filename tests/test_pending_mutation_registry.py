@@ -101,29 +101,6 @@ class PendingMutationRegistryTests(unittest.TestCase):
         )
         self.assertIsNotNone(registry.get(second.operation_id))
 
-    def test_recovery_lookup_includes_transaction_dependencies(self):
-        registry = PendingMutationRegistry()
-        request = _request()
-        registry.begin(request)
-        registry.transition(request.operation_id, PendingMutationState.RECOVERING)
-        recovering_states = frozenset(
-            {PendingMutationState.RECOVERING, PendingMutationState.UNCERTAIN}
-        )
-        self.assertTrue(
-            registry.has_resource_in_states(
-                "database",
-                ResourceRef("page", "20", 1),
-                recovering_states,
-            )
-        )
-        self.assertFalse(
-            registry.has_resource_in_states(
-                "database",
-                ResourceRef("page", "21", 1),
-                recovering_states,
-            )
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

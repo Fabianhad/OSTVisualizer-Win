@@ -1,8 +1,8 @@
 import logging
 from typing import Callable, Optional, Protocol
 from ...domain.entities.identity_refs import BidRef
-from ...domain.entities.file_results import BidLoadResult
 from ...domain.services.project_data_service import ProjectDataService
+from ..use_cases.project.load_bid_use_case import PreparedBidLoad
 from .navigation_load_service import NavigationLoadService, NavigationLoadState
 
 
@@ -12,8 +12,8 @@ class ILoadFileUseCase(Protocol):
     def execute(self, file_path: str) -> bool: ...
 class ILoadBidUseCase(Protocol):
     def execute(self, bid_ref: BidRef) -> bool: ...
-    def prepare(self, bid_ref: BidRef) -> BidLoadResult: ...
-    def apply_prepared(self, bid_ref: BidRef, result: BidLoadResult) -> bool: ...
+    def prepare(self, bid_ref: BidRef) -> PreparedBidLoad: ...
+    def apply_prepared(self, bid_ref: BidRef, result: PreparedBidLoad) -> bool: ...
 class ProjectOperationsService:
     def __init__(
         self,

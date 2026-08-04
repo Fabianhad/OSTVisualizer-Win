@@ -289,7 +289,9 @@ class DatabaseProjectWriter(SqlProjectWriter):
             resolve_database_backend(self._descriptor_registry, db_path)
             == DatabaseBackend.SQL_SERVER
         ):
-            return True
+            raise RuntimeError(
+                "SQL page view state must use per-user workspace persistence"
+            )
         return MdbWriter.save_page_view_state(
             self, db_path, page_uid, zoom_fac, current_x, current_y
         )
@@ -299,7 +301,9 @@ class DatabaseProjectWriter(SqlProjectWriter):
             resolve_database_backend(self._descriptor_registry, db_path)
             == DatabaseBackend.SQL_SERVER
         ):
-            return True
+            raise RuntimeError(
+                "SQL selected-page state must use per-user workspace persistence"
+            )
         return MdbWriter.save_bid_selected_page(self, db_path, bid_uid, page_uid)
 
 

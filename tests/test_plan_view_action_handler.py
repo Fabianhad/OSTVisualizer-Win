@@ -2549,6 +2549,17 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
             [[pending_uids[0]]],
         )
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertEqual(set(data.takeoffs), {"501"})
+        self.assertEqual(undo.count, 1)
 
     def test_deleting_queued_takeoff_preview_cancels_before_execution(self):
         plan_view = FakePlanView()
@@ -2944,7 +2955,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertIn("SQL takeoff placement failed: conflict", captured.output[0])
         self.assertEqual(data.takeoffs, {})
 
-    def test_stale_runtime_completion_removes_preview_without_projecting_commit(self):
+    def test_stale_runtime_completion_cannot_remove_pending_preview(self):
         data = FakeProjectData()
         write = FakeWriteService()
         write.sql_collaboration_mutations = True
@@ -2972,10 +2983,11 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 created_resource_ids=("501",),
             )
         )
-        self.assertNotIn(pending_uid, data.takeoffs)
+        self.assertIn(pending_uid, data.takeoffs)
         self.assertNotIn("501", data.takeoffs)
+        self.assertIn(operation_id, handler._pending_takeoff_placements)
 
-    def test_mismatched_database_completion_cannot_orphan_pending_preview(self):
+    def test_mismatched_database_completion_cannot_remove_pending_preview(self):
         data = FakeProjectData()
         write = FakeWriteService()
         write.sql_collaboration_mutations = True
@@ -3003,8 +3015,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 created_resource_ids=("501",),
             )
         )
-        self.assertNotIn(pending_uid, data.takeoffs)
+        self.assertIn(pending_uid, data.takeoffs)
         self.assertNotIn("501", data.takeoffs)
+        self.assertIn(operation_id, handler._pending_takeoff_placements)
 
     def test_pending_invalidation_preserves_condition_summary_dependencies(self):
         data = FakeProjectData()

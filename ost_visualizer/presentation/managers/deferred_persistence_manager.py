@@ -18,6 +18,7 @@ class DeferredPersistenceItem:
     write_fn: Callable[[], bool]
     skippable_when_blocked: bool = False
     blocks_shutdown: bool = True
+    sql_workspace: bool = False
 
 
 class DeferredPersistenceManager(QtCore.QObject):
@@ -26,11 +27,13 @@ class DeferredPersistenceManager(QtCore.QObject):
     def __init__(
         self,
         project_write_service,
+        sql_workspace_state_service,
         parent: Optional[QtCore.QObject] = None,
         logger_: Optional[logging.Logger] = None,
     ) -> None:
         super().__init__(parent)
         self._write_service = project_write_service
+        self._sql_workspace = sql_workspace_state_service
         self._logger = logger_ or logging.getLogger(__name__)
         self._pending: Dict[DeferredPersistenceKey, DeferredPersistenceItem] = {}
         self._flushing = False
@@ -53,6 +56,7 @@ class DeferredPersistenceManager(QtCore.QObject):
         write_fn: Callable[[], bool],
         skippable_when_blocked: bool = False,
         blocks_shutdown: bool = True,
+        sql_workspace: bool = False,
     ) -> bool:
         if self._cleaned_up or self._shutdown_started:
             return False
@@ -63,6 +67,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             write_fn,
             skippable_when_blocked,
             blocks_shutdown,
+            sql_workspace,
         )
         self._timer.start()
         return True
@@ -70,46 +75,87 @@ class DeferredPersistenceManager(QtCore.QObject):
     def schedule_page_view_state(
         self,
         db_path: str,
+        bid_uid: str,
         page_uid: str,
         zoom_fac: float,
         current_x: float,
         current_y: float,
     ) -> None:
+        sql_workspace = self._sql_workspace.uses_sql_workspace(db_path)
         self.schedule(
             PAGE_VIEW_STATE_KIND,
-            (PAGE_VIEW_STATE_KIND, db_path, page_uid),
+            (PAGE_VIEW_STATE_KIND, db_path, str(bid_uid), page_uid),
             f"page view state for page {page_uid}",
-            lambda: self._save_or_queue_page_setting(
+            lambda: self._save_page_view_state(
+                sql_workspace,
                 db_path,
+                bid_uid,
                 page_uid,
-                "view_state",
-                [zoom_fac, current_x, current_y],
-                lambda: self._write_service.save_page_view_state(
-                    db_path, page_uid, zoom_fac, current_x, current_y
-                ),
+                zoom_fac,
+                current_x,
+                current_y,
             ),
             skippable_when_blocked=True,
             blocks_shutdown=False,
+            sql_workspace=sql_workspace,
         )
 
     def schedule_bid_selected_page(
         self, db_path: str, bid_uid: str, page_uid: str
     ) -> None:
+        sql_workspace = self._sql_workspace.uses_sql_workspace(db_path)
         self.schedule(
             BID_SELECTED_PAGE_KIND,
             self._bid_selected_page_key(db_path, bid_uid),
             f"selected page {page_uid} for bid {bid_uid}",
-            lambda: self._save_or_queue_page_setting(
+            lambda: self._save_selected_page(
+                sql_workspace,
                 db_path,
                 bid_uid,
-                "bid_selected_page",
-                [page_uid],
-                lambda: self._write_service.save_bid_selected_page(
-                    db_path, bid_uid, page_uid
-                ),
+                page_uid,
             ),
             skippable_when_blocked=True,
             blocks_shutdown=False,
+            sql_workspace=sql_workspace,
+        )
+
+    def _save_page_view_state(
+        self,
+        sql_workspace: bool,
+        db_path: str,
+        bid_uid: str,
+        page_uid: str,
+        zoom_fac: float,
+        current_x: float,
+        current_y: float,
+    ) -> bool:
+        if sql_workspace:
+            self._sql_workspace.save_page_view(
+                db_path, bid_uid, page_uid, zoom_fac, current_x, current_y
+            )
+            return True
+        return bool(
+            self._write_service.save_page_view_state(
+                db_path,
+                page_uid,
+                zoom_fac,
+                current_x,
+                current_y,
+            )
+        )
+
+    def _save_selected_page(
+        self,
+        sql_workspace: bool,
+        db_path: str,
+        bid_uid: str,
+        page_uid: str,
+    ) -> bool:
+        if sql_workspace:
+            self._sql_workspace.save_active_page(db_path, bid_uid, page_uid)
+            return True
+        return bool(
+            self._write_service.save_bid_selected_page(db_path, bid_uid, page_uid)
         )
 
     def cancel_bid_selected_pages(self, db_path: str, bid_uids: list[str]) -> None:
@@ -383,6 +429,8 @@ class DeferredPersistenceManager(QtCore.QObject):
         return item.kind in NON_RETRYABLE_UI_STATE_KINDS
 
     def _should_skip_expected_block(self, item: DeferredPersistenceItem) -> bool:
+        if item.sql_workspace:
+            return False
         if not item.skippable_when_blocked:
             return False
         if len(item.key) <= 1:
@@ -408,7 +456,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             self.begin_shutdown()
         self._timer.stop()
         for key, item in list(self._pending.items()):
-            if item.blocks_shutdown:
+            if item.blocks_shutdown or item.sql_workspace:
                 continue
             if self._pending.get(key) is item:
                 self._pending.pop(key, None)
@@ -434,5 +482,6 @@ class DeferredPersistenceManager(QtCore.QObject):
             return False
         self._timer.stop()
         self._write_service = None
+        self._sql_workspace = None
         self._cleaned_up = True
         return True

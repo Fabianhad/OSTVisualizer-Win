@@ -2717,7 +2717,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
             bid_uid=bid_value,
             page_uid=page_uids[0] if len(page_uids) == 1 else "",
             payload=payload,
-            lifecycle_critical=setting_kind != "view_state",
         )
 
         def execute() -> MutationExecutionResult:
@@ -2818,17 +2817,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
                             str(area_uid),
                         )
                         for page_uid, area_uid in decoded
-                    )
-                elif setting_kind == "view_state":
-                    success = all(
-                        self._save_page_view_state.execute(
-                            database_id,
-                            str(page_uid),
-                            float(zoom),
-                            float(current_x),
-                            float(current_y),
-                        )
-                        for page_uid, zoom, current_x, current_y in decoded
                     )
                 elif setting_kind == "name":
                     success = all(
@@ -4692,37 +4680,15 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> Optional[bool]:
         if not self.uses_sql_collaboration_mutations(database_id):
             return None
-        if setting_kind == "bid_selected_page":
-            return True
+        if setting_kind in {"bid_selected_page", "view_state"}:
+            raise ValueError(
+                f"Client-local page setting must not enter the SQL queue: {setting_kind}"
+            )
         bid_uid = self._active_bid_uid_for(database_id)
         if bid_uid is None:
             return False
-        if (
-            setting_kind == "view_state"
-            and self._sql_collaboration_provider().is_resource_recovering(
-                database_id,
-                ResourceRef("page", str(page_uid), int(bid_uid)),
-            )
-        ):
-            self.logger.debug(
-                "Skipping best-effort page view persistence while page %s is recovering",
-                page_uid,
-            )
-            return True
 
         def complete(result: QueuedMutationResult) -> None:
-            if setting_kind == "view_state" and result.outcome_status not in {
-                MutationOutcomeStatus.COMMITTED,
-                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
-                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-            }:
-                self.logger.debug(
-                    "Best-effort SQL page view persistence ended for %s with %s: %s",
-                    page_uid,
-                    result.outcome_status.value,
-                    result.message,
-                )
-                return
             if result.outcome_status not in {
                 MutationOutcomeStatus.COMMITTED,
                 MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,

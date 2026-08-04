@@ -422,7 +422,6 @@ class PageSettingsPayload:
             "bitonal",
             "image_adjustments",
             "area",
-            "view_state",
             "name",
             "layer_show",
         }:
@@ -788,7 +787,6 @@ class SynchronizationConflict:
     reason: str
     expected: Optional[ConcurrencyToken] = None
     actual: Optional[ConcurrencyToken] = None
-    lock_owner: str = ""
     kind: SynchronizationConflictKind = (
         SynchronizationConflictKind.OPTIMISTIC_CONCURRENCY
     )

@@ -1848,6 +1848,19 @@ class PlanViewActionHandler:
             MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
         }:
             return
+        completion_matches = (
+            result.database_id == pending.database_id
+            and result.runtime_generation == pending.runtime_generation
+        )
+        if not completion_matches:
+            logger.debug(
+                "Ignoring stale SQL takeoff placement completion %s for %s at "
+                "runtime %s",
+                result.operation_id,
+                result.database_id,
+                result.runtime_generation,
+            )
+            return
         self._pending_takeoff_placements.pop(result.operation_id, None)
         self._data_svc.remove_takeoffs(pending.pending_uids)
         self._set_plan_items_pending(
@@ -1858,14 +1871,7 @@ class PlanViewActionHandler:
         )
         page_uids = self._takeoff_spec_page_uids(list(pending.specs))
         condition_uids = [str(spec.condition_uid) for spec in pending.specs]
-        completion_matches = (
-            result.database_id == pending.database_id
-            and result.runtime_generation == pending.runtime_generation
-        )
-        if (
-            result.outcome_status != MutationOutcomeStatus.COMMITTED
-            or not completion_matches
-        ):
+        if result.outcome_status != MutationOutcomeStatus.COMMITTED:
             if (
                 result.outcome_status == MutationOutcomeStatus.CANCELLED_BEFORE_START
                 and pending.deleted_pending_uids == frozenset(pending.pending_uids)

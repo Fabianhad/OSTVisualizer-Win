@@ -157,8 +157,10 @@ class UseCaseBuilder:
         )
         load_bid = LoadBidUseCase(
             ost_model,
+            project_data_service,
             ost_model.file_manager,
             self.container.get("database_concurrency_tokens"),
+            self.container.get("sql_workspace_state_service"),
             logger=project_logger.getChild("LoadBid"),
         )
         reload_database = ReloadDatabaseUseCase(

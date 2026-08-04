@@ -2048,6 +2048,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 "SchemaMigrations",
                 "Sessions",
                 "Presence",
+                "UserBidWorkspaceState",
+                "UserPageWorkspaceState",
                 "Locks",
                 "EntityVersions",
                 "ChangeLog",

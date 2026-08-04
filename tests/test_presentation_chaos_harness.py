@@ -1328,7 +1328,7 @@ class UIEventCoordinatorChaosHarness:
         self.coordinator._pending_hotlink_page_uid = None
         self.coordinator._pending_hotlink_named_view = None
         self.coordinator._last_mesh_scene = None
-        self.coordinator._update_page_info_status = self._record_page_info_update
+        self.coordinator._sync_page_info_status = self._record_page_info_update
         self.page_info_updates = 0
         configure_mesh_state(
             self.coordinator,
@@ -1594,6 +1594,11 @@ class SilentChaosLogger:
         pass
 
 
+class NonSqlWorkspaceService:
+    def uses_sql_workspace(self, _db_path):
+        return False
+
+
 class DeferredPersistenceChaosHarness:
     def __init__(self, seed: int, test_case: unittest.TestCase):
         self.seed = seed
@@ -1602,7 +1607,7 @@ class DeferredPersistenceChaosHarness:
         self.history: list[ChaosActionResult] = []
         self.service = DeferredChaosWriteService()
         self.manager = DeferredPersistenceManager(
-            self.service, logger_=SilentChaosLogger()
+            self.service, NonSqlWorkspaceService(), logger_=SilentChaosLogger()
         )
         self.deleted_bid_uids: set[str] = set()
         self.last_failed_flush = False
@@ -1649,7 +1654,9 @@ class DeferredPersistenceChaosHarness:
 
     def action_schedule_page_view_state(self) -> ChaosActionResult:
         page_uid = self.rng.choice(["p1", "p2", "p3"])
-        self.manager.schedule_page_view_state("chaos.mdb", page_uid, 1.5, 10.0, 20.0)
+        self.manager.schedule_page_view_state(
+            "chaos.mdb", "bid-1", page_uid, 1.5, 10.0, 20.0
+        )
         return ChaosActionResult("schedule_page_view_state", page_uid)
 
     def action_schedule_bid_selected_page(self) -> ChaosActionResult:

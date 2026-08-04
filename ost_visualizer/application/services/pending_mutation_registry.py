@@ -6,7 +6,6 @@ from ..dtos.collaboration_dtos import (
     PendingMutation,
     PendingMutationState,
     QueuedMutationRequest,
-    ResourceRef,
 )
 
 _ALLOWED_TRANSITIONS = {
@@ -112,23 +111,6 @@ class PendingMutationRegistry:
                 pending
                 for pending in self._mutations.values()
                 if pending.request.database_id == database_id
-            )
-
-    def has_resource_in_states(
-        self,
-        database_id: str,
-        resource: ResourceRef,
-        states: frozenset[PendingMutationState],
-    ) -> bool:
-        with self._lock:
-            return any(
-                pending.request.database_id == database_id
-                and pending.state in states
-                and (
-                    resource in pending.request.resources
-                    or resource in pending.request.dependency_resources
-                )
-                for pending in self._mutations.values()
             )
 
     def clear_database(self, database_id: str) -> tuple[PendingMutation, ...]:

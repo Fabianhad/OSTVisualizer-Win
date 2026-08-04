@@ -5,6 +5,7 @@ from .area import BidArea
 from .cdn_type import CdnType
 from .condition import Condition
 from .condition_folder import BidConditionFolder
+from .cover_sheet import CoverSheetData
 from .hierarchy_data import HierarchyData, HierarchyFileEntry
 from .layer import BidLayer
 from .page import Page
@@ -35,3 +36,5 @@ class BidLoadResult:
     bid_condition_folders: Dict[str, BidConditionFolder] = field(default_factory=dict)
     selected_page_uid: Optional[str] = None
     takeoff_extras: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    cover_sheet_data: Optional[CoverSheetData] = None
+    page_delete_content_uids: Optional[frozenset[str]] = None
