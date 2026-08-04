@@ -1559,8 +1559,8 @@ class UIEventCoordinator:
                 file_path, changes
             ),
             save_async_fn=(
-                lambda changes, completed: (
-                    self._save_master_data_async(
+                (
+                    lambda changes, completed: self._save_master_data_async(
                         file_path,
                         "Employees",
                         self._project_write_service.queue_employees_save,
@@ -1568,16 +1568,16 @@ class UIEventCoordinator:
                         completed,
                         "employees",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             pay_classes_save_fn=lambda changes: self._save_master_pay_classes(
                 file_path, changes
             ),
             pay_classes_save_async_fn=(
-                lambda changes, completed: (
-                    self._save_master_data_async(
+                (
+                    lambda changes, completed: self._save_master_data_async(
                         file_path,
                         "Payroll Classes",
                         self._project_write_service.queue_pay_classes_save,
@@ -1585,9 +1585,9 @@ class UIEventCoordinator:
                         completed,
                         "pay_classes",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             menu_mode=True,
         )
@@ -1638,8 +1638,8 @@ class UIEventCoordinator:
             used_job_status_uids=used_job_status_uids,
             save_fn=lambda changes: self._save_master_job_statuses(file_path, changes),
             save_async_fn=(
-                lambda changes, completed: (
-                    self._save_master_data_async(
+                (
+                    lambda changes, completed: self._save_master_data_async(
                         file_path,
                         "Job Statuses",
                         self._project_write_service.queue_job_statuses_save,
@@ -1647,9 +1647,9 @@ class UIEventCoordinator:
                         completed,
                         "job_statuses",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             menu_mode=True,
         )
@@ -1757,8 +1757,8 @@ class UIEventCoordinator:
             used_pay_class_uids=used_pay_class_uids,
             save_fn=lambda changes: self._save_master_pay_classes(file_path, changes),
             save_async_fn=(
-                lambda changes, completed: (
-                    self._save_master_data_async(
+                (
+                    lambda changes, completed: self._save_master_data_async(
                         file_path,
                         "Payroll Classes",
                         self._project_write_service.queue_pay_classes_save,
@@ -1766,9 +1766,9 @@ class UIEventCoordinator:
                         completed,
                         "pay_classes",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             menu_mode=True,
         )
@@ -1825,75 +1825,81 @@ class UIEventCoordinator:
                 self._move_default_layer_from_dialog(file_path, layer_uid, neighbor_uid)
             ),
             insert_async_fn=(
-                lambda name, sequence, completed: (
-                    self._save_default_layer_async(
+                (
+                    lambda name, sequence, completed: self._save_default_layer_async(
                         file_path,
                         "New Default Layer",
-                        lambda callback: self._project_write_service.queue_default_layer_insert(
-                            file_path, name, sequence, callback
+                        lambda callback: (
+                            self._project_write_service.queue_default_layer_insert(
+                                file_path, name, sequence, callback
+                            )
                         ),
                         completed,
                         "default_layers",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             delete_many_async_fn=(
-                lambda uids, completed: (
-                    self._save_default_layer_async(
+                (
+                    lambda uids, completed: self._save_default_layer_async(
                         file_path,
                         "Delete Default Layer",
-                        lambda callback: self._project_write_service.queue_default_layers_delete(
-                            file_path, uids, callback
+                        lambda callback: (
+                            self._project_write_service.queue_default_layers_delete(
+                                file_path, uids, callback
+                            )
                         ),
                         completed,
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             update_name_async_fn=(
-                lambda uid, name, completed: (
-                    self._save_default_layer_update_async(
+                (
+                    lambda uid, name, completed: self._save_default_layer_update_async(
                         file_path, "rename", {"layer_uid": uid, "name": name}, completed
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             move_async_fn=(
-                lambda uid, neighbor, completed: (
-                    self._save_default_layer_update_async(
-                        file_path,
-                        "reorder",
-                        {"layer_uid": uid, "neighbor_uid": neighbor},
-                        completed,
+                (
+                    lambda uid, neighbor, completed: (
+                        self._save_default_layer_update_async(
+                            file_path,
+                            "reorder",
+                            {"layer_uid": uid, "neighbor_uid": neighbor},
+                            completed,
+                        )
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             update_show_async_fn=(
-                lambda uid, show, completed: (
-                    self._save_default_layer_update_async(
+                (
+                    lambda uid, show, completed: self._save_default_layer_update_async(
                         file_path,
                         "show",
                         {"layer_uid": uid, "show": show},
                         completed,
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             update_all_show_async_fn=(
-                lambda show, completed: (
-                    self._save_default_layer_update_async(
+                (
+                    lambda show, completed: self._save_default_layer_update_async(
                         file_path, "show_all", {"show": show}, completed
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             has_license=True,
             mode=LayersDialogMode.DEFAULT_LAYERS,

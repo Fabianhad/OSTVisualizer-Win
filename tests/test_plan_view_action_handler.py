@@ -3649,6 +3649,45 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
+    def test_small_resize_geometry_payload_matches_mdb_and_sql(self):
+        old_position = [0.0, 0.0, 10.0, 0.0]
+        resized_position = [0.0, 0.0, 11.0, 0.0]
+        changes = [("t1", old_position, resized_position)]
+
+        def make_handler(sql_collaboration_mutations):
+            data = FakeProjectData()
+            data.takeoffs["t1"] = Takeoff(
+                uid="t1",
+                condition_uid="c1",
+                page_uid="p1",
+                position=list(old_position),
+            )
+            write = FakeWriteService()
+            write.sql_collaboration_mutations = sql_collaboration_mutations
+            handler = PlanViewActionHandler(
+                plan_view=FakePlanView(data),
+                ui_state_manager=FakeUiState(),
+                project_data_svc=data,
+                project_write_svc=write,
+                annotation_write_svc=FakeAnnotationWriteService(),
+                page_settings_bar=FakePageSettingsBar(),
+                undo_svc=FakeUndoService(),
+                event_bus=FakeEventBus(),
+                deferred_persistence_manager=FakeDeferredPersistence(),
+                ui_access_manager=FakeAccess(set(Feature)),
+            )
+            return handler, write
+
+        mdb_handler, mdb_write = make_handler(False)
+        sql_handler, sql_write = make_handler(True)
+        mdb_handler.on_positions_flushed(changes, [])
+        sql_handler.on_positions_flushed(changes, [])
+        mdb_geometry = mdb_write.position_calls[0][1]
+        sql_geometry = sql_write.queued_geometry[0][2]["takeoff_positions"]
+        expected_geometry = [("t1", resized_position)]
+        self.assertEqual(mdb_geometry, expected_geometry)
+        self.assertEqual(sql_geometry, expected_geometry)
+
     def test_sql_position_edit_is_queued_and_history_waits_for_commit(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(

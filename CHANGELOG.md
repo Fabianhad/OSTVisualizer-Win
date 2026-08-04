@@ -22,6 +22,20 @@
 
 ### Fixed
 
+- Fixed small snapped plan-item resizes being previewed and then reverted when
+  their screen movement stayed within the normal click threshold; resize handles
+  now commit changed snapped geometry while true no-op gestures remain unsaved.
+- Fixed annotation-placement drags starting over condition or dimension labels
+  being consumed as label selection, and failed hole-only backout pastes leaving
+  the selected annotation tool unable to place further annotations.
+- Fixed successful Text annotation placement in detached plan windows remaining
+  in Select mode; main and detached plan surfaces now both restore the Text tool
+  after Access saves or confirmed SQL commits, while cancellations and failures
+  continue to leave the safe Select cursor active.
+- Fixed the page-area picker failing to open after SQL collaboration support was
+  added; Access area, cover-sheet, master-data, and default-layer dialogs now
+  retain their synchronous save paths, while unlocked SQL cover sheets submit
+  and complete through the collaboration queue.
 - Fixed duplicating a condition while placement was active sometimes leaving the
   plan bound to the original condition and rendering its drag preview as solid;
   refreshed duplicates and secondary placement conditions now retain their
@@ -142,5 +156,9 @@
 - Fixed plan pages with both original and overlay images so hiding the image layer immediately reveals the white page canvas without an unexpected fit-to-page jump.
 - Fixed overlay-only plan pages so raster overlays load without a main image and a missing overlay does not leave an unused main image pending.
 - Fixed takeoff clicks after condition sidebar reloads so the clicked takeoff's condition is reselected and highlighted when the previous highlight was cleared.
-- Fixed OSP interoperability so current exports and original On-Screen Takeoff packages use the same flat `TempImages!.tmp` image layout: ordinary database paths remain unchanged, colliding basenames map to deterministic unique flat members, and imports now reject legacy nested Visualizer packages or missing drawings instead of silently importing incomplete pages.
+- Fixed OSP interoperability so current exports continue using a flat
+  `TempImages!.tmp` image layout while imports also resolve original and legacy
+  Visualizer packages with images in nested folders. Nested matches use the most
+  specific archived path and collision-safe staging, while unpackaged image
+  references are preserved with a warning so otherwise usable packages can load.
 - Fixed the Select Named View dialog so refocusing a non-empty search field shows the current matching named views again.

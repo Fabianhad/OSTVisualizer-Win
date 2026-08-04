@@ -2986,8 +2986,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         class FakeDialog:
             instance = None
 
-            def __init__(self, *_args, **_kwargs):
+            def __init__(self, *_args, **kwargs):
                 self.deleted = False
+                self.kwargs = kwargs
                 FakeDialog.instance = self
 
             def get_updates(self):
@@ -3056,6 +3057,11 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertEqual(len(publish_calls), 1)
         self.assertIs(publish_calls[0][1], AppEvents.DATABASE_REFRESHED)
         self.assertEqual(publish_calls[0][2], {"file_path": "bid.mdb"})
+        self.assertIsNone(FakeDialog.instance.kwargs["save_job_statuses_async_fn"])
+        self.assertIsNone(FakeDialog.instance.kwargs["save_employees_async_fn"])
+        self.assertIsNone(FakeDialog.instance.kwargs["save_pay_classes_async_fn"])
+        self.assertIsNone(FakeDialog.instance.kwargs["save_bid_areas_async_fn"])
+        self.assertIsNone(FakeDialog.instance.kwargs["save_cover_sheet_async_fn"])
         self.assertTrue(FakeDialog.instance.deleted)
 
     def test_cover_sheet_path_cell_double_click_edits_full_path(self):
@@ -3128,6 +3134,108 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0][:2], ("sql-database", "7"))
         self.assertEqual(len(queued[0][2]["pages"]), 1)
+
+    def test_unlocked_sql_cover_sheet_invokes_async_save_instead_of_returning_it(self):
+        queued = []
+        callback_results = []
+        data = _cover_sheet_data()
+
+        class ProjectData:
+            @staticmethod
+            def get_cover_sheet_snapshot(_database_id, _bid_uid):
+                return data
+
+            @staticmethod
+            def get_job_status_snapshot(_database_id):
+                return data.job_statuses
+
+            @staticmethod
+            def get_employee_snapshot(_database_id):
+                return data.employees
+
+            @staticmethod
+            def get_pay_class_snapshot(_database_id):
+                return data.pay_classes
+
+            @staticmethod
+            def get_used_job_status_uids(_database_id):
+                return set()
+
+            @staticmethod
+            def get_used_employee_uids(_database_id):
+                return set()
+
+            @staticmethod
+            def get_all_pages():
+                return []
+
+            @staticmethod
+            def get_page_delete_content_snapshot(_database_id, _bid_uid):
+                return set()
+
+            @staticmethod
+            def is_current_bid_locked():
+                return False
+
+            @staticmethod
+            def get_assigned_area_uids_with_stored_takeoff():
+                return set()
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_cover_sheet_save(database_id, bid_uid, updates, callback):
+                queued.append((database_id, bid_uid, updates, callback))
+                return 1
+
+        class FakeDialog:
+            def __init__(self, *_args, **kwargs):
+                self.save_async = kwargs["save_cover_sheet_async_fn"]
+
+            def deleteLater(self):
+                pass
+
+        handler = CoverSheetHandler(
+            window=object(),
+            icon_provider=_FakeIconProvider(),
+            project_data_service=ProjectData(),
+            project_read_service=SimpleNamespace(),
+            project_write_service=WriteService(),
+            infrastructure_provider=SimpleNamespace(
+                get_pdf_page_sizes=lambda _path: []
+            ),
+            event_bus=object(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("sql-database", "7")
+            ),
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda _feature: True,
+                has_license=lambda: True,
+            ),
+            deferred_persistence_manager=SimpleNamespace(),
+            workspace_state_model=None,
+        )
+        from ost_visualizer.presentation.handlers import cover_sheet_handler as module
+
+        def execute_dialog(dialog, _event_bus):
+            callback_results.append(
+                dialog.save_async({"notes": "Updated"}, lambda _success: None)
+            )
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with (
+            mock.patch.object(module, "CoverSheetDialog", FakeDialog),
+            mock.patch.object(
+                module, "exec_with_ost_blocking", side_effect=execute_dialog
+            ),
+        ):
+            handler.open_cover_sheet()
+        self.assertEqual(callback_results, [True])
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0][:3], ("sql-database", "7", {"notes": "Updated"}))
 
     def test_cover_sheet_image_path_cell_accepts_pasted_file_path(self):
         with tempfile.TemporaryDirectory() as tmp:

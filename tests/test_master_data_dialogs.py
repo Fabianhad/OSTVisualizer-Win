@@ -551,6 +551,28 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_bid_area_picker_forwards_async_and_existing_constructor_arguments(self):
+        async_save = lambda _changes, _completed: True
+        saved = []
+        used_uids = {"area-1"}
+        dialog = BidAreaPickerDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_async_fn=async_save,
+            used_uids=used_uids,
+            on_saved_fn=lambda: saved.append("saved"),
+        )
+        try:
+            self.assertIs(dialog._save_async_fn, async_save)
+            self.assertEqual(dialog._used_uids, used_uids)
+            self.assertIsNotNone(dialog._on_saved_fn)
+            dialog._on_saved_fn()
+            self.assertEqual(saved, ["saved"])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_deferred_dialog_save_controller_flushes_scheduled_save(self):
         calls = []
         controller = DeferredDialogSaveController(lambda: calls.append("save") or True)
@@ -903,6 +925,32 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_bid_areas_async_rejection_never_falls_back_to_sync_save(self):
+        sync_calls = []
+        async_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[],
+            save_fn=lambda changes: sync_calls.append(changes),
+            save_async_fn=lambda changes, _completed: (
+                async_calls.append(changes) or False
+            ),
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Area 2")
+            dialog.tree.blockSignals(False)
+            dialog._on_item_changed(item, 0)
+            self.assertFalse(dialog.flush_pending_save())
+            self.assertEqual(len(async_calls), 1)
+            self.assertEqual(sync_calls, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_page_settings_area_picker_saves_without_database_refresh(self):
         load_calls = []
         save_calls = []
@@ -1110,6 +1158,64 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(refresh_calls, [])
         finally:
             bar.deleteLater()
+
+    def test_page_settings_area_picker_selects_backend_with_real_dialog(self):
+        observed = []
+
+        def inspect_dialog(dialog, _event_bus):
+            observed.append(
+                (
+                    dialog._bid_ref.file_path,
+                    dialog._save_async_fn,
+                    set(dialog._used_uids),
+                    callable(dialog._on_saved_fn),
+                )
+            )
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        from ost_visualizer.presentation.components import page_settings_bar
+
+        old_exec = page_settings_bar.exec_with_ost_blocking
+        page_settings_bar.exec_with_ost_blocking = inspect_dialog
+        try:
+            for database_id, uses_async in (
+                ("access.mdb", False),
+                ("sql-database", True),
+            ):
+                bar = PageSettingsBar(
+                    FakeIconProvider(),
+                    event_bus=object(),
+                    load_areas_fn=lambda _file_path, bid_uid: [
+                        BidArea("area-1", bid_uid, "", "Area 1", 1)
+                    ],
+                    save_areas_fn=lambda *_args, **_kwargs: {},
+                    save_areas_async_fn=lambda *_args: True,
+                    uses_async_areas_fn=lambda _file_path, value=uses_async: value,
+                    refresh_areas_fn=lambda _file_path: None,
+                    ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+                )
+                bar.load_bid_areas(
+                    BidRef(database_id, "bid-1"),
+                    areas_with_takeoff={"area-1"},
+                )
+                bar.load_page("page-1", 1.0, 1.0, "area-1")
+                bar.set_interactive(True)
+                try:
+                    bar._on_area_browse()
+                finally:
+                    bar.deleteLater()
+        finally:
+            page_settings_bar.exec_with_ost_blocking = old_exec
+        self.assertEqual(
+            [
+                (database_id, callback is not None, used, has_saved_callback)
+                for database_id, callback, used, has_saved_callback in observed
+            ],
+            [
+                ("access.mdb", False, {"area-1"}, True),
+                ("sql-database", True, {"area-1"}, True),
+            ],
+        )
 
     def test_open_areas_dialog_refreshes_once_after_saved_changes(self):
         reload_calls = []
@@ -1836,6 +1942,14 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             observed["button_text"] = dialog.btn_select.text()
             observed["cancel_button"] = dialog.btn_cancel
             observed["layer_names"] = [layer.name for layer in dialog._layers]
+            observed["async_callbacks"] = (
+                dialog._insert_async_fn,
+                dialog._delete_many_async_fn,
+                dialog._update_name_async_fn,
+                dialog._move_async_fn,
+                dialog._update_show_async_fn,
+                dialog._update_all_show_async_fn,
+            )
             observed["new_uid"] = dialog._insert_fn("Added", 1)
             access_manager.allowed = False
             dialog._delete_many_fn(["default-1"])
@@ -1859,6 +1973,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         self.assertEqual(observed["button_text"], "OK")
         self.assertIsNone(observed["cancel_button"])
         self.assertEqual(observed["layer_names"], ["Default 1"])
+        self.assertEqual(observed["async_callbacks"], (None,) * 6)
         self.assertEqual(observed["insert"], ("defaults.mdb", "Added", 1))
         self.assertEqual(observed["new_uid"], "default-new")
         self.assertNotIn("delete", observed)
@@ -1866,6 +1981,57 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         self.assertNotIn("show_all", observed)
         self.assertNotIn("name", observed)
         self.assertNotIn("move", observed)
+
+    def test_access_master_data_menus_do_not_install_sql_save_callbacks(self):
+        dialogs = []
+        main_window = QtWidgets.QWidget()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = main_window
+        coordinator._icon_provider = FakeIconProvider()
+        coordinator._editable_master_data_file_path = lambda: "master-data.mdb"
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
+        )
+        coordinator._project_read_service = SimpleNamespace(
+            get_employees_and_pay_classes=lambda _file_path: (
+                [
+                    Employee(
+                        uid="emp-1",
+                        employee_no="1",
+                        first_name="Ava",
+                        last_name="Lee",
+                    )
+                ],
+                [PayClass(uid="pay-1", name="Regular")],
+            ),
+            get_estimator_uids_in_use=lambda _file_path: set(),
+            get_job_statuses=lambda _file_path: [
+                JobStatus(uid="status-1", name="Bidding", locked=False, sequence=1)
+            ],
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: None
+        )
+        coordinator._exec_with_collaboration_lease = (
+            lambda dialog, *_args, **_kwargs: dialogs.append(dialog)
+        )
+        try:
+            coordinator.open_employees_dialog()
+            coordinator.open_job_statuses_dialog()
+            coordinator.open_payroll_classes_dialog()
+            self.assertEqual(len(dialogs), 3)
+            employees, job_statuses, pay_classes = dialogs
+            self.assertIsNone(employees._save_async_fn)
+            self.assertIsNone(employees._pay_classes_save_async_fn)
+            self.assertIsNone(job_statuses._save_async_fn)
+            self.assertIsNone(pay_classes._save_async_fn)
+        finally:
+            for dialog in dialogs:
+                dialog.close()
+                dialog.cleanup()
+                dialog.deleteLater()
+            main_window.close()
+            main_window.deleteLater()
 
     def test_layers_dialog_multi_delete_uses_batch_callback_once(self):
         delete_many_calls = []

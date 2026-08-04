@@ -32,11 +32,12 @@ class BidAreasDialog(BaseListDialog):
         parent: Optional[QtWidgets.QWidget] = None,
         bid_areas: Optional[List[BidArea]] = None,
         save_fn: Optional[Callable[[dict], Optional[dict]]] = None,
-        save_async_fn=None,
         used_uids: Optional[Set[str]] = None,
         on_saved_fn: Optional[Callable] = None,
         has_license: bool = True,
         bid_ref: Optional[BidRef] = None,
+        *,
+        save_async_fn=None,
     ):
         super().__init__(icon_provider, parent, save_fn)
         self._bid_ref = bid_ref
@@ -650,15 +651,18 @@ class BidAreaPickerDialog(BidAreasDialog):
         used_uids: Optional[Set[str]] = None,
         on_saved_fn: Optional[Callable] = None,
         bid_ref: Optional[BidRef] = None,
+        *,
+        save_async_fn=None,
     ):
         self._selected_uid: Optional[str] = None
         super().__init__(
-            icon_provider,
-            parent,
-            bid_areas,
-            save_fn,
-            used_uids,
-            on_saved_fn,
+            icon_provider=icon_provider,
+            parent=parent,
+            bid_areas=bid_areas,
+            save_fn=save_fn,
+            save_async_fn=save_async_fn,
+            used_uids=used_uids,
+            on_saved_fn=on_saved_fn,
             bid_ref=bid_ref,
         )
 

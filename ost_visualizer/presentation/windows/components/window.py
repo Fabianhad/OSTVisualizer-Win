@@ -2205,7 +2205,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if isinstance(font_color, int):
             spec.color = int_color_to_hex(font_color)
         if self._uses_sql_mutation_queue():
-            self._queue_sql_annotation_insert(bid_ref, [spec])
+            self._queue_sql_annotation_insert(
+                bid_ref,
+                [spec],
+                reactivate_annotation_type=ANNOTATION_TYPE_TEXT,
+            )
             return
         new_uids = self._insert_annotations(bid_ref, [spec])
         if not new_uids:
@@ -2214,6 +2218,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
         if keys:
             self.plan_view.set_selected_uids(keys)
+        self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_TEXT)
         if self._undo_svc is None:
             return
         cmd = InsertAnnotationsCommand(

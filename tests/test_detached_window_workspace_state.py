@@ -2332,6 +2332,15 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         payload = args[1]
         source_uid = payload.annotation_source_uids[0]
         callback = args[2]
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.activate_calls, [])
         result = QueuedMutationResult(
             database_id="bid.mdb",
             runtime_generation=1,
@@ -2345,6 +2354,51 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         callback(result)
         callback(result)
         self.assertEqual(plan_view.selected_uids, {"ann-sql_line"})
+        self.assertEqual(len(undo_service.async_pushes), 1)
+
+    def test_detached_sql_text_commit_reactivates_text_tool_after_commit(self):
+        queued_write = FakeQueuedProjectWriteService()
+        undo_service = FakeUndoService()
+        window, plan_view, annotation_write = self._make_annotation_clipboard_window(
+            project_write_service=queued_write,
+            undo_service=undo_service,
+        )
+        plan_view.annotation_key_map[("ann-sql", "text")] = "ann-sql_text"
+        window._on_text_annotation_created(
+            [7.0, 8.0, 12.0, 12.0],
+            "p1",
+            {
+                "Text": "Hello",
+                "FontName": "Arial",
+                "FontColor": 0x336699,
+                "FontSize": 12,
+                "FontBold": False,
+                "FontItalic": False,
+                "FontUnderline": False,
+                "TextAlign": 0,
+            },
+        )
+        self.assertEqual(annotation_write.insert_calls, [])
+        self.assertEqual(plan_view.activate_calls, [])
+        self.assertEqual(len(queued_write.paste_calls), 1)
+        args, _kwargs = queued_write.paste_calls[0]
+        payload = args[1]
+        source_uid = payload.annotation_source_uids[0]
+        callback = args[2]
+        result = QueuedMutationResult(
+            database_id="bid.mdb",
+            runtime_generation=1,
+            operation_id=str(uuid.uuid4()),
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            authoritative_result=AuthoritativeMutationResult(
+                created_resource_ids=("ann-sql",),
+                created_uid_maps=(("annotations", ((source_uid, "ann-sql"),)),),
+            ),
+        )
+        callback(result)
+        callback(result)
+        self.assertEqual(plan_view.selected_uids, {"ann-sql_text"})
+        self.assertEqual(plan_view.activate_calls, ["text"])
         self.assertEqual(len(undo_service.async_pushes), 1)
 
     def test_detached_sql_annotation_move_stays_blocked_until_recovered(self):
@@ -4050,6 +4104,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(specs[0].color, "#996633")
         self.assertEqual(specs[0].layer_uid, "detached-annotation-layer")
         self.assertEqual(plan_view.selected_uids, {"ann-1_text"})
+        self.assertEqual(plan_view.activate_calls, ["text"])
         self.assertEqual(len(undo_service.pushes), 1)
 
     def test_detached_empty_text_annotation_commit_is_not_written(self):
@@ -4071,6 +4126,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             {"Text": "   ", "FontColor": 0x336699},
         )
         self.assertEqual(write_service.insert_calls, [])
+        self.assertEqual(window.plan_view.activate_calls, [])
 
     def test_detached_duplicate_named_view_shows_message_and_writes_zero_specs(self):
         write_service = FakeAnnotationWriteService()

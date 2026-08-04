@@ -5846,12 +5846,6 @@ class TakeoffPlanView(
     ) -> bool:
         if not self._editing_enabled:
             return False
-        self.cancel_overlay_move_mode(restore_preview=True)
-        self._remove_rotate_handle()
-        self.finish_intelligent_paste_placement()
-        self._exit_place_mode()
-        self._exit_annotation_place_mode()
-        self._clear_backout_state()
         valid_takeoffs = [
             t for t in takeoffs if t and t.position and len(t.position) >= 6
         ]
@@ -5865,6 +5859,12 @@ class TakeoffPlanView(
         )
         if not has_host:
             return False
+        self.cancel_overlay_move_mode(restore_preview=True)
+        self._remove_rotate_handle()
+        self.finish_intelligent_paste_placement()
+        self._exit_place_mode()
+        self._exit_annotation_place_mode()
+        self._clear_backout_state()
         sources: List[Dict] = []
         all_vertex_xs: List[float] = []
         all_vertex_ys: List[float] = []

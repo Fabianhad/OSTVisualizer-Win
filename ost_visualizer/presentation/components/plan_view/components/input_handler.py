@@ -521,6 +521,7 @@ class InputHandlerMixin:
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self._cursor_mode != CURSOR_MODE_PLACE
+            and self._cursor_mode != CURSOR_MODE_ANNOTATION_PLACE
             and not rotate_handle_press
         ):
             dimension_label = self._dimension_text_label_at(vp_pos)
@@ -1313,86 +1314,106 @@ class InputHandlerMixin:
                 event.accept()
                 return
             else:
-                if not was_dragged and (
-                    self._drag_plan_item_uid is not None
-                    or bool(self._drag_multi_orig_positions)
-                ):
-                    self._clear_drag_tracking(restore_preview=True)
-                if was_dragged and (
+                tracked_drag = bool(
                     self._drag_plan_item_uid is not None
                     or self._drag_multi_orig_positions
+                )
+                resize_release = bool(
+                    self._drag_plan_item_uid is not None
+                    and self._drag_orig_position
+                    and self._drag_handle_index >= 0
+                )
+                commit_tracked_drag = was_dragged
+                if (
+                    self._drag_plan_item_uid
+                    and self._drag_orig_position
+                    and (was_dragged or resize_release)
                 ):
-                    if self._drag_plan_item_uid and self._drag_orig_position:
-                        release_scene = self.mapToScene(vp_pos)
-                        sdx = release_scene.x() - origin.x()
-                        sdy = release_scene.y() - origin.y()
-                        ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
-                        ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(
-                            ost_dx, ost_dy
+                    release_scene = self.mapToScene(vp_pos)
+                    release_sdx = release_scene.x() - origin.x()
+                    release_sdy = release_scene.y() - origin.y()
+                    ost_dx, ost_dy = self.scene_to_ost_delta(release_sdx, release_sdy)
+                    ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(
+                        ost_dx, ost_dy
+                    )
+                    release_drag_ann = self._current_annotations.get(
+                        self._drag_plan_item_uid
+                    )
+                    if (
+                        release_drag_ann
+                        and release_drag_ann.is_interactive
+                        and self._drag_handle_index >= 0
+                    ):
+                        release_new_pos = self._compute_ann_resize(
+                            release_drag_ann,
+                            self._drag_orig_position,
+                            ost_dx,
+                            ost_dy,
+                            self._drag_handle_index,
+                            self._drag_handle_corner_count,
                         )
-                        _drag_ann = self._current_annotations.get(
-                            self._drag_plan_item_uid
+                    else:
+                        text_move = bool(
+                            release_drag_ann is not None
+                            and release_drag_ann.is_text
+                            and self._drag_handle_index == -1
                         )
-                        if (
-                            _drag_ann
-                            and _drag_ann.is_interactive
-                            and self._drag_handle_index >= 0
-                        ):
-                            new_pos = self._compute_ann_resize(
-                                _drag_ann,
+                        if release_drag_ann and release_drag_ann.is_ink:
+                            release_new_pos = self._compute_ink_drag_position(
+                                self._drag_orig_position, ost_dx, ost_dy
+                            )
+                        else:
+                            free_mode = bool(
+                                event.modifiers()
+                                & QtCore.Qt.KeyboardModifier.ShiftModifier
+                            )
+                            release_new_pos = self.compute_new_position(
                                 self._drag_orig_position,
                                 ost_dx,
                                 ost_dy,
                                 self._drag_handle_index,
                                 self._drag_handle_corner_count,
+                                move_only_first_pair=text_move,
+                                free_mode=free_mode,
                             )
-                        else:
-                            _text_move = (
-                                _drag_ann is not None
-                                and _drag_ann.is_text
-                                and self._drag_handle_index == -1
-                            )
-                            if _drag_ann and _drag_ann.is_ink:
-                                new_pos = self._compute_ink_drag_position(
-                                    self._drag_orig_position, ost_dx, ost_dy
-                                )
-                            else:
-                                _shift_r = bool(
-                                    event.modifiers()
-                                    & QtCore.Qt.KeyboardModifier.ShiftModifier
-                                )
-                                new_pos = self.compute_new_position(
-                                    self._drag_orig_position,
-                                    ost_dx,
-                                    ost_dy,
-                                    self._drag_handle_index,
-                                    self._drag_handle_corner_count,
-                                    move_only_first_pair=_text_move,
-                                    free_mode=_shift_r,
-                                )
-                        takeoff = self._current_takeoffs.get(self._drag_plan_item_uid)
-                        condition = (
-                            self._current_conditions.get(takeoff.condition_uid)
-                            if takeoff
-                            else None
+                    release_takeoff = self._current_takeoffs.get(
+                        self._drag_plan_item_uid
+                    )
+                    release_condition = (
+                        self._current_conditions.get(release_takeoff.condition_uid)
+                        if release_takeoff
+                        else None
+                    )
+                    if (
+                        release_condition
+                        and release_condition.is_area
+                        and self._drag_last_valid_new_pos
+                    ):
+                        release_new_pos = self._drag_last_valid_new_pos
+                    if (
+                        release_drag_ann
+                        and release_drag_ann.annotation_type
+                        in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD)
+                        and self._drag_handle_index >= 0
+                        and self._drag_last_valid_new_pos
+                    ):
+                        release_new_pos = self._drag_last_valid_new_pos
+                    if resize_release:
+                        commit_tracked_drag = self._positions_meaningfully_different(
+                            self._drag_orig_position,
+                            release_new_pos,
                         )
-                        if (
-                            condition
-                            and condition.is_area
-                            and self._drag_last_valid_new_pos
-                        ):
-                            new_pos = self._drag_last_valid_new_pos
-                        if (
-                            _drag_ann
-                            and _drag_ann.annotation_type
-                            in (
-                                ANNOTATION_TYPE_POLYGON,
-                                ANNOTATION_TYPE_CLOUD,
-                            )
-                            and self._drag_handle_index >= 0
-                            and self._drag_last_valid_new_pos
-                        ):
-                            new_pos = self._drag_last_valid_new_pos
+                if not commit_tracked_drag and tracked_drag:
+                    self._clear_drag_tracking(restore_preview=True)
+                    if resize_release and was_dragged:
+                        self.finish_intelligent_paste_placement()
+                        self._update_cursor()
+                        event.accept()
+                        return
+                if commit_tracked_drag and tracked_drag:
+                    if self._drag_plan_item_uid and self._drag_orig_position:
+                        new_pos = release_new_pos
+                        condition = release_condition
                         uid = self._drag_plan_item_uid
                         if uid in self._current_takeoffs:
                             takeoff = self._current_takeoffs.get(uid)
@@ -1427,7 +1448,10 @@ class InputHandlerMixin:
                             if ann:
                                 if ann.is_dimension:
                                     self.update_drag_handle_positions(
-                                        new_pos, uid, sdx, sdy
+                                        new_pos,
+                                        uid,
+                                        release_sdx,
+                                        release_sdy,
                                     )
                                 ann.position = new_pos
                                 if uid not in self._position_before_edit:

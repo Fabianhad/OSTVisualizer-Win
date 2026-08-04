@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtTest, QtWidgets
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QColor,
     QFont,
     QImage,
@@ -38,6 +39,7 @@ from ost_visualizer.application.services.page_load_strategy_service import (
     PageLoadStrategyService,
 )
 from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION,
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_NAMED_VIEW,
     ANNOTATION_TYPE_TEXT,
@@ -74,7 +76,12 @@ from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
     PlanSurfaceAccessState,
 )
-from ost_visualizer.presentation.modes.cursor import CURSOR_MODE_SELECT
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PASTE_BACKOUT,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_SELECT,
+)
 from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
@@ -2744,6 +2751,123 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._editing_cursor_mode_allowed())
         view.cleanup()
 
+    def test_dimension_drag_over_condition_label_creates_dimension(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view.set_selection_enabled(True)
+        created = []
+        view.annotation_created.connect(
+            lambda annotation_type, position, page_uid: created.append(
+                (annotation_type, list(position), page_uid)
+            )
+        )
+        label = QGraphicsTextItem("Condition")
+        label.setData(2, "condition_label")
+        self.assertTrue(view.activate_annotation_placement(ANNOTATION_TYPE_DIMENSION))
+        with patch.object(
+            view, "_condition_text_label_at", return_value=label
+        ), patch.object(
+            view,
+            "_select_condition_text_label",
+            side_effect=AssertionError(
+                "active dimension placement must precede condition-label selection"
+            ),
+        ):
+            press = self._left_press_event(80.0, 80.0)
+            release = self._left_release_event(140.0, 80.0)
+            view.mousePressEvent(press)
+            view.mouseReleaseEvent(release)
+        self.assertTrue(press.isAccepted())
+        self.assertTrue(release.isAccepted())
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0][0], ANNOTATION_TYPE_DIMENSION)
+        self.assertEqual(created[0][2], page.uid)
+        self.assertNotEqual(created[0][1][:2], created[0][1][2:])
+        view._current_conditions = {
+            "c1": Condition(uid="c1", condition_type=Condition.TYPE_LINEAR)
+        }
+        self.assertTrue(view.activate_place_for_condition("c1"))
+        self.assertEqual(view.cursor_mode, CURSOR_MODE_PLACE)
+        self.assertIsNone(view.annotation_place_type)
+        view.cleanup()
+
+    def test_dimension_drag_over_dimension_label_creates_dimension(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view.set_selection_enabled(True)
+        created = []
+        view.annotation_created.connect(
+            lambda annotation_type, position, page_uid: created.append(
+                (annotation_type, list(position), page_uid)
+            )
+        )
+        label = QGraphicsTextItem("12' - 0\"")
+        label.setData(2, DIMENSION_LABEL_ITEM_KIND)
+        self.assertTrue(view.activate_annotation_placement(ANNOTATION_TYPE_DIMENSION))
+        with patch.object(
+            view, "_dimension_text_label_at", return_value=label
+        ), patch.object(
+            view,
+            "_select_dimension_text_label",
+            side_effect=AssertionError(
+                "active dimension placement must precede dimension-label selection"
+            ),
+        ):
+            press = self._left_press_event(80.0, 80.0)
+            release = self._left_release_event(140.0, 80.0)
+            view.mousePressEvent(press)
+            view.mouseReleaseEvent(release)
+        self.assertTrue(press.isAccepted())
+        self.assertTrue(release.isAccepted())
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0][0], ANNOTATION_TYPE_DIMENSION)
+        self.assertEqual(created[0][2], page.uid)
+        self.assertNotEqual(created[0][1][:2], created[0][1][2:])
+        view._current_conditions = {
+            "c1": Condition(uid="c1", condition_type=Condition.TYPE_LINEAR)
+        }
+        self.assertTrue(view.activate_place_for_condition("c1"))
+        self.assertEqual(view.cursor_mode, CURSOR_MODE_PLACE)
+        self.assertIsNone(view.annotation_place_type)
+        view.cleanup()
+
+    def test_plan_labels_remain_selectable_outside_annotation_placement(self):
+        for label_kind in ("condition", "dimension"):
+            with self.subTest(label_kind=label_kind):
+                view = self._make_plan_view()
+                selected = []
+                label = QGraphicsTextItem(label_kind)
+                if label_kind == "condition":
+                    label.setData(2, "condition_label")
+                    lookup_patch = patch.object(
+                        view, "_condition_text_label_at", return_value=label
+                    )
+                    selection_patch = patch.object(
+                        view,
+                        "_select_condition_text_label",
+                        side_effect=lambda item: selected.append(item),
+                    )
+                else:
+                    label.setData(2, DIMENSION_LABEL_ITEM_KIND)
+                    lookup_patch = patch.object(
+                        view, "_dimension_text_label_at", return_value=label
+                    )
+                    selection_patch = patch.object(
+                        view,
+                        "_select_dimension_text_label",
+                        side_effect=lambda item: selected.append(item) or True,
+                    )
+                with lookup_patch, selection_patch:
+                    press = self._left_press_event(80.0, 80.0)
+                    view.mousePressEvent(press)
+                self.assertTrue(press.isAccepted())
+                self.assertEqual(selected, [label])
+                self.assertEqual(view.cursor_mode, CURSOR_MODE_SELECT)
+                self.assertIsNone(view.annotation_place_type)
+                view.cleanup()
+
     def test_paste_uses_content_specific_callback_when_general_editing_is_disabled(
         self,
     ):
@@ -2761,6 +2885,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
 
     def test_paste_backout_cancels_move_overlay_state(self):
         view = self._make_plan_view()
+        cursor_modes = []
+        view.cursor_mode_change_requested.connect(cursor_modes.append)
         page = Page(
             uid="p1",
             name="P1",
@@ -2800,8 +2926,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self.assertTrue(view.begin_paste_backout([hole], {}, "7"))
         self.assertEqual(page.overlay_rect, (0.0, 0.0, 544.0, 704.0))
-        self.assertEqual(view._cursor_mode, "paste_backout")
+        self.assertEqual(view._cursor_mode, CURSOR_MODE_PASTE_BACKOUT)
+        self.assertEqual(cursor_modes[-1], CURSOR_MODE_PASTE_BACKOUT)
         self.assertTrue(view._paste_backout_active)
+        self.assertEqual(len(view._paste_backout_sources), 1)
         self.assertIsNone(view._place_session_uid)
         self.assertEqual(view._place_points, [])
         self.assertIsNone(view._annotation_place_type)
@@ -2810,6 +2938,95 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNone(view._overlay_move_handle_item)
         self.assertIsNone(view._overlay_move_original_rect)
         self.assertIsNone(view._overlay_move_preview_rect)
+        view.cleanup()
+
+    def test_failed_paste_backout_preserves_dimension_tool_and_toolbar_state(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view.set_selection_enabled(True)
+        view._current_conditions = {
+            "area-condition": Condition(
+                uid="area-condition",
+                condition_type=Condition.TYPE_AREA,
+            )
+        }
+        select_action = QAction()
+        select_action.setCheckable(True)
+        dimension_action = QAction()
+        dimension_action.setCheckable(True)
+        place_action = QAction()
+        place_action.setCheckable(True)
+        action_group = QActionGroup(view)
+        action_group.setExclusive(True)
+        for action in (select_action, dimension_action, place_action):
+            action_group.addAction(action)
+        select_action.toggled.connect(
+            lambda checked: (
+                view.set_cursor_mode(CURSOR_MODE_SELECT) if checked else None
+            )
+        )
+        dimension_action.toggled.connect(
+            lambda checked: (
+                view.activate_annotation_placement(ANNOTATION_TYPE_DIMENSION)
+                if checked
+                else None
+            )
+        )
+        place_action.toggled.connect(
+            lambda checked: (
+                view.activate_place_for_condition("area-condition") if checked else None
+            )
+        )
+
+        def project_cursor_mode(mode):
+            action = {
+                CURSOR_MODE_SELECT: select_action,
+                CURSOR_MODE_PLACE: place_action,
+                CURSOR_MODE_ANNOTATION_PLACE: dimension_action,
+            }.get(mode)
+            if action is not None and not action.isChecked():
+                action.setChecked(True)
+
+        view.cursor_mode_change_requested.connect(project_cursor_mode)
+        select_action.setChecked(True)
+        dimension_action.setChecked(True)
+        self.assertTrue(dimension_action.isChecked())
+        self.assertEqual(view.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+        self.assertEqual(view.annotation_place_type, ANNOTATION_TYPE_DIMENSION)
+        self.assertTrue(view._editing_cursor_mode_allowed())
+        hole = Takeoff(
+            uid="hole",
+            condition_uid="area-condition",
+            position=[1.0, 1.0, 2.0, 1.0, 2.0, 2.0],
+            parent_uid="source-parent",
+        )
+        self.assertFalse(view.begin_paste_backout([hole], {}, "7"))
+        self.assertTrue(dimension_action.isChecked())
+        self.assertFalse(select_action.isChecked())
+        self.assertFalse(place_action.isChecked())
+        self.assertEqual(view.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+        self.assertEqual(view.annotation_place_type, ANNOTATION_TYPE_DIMENSION)
+        self.assertTrue(view._editing_cursor_mode_allowed())
+        created = []
+        view.annotation_created.connect(
+            lambda annotation_type, position, page_uid: created.append(
+                (annotation_type, list(position), page_uid)
+            )
+        )
+        view.mousePressEvent(self._left_press_event(80.0, 80.0))
+        view.mouseReleaseEvent(self._left_release_event(140.0, 80.0))
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0][0], ANNOTATION_TYPE_DIMENSION)
+        self.assertTrue(dimension_action.isChecked())
+        self.assertEqual(view.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+        self.assertEqual(view.annotation_place_type, ANNOTATION_TYPE_DIMENSION)
+        place_action.setChecked(True)
+        self.assertTrue(place_action.isChecked())
+        self.assertFalse(dimension_action.isChecked())
+        self.assertEqual(view.cursor_mode, CURSOR_MODE_PLACE)
+        self.assertEqual(view.place_condition_uid, "area-condition")
+        self.assertIsNone(view.annotation_place_type)
         view.cleanup()
 
     def test_move_overlay_commit_saves_preview_overlay_rect(self):

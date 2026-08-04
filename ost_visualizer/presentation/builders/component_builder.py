@@ -502,6 +502,9 @@ class ComponentBuilder:
             load_areas_fn=load_bid_areas,
             save_areas_fn=project_write_service.save_bid_areas_result,
             save_areas_async_fn=ui_event_handler.save_bid_areas_async,
+            uses_async_areas_fn=(
+                project_write_service.uses_sql_collaboration_mutations
+            ),
             refresh_areas_fn=project_write_service.reload_and_notify,
             parent=viewer_container,
             ui_access_manager=ui_access_manager,

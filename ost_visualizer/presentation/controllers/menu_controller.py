@@ -824,18 +824,20 @@ class MenuController:
                 and self._project_write_service.save_job_statuses(file_path, ch)
             ),
             save_job_statuses_async_fn=(
-                lambda changes, completed: (
-                    self.handlers.cover_sheet.save_master_data_async(
-                        file_path,
-                        "Job Statuses",
-                        self._project_write_service.queue_job_statuses_save,
-                        changes,
-                        completed,
-                        "job_statuses",
+                (
+                    lambda changes, completed: (
+                        self.handlers.cover_sheet.save_master_data_async(
+                            file_path,
+                            "Job Statuses",
+                            self._project_write_service.queue_job_statuses_save,
+                            changes,
+                            completed,
+                            "job_statuses",
+                        )
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             reload_job_statuses_fn=(
                 (lambda: self.project_data.get_job_status_snapshot(file_path))
@@ -853,32 +855,36 @@ class MenuController:
                 and self._project_write_service.save_pay_classes(file_path, ch)
             ),
             save_employees_async_fn=(
-                lambda changes, completed: (
-                    self.handlers.cover_sheet.save_master_data_async(
-                        file_path,
-                        "Employees",
-                        self._project_write_service.queue_employees_save,
-                        changes,
-                        completed,
-                        "employees",
+                (
+                    lambda changes, completed: (
+                        self.handlers.cover_sheet.save_master_data_async(
+                            file_path,
+                            "Employees",
+                            self._project_write_service.queue_employees_save,
+                            changes,
+                            completed,
+                            "employees",
+                        )
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             save_pay_classes_async_fn=(
-                lambda changes, completed: (
-                    self.handlers.cover_sheet.save_master_data_async(
-                        file_path,
-                        "Payroll Classes",
-                        self._project_write_service.queue_pay_classes_save,
-                        changes,
-                        completed,
-                        "pay_classes",
+                (
+                    lambda changes, completed: (
+                        self.handlers.cover_sheet.save_master_data_async(
+                            file_path,
+                            "Payroll Classes",
+                            self._project_write_service.queue_pay_classes_save,
+                            changes,
+                            completed,
+                            "pay_classes",
+                        )
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             reload_employees_fn=(
                 (
@@ -893,16 +899,18 @@ class MenuController:
                 )
             ),
             save_cover_sheet_async_fn=(
-                lambda updates, completed: (
-                    self.handlers.cover_sheet.create_bid_async(
-                        file_path,
-                        target_project_uid,
-                        updates,
-                        completed,
+                (
+                    lambda updates, completed: (
+                        self.handlers.cover_sheet.create_bid_async(
+                            file_path,
+                            target_project_uid,
+                            updates,
+                            completed,
+                        )
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             pdf_page_sizes_fn=self._infrastructure_provider.get_pdf_page_sizes,
             create_mode=True,

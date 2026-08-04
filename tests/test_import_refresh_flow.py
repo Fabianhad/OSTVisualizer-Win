@@ -349,25 +349,21 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self.assertEqual(len(importer.calls), 1)
         self.assertTrue(str(fake_cab.root).startswith(str(short_parent)))
 
-    def test_osp_import_rejects_nested_legacy_visualizer_layout(self):
+    def test_osp_import_accepts_nested_legacy_visualizer_layout(self):
         nested_member = "TempImages!.tmp\\generated-folder\\sheet.pdf"
         fake_cab = FakeOspCab(names=["Project.ost", nested_member])
         importer = FakeImporter()
         original_cab = osp_importer_module.ost_cab
         try:
             osp_importer_module.ost_cab = fake_cab
-            with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
-                result = OspImporter(importer).import_osp(
-                    "legacy.osp", "target.mdb", "project-1"
-                )
+            result = OspImporter(importer).import_osp(
+                "legacy.osp", "target.mdb", "project-1"
+            )
         finally:
             osp_importer_module.ost_cab = original_cab
-        self.assertFalse(result)
-        self.assertIn(
-            "unsupported legacy Visualizer export layout", "\n".join(logs.output)
-        )
-        self.assertEqual(fake_cab.extract_calls, [])
-        self.assertEqual(importer.calls, [])
+        self.assertTrue(result)
+        self.assertEqual(len(fake_cab.extract_calls), 1)
+        self.assertEqual(len(importer.calls), 1)
 
     def test_osp_import_uses_same_flat_lookup_for_original_and_visualizer_paths(self):
         member_name = "TempImages!.tmp\\A00.00.pdf"
@@ -429,22 +425,82 @@ class ImportRefreshFlowTests(unittest.TestCase):
             self.assertIn(str(dest_dir / "page.pdf"), rewritten)
             self.assertIn(str(dest_dir / "overlay.tif"), rewritten)
 
-    def test_osp_import_fails_when_required_image_member_is_missing(self):
+    def test_osp_import_resolves_most_specific_nested_member_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            flat_member = "TempImages!.tmp\\A701-D.pdf"
+            nested_member = "TempImages!.tmp\\estimates\\project\\drawings\\A701-D.pdf"
+            _write_packaged_image(tmp_path, flat_member, b"generated")
+            _write_packaged_image(tmp_path, nested_member, b"original")
+            generated_path = "C:\\OST\\Project\\A701-D.pdf"
+            original_path = "Q:\\estimates\\project\\drawings\\A701-D.pdf"
+            ost_path = tmp_path / "Project.ost"
+            ost_path.write_text(
+                f"""
+                <XML_ROOT><Bid><BidPages><BidPage
+                  ImagePath="{generated_path}"
+                  OverlayImagePath="{original_path}"
+                /></BidPages></Bid></XML_ROOT>
+                """,
+                encoding="utf-8",
+            )
+            dest_dir = tmp_path / "dest"
+            OspImporter(FakeImporter())._extract_images(
+                tmp_path,
+                ost_path,
+                dest_dir,
+                {
+                    flat_member.casefold(): flat_member,
+                    nested_member.casefold(): nested_member,
+                },
+            )
+            generated_dest = dest_dir / "A701-D.pdf"
+            nested_destinations = list((dest_dir / "Images").glob("*/A701-D.pdf"))
+            self.assertEqual(generated_dest.read_bytes(), b"generated")
+            self.assertEqual(len(nested_destinations), 1)
+            self.assertEqual(nested_destinations[0].read_bytes(), b"original")
+            rewritten = ost_path.read_text(encoding="utf-8")
+            self.assertIn(str(generated_dest), rewritten)
+            self.assertIn(str(nested_destinations[0]), rewritten)
+
+    def test_osp_import_does_not_fall_back_to_nested_basename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            nested_member = "TempImages!.tmp\\first\\sheet.pdf"
+            _write_packaged_image(tmp_path, nested_member, b"nested")
+            source_path = "C:\\unrelated\\sheet.pdf"
+            ost_path = tmp_path / "Project.ost"
+            original_xml = _write_osp_page_xml(ost_path, source_path)
+            dest_dir = tmp_path / "dest"
+            with self.assertLogs(osp_importer_module.logger, level="WARNING") as logs:
+                OspImporter(FakeImporter())._extract_images(
+                    tmp_path,
+                    ost_path,
+                    dest_dir,
+                    {nested_member.casefold(): nested_member},
+                )
+            self.assertIn(
+                "could not resolve 1 referenced image", "\n".join(logs.output)
+            )
+            self.assertEqual(ost_path.read_text(encoding="utf-8"), original_xml)
+            self.assertFalse(dest_dir.exists())
+
+    def test_osp_import_preserves_missing_image_reference_and_continues(self):
         source_path = "C:\\old\\folder\\missing.pdf"
         fake_cab = FakeOspCab(ost_xml=_write_osp_page_xml_text(source_path))
         importer = FakeImporter()
         original_cab = osp_importer_module.ost_cab
         try:
             osp_importer_module.ost_cab = fake_cab
-            with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
+            with self.assertLogs(osp_importer_module.logger, level="WARNING") as logs:
                 result = OspImporter(importer).import_osp(
                     "missing-image.osp", "target.mdb", "project-1"
                 )
         finally:
             osp_importer_module.ost_cab = original_cab
-        self.assertFalse(result)
-        self.assertIn("required image member is missing", "\n".join(logs.output))
-        self.assertEqual(importer.calls, [])
+        self.assertTrue(result)
+        self.assertIn("could not resolve 1 referenced image", "\n".join(logs.output))
+        self.assertEqual(len(importer.calls), 1)
         self.assertFalse(fake_cab.root.exists())
 
     def test_osp_import_rejects_case_insensitive_duplicate_members(self):

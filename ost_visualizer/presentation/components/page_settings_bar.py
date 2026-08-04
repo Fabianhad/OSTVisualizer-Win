@@ -35,6 +35,8 @@ class PageSettingsBar(QtWidgets.QWidget):
         save_areas_fn: Optional[Callable] = None,
         save_areas_async_fn: Optional[Callable] = None,
         parent=None,
+        *,
+        uses_async_areas_fn: Optional[Callable[[str], bool]] = None,
     ):
         super().__init__(parent)
         self._icon_provider = icon_provider
@@ -43,6 +45,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         self._load_areas_fn = load_areas_fn
         self._save_areas_fn = save_areas_fn
         self._save_areas_async_fn = save_areas_async_fn
+        self._uses_async_areas_fn = uses_async_areas_fn
         self._refresh_areas_fn = refresh_areas_fn
         self._bid_ref: Optional[BidRef] = None
         self._page_uid: Optional[str] = None
@@ -211,10 +214,17 @@ class PageSettingsBar(QtWidgets.QWidget):
             not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
             or not self._bid_ref
             or not self._load_areas_fn
-            or not (self._save_areas_fn or self._save_areas_async_fn)
         ):
             return
         bid_ref = self._bid_ref
+        sync_save_fn = self._save_areas_fn
+        async_save_fn = self._save_areas_async_fn
+        use_async_save = async_save_fn is not None and (
+            self._uses_async_areas_fn is None
+            or self._uses_async_areas_fn(bid_ref.file_path)
+        )
+        if sync_save_fn is None and not use_async_save:
+            return
         page_uid = self._page_uid
         areas = []
         try:
@@ -223,29 +233,36 @@ class PageSettingsBar(QtWidgets.QWidget):
             logger.exception("Failed to load bid areas for picker")
             return
         prev_area_uid = self.area_combo.get_current_area_uid()
+        if sync_save_fn is not None:
 
-        def _save_fn(changes: dict):
-            if (
-                not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
-                or self._bid_ref != bid_ref
-            ):
-                return None
-            return self._save_areas_fn(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                changes,
-                publish_database_refreshed_after_write=False,
-            )
+            def _save_fn(changes: dict):
+                if (
+                    not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+                    or self._bid_ref != bid_ref
+                ):
+                    return None
+                return sync_save_fn(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    changes,
+                    publish_database_refreshed_after_write=False,
+                )
 
-        def _save_async_fn(changes: dict, completed) -> bool:
-            if (
-                not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
-                or self._bid_ref != bid_ref
-                or self._save_areas_async_fn is None
-            ):
-                completed(False, None)
-                return False
-            return bool(self._save_areas_async_fn(bid_ref, changes, completed))
+        else:
+            _save_fn = None
+        if use_async_save:
+
+            def _save_async_fn(changes: dict, completed) -> bool:
+                if (
+                    not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+                    or self._bid_ref != bid_ref
+                ):
+                    completed(False, None)
+                    return False
+                return bool(async_save_fn(bid_ref, changes, completed))
+
+        else:
+            _save_async_fn = None
 
         def _on_saved() -> None:
             if self._bid_ref != bid_ref:
@@ -261,9 +278,7 @@ class PageSettingsBar(QtWidgets.QWidget):
             parent=self,
             bid_areas=areas,
             save_fn=_save_fn,
-            save_async_fn=(
-                _save_async_fn if self._save_areas_async_fn is not None else None
-            ),
+            save_async_fn=_save_async_fn,
             used_uids=self._bid_areas_in_use,
             on_saved_fn=_on_saved,
             bid_ref=bid_ref,
@@ -279,7 +294,7 @@ class PageSettingsBar(QtWidgets.QWidget):
             dlg.cleanup()
             saved_changes = dlg.has_saved_changes()
             dlg.deleteLater()
-        if saved_changes and self._save_areas_async_fn is None:
+        if saved_changes and not use_async_save:
             self._refresh_areas_fn(bid_ref.file_path)
         if self._bid_ref != bid_ref or self._page_uid != page_uid:
             return

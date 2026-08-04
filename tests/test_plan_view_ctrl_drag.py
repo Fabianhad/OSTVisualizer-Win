@@ -844,6 +844,202 @@ class CtrlDragTests(unittest.TestCase):
         view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
         return view
 
+    def _make_linear_resize_gesture_view(
+        self,
+        *,
+        scale_ratio=48.0,
+        coordinate_view_scale=2.0,
+        zoom=1.0,
+        position=None,
+        snap_increment=1.0,
+    ):
+        view = self._make_view({"t1"})
+        view._advanced_mouse_controls_enabled = False
+        view._drag_model_orig_position = None
+        view._drag_position_before_edit_existed = False
+        view._current_conditions = {
+            "c": Condition(uid="c", condition_type=Condition.TYPE_LINEAR)
+        }
+        view._current_takeoffs["t1"].position = list(position or [0.0, 0.0, 10.0, 0.0])
+        view._scene_builder = FakeSceneBuilder()
+        coordinate_system = view._scene_builder.get_coordinate_system()
+        coordinate_system.scale_ratio = float(scale_ratio)
+        coordinate_system.view_scale = float(coordinate_view_scale)
+        view._snap_increments = float(snap_increment)
+        view.mapToScene = lambda point: QtCore.QPointF(
+            point.x() / zoom,
+            point.y() / zoom,
+        )
+        view.mapFromScene = lambda point: QtCore.QPoint(
+            round(point.x() * zoom),
+            round(point.y() * zoom),
+        )
+        view._current_page_transform = lambda: None
+        view._snap_angle = lambda _ox, _oy, nx, ny: (nx, ny)
+        view.find_text_annotation_at = lambda _scene_pos: None
+        view.find_selected_movable_at = lambda _scene_pos: "t1"
+        view.find_takeoff_at = lambda _scene_pos, cycle_from_uid=None: "t1"
+        view.find_takeoffs_at = lambda _scene_pos: ["t1"]
+        handles = [
+            SimpleNamespace(item=FakeItem()),
+            SimpleNamespace(item=FakeItem()),
+        ]
+        view._handle_infos = handles
+        view._is_handle_info_at_viewport_pos = lambda info, _pos: info is handles[1]
+        view.resize_previews = []
+        view.update_drag_handle_positions = (
+            lambda new_pos, uid, *_args: view.resize_previews.append(
+                (uid, list(new_pos))
+            )
+        )
+        view.positions_flushed = FakeSignal()
+
+        def flush_dirty_positions():
+            if not view._dirty_positions and not view._dirty_ann_positions:
+                return
+            previous = dict(view._position_before_edit)
+            takeoff_changes = [
+                (uid, previous.get(uid, []), list(new_pos))
+                for uid, new_pos in view._dirty_positions.items()
+            ]
+            annotation_changes = [
+                (uid, annotation_type, previous.get(uid, []), list(new_pos))
+                for uid, (annotation_type, new_pos) in view._dirty_ann_positions.items()
+            ]
+            view._dirty_positions.clear()
+            view._dirty_ann_positions.clear()
+            view._position_before_edit.clear()
+            view.positions_flushed.emit(takeoff_changes, annotation_changes)
+
+        view._flush_dirty_positions = flush_dirty_positions
+        return view
+
+    @staticmethod
+    def _perform_linear_resize_gesture(view, points):
+        view.mousePressEvent(FakeMouseEvent(x=0, y=0))
+        drag_latches = []
+        for x, y in points:
+            view.mouseMoveEvent(FakeMouseEvent(x=x, y=y))
+            drag_latches.append(view._select_band_dragged)
+        release_x, release_y = points[-1] if points else (0, 0)
+        release = FakeMouseEvent(
+            x=release_x,
+            y=release_y,
+            buttons=Qt.MouseButton.NoButton,
+        )
+        view.mouseReleaseEvent(release)
+        return drag_latches, release
+
+    def test_three_pixel_snapped_linear_resize_commits_geometry_change(self):
+        view = self._make_linear_resize_gesture_view(zoom=1.0)
+        drag_latches, release = self._perform_linear_resize_gesture(view, [(3, 0)])
+        expected = [0.0, 0.0, 11.0, 0.0]
+        self.assertEqual(drag_latches, [False])
+        self.assertTrue(release.accepted)
+        self.assertEqual(view._current_takeoffs["t1"].position, expected)
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("t1", [0.0, 0.0, 10.0, 0.0], expected)], [])],
+        )
+
+    def test_exactly_five_pixel_snapped_linear_resize_commits_geometry_change(self):
+        view = self._make_linear_resize_gesture_view(zoom=5.0 / 3.0)
+        drag_latches, _release = self._perform_linear_resize_gesture(view, [(5, 0)])
+        self.assertEqual(drag_latches, [False])
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [0.0, 0.0, 11.0, 0.0],
+        )
+        self.assertEqual(len(view.positions_flushed.emitted), 1)
+
+    def test_six_pixel_snapped_linear_resize_continues_to_commit(self):
+        view = self._make_linear_resize_gesture_view(zoom=2.0)
+        drag_latches, _release = self._perform_linear_resize_gesture(view, [(6, 0)])
+        self.assertEqual(drag_latches, [True])
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [0.0, 0.0, 11.0, 0.0],
+        )
+        self.assertEqual(len(view.positions_flushed.emitted), 1)
+
+    def test_linear_resize_overshoot_matches_direct_final_endpoint(self):
+        direct = self._make_linear_resize_gesture_view(zoom=1.0)
+        overshoot = self._make_linear_resize_gesture_view(zoom=1.0)
+        direct_latches, _release = self._perform_linear_resize_gesture(direct, [(3, 0)])
+        overshoot_latches, _release = self._perform_linear_resize_gesture(
+            overshoot, [(6, 0), (3, 0)]
+        )
+        self.assertEqual(direct_latches, [False])
+        self.assertEqual(overshoot_latches, [True, True])
+        self.assertEqual(
+            direct._current_takeoffs["t1"].position,
+            overshoot._current_takeoffs["t1"].position,
+        )
+        self.assertEqual(
+            direct.positions_flushed.emitted,
+            overshoot.positions_flushed.emitted,
+        )
+
+    def test_resize_returning_to_original_geometry_reverts_without_persistence(self):
+        view = self._make_linear_resize_gesture_view(zoom=1.0)
+        drag_latches, release = self._perform_linear_resize_gesture(
+            view, [(6, 0), (0, 0)]
+        )
+        self.assertEqual(drag_latches, [True, True])
+        self.assertTrue(release.accepted)
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [0.0, 0.0, 10.0, 0.0],
+        )
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_resize_handle_click_without_geometry_change_remains_a_click(self):
+        view = self._make_linear_resize_gesture_view(zoom=1.0)
+        drag_latches, release = self._perform_linear_resize_gesture(view, [])
+        self.assertEqual(drag_latches, [])
+        self.assertTrue(release.accepted)
+        self.assertEqual(view._selected_uids, {"t1"})
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [0.0, 0.0, 10.0, 0.0],
+        )
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_small_body_drag_still_uses_existing_pixel_threshold(self):
+        view = self._make_linear_resize_gesture_view(zoom=1.0)
+        view._is_handle_info_at_viewport_pos = lambda _info, _pos: False
+        drag_latches, _release = self._perform_linear_resize_gesture(view, [(3, 0)])
+        self.assertEqual(drag_latches, [False])
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [0.0, 0.0, 10.0, 0.0],
+        )
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_angled_resize_is_consistent_across_page_scale_and_zoom(self):
+        configurations = (
+            {"scale_ratio": 48.0, "zoom": 5.0 / 3.0},
+            {"scale_ratio": 96.0, "zoom": 10.0 / 3.0},
+        )
+        results = []
+        for configuration in configurations:
+            with self.subTest(**configuration):
+                view = self._make_linear_resize_gesture_view(
+                    **configuration,
+                    position=[0.0, 0.0, 6.0, 8.0],
+                    snap_increment=0.1,
+                )
+                drag_latches, _release = self._perform_linear_resize_gesture(
+                    view, [(3, 4)]
+                )
+                self.assertEqual(drag_latches, [False])
+                self.assertEqual(len(view.positions_flushed.emitted), 1)
+                result = view._current_takeoffs["t1"].position
+                self.assertAlmostEqual(result[2], 6.6)
+                self.assertAlmostEqual(result[3], 8.8)
+                results.append(result)
+        self.assertEqual(results[0], results[1])
+
     def _make_area_control_point_view(self, selected_uids=None, include_hole=False):
         view = self._make_view(set() if selected_uids is None else selected_uids)
         view._scene = QGraphicsScene()

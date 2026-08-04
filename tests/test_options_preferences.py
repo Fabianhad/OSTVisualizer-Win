@@ -1962,6 +1962,56 @@ class OptionsPreferencesTests(unittest.TestCase):
             [_app_config_event({"grayscale_enabled": True})],
         )
 
+    def test_access_new_project_dialog_does_not_install_sql_save_callbacks(self):
+        captured = {}
+
+        class FakeDialog:
+            def __init__(self, *_args, **kwargs):
+                captured.update(kwargs)
+
+            def deleteLater(self):
+                pass
+
+        controller = MenuController.__new__(MenuController)
+        controller._resolve_project_tree_file_path = lambda: "projects.mdb"
+        controller._resolve_target_project_uid = lambda: "project-1"
+        controller.ui_access_manager = SimpleNamespace(
+            can_create_project_tree_items=lambda _has_file: True,
+            has_license=lambda: True,
+            is_allowed=lambda _feature: True,
+        )
+        controller._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False
+        )
+        controller._project_read_service = SimpleNamespace(
+            get_settings_defaults=lambda _file_path: {},
+            get_job_statuses=lambda _file_path: [],
+            get_employees_and_pay_classes=lambda _file_path: ([], []),
+        )
+        controller.icon_provider = object()
+        controller.window = object()
+        controller._infrastructure_provider = SimpleNamespace(
+            get_pdf_page_sizes=lambda _path: []
+        )
+        controller._workspace_state_model = None
+        controller._event_bus = object()
+        with (
+            mock.patch(
+                "ost_visualizer.presentation.controllers.menu_controller.CoverSheetDialog",
+                FakeDialog,
+            ),
+            mock.patch(
+                "ost_visualizer.presentation.controllers.menu_controller."
+                "exec_with_ost_blocking",
+                return_value=QtWidgets.QDialog.DialogCode.Rejected,
+            ),
+        ):
+            controller._new_project()
+        self.assertIsNone(captured["save_job_statuses_async_fn"])
+        self.assertIsNone(captured["save_employees_async_fn"])
+        self.assertIsNone(captured["save_pay_classes_async_fn"])
+        self.assertIsNone(captured["save_cover_sheet_async_fn"])
+
     def test_grayscale_noop_does_not_publish(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)

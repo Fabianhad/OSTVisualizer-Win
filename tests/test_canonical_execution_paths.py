@@ -51,6 +51,37 @@ def _production_python_sources() -> list[Path]:
 
 
 class CanonicalExecutionPathTests(unittest.TestCase):
+    def test_optional_async_dialog_callbacks_are_selected_before_invocation(self):
+        invalid_callbacks = []
+        presentation_root = _ROOT / "ost_visualizer" / "presentation"
+        for path in presentation_root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+                for keyword in call.keywords:
+                    if not keyword.arg or not keyword.arg.endswith("_async_fn"):
+                        continue
+                    callbacks = [keyword.value]
+                    if isinstance(keyword.value, ast.IfExp):
+                        callbacks = [keyword.value.body, keyword.value.orelse]
+                    for callback in callbacks:
+                        if not isinstance(callback, ast.Lambda) or not isinstance(
+                            callback.body, ast.IfExp
+                        ):
+                            continue
+                        returns_none = (
+                            isinstance(callback.body.orelse, ast.Constant)
+                            and callback.body.orelse.value is None
+                        )
+                        returns_callback = isinstance(
+                            callback.body.body, ast.Lambda
+                        ) or isinstance(callback.body.orelse, ast.Lambda)
+                        if returns_none or returns_callback:
+                            invalid_callbacks.append(
+                                f"{path.relative_to(_ROOT)}:{callback.lineno}:"
+                                f"{keyword.arg}"
+                            )
+        self.assertEqual(invalid_callbacks, [])
+
     def test_decision_ledger_is_complete_and_linked(self):
         columns, rows = _read_tsv(_LEDGER_PATH)
         required = {

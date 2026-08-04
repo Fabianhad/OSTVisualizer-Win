@@ -115,8 +115,8 @@ class CoverSheetHandler:
             has_license=self._ui_access_manager.has_license(),
             context=context,
             save_job_statuses_async_fn=(
-                lambda changes, completed: (
-                    self._save_master_data_async(
+                (
+                    lambda changes, completed: self._save_master_data_async(
                         file_path,
                         "Job Statuses",
                         self._write_service.queue_job_statuses_save,
@@ -124,9 +124,9 @@ class CoverSheetHandler:
                         completed,
                         "job_statuses",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             reload_job_statuses_fn=(
                 (lambda: self._project_data.get_job_status_snapshot(file_path))
@@ -134,8 +134,8 @@ class CoverSheetHandler:
                 else None
             ),
             save_employees_async_fn=(
-                lambda changes, completed: (
-                    self._save_master_data_async(
+                (
+                    lambda changes, completed: self._save_master_data_async(
                         file_path,
                         "Employees",
                         self._write_service.queue_employees_save,
@@ -143,13 +143,13 @@ class CoverSheetHandler:
                         completed,
                         "employees",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             save_pay_classes_async_fn=(
-                lambda changes, completed: (
-                    self._save_master_data_async(
+                (
+                    lambda changes, completed: self._save_master_data_async(
                         file_path,
                         "Payroll Classes",
                         self._write_service.queue_pay_classes_save,
@@ -157,9 +157,9 @@ class CoverSheetHandler:
                         completed,
                         "pay_classes",
                     )
-                    if uses_sql_queue
-                    else None
                 )
+                if uses_sql_queue
+                else None
             ),
             reload_employees_fn=(
                 (
@@ -172,11 +172,13 @@ class CoverSheetHandler:
                 else None
             ),
             save_bid_areas_async_fn=(
-                lambda changes, completed: (
-                    self._save_bid_areas_async(bid_ref, changes, completed)
-                    if uses_sql_queue
-                    else None
+                (
+                    lambda changes, completed: self._save_bid_areas_async(
+                        bid_ref, changes, completed
+                    )
                 )
+                if uses_sql_queue
+                else None
             ),
             reload_bid_areas_fn=(
                 (lambda: self._project_data.get_bid_area_snapshot())
@@ -193,9 +195,7 @@ class CoverSheetHandler:
                             completed,
                         )
                         if locked_at_open
-                        else lambda updates, completed: self._save_cover_sheet_async(
-                            bid_ref, updates, completed
-                        )
+                        else self._save_cover_sheet_async(bid_ref, updates, completed)
                     )
                 )
                 if uses_sql_queue

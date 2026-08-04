@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import shutil
@@ -142,13 +143,7 @@ def _inspect_package(member_names: Iterable[str]) -> _OspPackage:
             ost_members.append(member_name)
         if parts[0].casefold() != _IMAGE_MEMBER_ROOT.casefold():
             continue
-        if len(parts) > 2:
-            raise _OspFormatError(
-                "unsupported legacy Visualizer export layout; image members must "
-                f"be flat under {_IMAGE_MEMBER_ROOT}. Re-export the project with "
-                "a current OST Visualizer version"
-            )
-        if len(parts) != 2 or not _is_supported_image_path(member_name):
+        if len(parts) < 2 or not _is_supported_image_path(member_name):
             raise _OspFormatError(
                 f"unsupported member under {_IMAGE_MEMBER_ROOT}: {member_name!r}"
             )
@@ -259,34 +254,28 @@ class OspImporter:
         image_members_by_path: dict[str, str],
     ) -> list[_ImageReference]:
         image_refs_by_original: dict[str, _ImageReference] = {}
+        missing_paths: dict[str, None] = {}
         for page_elem in root.iter("BidPage"):
             for attr in _IMAGE_PATH_ATTRS:
                 image_path = page_elem.get(attr)
                 if not image_path or not _is_supported_image_path(image_path):
                     continue
-                path_parts = _windows_path_parts(image_path)
-                if (
-                    path_parts
-                    and path_parts[0].casefold() == _IMAGE_MEMBER_ROOT.casefold()
-                    and len(path_parts) != 2
-                ):
-                    raise _OspFormatError(
-                        "unsupported legacy Visualizer export layout in embedded "
-                        f"OST image reference: {image_path!r}. Re-export the project "
-                        "with a current OST Visualizer version"
-                    )
-                image_filename = _windows_path_name(image_path)
-                expected_member_name = f"{_IMAGE_MEMBER_ROOT}\\{image_filename}"
-                member_name = image_members_by_path.get(expected_member_name.casefold())
+                member_name = _resolve_image_member(image_path, image_members_by_path)
                 if member_name is None:
-                    raise _OspFormatError(
-                        f"required image member is missing for {image_path!r}; "
-                        f"expected {expected_member_name}"
-                    )
+                    missing_paths[image_path] = None
+                    continue
                 image_refs_by_original[image_path] = _ImageReference(
                     original_path=image_path,
                     member_name=member_name,
                 )
+        if missing_paths:
+            logger.warning(
+                "OSP import could not resolve %d referenced image(s) in the "
+                "package. Import will continue and preserve those original paths. "
+                "First missing source path: %s",
+                len(missing_paths),
+                next(iter(missing_paths)),
+            )
         return list(image_refs_by_original.values())
 
     def _copy_referenced_images(
@@ -303,16 +292,27 @@ class OspImporter:
                 )
         copied_paths: dict[str, str] = {}
         destinations_by_member: dict[str, str] = {}
+        members_by_destination: dict[str, str] = {}
         for image_ref in image_refs:
             source_path = _cab_member_path(tmp_path, image_ref.member_name)
             member_key = image_ref.member_name.casefold()
             destination = destinations_by_member.get(member_key)
             if destination is None:
-                dest_path = dest_dir / _windows_path_name(image_ref.member_name)
+                dest_path = dest_dir / _image_destination_relative_path(
+                    image_ref.member_name
+                )
+                destination_key = str(dest_path).casefold()
+                conflicting_member = members_by_destination.get(destination_key)
+                if conflicting_member is not None and conflicting_member != member_key:
+                    raise _OspFormatError(
+                        "image staging destination collision between "
+                        f"{image_ref.member_name!r} and {conflicting_member!r}"
+                    )
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(source_path), str(dest_path))
                 destination = str(dest_path)
                 destinations_by_member[member_key] = destination
+                members_by_destination[destination_key] = member_key
             copied_paths[image_ref.original_path] = destination
         return copied_paths
 
@@ -340,12 +340,40 @@ def _is_supported_image_path(path: str) -> bool:
     )
 
 
-def _windows_path_name(path: str) -> str:
-    return PureWindowsPath(path.replace("/", "\\")).name
-
-
 def _windows_path_parts(path: str) -> tuple[str, ...]:
     return PureWindowsPath(path.replace("/", "\\")).parts
+
+
+def _resolve_image_member(
+    image_path: str,
+    image_members_by_path: dict[str, str],
+) -> Optional[str]:
+    reference_parts = tuple(part.casefold() for part in _windows_path_parts(image_path))
+    if reference_parts[0] == _IMAGE_MEMBER_ROOT.casefold():
+        return image_members_by_path.get("\\".join(reference_parts))
+    best_match: Optional[str] = None
+    best_match_depth = 0
+    for member_name in image_members_by_path.values():
+        member_parts = _windows_path_parts(member_name)[1:]
+        member_parts_folded = tuple(part.casefold() for part in member_parts)
+        member_depth = len(member_parts_folded)
+        if (
+            member_depth > best_match_depth
+            and member_depth <= len(reference_parts)
+            and reference_parts[-member_depth:] == member_parts_folded
+        ):
+            best_match = member_name
+            best_match_depth = member_depth
+    return best_match
+
+
+def _image_destination_relative_path(member_name: str) -> Path:
+    member_parts = _windows_path_parts(member_name)
+    filename = member_parts[-1]
+    if len(member_parts) == 2:
+        return Path(filename)
+    digest = hashlib.sha1(member_name.casefold().encode("utf-8")).hexdigest()[:16]
+    return Path("Images") / digest / filename
 
 
 def _cab_member_path(root: Path, member_name: str) -> Path:

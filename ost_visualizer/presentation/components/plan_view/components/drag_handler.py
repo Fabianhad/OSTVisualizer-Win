@@ -250,6 +250,22 @@ class DragHandlerMixin:
             return val
         return round(val / self._snap_increments) * self._snap_increments
 
+    @staticmethod
+    def _positions_meaningfully_different(
+        original: List[float], candidate: List[float]
+    ) -> bool:
+        if len(original) != len(candidate):
+            return True
+        return any(
+            not math.isclose(
+                original_value,
+                candidate_value,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+            for original_value, candidate_value in zip(original, candidate)
+        )
+
     def compute_new_position(
         self,
         orig_pos: List[float],
