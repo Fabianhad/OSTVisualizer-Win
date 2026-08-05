@@ -44,6 +44,9 @@ from ost_visualizer.presentation.coordinators.placement_coordinator import (
 from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
     SidebarCoordinator,
 )
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
@@ -401,6 +404,55 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.app.processEvents()
         self.assertGreater(scrollbar.value(), 0)
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c80"])
+
+    def test_takeoff_owned_highlight_repairs_real_sidebar_projection(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(2)
+        sidebar.load_conditions(conditions, {}, "Project")
+
+        class UiState:
+            highlighted_condition_uids = set()
+
+            def set_highlighted_conditions(self, uids):
+                self.highlighted_condition_uids = set(uids)
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = SimpleNamespace(
+            get_all_takeoffs=lambda: [
+                Takeoff(uid="t1", condition_uid="c1"),
+                Takeoff(uid="t2", condition_uid="c2"),
+            ]
+        )
+        coordinator.conditions_sidebar = sidebar
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._placement = SimpleNamespace(
+            is_active=False,
+            condition_uid=None,
+            enter=lambda *_args: None,
+        )
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
+        coordinator._tab_widget = SimpleNamespace(currentIndex=lambda: 1)
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator._selected_takeoff_uids = ()
+        coordinator._selected_takeoff_condition_uids = set()
+        coordinator._selection_projected_condition_uids = set()
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1", "t2"])
+        self.assertEqual(set(sidebar.get_selected_condition_uids()), {"c1", "c2"})
+        sidebar.tree.clearSelection()
+        sidebar._sync_button_states()
+        self.assertEqual(sidebar.get_selected_condition_uids(), [])
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c1", "c2"}
+        )
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1", "t2"])
+        self.assertEqual(set(sidebar.get_selected_condition_uids()), {"c1", "c2"})
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c1", "c2"}
+        )
 
     def test_condition_sidebar_explicit_highlight_expands_condition_path(self):
         sidebar = ConditionsSidebar(None)

@@ -265,6 +265,8 @@ class ProjectDataService:
     ) -> bool:
         if self.model.current_bid_ref != bid_ref:
             return False
+        annotations_changed = "annotations" in families
+        layers_changed = "layers" in families
         if "takeoffs" in families:
             authoritative_takeoffs = list(bid_data.bid_takeoffs)
             authoritative_uids = {
@@ -277,7 +279,7 @@ class ProjectDataService:
             ]
             self.model.bid_takeoffs = authoritative_takeoffs + transient_takeoffs
             self.model.bid_takeoff_extras = dict(bid_data.takeoff_extras)
-        if "annotations" in families:
+        if annotations_changed:
             self.model.set_annotations(list(bid_data.bid_annotations))
         if "pages" in families:
             self.model.set_pages(dict(bid_data.pages))
@@ -288,11 +290,23 @@ class ProjectDataService:
                 takeoffs_by_page.setdefault(str(takeoff.page_uid), []).append(takeoff)
             for page in self.model.get_all_pages():
                 page.takeoffs = list(takeoffs_by_page.get(str(page.uid), ()))
-        if "layers" in families:
-            self.set_bid_layer_visibility(bid_data.bid_layers)
+        if layers_changed:
+            self._replace_bid_layer_visibility_state(bid_data.bid_layers)
+        if annotations_changed or layers_changed:
+            self._synchronize_annotation_visibility()
         return True
 
-    def set_bid_layer_visibility(self, layers: Iterable[BidLayer]) -> None:
+    def _synchronize_annotation_visibility(
+        self, layer_uids: Optional[set[str]] = None
+    ) -> None:
+        layer_set = self._bid_layer_set()
+        for annotation in self.model.get_all_annotations():
+            annotation_layer_uid = str(annotation.layer_uid or "")
+            if layer_uids is not None and annotation_layer_uid not in layer_uids:
+                continue
+            annotation.visible = layer_set.is_visible(annotation.layer_uid)
+
+    def _replace_bid_layer_visibility_state(self, layers: Iterable[BidLayer]) -> None:
         layer_list = list(layers)
         self.model.bid_layers = layer_list
         self.model.bid_layer_visibility = {}
@@ -308,6 +322,10 @@ class ProjectDataService:
             if layer_name:
                 self.model.bid_layer_names_by_uid[layer_uid] = layer_name
                 self.model.bid_layer_visibility_by_name[layer_name] = visible
+
+    def set_bid_layer_visibility(self, layers: Iterable[BidLayer]) -> None:
+        self._replace_bid_layer_visibility_state(layers)
+        self._synchronize_annotation_visibility()
 
     def get_hidden_layer_uids(self) -> set[str]:
         return {
@@ -416,6 +434,7 @@ class ProjectDataService:
         for layer in self.model.bid_layers or []:
             if str(layer.uid) == layer_key:
                 layer.show = visible
+        self._synchronize_annotation_visibility({layer_key})
         if self.is_image_layer_uid(layer_key):
             for page in self.model.get_all_pages():
                 page.layer_visible = visible
@@ -431,6 +450,7 @@ class ProjectDataService:
             condition.layer_visible = visible
         for layer in self.model.bid_layers or []:
             layer.show = visible
+        self._synchronize_annotation_visibility()
         changed_pages: List[str] = []
         for page in self.model.get_all_pages():
             page.layer_visible = visible
@@ -461,6 +481,9 @@ class ProjectDataService:
     def add_annotations(self, annotations: List[BidAnnotation]) -> None:
         if annotations:
             self.model.add_annotations(annotations)
+            self._synchronize_annotation_visibility(
+                {str(annotation.layer_uid or "") for annotation in annotations}
+            )
 
     def remove_annotations_by_keys(
         self, annotation_keys: Iterable[Tuple[str, str]]

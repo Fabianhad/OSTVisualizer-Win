@@ -1,3 +1,4 @@
 pyodbc
 PySide6==6.10.2
 Nuitka
+pywin32

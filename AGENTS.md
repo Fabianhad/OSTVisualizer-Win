@@ -231,6 +231,10 @@ State and identity:
   authoritative for interaction state, and its toolbar actions must remain in
   the existing exclusive action group rather than using signal-blocked checked
   states that bypass group exclusivity.
+- Annotation-layer visibility is authoritative in `ProjectDataService`. Plan
+  snapshots must retain hidden annotations so every open plan surface can
+  reveal the existing scene items when the layer is enabled; do not filter
+  hidden annotations out during viewer hydration.
 
 C++ extensions:
 

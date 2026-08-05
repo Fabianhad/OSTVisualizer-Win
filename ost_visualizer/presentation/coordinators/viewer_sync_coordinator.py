@@ -45,7 +45,7 @@ class _PlanUpdateSnapshot:
 class _PreparedPlanUpdate:
     snapshot: _PlanUpdateSnapshot
     color_map: Dict
-    visible_annotations: tuple
+    annotations: tuple
 
 
 class ViewerSyncCoordinator:
@@ -257,9 +257,7 @@ class ViewerSyncCoordinator:
         return _PreparedPlanUpdate(
             snapshot=snapshot,
             color_map=color_map,
-            visible_annotations=tuple(
-                annotation for annotation in snapshot.annotations if annotation.visible
-            ),
+            annotations=snapshot.annotations,
         )
 
     def _apply_plan_update(self, prepared: _PreparedPlanUpdate) -> bool:
@@ -278,7 +276,7 @@ class ViewerSyncCoordinator:
                 conditions=conditions,
                 color_map=prepared.color_map,
                 bid_ref=snapshot.bid_ref,
-                annotations=list(prepared.visible_annotations),
+                annotations=list(prepared.annotations),
                 page_area_selections=page_area_selections,
                 hidden_layer_uids=set(snapshot.hidden_layer_uids),
                 changed_takeoff_uids=list(snapshot.changed_takeoff_uids),
@@ -295,7 +293,7 @@ class ViewerSyncCoordinator:
             conditions=conditions,
             color_map=prepared.color_map,
             bid_ref=snapshot.bid_ref,
-            annotations=list(prepared.visible_annotations),
+            annotations=list(prepared.annotations),
             page_area_selections=page_area_selections,
             hidden_layer_uids=set(snapshot.hidden_layer_uids),
         )

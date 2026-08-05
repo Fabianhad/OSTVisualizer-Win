@@ -3716,6 +3716,22 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(calls, ["undo", "refresh"])
 
+    def test_combined_remote_annotation_layer_change_refreshes_detached_view_once(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = SimpleNamespace(clear=lambda: None)
+        manager._refresh_signaler = SimpleNamespace(
+            request=lambda: calls.append("refresh")
+        )
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            families=["annotations", "layers"],
+        )
+        self.assertEqual(calls, ["refresh"])
+
     def test_remote_hierarchy_refreshes_matching_detached_database(self):
         calls = []
         view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))

@@ -144,7 +144,7 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
             refreshed_bid
         )
         coordinator._load_condition_summary = lambda: None
-        coordinator.highlight_sidebar = lambda _uids, reveal=True: None
+        coordinator._restore_sidebar_highlight = lambda _uids, reveal=True: None
         coordinator._sync_embedded_renderer_exposure = lambda: None
         coordinator._update_menu_state = lambda: None
         coordinator._update_export_menu_state = lambda: None

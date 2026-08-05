@@ -609,6 +609,28 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
             plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
 
+    def test_hidden_loaded_annotation_is_retained_for_later_layer_reveal(self):
+        plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
+        coordinator = self._make_coordinator(plan_view)
+        annotation = BidAnnotation(
+            uid="ann-hidden",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            page_uid="page-1",
+            layer_uid="annotation-layer",
+            position=[20.0, 20.0, 80.0, 24.0],
+            properties={"Text": "Hidden note"},
+            visible=False,
+        )
+        coordinator._project_data.get_page_annotations = lambda _page_uid: [annotation]
+        coordinator.update_plan_view("page-1")
+        self.assertEqual(
+            [item.uid for item in plan_view.load_options[0]["annotations"]],
+            ["ann-hidden"],
+        )
+        self.assertEqual(
+            plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
+        )
+
     def test_annotation_change_on_different_current_page_uses_full_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
         coordinator = self._make_coordinator(plan_view)
@@ -6144,6 +6166,40 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             )
         )
         self.assertTrue(view._uid_to_items["ann-1"][0].isVisible())
+        view.cleanup()
+
+    def test_load_hidden_annotation_then_enable_reuses_one_scene_item(self):
+        view = self._make_plan_view()
+        page = Page(uid="page-1", name="Page 1", width_pts=612.0, height_pts=792.0)
+        annotation = BidAnnotation(
+            uid="ann-1",
+            annotation_type="text",
+            page_uid=page.uid,
+            position=[20.0, 20.0, 80.0, 24.0],
+            properties={"Text": "Note", "FontName": "Arial", "FontSize": 12},
+            layer_uid="annotation-layer",
+            visible=False,
+        )
+        self.assertTrue(
+            view.load_page(
+                page,
+                [],
+                {},
+                {},
+                annotations=[annotation],
+                hidden_layer_uids={"annotation-layer"},
+            )
+        )
+        original_items = list(view._uid_to_items["ann-1"])
+        self.assertEqual(len(original_items), 1)
+        self.assertFalse(original_items[0].isVisible())
+        self.assertTrue(view.apply_layer_visibility("annotation-layer", True, {}))
+        self.assertTrue(original_items[0].isVisible())
+        self.assertTrue(view.apply_layer_visibility("annotation-layer", False, {}))
+        self.assertFalse(original_items[0].isVisible())
+        self.assertTrue(view.apply_layer_visibility("annotation-layer", True, {}))
+        self.assertEqual(view._uid_to_items["ann-1"], original_items)
+        self.assertTrue(original_items[0].isVisible())
         view.cleanup()
 
     def test_hidden_annotation_layer_stays_hidden_after_overlay_refresh(self):

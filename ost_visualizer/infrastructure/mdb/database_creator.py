@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 import pyodbc
+import win32com.client
 from .reference_schema_metadata import (
     EXPLICIT_INDEXES,
     FIELD_DEFAULTS,
@@ -983,8 +984,6 @@ class DatabaseCreator:
         db_path: Path,
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
-        import win32com.client
-
         engine = win32com.client.Dispatch("DAO.DBEngine.120")
         db = engine.OpenDatabase(str(db_path))
         operation_failed = False

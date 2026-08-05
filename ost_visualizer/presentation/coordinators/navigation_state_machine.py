@@ -25,14 +25,12 @@ _VALID_TRANSITIONS = {
         NavState.NO_FILE,
         NavState.FILE_LOADED_NO_BID,
         NavState.BID_ACTIVE_NO_PAGES,
-        NavState.REFRESHING,
     },
     NavState.BID_ACTIVE_NO_PAGES: {
         NavState.NO_FILE,
         NavState.FILE_LOADED_NO_BID,
         NavState.BID_ACTIVE_NO_PAGES,
         NavState.BID_ACTIVE_PAGES_SELECTED,
-        NavState.REFRESHING,
     },
     NavState.BID_ACTIVE_PAGES_SELECTED: {
         NavState.NO_FILE,
@@ -40,7 +38,6 @@ _VALID_TRANSITIONS = {
         NavState.BID_ACTIVE_NO_PAGES,
         NavState.BID_ACTIVE_PAGES_SELECTED,
         NavState.PLACE_MODE,
-        NavState.REFRESHING,
     },
     NavState.PLACE_MODE: {
         NavState.NO_FILE,
@@ -48,9 +45,14 @@ _VALID_TRANSITIONS = {
         NavState.BID_ACTIVE_NO_PAGES,
         NavState.BID_ACTIVE_PAGES_SELECTED,
         NavState.PLACE_MODE,
-        NavState.REFRESHING,
     },
     NavState.REFRESHING: set(),
+}
+_VALID_REFRESH_SOURCES = {
+    NavState.FILE_LOADED_NO_BID,
+    NavState.BID_ACTIVE_NO_PAGES,
+    NavState.BID_ACTIVE_PAGES_SELECTED,
+    NavState.PLACE_MODE,
 }
 _VALID_REFRESH_TARGETS = {
     NavState.NO_FILE,
@@ -127,25 +129,51 @@ class NavigationStateMachine:
             return NavState.BID_ACTIVE_NO_PAGES
         return NavState.BID_ACTIVE_PAGES_SELECTED
 
-    def start_refresh(self, ui_state, placement, selected_area_uid: str = "") -> bool:
-        if not self.transition_to(NavState.REFRESHING):
+    def begin_bid_load(self, has_file: bool) -> bool:
+        """Establish the file stage before a bid load may complete.
+        Existing bid state remains authoritative while a replacement bid is
+        loading. A startup or recovery path whose model already contains a
+        loaded file may repair a stale ``NO_FILE`` projection through the one
+        required intermediate state.
+        """
+        if not has_file:
+            logger.warning("Cannot begin bid load without a loaded file")
             return False
-        self._refresh_snapshot = RefreshSnapshot(
-            bid_ref=ui_state.get_selected_bid_ref(),
-            page_uids=list(ui_state.selected_page_uids),
-            active_page_uid=ui_state.active_page_uid,
-            highlighted_condition_uids=set(ui_state.highlighted_condition_uids),
-            project_uid=ui_state.selected_project_uid,
-            database_selected=ui_state.is_database_selected(),
-            selected_file_path=ui_state.selected_file_path,
-            place_condition_uid=(
-                ui_state.place_condition_uid if placement.is_active else None
-            ),
-            place_condition_uids=(
-                list(ui_state.place_condition_uids) if placement.is_active else []
-            ),
-            selected_area_uid=selected_area_uid,
-        )
+        if self._state == NavState.NO_FILE:
+            return self.transition_to(NavState.FILE_LOADED_NO_BID)
+        if self._state == NavState.REFRESHING:
+            return self.transition_to(NavState.FILE_LOADED_NO_BID)
+        return True
+
+    def start_refresh(self, ui_state, placement, selected_area_uid: str = "") -> bool:
+        if self._transitioning or self._state not in _VALID_REFRESH_SOURCES:
+            logger.warning(
+                "Invalid transition %s -> %s",
+                self._state.name,
+                NavState.REFRESHING.name,
+            )
+            return False
+        self._transitioning = True
+        try:
+            self._refresh_snapshot = RefreshSnapshot(
+                bid_ref=ui_state.get_selected_bid_ref(),
+                page_uids=list(ui_state.selected_page_uids),
+                active_page_uid=ui_state.active_page_uid,
+                highlighted_condition_uids=set(ui_state.highlighted_condition_uids),
+                project_uid=ui_state.selected_project_uid,
+                database_selected=ui_state.is_database_selected(),
+                selected_file_path=ui_state.selected_file_path,
+                place_condition_uid=(
+                    ui_state.place_condition_uid if placement.is_active else None
+                ),
+                place_condition_uids=(
+                    list(ui_state.place_condition_uids) if placement.is_active else []
+                ),
+                selected_area_uid=selected_area_uid,
+            )
+            self._state = NavState.REFRESHING
+        finally:
+            self._transitioning = False
         return True
 
     def finish_refresh(self, target: NavState) -> bool:

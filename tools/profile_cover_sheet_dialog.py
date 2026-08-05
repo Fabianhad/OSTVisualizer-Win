@@ -6,13 +6,10 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
-
 from PySide6 import QtWidgets
-
 from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog

@@ -57,6 +57,36 @@ class NavigationStateMachineTests(unittest.TestCase):
             self.assertFalse(nav.transition_to(NavState.BID_ACTIVE_NO_PAGES))
         self.assertEqual(nav.current_state, NavState.NO_FILE)
 
+    def test_rejects_selected_page_transition_before_file_initialization(self):
+        nav = NavigationStateMachine()
+        with self.assertLogs(self.logger, level="WARNING"):
+            self.assertFalse(nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED))
+        self.assertEqual(nav.current_state, NavState.NO_FILE)
+
+    def test_begin_bid_load_projects_required_file_stage(self):
+        nav = NavigationStateMachine()
+        with self.assertNoLogs(self.logger, level="WARNING"):
+            self.assertTrue(nav.begin_bid_load(has_file=True))
+            self.assertTrue(nav.transition_to(NavState.BID_ACTIVE_NO_PAGES))
+        self.assertEqual(nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
+
+    def test_begin_bid_load_without_authoritative_file_is_rejected(self):
+        nav = NavigationStateMachine()
+        with self.assertLogs(self.logger, level="WARNING") as logs:
+            self.assertFalse(nav.begin_bid_load(has_file=False))
+        self.assertEqual(nav.current_state, NavState.NO_FILE)
+        self.assertIn("without a loaded file", logs.output[0])
+
+    def test_begin_bid_load_during_refresh_is_rejected(self):
+        nav = NavigationStateMachine()
+        nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        self.assertTrue(nav.start_refresh(FakeUiState(), FakePlacement()))
+        snapshot = nav.refresh_snapshot
+        with self.assertLogs(self.logger, level="WARNING"):
+            self.assertFalse(nav.begin_bid_load(has_file=True))
+        self.assertEqual(nav.current_state, NavState.REFRESHING)
+        self.assertIs(nav.refresh_snapshot, snapshot)
+
     def test_repeated_no_file_transition_is_idempotent(self):
         nav = NavigationStateMachine()
         with self.assertNoLogs(self.logger, level="WARNING"):
@@ -75,6 +105,112 @@ class NavigationStateMachineTests(unittest.TestCase):
             self.assertTrue(nav.transition_to(NavState.PLACE_MODE))
             self.assertTrue(nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED))
         self.assertEqual(nav.current_state, NavState.BID_ACTIVE_PAGES_SELECTED)
+
+    def test_complete_direct_transition_matrix_remains_explicit(self):
+        allowed = {
+            NavState.NO_FILE: {
+                NavState.NO_FILE,
+                NavState.FILE_LOADED_NO_BID,
+            },
+            NavState.FILE_LOADED_NO_BID: {
+                NavState.NO_FILE,
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+            },
+            NavState.BID_ACTIVE_NO_PAGES: {
+                NavState.NO_FILE,
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+                NavState.BID_ACTIVE_PAGES_SELECTED,
+            },
+            NavState.BID_ACTIVE_PAGES_SELECTED: {
+                NavState.NO_FILE,
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+                NavState.BID_ACTIVE_PAGES_SELECTED,
+                NavState.PLACE_MODE,
+            },
+            NavState.PLACE_MODE: {
+                NavState.NO_FILE,
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+                NavState.BID_ACTIVE_PAGES_SELECTED,
+                NavState.PLACE_MODE,
+            },
+            NavState.REFRESHING: set(),
+        }
+
+        def machine_in(source):
+            nav = NavigationStateMachine()
+            if source == NavState.NO_FILE:
+                return nav
+            nav.transition_to(NavState.FILE_LOADED_NO_BID)
+            if source == NavState.FILE_LOADED_NO_BID:
+                return nav
+            if source == NavState.REFRESHING:
+                nav.start_refresh(FakeUiState(), FakePlacement())
+                return nav
+            nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+            if source == NavState.BID_ACTIVE_NO_PAGES:
+                return nav
+            nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
+            if source == NavState.BID_ACTIVE_PAGES_SELECTED:
+                return nav
+            nav.transition_to(NavState.PLACE_MODE)
+            return nav
+
+        for source in NavState:
+            for target in NavState:
+                with self.subTest(source=source, target=target):
+                    nav = machine_in(source)
+                    if target in allowed[source]:
+                        with self.assertNoLogs(self.logger, level="WARNING"):
+                            self.assertTrue(nav.transition_to(target))
+                        self.assertEqual(nav.current_state, target)
+                    else:
+                        with self.assertLogs(self.logger, level="WARNING"):
+                            self.assertFalse(nav.transition_to(target))
+                        self.assertEqual(nav.current_state, source)
+
+    def test_begin_bid_load_preserves_existing_bid_during_slow_replacement(self):
+        nav = NavigationStateMachine()
+        nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
+        with self.assertNoLogs(self.logger, level="WARNING"):
+            self.assertTrue(nav.begin_bid_load(has_file=True))
+        self.assertEqual(nav.current_state, NavState.BID_ACTIVE_PAGES_SELECTED)
+
+    def test_refresh_entry_is_owned_only_by_atomic_start_refresh(self):
+        source_paths = {
+            NavState.FILE_LOADED_NO_BID: [NavState.FILE_LOADED_NO_BID],
+            NavState.BID_ACTIVE_NO_PAGES: [
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+            ],
+            NavState.BID_ACTIVE_PAGES_SELECTED: [
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+                NavState.BID_ACTIVE_PAGES_SELECTED,
+            ],
+            NavState.PLACE_MODE: [
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+                NavState.BID_ACTIVE_PAGES_SELECTED,
+                NavState.PLACE_MODE,
+            ],
+        }
+        for source, path in source_paths.items():
+            with self.subTest(source=source):
+                nav = NavigationStateMachine()
+                for state in path:
+                    nav.transition_to(state)
+                with self.assertLogs(self.logger, level="WARNING"):
+                    self.assertFalse(nav.transition_to(NavState.REFRESHING))
+                with self.assertNoLogs(self.logger, level="WARNING"):
+                    self.assertTrue(nav.start_refresh(FakeUiState(), FakePlacement()))
+                self.assertEqual(nav.current_state, NavState.REFRESHING)
+                self.assertIsNotNone(nav.refresh_snapshot)
 
     def test_start_refresh_before_file_loaded_is_rejected(self):
         nav = NavigationStateMachine()

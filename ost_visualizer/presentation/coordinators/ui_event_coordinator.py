@@ -890,7 +890,7 @@ class UIEventCoordinator:
             highlighted = self._validate_condition_uids(
                 self.ui_state_manager.highlighted_condition_uids
             )
-            self.highlight_sidebar(highlighted, reveal=False)
+            self._restore_sidebar_highlight(highlighted, reveal=False)
             self._takeoff_workspace_bid_ref = bid_ref
         should_restore_selection = (
             needs_hydration
@@ -1048,13 +1048,23 @@ class UIEventCoordinator:
         self.plan_view.reveal_deferred_page_visual()
         return True
 
-    def highlight_sidebar(self, uids: set, reveal: bool = True) -> None:
+    def _apply_sidebar_highlight(self, uids: set, reveal: bool = True) -> bool:
         if self._nav.is_refreshing:
-            return
-        self._selection_projected_condition_uids = set()
+            return False
         self.ui_state_manager.set_highlighted_conditions(uids)
         if self.conditions_sidebar:
             self.conditions_sidebar.highlight_conditions(uids, reveal=reveal)
+        return True
+
+    def highlight_sidebar(self, uids: set, reveal: bool = True) -> None:
+        self._selection_projected_condition_uids = set()
+        self._apply_sidebar_highlight(uids, reveal=reveal)
+
+    def _restore_sidebar_highlight(self, uids: set, reveal: bool = False) -> None:
+        takeoff_owned = self._selection_projected_condition_uids == set(uids)
+        self._apply_sidebar_highlight(uids, reveal=reveal)
+        if not takeoff_owned:
+            self._selection_projected_condition_uids = set()
 
     def _is_takeoff_2d_view_active(self) -> bool:
         return self._toolbar.is_takeoff_2d_view_active()
@@ -1153,27 +1163,29 @@ class UIEventCoordinator:
         condition_uids: set[str],
         *,
         selection_changed: bool,
-        conditions_changed: bool,
     ) -> bool:
         current = set(self.ui_state_manager.highlighted_condition_uids)
-        previously_projected = self._selection_projected_condition_uids
+        previously_projected = set(self._selection_projected_condition_uids)
         if condition_uids:
-            if current == condition_uids:
-                return False
-            incomplete_projection = bool(previously_projected) and (
-                current.issubset(previously_projected)
-                and current.issubset(condition_uids)
+            sidebar_projection = (
+                set(self.conditions_sidebar.get_selected_condition_uids())
+                if self.conditions_sidebar
+                else set(condition_uids)
             )
-            if (
-                not selection_changed
-                and not conditions_changed
-                and current
-                and not incomplete_projection
-            ):
+            projection_complete = (
+                current == condition_uids and sidebar_projection == condition_uids
+            )
+            if projection_complete:
+                if previously_projected:
+                    self._selection_projected_condition_uids = set(condition_uids)
                 return False
-            self.highlight_sidebar(condition_uids)
-            self._selection_projected_condition_uids = set(condition_uids)
-            return True
+            takeoff_owns_highlight = bool(previously_projected)
+            if takeoff_owns_highlight or selection_changed:
+                self._selection_projected_condition_uids = set(condition_uids)
+                takeoff_owns_highlight = True
+            if not takeoff_owns_highlight:
+                return False
+            return self._apply_sidebar_highlight(condition_uids)
         placement_owns_highlight = bool(
             self._placement.is_active
             and self._placement.condition_uid
@@ -1182,15 +1194,15 @@ class UIEventCoordinator:
         selection_owns_highlight = bool(
             previously_projected and current.issubset(previously_projected)
         )
-        self._selection_projected_condition_uids = set()
-        if (
-            not conditions_changed
-            or not selection_owns_highlight
-            or placement_owns_highlight
-        ):
+        if not selection_owns_highlight or placement_owns_highlight:
             return False
-        self.highlight_sidebar(set())
-        return True
+        if not current:
+            self._selection_projected_condition_uids = set()
+            return False
+        projection_changed = self._apply_sidebar_highlight(set())
+        if projection_changed:
+            self._selection_projected_condition_uids = set()
+        return projection_changed
 
     _SOURCE_2D = "2d"
     _SOURCE_3D = "3d_embedded"
@@ -1201,15 +1213,12 @@ class UIEventCoordinator:
             return
         selected_uids, cond_uids = self._canonical_takeoff_selection(takeoff_uids)
         previous_selection = self._selected_takeoff_uids
-        previous_conditions = self._selected_takeoff_condition_uids
         selection_changed = selected_uids != previous_selection
-        conditions_changed = cond_uids != previous_conditions
         self._selected_takeoff_uids = selected_uids
         self._selected_takeoff_condition_uids = cond_uids
         projection_changed = self._project_takeoff_selection_conditions(
             cond_uids,
             selection_changed=selection_changed,
-            conditions_changed=conditions_changed,
         )
         if not selection_changed:
             if (
@@ -2470,6 +2479,11 @@ class UIEventCoordinator:
             return
         changed_families = set(families or [])
         changed_uids = resource_uids_by_family or {}
+        annotations_changed = (
+            CollaborationResourceFamily.ANNOTATIONS.value in changed_families
+        )
+        layers_changed = CollaborationResourceFamily.LAYERS.value in changed_families
+        pages_changed = CollaborationResourceFamily.PAGES.value in changed_families
         if self._undo_service and changed_families and not local_completion:
             self._undo_service.clear()
         if CollaborationResourceFamily.TAKEOFFS.value in changed_families:
@@ -2482,7 +2496,7 @@ class UIEventCoordinator:
                 update_plan=not defer_plan_projection,
                 update_mesh=not defer_plan_projection,
             )
-        if CollaborationResourceFamily.ANNOTATIONS.value in changed_families:
+        if annotations_changed:
             self._on_annotations_changed(
                 page_uid=self.ui_state_manager.active_page_uid,
                 annotation_uids=(
@@ -2490,9 +2504,13 @@ class UIEventCoordinator:
                     or None
                 ),
                 update_shell=False,
-                update_plan=not defer_plan_projection,
+                update_plan=(
+                    not defer_plan_projection
+                    and not layers_changed
+                    and not pages_changed
+                ),
             )
-        if CollaborationResourceFamily.PAGES.value in changed_families:
+        if pages_changed:
             if self._pending_takeoff_page_uids is not None:
                 valid_pages, active_page = self._resolve_takeoff_selection()
                 self._clear_staged_takeoff_restore()
@@ -2524,21 +2542,18 @@ class UIEventCoordinator:
                 self._viewer.clear_plan_view()
             if not defer_plan_projection:
                 self._request_or_defer_mesh_refresh(valid_pages)
-        if (
-            CollaborationResourceFamily.LAYERS.value in changed_families
-            and self._sidebar.bid_layers_sidebar
-        ):
+        if layers_changed and self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.load_layers(
                 self.project_data.get_bid_layer_snapshot(),
                 used_uids=self.project_data.get_layer_uids_in_use(),
             )
             self._sidebar.refresh_conditions_from_memory()
-            if not defer_plan_projection:
-                self._update_plan_view_for_active()
+        if layers_changed and not pages_changed and not defer_plan_projection:
+            self._update_plan_view_for_active()
         if (
-            CollaborationResourceFamily.LAYERS.value in changed_families
+            layers_changed
             and CollaborationResourceFamily.TAKEOFFS.value not in changed_families
-            and CollaborationResourceFamily.PAGES.value not in changed_families
+            and not pages_changed
             and not defer_plan_projection
         ):
             self._request_or_defer_mesh_refresh(
@@ -2591,7 +2606,7 @@ class UIEventCoordinator:
         )
         self.ui_state_manager.set_highlighted_conditions(valid_highlights)
         self._sidebar.refresh_conditions_from_memory()
-        self.highlight_sidebar(valid_highlights, reveal=False)
+        self._restore_sidebar_highlight(valid_highlights, reveal=False)
         if not defer_plan_projection:
             self._update_plan_view_for_active(condition_uids=condition_uids)
         if not defer_plan_projection:
@@ -3303,7 +3318,13 @@ class UIEventCoordinator:
             self.ui_state_manager.set_file_path(None)
             self.project_data.clear_bid()
             self._sync_undo_bid()
-            self._nav.transition_to(NavState.FILE_LOADED_NO_BID)
+            self._nav.transition_to(
+                self._nav.compute_state_for(
+                    has_file=bool(self.project_data.get_current_file_path()),
+                    bid_ref=None,
+                    active_page_uid=None,
+                )
+            )
             self.ui_access_manager.refresh()
             self.project_data.deselect_pages()
             self._reset_takeoff_workspace_state()
@@ -3316,6 +3337,12 @@ class UIEventCoordinator:
             self.main_window.refresh_window_title()
             return
         prev_current_file_path = self.project_data.get_current_file_path()
+        has_loaded_file = bool(
+            prev_current_file_path or self.project_data.get_bid(bid_ref)
+        )
+        if not self._nav.begin_bid_load(has_loaded_file):
+            self._sync_page_info_status()
+            return
         try:
             self.project_operations.request_load_bid(
                 bid_ref,

@@ -22,6 +22,12 @@
 
 ### Fixed
 
+- Fixed startup and recovery bid restoration traversing the navigation
+  state machine without first projecting its loaded-file stage, which could
+  leave page navigation state stale and log invalid-transition warnings.
+- Fixed annotations loaded while their layer was hidden remaining absent after
+  the layer was enabled; Main, Annotation, and View plan surfaces now retain
+  hidden annotation scene state and reveal it without a page reload.
 - Fixed the Takeoff toolbar overflow button omitting embedded annotation, zoom,
   scale, and area controls on narrower or display-scaled desktops; overflowed
   controls now remain interactive and synchronized with their toolbar state.
@@ -158,7 +164,10 @@
 - Fixed transient file-state read failures clearing the last known Open Files database list in memory.
 - Fixed plan pages with both original and overlay images so hiding the image layer immediately reveals the white page canvas without an unexpected fit-to-page jump.
 - Fixed overlay-only plan pages so raster overlays load without a main image and a missing overlay does not leave an unused main image pending.
-- Fixed takeoff clicks after condition sidebar reloads so the clicked takeoff's condition is reselected and highlighted when the previous highlight was cleared.
+- Fixed takeoff clicks after condition sidebar reloads so the clicked takeoffs'
+  conditions are reselected when either authoritative highlight state or the
+  visible row projection was cleared, while preserving explicit condition and
+  placement-owned highlights.
 - Fixed OSP interoperability so current exports continue using a flat
   `TempImages!.tmp` image layout while imports also resolve original and legacy
   Visualizer packages with images in nested folders. Nested matches use the most

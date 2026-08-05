@@ -119,7 +119,6 @@ class ComponentBuilderTests(unittest.TestCase):
         self.app.processEvents()
         self.assertIs(toolbar.widgetForAction(action), source)
         self.assertTrue(toolbar.widgetForAction(action).isVisible())
-
         host.resize(180, 100)
         self.app.processEvents()
         self.assertFalse(toolbar.widgetForAction(action).isVisible())
@@ -137,7 +136,6 @@ class ComponentBuilderTests(unittest.TestCase):
         self.assertEqual(self._use_extension_menu(toolbar, use_combo), "150%")
         self.assertEqual(source.currentText(), "150%")
         self.assertEqual(activations, [2])
-
         host.resize(800, 100)
         self.app.processEvents()
         self.assertTrue(toolbar.widgetForAction(action).isVisible())
@@ -169,7 +167,6 @@ class ComponentBuilderTests(unittest.TestCase):
             overflow_factory=create_overflow_widget,
             text="Zoom",
         )
-
         self.assertEqual(factory_parents, [])
         self.assertIs(toolbar.widgetForAction(action), source)
         self.assertIs(source.parentWidget(), toolbar)
@@ -283,7 +280,6 @@ class ComponentBuilderTests(unittest.TestCase):
         )
         source.area_change_requested.connect(lambda *_args: area_requests.append(_args))
         overflow = PageSettingsOverflowWidget(source)
-
         scale_index = next(
             index
             for index in range(overflow.scale_combo.count())
@@ -294,13 +290,11 @@ class ComponentBuilderTests(unittest.TestCase):
         area_index = overflow.area_combo.findData("a2")
         overflow.area_combo.setCurrentIndex(area_index)
         overflow.area_combo.activated.emit(area_index)
-
         self.assertEqual(source.scale_combo.currentIndex(), scale_index)
         self.assertEqual(source.area_combo.get_current_area_uid(), "a2")
         self.assertEqual(len(scale_requests), 1)
         self.assertEqual(len(area_requests), 1)
         self.assertEqual(overflow.area_combo.currentData(), "a2")
-
         presentation_updates = []
         source.presentation_state_changed.connect(
             lambda: presentation_updates.append(None)
@@ -341,7 +335,6 @@ class ComponentBuilderTests(unittest.TestCase):
         self.assertIs(source.parentWidget(), toolbar)
         self.assertFalse(source.isWindow())
         self.assertEqual(source.scale_combo.y(), source.area_combo.y())
-
         host.resize(180, 100)
         self.app.processEvents()
         self.assertFalse(toolbar.widgetForAction(action).isVisible())
