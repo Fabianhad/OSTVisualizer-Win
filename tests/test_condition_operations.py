@@ -95,9 +95,6 @@ class _UseCaseWriter:
     def __init__(self):
         self.update_calls = []
 
-    def shift_ref_nos(self, *_args, **_kwargs):
-        raise AssertionError("reference numbers must not be shifted separately")
-
     def update_condition(self, *args):
         self.update_calls.append(args)
         return True

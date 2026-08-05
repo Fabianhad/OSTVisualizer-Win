@@ -7,7 +7,6 @@ from ost_visualizer.domain.entities.file_extensions import (
     TIFF_EXTENSION,
     is_csv_suffix,
     is_pdf_suffix,
-    is_tiff_suffix,
 )
 
 
@@ -16,11 +15,6 @@ class FileExtensionsTest(unittest.TestCase):
         self.assertTrue(is_pdf_suffix(".PDF"))
         self.assertTrue(is_pdf_suffix(r"C:\jobs\plans\A101.Pdf"))
         self.assertFalse(is_pdf_suffix("A101.tif"))
-
-    def test_tiff_suffix_matches_both_tif_extensions(self):
-        self.assertTrue(is_tiff_suffix(".TIF"))
-        self.assertTrue(is_tiff_suffix("overlay.TIFF"))
-        self.assertFalse(is_tiff_suffix("overlay.pdf"))
 
     def test_csv_suffix_matches_suffix_or_path_case_insensitively(self):
         self.assertTrue(is_csv_suffix(".CSV"))

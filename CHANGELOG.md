@@ -22,6 +22,9 @@
 
 ### Fixed
 
+- Fixed the Takeoff toolbar overflow button omitting embedded annotation, zoom,
+  scale, and area controls on narrower or display-scaled desktops; overflowed
+  controls now remain interactive and synchronized with their toolbar state.
 - Fixed small snapped plan-item resizes being previewed and then reverted when
   their screen movement stayed within the normal click threshold; resize handles
   now commit changed snapped geometry while true no-op gestures remain unsaved.

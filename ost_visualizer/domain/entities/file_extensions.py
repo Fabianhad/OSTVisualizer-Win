@@ -25,7 +25,3 @@ def is_pdf_suffix(value) -> bool:
 
 def is_csv_suffix(value) -> bool:
     return _suffix_from_value(value) == CSV_EXTENSION
-
-
-def is_tiff_suffix(value) -> bool:
-    return _suffix_from_value(value) in TIFF_EXTENSIONS

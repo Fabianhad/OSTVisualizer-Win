@@ -5,7 +5,14 @@ from PySide6.QtCore import Signal
 from ...domain.entities.identity_refs import BidRef
 from ..components.area_combo import AreaComboBox
 from ..components.resizable_combo import ResizableComboBox
-from ..config import COMPACT_MARGINS, COMPACT_SPACING, NO_MARGINS, SCALE_TOOLTIP
+from ..config import (
+    COMPACT_MARGINS,
+    COMPACT_SPACING,
+    NO_MARGINS,
+    SCALE_TOOLTIP,
+    VIEWER_AREA_COMBO_WIDTH,
+    VIEWER_SCALE_COMBO_WIDTH,
+)
 from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.button_policy import apply_no_highlight_button_policy
@@ -24,6 +31,7 @@ class PageSettingsBar(QtWidgets.QWidget):
     custom_scale_requested = Signal(str, str)
     area_change_requested = Signal(str, str, str)
     dropdown_size_changed = Signal()
+    presentation_state_changed = Signal()
 
     def __init__(
         self,
@@ -61,7 +69,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         layout.setSpacing(COMPACT_SPACING)
         layout.addSpacing(COMPACT_MARGINS[0])
         self.scale_combo = ResizableComboBox()
-        self.scale_combo.setFixedWidth(120)
+        self.scale_combo.setFixedWidth(VIEWER_SCALE_COMBO_WIDTH)
         self.scale_combo.setEnabled(False)
         self.scale_combo.setToolTip(SCALE_TOOLTIP)
         for sf1, sf2, label in ALL_SCALES:
@@ -74,7 +82,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         layout.addWidget(self.scale_combo)
         layout.addWidget(QtWidgets.QLabel("Area"))
         self.area_combo = AreaComboBox()
-        self.area_combo.setFixedWidth(120)
+        self.area_combo.setFixedWidth(VIEWER_AREA_COMBO_WIDTH)
         self.area_combo.setEnabled(False)
         self.area_combo.setToolTip("Area")
         self.area_combo.area_activated.connect(self._on_area_activated)
@@ -110,9 +118,11 @@ class PageSettingsBar(QtWidgets.QWidget):
             selected_uid=selected_uid,
         )
         self.area_combo.blockSignals(False)
+        self.presentation_state_changed.emit()
 
     def update_bold_states(self, areas_with_takeoff: Set) -> None:
         self.area_combo.update_bold_states(areas_with_takeoff)
+        self.presentation_state_changed.emit()
 
     def update_area_usage(
         self,
@@ -151,10 +161,11 @@ class PageSettingsBar(QtWidgets.QWidget):
         self.area_combo.set_current_area_uid(selected_area_uid or "")
         if areas_with_takeoff is not None:
             self._page_areas_in_use = areas_with_takeoff
-            self.update_bold_states(areas_with_takeoff)
+            self.area_combo.update_bold_states(areas_with_takeoff)
         self.area_combo.blockSignals(False)
         if self._interactive:
             self._sync_interactive_controls()
+        self.presentation_state_changed.emit()
 
     def _predefined_scale_index(self, sf1: float, sf2: float) -> int:
         try:
@@ -200,6 +211,7 @@ class PageSettingsBar(QtWidgets.QWidget):
             self.scale_combo.blockSignals(signals_were_blocked)
         for w in (self.scale_combo, self.area_combo, self.area_browse_btn):
             w.setEnabled(False)
+        self.presentation_state_changed.emit()
 
     def set_interactive(self, enabled: bool) -> None:
         self._interactive = enabled
@@ -208,6 +220,7 @@ class PageSettingsBar(QtWidgets.QWidget):
                 w.setEnabled(False)
         elif self._page_uid:
             self._sync_interactive_controls()
+        self.presentation_state_changed.emit()
 
     def _on_area_browse(self) -> None:
         if (

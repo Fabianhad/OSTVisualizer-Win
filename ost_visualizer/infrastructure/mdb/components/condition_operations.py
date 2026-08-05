@@ -549,33 +549,3 @@ class ConditionOperationsMixin:
                 "Failed to renumber conditions for bid %s in %s", bid_uid, db_path
             )
             return False
-
-    def shift_ref_nos(
-        self,
-        db_path: str,
-        bid_uid: str,
-        from_ref_no: int,
-        exclude_uid: str,
-    ) -> bool:
-        try:
-            with self._connection(db_path) as conn:
-                schema = self._schema(conn)
-                self._require_write_columns(
-                    schema, "BidConditions", ("BidUID", "RefNo", "UID")
-                )
-                cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE [BidConditions] SET [RefNo] = [RefNo] + 1 "
-                    "WHERE [BidUID] = ? AND [RefNo] >= ? AND [UID] <> ?",
-                    int(bid_uid),
-                    from_ref_no,
-                    int(exclude_uid),
-                )
-                return True
-        except Exception as exc:
-            if self._record_caught_mutation_error(exc):
-                raise
-            self.logger.exception(
-                "Failed to shift ref nos from %d in %s", from_ref_no, db_path
-            )
-            return False

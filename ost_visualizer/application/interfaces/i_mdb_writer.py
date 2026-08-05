@@ -157,13 +157,6 @@ class IMdbWriter(Protocol):
     def renumber_conditions(
         self, db_path: str, bid_uid: str, ordered_condition_uids: List[str]
     ) -> bool: ...
-    def shift_ref_nos(
-        self,
-        db_path: str,
-        bid_uid: str,
-        from_ref_no: int,
-        exclude_uid: str,
-    ) -> bool: ...
     def save_page_view_state(
         self,
         db_path: str,

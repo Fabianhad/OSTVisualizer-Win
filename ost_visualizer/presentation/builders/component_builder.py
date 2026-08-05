@@ -25,6 +25,11 @@ from ..components.popup_tracking_combo import (
 )
 from ..components.project_tree_view import ProjectView
 from ..components.status_panel import StatusPanel
+from ..components.toolbar_overflow import (
+    PageSettingsOverflowWidget,
+    SyncedComboOverflowWidget,
+    add_overflow_widget,
+)
 from ..components.viewer_cursors import (
     make_move_overlay_cursor,
     make_rotate_cursor,
@@ -383,6 +388,15 @@ class ComponentBuilder:
         main_toolbar.setFloatable(False)
         main_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
         main_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
+
+        def _create_action_button(
+            parent: QtWidgets.QWidget, action: QtGui.QAction
+        ) -> QtWidgets.QToolButton:
+            button = QtWidgets.QToolButton(parent)
+            button.setDefaultAction(action)
+            button.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
+            return button
+
         previous_page_action = QtGui.QAction(
             ACTION_PREVIOUS_PAGE_LABEL, viewer_container
         )
@@ -392,7 +406,15 @@ class ComponentBuilder:
         btn_prev_page = QtWidgets.QToolButton()
         btn_prev_page.setDefaultAction(previous_page_action)
         btn_prev_page.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
-        main_toolbar.addWidget(btn_prev_page)
+        add_overflow_widget(
+            main_toolbar,
+            btn_prev_page,
+            overflow_factory=lambda parent: _create_action_button(
+                parent, previous_page_action
+            ),
+            text=previous_page_action.text(),
+            visibility_action=previous_page_action,
+        )
         main_toolbar.addWidget(page_combo)
         next_page_action = QtGui.QAction(ACTION_NEXT_PAGE_LABEL, viewer_container)
         IconManager.apply(next_page_action, IconId.NEXT_PAGE)
@@ -401,7 +423,15 @@ class ComponentBuilder:
         btn_next_page = QtWidgets.QToolButton()
         btn_next_page.setDefaultAction(next_page_action)
         btn_next_page.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
-        main_toolbar.addWidget(btn_next_page)
+        add_overflow_widget(
+            main_toolbar,
+            btn_next_page,
+            overflow_factory=lambda parent: _create_action_button(
+                parent, next_page_action
+            ),
+            text=next_page_action.text(),
+            visibility_action=next_page_action,
+        )
 
         def _update_page_nav_actions(_uid=None) -> None:
             order = page_combo.get_page_order()
@@ -427,6 +457,27 @@ class ComponentBuilder:
         plan_tool_group = QtGui.QActionGroup(viewer_container)
         plan_tool_group.setExclusive(True)
         plan_tool_actions = {}
+
+        def _create_annotation_split_button(
+            parent: QtWidgets.QWidget,
+            action: QtGui.QAction,
+            annotation_type: str,
+        ) -> QtWidgets.QWidget:
+            button = QtWidgets.QToolButton(parent)
+            button.setDefaultAction(action)
+            button.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
+            split_button, _ = create_annotation_tool_split_button(
+                parent,
+                button,
+                lambda: self.window.get_annotation_style_for_tool(annotation_type),
+                lambda **style_updates: self.window.set_annotation_style_for_tool(
+                    annotation_type, **style_updates
+                ),
+                icon_size=QtCore.QSize(*DEFAULT_ICON_SIZE),
+                annotation_type=annotation_type,
+            )
+            return split_button
+
         for spec in PLAN_TOOL_SPECS:
             action = QtGui.QAction(spec.label, viewer_container)
             IconManager.apply(action, spec.icon_id)
@@ -437,24 +488,22 @@ class ComponentBuilder:
             plan_tool_group.addAction(action)
             plan_tool_actions[spec.action_key] = action
             if spec.annotation_type is not None:
-                button = QtWidgets.QToolButton(viewer_container)
-                button.setDefaultAction(action)
-                button.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
-                split_button, _ = create_annotation_tool_split_button(
+                split_button = _create_annotation_split_button(
                     viewer_container,
-                    button,
-                    lambda annotation_type=spec.annotation_type: (
-                        self.window.get_annotation_style_for_tool(annotation_type)
-                    ),
-                    lambda annotation_type=spec.annotation_type, **style_updates: (
-                        self.window.set_annotation_style_for_tool(
-                            annotation_type, **style_updates
+                    action,
+                    spec.annotation_type,
+                )
+                add_overflow_widget(
+                    main_toolbar,
+                    split_button,
+                    overflow_factory=(
+                        lambda parent, tool_action=action, annotation_type=spec.annotation_type: _create_annotation_split_button(
+                            parent, tool_action, annotation_type
                         )
                     ),
-                    icon_size=QtCore.QSize(*DEFAULT_ICON_SIZE),
-                    annotation_type=spec.annotation_type,
+                    text=action.text(),
+                    visibility_action=action,
                 )
-                main_toolbar.addWidget(split_button)
             else:
                 main_toolbar.addAction(action)
         apply_annotation_tool_icon_color(plan_tool_actions)
@@ -489,7 +538,80 @@ class ComponentBuilder:
             zoom_combo.addItem(f"{_lvl}%", _lvl)
         zoom_combo.setCurrentIndex(-1)
         zoom_combo.setEditText("100%")
-        main_toolbar.addWidget(zoom_combo)
+        _last_2d_zoom = [1.0]
+        _popup_open = [False]
+        zoom_combo.popup_shown.connect(lambda: _popup_open.__setitem__(0, True))
+        zoom_combo.popup_hidden.connect(lambda: _popup_open.__setitem__(0, False))
+
+        def _update_combo(factor: float) -> None:
+            update_zoom_combo(zoom_combo, factor)
+
+        def _on_zoom_changed(factor: float) -> None:
+            _last_2d_zoom[0] = factor
+            if view_stack.currentIndex() == 1:
+                _update_combo(factor)
+
+        def _apply_zoom_combo_index(index: int) -> None:
+            if index < 0:
+                return
+            percent = zoom_combo.itemData(index)
+            if percent is None:
+                return
+            percent = float(percent)
+            if view_stack.currentIndex() == 0:
+                canvas.set_zoom_percent(percent)
+                _update_combo(canvas.get_zoom_percent() / 100.0)
+            else:
+                plan_view.set_zoom_percent(percent)
+
+        def _on_zoom_combo_activated(index: int) -> None:
+            if _popup_open[0]:
+                _apply_zoom_combo_index(index)
+
+        def _apply_zoom_text(text: str) -> None:
+            percent = parse_zoom_percent(text)
+            if percent is None:
+                factor = (
+                    canvas.get_zoom_percent() / 100.0
+                    if view_stack.currentIndex() == 0
+                    else _last_2d_zoom[0]
+                )
+                _update_combo(factor)
+                return
+            if view_stack.currentIndex() == 0:
+                canvas.set_zoom_percent(percent)
+                _update_combo(canvas.get_zoom_percent() / 100.0)
+            else:
+                plan_view.set_zoom_percent(percent)
+
+        def _on_zoom_text_entered() -> None:
+            _apply_zoom_text(zoom_combo.currentText())
+
+        def _on_overflow_zoom_activated(index: int) -> None:
+            zoom_combo.setCurrentIndex(index)
+            _apply_zoom_combo_index(index)
+
+        def _on_overflow_zoom_text_submitted(text: str) -> None:
+            zoom_combo.setEditText(text)
+            _apply_zoom_text(text)
+
+        def _create_zoom_overflow_widget(
+            parent: QtWidgets.QWidget,
+        ) -> SyncedComboOverflowWidget:
+            return SyncedComboOverflowWidget(
+                zoom_combo,
+                "Zoom",
+                _on_overflow_zoom_activated,
+                parent,
+                on_text_submitted=_on_overflow_zoom_text_submitted,
+            )
+
+        add_overflow_widget(
+            main_toolbar,
+            zoom_combo,
+            overflow_factory=_create_zoom_overflow_widget,
+            text="Zoom",
+        )
 
         def load_bid_areas(file_path, bid_uid):
             if project_write_service.uses_sql_collaboration_mutations(file_path):
@@ -509,7 +631,14 @@ class ComponentBuilder:
             parent=viewer_container,
             ui_access_manager=ui_access_manager,
         )
-        main_toolbar.addWidget(page_settings_bar)
+        add_overflow_widget(
+            main_toolbar,
+            page_settings_bar,
+            overflow_factory=lambda parent: PageSettingsOverflowWidget(
+                page_settings_bar, parent
+            ),
+            text="Page settings",
+        )
         plan_view.set_selection_enabled(True)
         _undo_svc = UndoRedoService()
         if ui_access_manager:
@@ -530,49 +659,6 @@ class ComponentBuilder:
         )
         _plan_view_handler.connect_signals()
         plan_view.set_paste_allowed_fn(_plan_view_handler.can_paste_to_current_bid)
-        _last_2d_zoom = [1.0]
-        _popup_open = [False]
-        zoom_combo.popup_shown.connect(lambda: _popup_open.__setitem__(0, True))
-        zoom_combo.popup_hidden.connect(lambda: _popup_open.__setitem__(0, False))
-
-        def _update_combo(factor: float) -> None:
-            update_zoom_combo(zoom_combo, factor)
-
-        def _on_zoom_changed(factor: float) -> None:
-            _last_2d_zoom[0] = factor
-            if view_stack.currentIndex() == 1:
-                _update_combo(factor)
-
-        def _on_zoom_combo_activated(index: int) -> None:
-            if not _popup_open[0]:
-                return
-            if index < 0:
-                return
-            percent = zoom_combo.itemData(index)
-            if percent is None:
-                return
-            percent = float(percent)
-            if view_stack.currentIndex() == 0:
-                canvas.set_zoom_percent(percent)
-                _update_combo(canvas.get_zoom_percent() / 100.0)
-            else:
-                plan_view.set_zoom_percent(percent)
-
-        def _on_zoom_text_entered() -> None:
-            percent = parse_zoom_percent(zoom_combo.currentText())
-            if percent is None:
-                factor = (
-                    canvas.get_zoom_percent() / 100.0
-                    if view_stack.currentIndex() == 0
-                    else _last_2d_zoom[0]
-                )
-                _update_combo(factor)
-                return
-            if view_stack.currentIndex() == 0:
-                canvas.set_zoom_percent(percent)
-                _update_combo(canvas.get_zoom_percent() / 100.0)
-            else:
-                plan_view.set_zoom_percent(percent)
 
         def _on_view_changed(index: int) -> None:
             btn_3d.blockSignals(True)

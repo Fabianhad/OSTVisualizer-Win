@@ -81,6 +81,9 @@ class TreePopupComboBoxBase(QtWidgets.QComboBox):
             return []
         return [max(0, self._popup.width()), max(0, self._popup.height())]
 
+    def popup_model(self) -> QtCore.QAbstractItemModel:
+        return self._model
+
     def set_popup_size(self, size: list[int]) -> None:
         if self._popup is None or len(size) < 2:
             return

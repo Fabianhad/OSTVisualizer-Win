@@ -4,6 +4,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ...domain.entities.bid import Bid
 from ...domain.entities.folder import Folder
 from ...domain.entities.page import Page
+from ..config import VIEWER_PAGE_COMBO_MIN_WIDTH
 from ..managers.icon_manager import IconId, IconManager
 from .tree_popup_combo import TreePopupComboBoxBase
 
@@ -104,7 +105,7 @@ class PageComboBox(TreePopupComboBoxBase):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setModel(self._model)
-        self.setMinimumWidth(180)
+        self.setMinimumWidth(VIEWER_PAGE_COMBO_MIN_WIDTH)
         self.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
