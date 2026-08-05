@@ -1,0 +1,385 @@
+{
+  "head": "e28ab60f6f751e195c41d0d4754208680620834f",
+  "scope": "Full ost_visualizer scan; detailed review covers findings in the uncommitted production tree and directly affected Qt components.",
+  "runs": {
+    "100": {
+      "command": "python -m vulture ost_visualizer --min-confidence 100",
+      "exit_code": 0,
+      "finding_count": 0
+    },
+    "80": {
+      "command": "python -m vulture ost_visualizer --min-confidence 80",
+      "exit_code": 0,
+      "finding_count": 0
+    },
+    "60": {
+      "command": "python -m vulture ost_visualizer --min-confidence 60",
+      "exit_code": 3,
+      "finding_count": 185
+    }
+  },
+  "removed_findings": [
+    {
+      "symbol": "get_column_widths",
+      "file": "ost_visualizer/presentation/components/condition_summary.py",
+      "line_at_head": 222,
+      "confidence": 60,
+      "classification": "test accommodation and superseded implementation",
+      "evidence": "The semantic PersistentHeaderController is now the sole Summary width owner; only tests called this second public width API.",
+      "action": "Removed the method and rewrote tests through observable QHeaderView state and the workspace-backed controller."
+    },
+    {
+      "symbol": "set_column_widths",
+      "file": "ost_visualizer/presentation/components/condition_summary.py",
+      "line_at_head": 226,
+      "confidence": 60,
+      "classification": "test accommodation and superseded implementation",
+      "evidence": "The semantic PersistentHeaderController restores widths after canonical columns exist; only tests exercised this duplicate setter.",
+      "action": "Removed the method, the local width cache, and its resize callback."
+    },
+    {
+      "symbol": "get_layer",
+      "file": "ost_visualizer/presentation/components/layers_sidebar.py",
+      "line_at_head": 114,
+      "confidence": 60,
+      "classification": "test-only production accommodation",
+      "evidence": "Repository search found no production caller; tests can inspect the public get_layers result.",
+      "action": "Removed the single-item accessor and updated tests to use get_layers."
+    },
+    {
+      "symbol": "_selected_takeoff_condition_uids",
+      "file": "ost_visualizer/presentation/coordinators/ui_event_coordinator.py",
+      "line_at_head": 218,
+      "confidence": 60,
+      "classification": "dead duplicate state",
+      "evidence": "The field had three writes and no production read. _selection_projected_condition_uids owns highlight projection, while condition UIDs are derived from canonical selected takeoff UIDs per event.",
+      "action": "Removed the field, resets, writes, and private-cache assertions."
+    },
+    {
+      "symbol": "update_columns",
+      "file": "ost_visualizer/presentation/utils/persistent_header.py",
+      "line_at_review": 115,
+      "confidence": 60,
+      "classification": "unused wrapper",
+      "evidence": "All dynamic Summary rebuild callers use the paired begin_columns_update/end_columns_update signals so updates remain suppressed while the Qt model changes.",
+      "action": "Removed the unused wrapper."
+    }
+  ],
+  "retained_findings": [
+    {
+      "symbols": ["dragEnterEvent", "dragMoveEvent", "dropEvent"],
+      "file": "ost_visualizer/presentation/components/conditions_sidebar.py",
+      "lines": [60, 66, 77],
+      "confidence": 60,
+      "classification": "required Qt virtual methods",
+      "evidence": "QTreeWidget invokes these overrides through the Qt event system; Python call-site search cannot observe that dispatch.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["paintEngine", "paintEvent", "contextMenuEvent", "wheelEvent"],
+      "file": "ost_visualizer/presentation/components/mesh_view.py",
+      "lines": [118, 183, 629, 769],
+      "confidence": 60,
+      "classification": "required Qt/OpenGL virtual methods",
+      "evidence": "Qt dispatches painting, context-menu, and wheel events; paintEngine is required by the native OpenGL surface contract.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["wheelEvent", "mouseDoubleClickEvent", "contextMenuEvent"],
+      "file": "ost_visualizer/presentation/components/plan_view/components/input_handler.py",
+      "lines": [385, 434, 2827],
+      "confidence": 60,
+      "classification": "required Qt virtual methods",
+      "evidence": "QGraphicsView routes user input to these overrides.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["dragEnterEvent", "dragMoveEvent", "dropEvent"],
+      "file": "ost_visualizer/presentation/components/project_tree_view.py",
+      "lines": [160, 166, 173],
+      "confidence": 60,
+      "classification": "required Qt virtual methods",
+      "evidence": "Qt invokes the project hierarchy drag/drop overrides.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["createWidget"],
+      "file": "ost_visualizer/presentation/components/toolbar_overflow.py",
+      "lines": [54],
+      "confidence": 60,
+      "classification": "required Qt virtual method",
+      "evidence": "QWidgetAction invokes createWidget when materializing the toolbar widget and its overflow-menu counterpart; focused toolbar tests exercise both parents.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/areas_dialog.py",
+      "lines": [64],
+      "confidence": 60,
+      "classification": "required Qt signal/lifetime owner",
+      "evidence": "The controller is a QObject parented to the view and owns live header signal connections for the dialog lifetime.",
+      "action": "Retained explicit ownership."
+    },
+    {
+      "symbols": ["_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/condition_types_dialog.py",
+      "lines": [58],
+      "confidence": 60,
+      "classification": "required Qt signal/lifetime owner",
+      "evidence": "The controller owns live sort/resize persistence connections for the dialog lifetime.",
+      "action": "Retained explicit ownership."
+    },
+    {
+      "symbols": ["mouseDoubleClickEvent", "_plan_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/cover_sheet/dialog.py",
+      "lines": [87, 227],
+      "confidence": 60,
+      "classification": "required Qt virtual and signal/lifetime owner",
+      "evidence": "Qt dispatches the title-bar double-click override; the header controller owns live semantic persistence connections.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/employees_dialog.py",
+      "lines": [68],
+      "confidence": 60,
+      "classification": "required Qt signal/lifetime owner",
+      "evidence": "The controller owns live sort/move/resize persistence connections.",
+      "action": "Retained explicit ownership."
+    },
+    {
+      "symbols": ["_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/job_statuses_dialog.py",
+      "lines": [68],
+      "confidence": 60,
+      "classification": "required Qt signal/lifetime owner",
+      "evidence": "The controller owns live move/resize persistence connections while preserving authoritative sequence ordering.",
+      "action": "Retained explicit ownership."
+    },
+    {
+      "symbols": ["_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/layers_dialog.py",
+      "lines": [84],
+      "confidence": 60,
+      "classification": "required Qt signal/lifetime owner",
+      "evidence": "The controller owns live move/resize persistence connections while sorting remains disabled.",
+      "action": "Retained explicit ownership."
+    },
+    {
+      "symbols": ["_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/open_files_dialog.py",
+      "lines": [73],
+      "confidence": 60,
+      "classification": "required Qt signal/lifetime owner",
+      "evidence": "The controller owns live sort/resize persistence connections for Open Databases.",
+      "action": "Retained explicit ownership."
+    },
+    {
+      "symbols": ["_header_controller"],
+      "file": "ost_visualizer/presentation/dialogs/payroll_class_dialog.py",
+      "lines": [56],
+      "confidence": 60,
+      "classification": "required Qt signal/lifetime owner",
+      "evidence": "The controller owns live sort/move/resize persistence connections.",
+      "action": "Retained explicit ownership."
+    },
+    {
+      "symbols": ["createPopupMenu"],
+      "file": "ost_visualizer/presentation/main_window.py",
+      "lines": [1403],
+      "confidence": 60,
+      "classification": "required Qt virtual method",
+      "evidence": "QMainWindow calls this override when constructing the toolbar context menu.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["dragEnterEvent", "dragMoveEvent", "dropEvent"],
+      "file": "ost_visualizer/presentation/dialogs/cover_sheet/components.py",
+      "lines": [104, 114, 126],
+      "confidence": 60,
+      "classification": "required Qt virtual methods in affected Cover Sheet workflow",
+      "evidence": "Qt dispatches Cover Sheet page drag/drop to these overrides.",
+      "action": "Retained."
+    },
+    {
+      "symbols": ["createEditor", "setEditorData", "setModelData", "updateEditorGeometry"],
+      "file": "ost_visualizer/presentation/dialogs/cover_sheet/delegates.py",
+      "lines": [40, 64, 78, 90],
+      "confidence": 60,
+      "classification": "required Qt delegate virtual methods in affected Cover Sheet workflow",
+      "evidence": "QStyledItemDelegate invokes these editor lifecycle hooks.",
+      "action": "Retained."
+    }
+  ],
+  "global_low_confidence_groups": [
+    {
+      "classification": "serialization and protocol fields",
+      "evidence": "Dataclass and TypedDict fields in MCP, collaboration, scene, mesh, and page-render DTOs are consumed through dataclass serialization, protocol output, or native bridges."
+    },
+    {
+      "classification": "dynamic registration",
+      "evidence": "MCP tools, resources, and prompts are registered by OstMcpServer decorators/registries; direct Python references are intentionally absent."
+    },
+    {
+      "classification": "external/native attribute contracts",
+      "evidence": "ADOX schema, Windows Credential Manager, native renderer, PDF exporter, and cache attributes are read by COM, ctypes, nanobind, or native extensions."
+    },
+    {
+      "classification": "application and Qt entry hooks",
+      "evidence": "Python unraisablehook, single-instance server ownership, file association registration, and Qt virtual methods are entry/integration points not discoverable by Vulture."
+    }
+  ],
+  "second_pass_cleanup": [
+    {
+      "symbol": "workspace_state_model optional header fallback",
+      "files": [
+        "ost_visualizer/presentation/utils/persistent_header.py",
+        "ost_visualizer/presentation/handlers/file_operation_handler.py",
+        "ost_visualizer/presentation/components/page_settings_bar.py",
+        "ost_visualizer/presentation/dialogs"
+      ],
+      "classification": "test accommodation that concealed incomplete production wiring",
+      "evidence": "Every header-owning production dialog is backed by WorkspaceState.header_layouts, but MainWindow omitted the aggregate from FileOperationHandler and ComponentBuilder omitted it from PageSettingsBar. The optional fallback silently disabled persistence in Open Databases and the page-area picker.",
+      "action": "Made the aggregate an explicit constructor dependency, wired both composition paths, and supplied isolated UI tests with a complete in-memory aggregate fixture."
+    },
+    {
+      "symbol": "textual NULL job-status sentinel",
+      "file": "ost_visualizer/infrastructure/mdb/components/settings_operations.py",
+      "classification": "obsolete compatibility and duplicate conversion path",
+      "evidence": "Current callers pass an integer identity or None; repository search found no caller or supported format producing the string NULL. The sentinel originated in the initial implementation and SQL/current UI contracts do not use it.",
+      "action": "Removed the sentinel and routed Cover Sheet and direct job-status identifiers through one strict optional Access-integer converter."
+    },
+    {
+      "symbol": "_polygon_control_point_candidate_uids",
+      "file": "ost_visualizer/presentation/components/plan_view/components/selection_manager.py",
+      "classification": "duplicate model parsing",
+      "evidence": "Candidate validation parsed the same model position once while ordering UIDs and again immediately while building hit-test geometry.",
+      "action": "Replaced it with one candidate snapshot carrying each validated UID and parsed model position."
+    },
+    {
+      "symbol": "test_all_takeoff_sources_use_one_stable_selection_order_without_placement",
+      "file": "tests/test_ui_event_coordinator_takeoffs_changed.py",
+      "classification": "duplicated and ineffective regression test",
+      "evidence": "The existing all-source projection test already covered identical UID sets. The removed test used two conditions, so it could not detect the historical single-condition placement side effect it claimed to guard.",
+      "action": "Folded stable ordering and a real single-condition placement assertion into the existing all-source duplicate-projection workflow."
+    }
+  ],
+  "final_cleanup": [
+    {
+      "symbol": "PersistentHeaderController structural corruption fallback",
+      "files": [
+        "ost_visualizer/domain/entities/workspace_state.py",
+        "ost_visualizer/presentation/utils/persistent_header.py"
+      ],
+      "classification": "duplicated validation and weakened typed-state contract",
+      "evidence": "JsonWorkspaceStateRepository always constructs header layouts through HeaderLayoutState.from_dict, which already rejects non-list, non-string, empty-key, and duplicate orders. Production search found no alternate HeaderLayoutState producer with unvalidated order data.",
+      "action": "Kept structural validation at deserialization and reduced the controller to the view-specific wholly-unknown-schema check."
+    },
+    {
+      "symbol": "PersistentHeaderController duplicate workspace-state read",
+      "file": "ost_visualizer/presentation/utils/persistent_header.py",
+      "classification": "redundant persistence logic",
+      "evidence": "A user header signal loaded WorkspaceState once for comparison and again through _stored_layout; the aggregate returns a deep copy on every read.",
+      "action": "Reused the already loaded typed layout for schema reconciliation and retained the equality guard before the single repository save."
+    },
+    {
+      "symbol": "_CountingWorkspaceStateModel",
+      "file": "tests/test_persistent_headers.py",
+      "classification": "incomplete aggregate fake and implementation-coupled assertion",
+      "evidence": "The fake exposed mutable state directly and counted update_state calls, unlike WorkspaceStateAggregate. The requirement under test is repository-write suppression.",
+      "action": "Replaced it with the real aggregate over a complete counting repository and asserted observable save operations."
+    },
+    {
+      "symbol": "ProjectView._ITEM_ROLE test access",
+      "file": "tests/test_persistent_headers.py",
+      "classification": "private implementation coupling",
+      "evidence": "Recursive sibling sorting is observable through displayed project and bid labels; private role payloads are not part of the sorting contract.",
+      "action": "Rewrote the test to assert visible sibling order, parentage, and unchanged domain collections."
+    },
+    {
+      "symbol": "FakeWorkspaceStateModel",
+      "file": "tests/test_detached_window_workspace_state.py",
+      "classification": "incomplete mutable aggregate fake",
+      "evidence": "The fake exposed a writable state attribute and retained caller-owned state objects, while WorkspaceStateAggregate exposes deep copies and persists updates through its repository contract.",
+      "action": "Replaced it with the real aggregate over a recording in-memory repository, initialized tests through the load contract, and asserted repository saves."
+    },
+    {
+      "symbol": "_WorkspaceStateModel",
+      "file": "tests/test_condition_summary_tab.py",
+      "classification": "duplicate incomplete aggregate fake",
+      "evidence": "The header test module already imports the shared complete workspace-state fixture, while the local fake bypassed repository persistence and deep-copy semantics.",
+      "action": "Removed the local fake and attached Summary headers with the shared real aggregate fixture."
+    },
+    {
+      "symbol": "_record_caught_mutation_error(_exc)",
+      "file": "ost_visualizer/infrastructure/mdb/mdb_writer.py",
+      "classification": "stale unused-parameter naming",
+      "evidence": "The Access transaction-depth fix now inspects the exception type, so the underscore prefix incorrectly claimed that the argument was unused.",
+      "action": "Renamed the parameter to exc without changing the transaction-boundary behavior."
+    },
+    {
+      "symbol": "threading and navigation invariant documentation",
+      "files": [
+        "ost_visualizer/application/services/sql_workspace_state_service.py",
+        "ost_visualizer/presentation/coordinators/navigation_state_machine.py"
+      ],
+      "classification": "non-obvious architecture documentation",
+      "evidence": "Repository callers and AGENTS.md confirm that SQL workspace reads run on the navigation worker, writes use the private queue, and complete bid snapshots must first project the file-loaded state.",
+      "action": "Retained concise docstrings describing these boundaries while leaving restatement-only UI docstrings removed."
+    }
+  ],
+  "dynamic_access_review": {
+    "changed_production_occurrences": 0,
+    "retained_surrounding_production_occurrences": [
+      {
+        "expression": "getattr(error, 'add_note', None)",
+        "file": "ost_visualizer/infrastructure/sql/database_creator.py",
+        "line": 34,
+        "classification": "required supported-runtime integration behavior",
+        "evidence": "README.md supports Python 3.10+, while BaseException.add_note begins in Python 3.11. The helper preserves the authoritative database exception on both supported runtimes."
+      }
+    ],
+    "retained_test_occurrences": [
+      {
+        "expression": "getattr(exception, '__notes__', ())",
+        "file": "tests/test_sql_cleanup_correctness.py",
+        "lines": [2837, 2926, 2956],
+        "classification": "required Python runtime-version behavior",
+        "evidence": "Python 3.10 is supported and exception notes are created only when add_note exists; the test verifies both runtime contracts."
+      },
+      {
+        "expression": "ConfigService.__dict__",
+        "file": "tests/test_options_preferences.py",
+        "lines": [1954],
+        "classification": "deliberate reflection in a contract test",
+        "evidence": "The test inventories public config mutation methods to enforce one write API; production does not use this reflection."
+      },
+      {
+        "expression": "DatabaseProjectWriter.__dict__",
+        "file": "tests/test_sql_database_foundation.py",
+        "lines": [635, 636],
+        "classification": "deliberate reflection in a canonical-path contract test",
+        "evidence": "The assertions verify that the router inherits one writer operation surface instead of reintroducing duplicate compatibility aliases."
+      },
+      {
+        "expression": "dialog.__dict__",
+        "file": "tests/test_sql_database_foundation.py",
+        "lines": [716, 784, 798],
+        "classification": "deliberate negative UI contract check",
+        "evidence": "The assertions prove that the removed trust-certificate control and its secret-affecting alternate connection path are not constructed."
+      }
+    ],
+    "removed_test_occurrences": [
+      {
+        "expressions": ["setattr fake for UI selection", "setattr fakes for cursor and inline-text state"],
+        "classification": "avoidable test accommodations",
+        "action": "Replaced with explicit complete fake functions matching the production call signatures."
+      },
+      {
+        "expression": "getattr(dialog, '_header_controller', None)",
+        "classification": "avoidable test accommodation",
+        "action": "Replaced with explicit controller ownership and deterministic widget cleanup."
+      }
+    ]
+  }
+}

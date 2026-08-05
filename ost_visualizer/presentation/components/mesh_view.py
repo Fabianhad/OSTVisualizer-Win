@@ -333,8 +333,14 @@ class OpenGLViewer(QtWidgets.QWidget):
             and self._renderer
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
-            ctrl = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
-            self._handle_pick(event.position(), ctrl)
+            additive = bool(
+                event.modifiers()
+                & (
+                    QtCore.Qt.KeyboardModifier.ControlModifier
+                    | QtCore.Qt.KeyboardModifier.ShiftModifier
+                )
+            )
+            self._handle_pick(event.position(), additive)
         self._click_pos = None
         self._last_mouse_pos = None
         if event.button() == QtCore.Qt.MouseButton.RightButton:
@@ -393,7 +399,7 @@ class OpenGLViewer(QtWidgets.QWidget):
     def set_editing_enabled(self, enabled: bool) -> None:
         self._editing_enabled = bool(enabled)
 
-    def _handle_pick(self, pos: QtCore.QPointF | QtCore.QPoint, ctrl: bool) -> None:
+    def _handle_pick(self, pos: QtCore.QPointF | QtCore.QPoint, additive: bool) -> None:
         if not self._renderer or not self._pick_enabled:
             return
         px, py = self._current_render_surface_metrics().to_physical_point(
@@ -402,7 +408,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         mesh_idx = self._renderer.pick(px, py)
         scene = self._renderer.scene
         if mesh_idx < 0 or mesh_idx >= scene.mesh_count():
-            if not ctrl:
+            if not additive:
                 scene.clear_selection()
                 self._selected_takeoff_uids = []
                 self.mesh_clicked.emit([])
@@ -412,7 +418,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         tk_uid = scene.get_takeoff_uid(mesh_idx)
         if tk_uid in self._pending_mutation_uids:
             return
-        if ctrl and tk_uid:
+        if additive and tk_uid:
             if tk_uid in self._selected_takeoff_uids:
                 self._selected_takeoff_uids.remove(tk_uid)
                 for i in range(scene.mesh_count()):

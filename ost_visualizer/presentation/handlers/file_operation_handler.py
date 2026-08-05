@@ -31,6 +31,7 @@ class FileOperationHandler:
         deferred_persistence_manager,
         ui_access_manager,
         sql_collaboration_coordinator,
+        workspace_state_model,
         ui_state_manager=None,
         database_catalog=None,
         credential_store=None,
@@ -55,6 +56,7 @@ class FileOperationHandler:
         self._database_descriptor_registry = database_descriptor_registry
         self._sql_database_creator = sql_database_creator
         self._database_capability_service = database_capability_service
+        self._workspace_state_model = workspace_state_model
 
     def open_files(self) -> None:
         self._file_state_model.reload()
@@ -72,10 +74,13 @@ class FileOperationHandler:
             self.window,
             self._file_state_model.file_entries,
             self._working_directory_service,
-            self._database_catalog,
-            self._credential_store,
-            self._sql_database_creator,
-            lambda: self._ui_access_manager.is_allowed(Feature.CREATE_DATABASE),
+            workspace_state_model=self._workspace_state_model,
+            sql_catalog=self._database_catalog,
+            credential_store=self._credential_store,
+            sql_database_creator=self._sql_database_creator,
+            schema_change_allowed_fn=lambda: self._ui_access_manager.is_allowed(
+                Feature.CREATE_DATABASE
+            ),
         )
         file_entries = None
         reconfigured_database_ids: set[str] = set()

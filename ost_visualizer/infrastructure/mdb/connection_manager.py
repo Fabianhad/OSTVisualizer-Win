@@ -82,7 +82,9 @@ class MdbConnectionManager:
                         conn.rollback()
             except pyodbc.Error:
                 with self._lock:
-                    self._close_single(pool, abs_path)
+                    _active_mode, active_depth = self._active_leases[abs_path]
+                    if active_depth == 1:
+                        self._close_single(pool, abs_path)
                 raise
             finally:
                 with self._lock:

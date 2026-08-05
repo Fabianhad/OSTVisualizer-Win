@@ -24,9 +24,9 @@ class _WorkspaceWriteRequest:
 
 
 class SqlWorkspaceStateService:
-    """Owns non-collaborative per-user SQL workspace I/O.
-    Bid loads call ``load_bid_state`` from the existing navigation worker. Writes
-    are accepted immediately and serialized on this service's private worker.
+    """Own per-user SQL workspace reads and serialized background writes.
+    Navigation calls the read path from its worker. UI callers enqueue writes
+    here so SQL connections remain off the Qt thread.
     """
 
     def __init__(

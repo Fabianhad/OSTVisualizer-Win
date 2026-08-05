@@ -15,7 +15,7 @@ from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 
 StyleGetter = Callable[[], AnnotationStyle]
 StyleSetter = Callable[..., AnnotationStyle]
-_TEXT_FONT_SIZES = (8, 9, 10, 11, 12, 14, 16, 18, 24, 36)
+TEXT_FONT_SIZES = (8, 9, 10, 11, 12, 14, 16, 18, 24, 36, 48, 72)
 _COLOR_ONLY_ANNOTATION_TYPES = frozenset(
     {
         ANNOTATION_TYPE_HIGHLIGHT,
@@ -152,7 +152,7 @@ def _create_font_annotation_style_menu(
         set_style(font_size=size)
         _refresh_text_menu_state()
 
-    for size in _TEXT_FONT_SIZES:
+    for size in TEXT_FONT_SIZES:
         action = QtGui.QAction(str(size), size_menu)
         action.setCheckable(True)
         action.setData(size)

@@ -52,6 +52,10 @@ from ost_visualizer.presentation.utils.condition_tree_style import (
     CONDITION_TREE_INDENTATION,
     CONDITION_TREE_ROW_HEIGHT,
 )
+from ost_visualizer.presentation.utils.persistent_header import (
+    PersistentHeaderController,
+)
+from tests.workspace_state_test_support import make_workspace_state_model
 
 
 def _app():
@@ -103,6 +107,21 @@ def _condition_row_uids(node):
         for child in _summary_nodes(node)
         if child.kind in (SUMMARY_NODE_CONDITION, SUMMARY_NODE_MULTI_AREA_TOTAL)
     ]
+
+
+def _attach_summary_header(tab):
+    controller = PersistentHeaderController(
+        tab.tree,
+        "condition_summary_test",
+        tab.column_keys,
+        make_workspace_state_model(),
+        sorting=True,
+        movable=True,
+        default_sort_column="name",
+    )
+    tab.columns_about_to_change.connect(controller.begin_columns_update)
+    tab.columns_changed.connect(controller.end_columns_update)
+    return controller
 
 
 def _group_labels(node, level=None):
@@ -407,6 +426,7 @@ class ConditionSummaryTabTests(unittest.TestCase):
             copy_allowed_fn=lambda: True,
             delete_allowed_fn=lambda: True,
         )
+        self.header_controller = _attach_summary_header(self.tab)
 
     def tearDown(self):
         self.tab.deleteLater()
@@ -706,7 +726,8 @@ class ConditionSummaryTabTests(unittest.TestCase):
         ]
         grouping = ConditionSummaryGrouping(by_type=True)
         self._load(grouping)
-        self.tab.set_column_widths({"name": 222, "quantity1": 91})
+        self.tab.tree.header().resizeSection(self._column_index("Name"), 222)
+        self.tab.tree.header().resizeSection(self._column_index("Quantity 1"), 91)
         self._show_and_process()
         item_a = self._item_for_condition_uid("c1")
         item_b = self._item_for_condition_uid("c2")
@@ -771,22 +792,10 @@ class ConditionSummaryTabTests(unittest.TestCase):
         _app().processEvents()
         self.assertEqual(self.tab.tree.header().sectionSize(name_col), 211)
 
-    def test_column_widths_can_be_restored_from_workspace_state(self):
-        self._load()
-        self.tab.set_column_widths({"name": 211, "area": 233, "bad": 400})
-        self.assertEqual(
-            self.tab.tree.header().sectionSize(self._column_index("Name")), 211
-        )
-        self.assertEqual(
-            self.tab.tree.header().sectionSize(self._column_index("Area")), 233
-        )
-        widths = self.tab.get_column_widths()
-        self.assertEqual(widths["name"], 211)
-        self.assertNotIn("bad", widths)
-
     def test_hidden_area_column_width_is_preserved_and_restored(self):
         self._load()
-        self.tab.set_column_widths({"area": 233, "name": 211})
+        self.tab.tree.header().resizeSection(self._column_index("Area"), 233)
+        self.tab.tree.header().resizeSection(self._column_index("Name"), 211)
         self._load(ConditionSummaryGrouping(by_area=True))
         self.assertNotIn(
             "Area",
@@ -1155,6 +1164,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         tab = ConditionSummaryTab(
             None, uom_label_fn=lambda _code: "EA", delete_allowed_fn=lambda: True
         )
+        header_controller = _attach_summary_header(tab)
         service = ConditionSummaryService()
         grouping = ConditionSummaryGrouping(by_page=True, by_type=True)
         root = service.build_summary(
@@ -1183,7 +1193,8 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             grouping=grouping,
         )
         tab.load_summary(root, grouping)
-        tab.set_column_widths({"name": 211, "quantity1": 97})
+        tab.tree.header().resizeSection(tab.column_keys.index("name"), 211)
+        tab.tree.header().resizeSection(tab.column_keys.index("quantity1"), 97)
         tab.resize(900, 400)
         tab.show()
         _app().processEvents()
@@ -1217,6 +1228,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         self.assertEqual(tab.tree.header().sectionSize(name_col), 211)
         self.assertEqual(tab.tree.header().sectionSize(quantity_col), 97)
         self.assertEqual(_condition_row_uids(root), ["c1"])
+        del header_controller
         tab.deleteLater()
 
     def test_database_refresh_after_ost_status_keeps_summary_tree_visible(self):
@@ -1224,6 +1236,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         tab = ConditionSummaryTab(
             None, uom_label_fn=lambda _code: "EA", delete_allowed_fn=lambda: True
         )
+        header_controller = _attach_summary_header(tab)
         service = ConditionSummaryService()
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
         root = service.build_summary(
@@ -1245,7 +1258,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             grouping=grouping,
         )
         tab.load_summary(root, grouping)
-        tab.set_column_widths({"name": 211})
+        tab.tree.header().resizeSection(tab.column_keys.index("name"), 211)
         tab.resize(900, 400)
         tab.show()
         _app().processEvents()
@@ -1279,6 +1292,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(tab.grouping, grouping)
         self.assertEqual(_condition_row_uids(root), ["c1"])
+        del header_controller
         tab.deleteLater()
 
     def test_database_refresh_while_summary_tab_active_reloads_cleared_summary(self):
@@ -1364,7 +1378,6 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._page_settings_bar = None
         coordinator._takeoff_workspace_bid_ref = bid_ref
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._clear_staged_takeoff_restore = lambda: None
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
@@ -1481,6 +1494,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             project_read_service=None,
             project_data=type("FakeProjectData", (), {})(),
             ui_state_manager=ui_state,
+            workspace_state_model=make_workspace_state_model(),
         )
         original_confirm = condition_action_handler.confirm_delete_conditions
         condition_action_handler.confirm_delete_conditions = lambda _parent, names: [

@@ -130,11 +130,10 @@ class NavigationStateMachine:
         return NavState.BID_ACTIVE_PAGES_SELECTED
 
     def begin_bid_load(self, has_file: bool) -> bool:
-        """Establish the file stage before a bid load may complete.
-        Existing bid state remains authoritative while a replacement bid is
-        loading. A startup or recovery path whose model already contains a
-        loaded file may repair a stale ``NO_FILE`` projection through the one
-        required intermediate state.
+        """Project the required file stage before a bid snapshot completes.
+        A loaded model may legitimately reach this method while the UI still
+        projects ``NO_FILE`` (startup or recovery), but bid-active states must
+        not bypass ``FILE_LOADED_NO_BID``.
         """
         if not has_file:
             logger.warning("Cannot begin bid load without a loaded file")

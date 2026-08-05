@@ -72,6 +72,15 @@ Persistence:
 - JSON state lives under `~/.ost_visualizer/`.
 - Durable preferences belong in `config.json`.
 - Restorable workspace shell state belongs in `workspace_state.json`.
+- User-adjustable table and tree headers use semantic view and column IDs in
+  `WorkspaceState.header_layouts`; do not add Qt opaque header blobs, QSettings,
+  or per-dialog layout stores. Restore only after canonical columns exist, and
+  reconcile saved semantic keys across added or removed columns instead of
+  applying visual indexes to changed models. Duplicate, corrupt, or wholly
+  unusable orders reset only that header layout. Restoration and model/schema
+  rebuilds must not write their programmatic changes back as user preferences.
+  Header-owning views require the workspace-state aggregate at construction;
+  production callers must not silently fall back to nonpersistent headers.
 - New JSON persistence should use `JsonRepositoryBase` for atomic writes.
 - Saved databases use stable backend-aware descriptors in `file_state.json`.
   SQL passwords belong only in Windows Credential Manager; never place them in

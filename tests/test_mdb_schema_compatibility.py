@@ -618,6 +618,71 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         self.assertIn("ALState", _column_names(bid_pages))
         self.assertTrue({"Color", "Origin"}.issubset(_column_names(bid_named_views)))
 
+    def test_app_created_mdb_cover_sheet_accepts_blank_optional_values_and_page(self):
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX metadata is not available")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            db_path = Path(temp_dir) / "cover_sheet.mdb"
+            self.assertTrue(DatabaseCreator().create_database(db_path, "Cover Sheet"))
+            connection = _connect_mdb(db_path)
+            cursor = connection.cursor()
+            try:
+                ids = _seed_minimal_bid(cursor)
+                cursor.execute(
+                    "UPDATE [Bids] SET [JobStatusUID]=NULL, [EstimatorUID]=NULL, "
+                    "[BidDate]=NULL, [BidNo]=NULL WHERE [UID]=?",
+                    ids["bid_uid"],
+                )
+                connection.commit()
+            finally:
+                cursor.close()
+                connection.close()
+            self.assertTrue(
+                MdbWriter().save_cover_sheet(
+                    str(db_path),
+                    str(ids["bid_uid"]),
+                    {
+                        "job_status_uid": "",
+                        "job_name": "Compatibility Bid",
+                        "estimator_uid": "",
+                        "bid_date": "",
+                        "bid_no": "",
+                        "measure_base": 0,
+                        "pages": [
+                            {
+                                "uid": None,
+                                "sequence": 3,
+                                "sheet_no": "3",
+                                "name": "",
+                                "width": 42.0,
+                                "height": 30.0,
+                                "scale_factor1": 0.25,
+                                "scale_factor2": 12.0,
+                                "show_mode": 0,
+                                "index": 1,
+                            }
+                        ],
+                    },
+                )
+            )
+            connection = _connect_mdb(db_path)
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    "SELECT [JobStatusUID], [EstimatorUID], [BidDate], [BidNo] "
+                    "FROM [Bids] WHERE [UID]=?",
+                    ids["bid_uid"],
+                )
+                self.assertEqual(tuple(cursor.fetchone()), (None, None, None, None))
+                cursor.execute(
+                    "SELECT COUNT(*) FROM [BidPages] WHERE [BidUID]=?",
+                    ids["bid_uid"],
+                )
+                self.assertEqual(cursor.fetchone()[0], 3)
+            finally:
+                cursor.close()
+                connection.close()
+
     def test_app_created_mdb_matches_reference_dao_schema_metadata(self):
         if not _access_available():
             self.skipTest("Access ODBC/ADOX metadata is not available")

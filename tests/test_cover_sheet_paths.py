@@ -28,7 +28,10 @@ from ost_visualizer.domain.entities.cover_sheet import (
 )
 from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.workspace_state import WorkspaceState
+from ost_visualizer.domain.entities.workspace_state import (
+    HeaderLayoutState,
+    WorkspaceState,
+)
 from ost_visualizer.infrastructure.mdb.components.constants import (
     PAGE_DELETE_CHILD_TABLES,
     TAKEOFF_REFERENCE_TABLES,
@@ -43,15 +46,17 @@ from ost_visualizer.infrastructure.mdb.components.settings_reader import (
     SettingsReaderMixin,
 )
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
-from ost_visualizer.presentation.dialogs.cover_sheet.header_state import (
-    load_cover_sheet_plan_header_state,
-    save_cover_sheet_plan_header_state,
-)
 from ost_visualizer.presentation.dialogs.cover_sheet.pdf_metadata_loader import (
     PdfMetadataSnapshot,
 )
 from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
+from tests.workspace_state_test_support import (
+    make_workspace_state_model,
+    with_workspace_state,
+)
+
+CoverSheetDialog = with_workspace_state(CoverSheetDialog)
 
 
 def _app():
@@ -602,6 +607,57 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             {"new": [], "updated": [], "deleted_uids": []},
         )
         self.assertEqual(result, {})
+
+    def test_cover_sheet_normalizes_nullable_access_column_values(self):
+        operations = _CoverSheetSettingsOps()
+        self.assertTrue(
+            operations.save_cover_sheet(
+                "test.mdb",
+                "7",
+                {
+                    "job_status_uid": "",
+                    "job_name": "Bid",
+                    "estimator_uid": None,
+                    "bid_date": "",
+                    "bid_no": "42",
+                    "measure_base": 0,
+                },
+            )
+        )
+        bid_values = next(
+            update["values"]
+            for update in operations.updates
+            if update["table"] == "Bids"
+        )
+        self.assertIsNone(bid_values["JobStatusUID"])
+        self.assertIsNone(bid_values["EstimatorUID"])
+        self.assertIsNone(bid_values["BidDate"])
+        self.assertEqual(bid_values["BidNo"], 42)
+
+    def test_cover_sheet_rejects_silent_noninteger_identifier_coercion(self):
+        for invalid_value in (True, 7.5):
+            with self.subTest(value=invalid_value):
+                operations = _CoverSheetSettingsOps()
+                self.assertFalse(
+                    operations.save_cover_sheet(
+                        "test.mdb",
+                        "7",
+                        {
+                            "job_status_uid": invalid_value,
+                            "job_name": "Bid",
+                            "measure_base": 0,
+                        },
+                    )
+                )
+                self.assertEqual(operations.updates, [])
+
+    def test_job_status_update_uses_none_instead_of_textual_null_sentinel(self):
+        operations = _CoverSheetSettingsOps()
+        self.assertTrue(operations.update_bid_job_status("test.mdb", "7", None))
+        self.assertIsNone(operations.updates[-1]["values"]["JobStatusUID"])
+        operations = _CoverSheetSettingsOps()
+        self.assertFalse(operations.update_bid_job_status("test.mdb", "7", "NULL"))
+        self.assertEqual(operations.updates, [])
 
     def test_new_master_data_returns_authoritative_uid_maps(self):
         operations = _CoverSheetSettingsOps()
@@ -1675,12 +1731,16 @@ class CoverSheetPathSaveTests(unittest.TestCase):
 
     def test_cover_sheet_plan_header_state_restores_width_and_order(self):
         model = _FakeWorkspaceStateModel()
-        source = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
+        source = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
         try:
             header = source.plan_tree.header()
             header.resizeSection(0, 222)
             header.moveSection(0, 2)
-            save_cover_sheet_plan_header_state(model, source.save_plan_header_state())
         finally:
             source.deleteLater()
         restored = CoverSheetDialog(
@@ -1698,7 +1758,10 @@ class CoverSheetPathSaveTests(unittest.TestCase):
 
     def test_cover_sheet_plan_header_invalid_state_keeps_default_layout(self):
         state = WorkspaceState()
-        state.cover_sheet.plan_header_state_b64 = "not valid base64"
+        state.header_layouts["cover_sheet_pages"] = HeaderLayoutState(
+            widths={"sheet_number": 9999},
+            order=["removed_column"],
+        )
         model = _FakeWorkspaceStateModel(state)
         dialog = CoverSheetDialog(
             _FakeIconProvider(),
@@ -1710,17 +1773,11 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             header = dialog.plan_tree.header()
             self.assertEqual(header.sectionSize(0), 140)
             self.assertEqual(header.visualIndex(0), 0)
-            self.assertFalse(
-                dialog.restore_plan_header_state(
-                    QtCore.QByteArray(b"not a qt header state")
-                )
-            )
         finally:
             dialog.deleteLater()
 
     def test_cover_sheet_plan_header_reject_saves_state_to_workspace_key(self):
         model = _FakeWorkspaceStateModel()
-        self.assertTrue(load_cover_sheet_plan_header_state(model).isEmpty())
         dialog = CoverSheetDialog(
             _FakeIconProvider(),
             None,
@@ -1732,7 +1789,10 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.reject()
         finally:
             dialog.deleteLater()
-        self.assertIsNotNone(model.state.cover_sheet.plan_header_state_b64)
+        self.assertEqual(
+            model.state.header_layouts["cover_sheet_pages"].widths["sheet_number"],
+            233,
+        )
         restored = CoverSheetDialog(
             _FakeIconProvider(),
             None,
@@ -3038,7 +3098,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             ui_state_manager=UiState(),
             ui_access_manager=Access(),
             deferred_persistence_manager=DeferredPersistence(),
-            workspace_state_model=None,
+            workspace_state_model=make_workspace_state_model(),
         )
         from ost_visualizer.presentation.handlers import cover_sheet_handler as module
 
@@ -3125,7 +3185,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             ),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             deferred_persistence_manager=SimpleNamespace(),
-            workspace_state_model=None,
+            workspace_state_model=make_workspace_state_model(),
         )
         from ost_visualizer.presentation.handlers import cover_sheet_handler as module
 
@@ -3134,6 +3194,61 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0][:2], ("sql-database", "7"))
         self.assertEqual(len(queued[0][2]["pages"]), 1)
+
+    def test_mdb_add_blank_page_uses_cover_sheet_save_workflow(self):
+        saved = []
+        data = _cover_sheet_data()
+        data.job_status_uid = ""
+        data.estimator_uid = ""
+        data.bid_date = ""
+        data.bid_no = ""
+
+        class ProjectData:
+            @staticmethod
+            def is_current_bid_locked():
+                return False
+
+        class ReadService:
+            @staticmethod
+            def get_cover_sheet_data(database_id, bid_uid):
+                self.assertEqual((database_id, bid_uid), ("bid.mdb", "7"))
+                return data
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return False
+
+            @staticmethod
+            def save_cover_sheet(database_id, bid_uid, updates):
+                saved.append((database_id, bid_uid, updates))
+                return True
+
+        handler = CoverSheetHandler(
+            window=object(),
+            icon_provider=_FakeIconProvider(),
+            project_data_service=ProjectData(),
+            project_read_service=ReadService(),
+            project_write_service=WriteService(),
+            infrastructure_provider=SimpleNamespace(),
+            event_bus=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("bid.mdb", "7")
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _database_id: True
+            ),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        from ost_visualizer.presentation.handlers import cover_sheet_handler as module
+
+        with mock.patch.object(module, "confirm", return_value=True):
+            self.assertTrue(handler.add_blank_page_from_takeoff_tab())
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0][:2], ("bid.mdb", "7"))
+        self.assertEqual(saved[0][2]["job_status_uid"], "")
+        self.assertEqual(len(saved[0][2]["pages"]), 1)
 
     def test_unlocked_sql_cover_sheet_invokes_async_save_instead_of_returning_it(self):
         queued = []
@@ -3216,7 +3331,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 has_license=lambda: True,
             ),
             deferred_persistence_manager=SimpleNamespace(),
-            workspace_state_model=None,
+            workspace_state_model=make_workspace_state_model(),
         )
         from ost_visualizer.presentation.handlers import cover_sheet_handler as module
 

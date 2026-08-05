@@ -69,6 +69,9 @@ class BidAnnotation:
             ANNOTATION_TYPE_CALLOUT,
         }
     )
+    POLYGON_CONTROL_POINT_TYPES: ClassVar[frozenset] = frozenset(
+        {ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD}
+    )
     uid: str
     annotation_type: str
     page_uid: str = ""
@@ -90,6 +93,10 @@ class BidAnnotation:
     @property
     def can_rotate(self) -> bool:
         return self.annotation_type in self.ROTATABLE_TYPES
+
+    @property
+    def supports_polygon_control_points(self) -> bool:
+        return self.annotation_type in self.POLYGON_CONTROL_POINT_TYPES
 
     @property
     def is_text(self) -> bool:

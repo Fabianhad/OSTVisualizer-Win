@@ -786,15 +786,6 @@ class ProjectView(QtWidgets.QWidget):
         finally:
             self.top_tree.blockSignals(signals_were_blocked)
 
-    def save_header_state(self) -> QtCore.QByteArray:
-        return self.top_tree.header().saveState()
-
-    def header(self) -> QtWidgets.QHeaderView:
-        return self.top_tree.header()
-
-    def restore_header_state(self, state: QtCore.QByteArray) -> None:
-        self.top_tree.header().restoreState(state)
-
     def get_expanded_node_keys(self) -> List[str]:
         return sorted(self.expanded_nodes)
 

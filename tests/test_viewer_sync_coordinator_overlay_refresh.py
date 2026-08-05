@@ -5372,6 +5372,40 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(annotation.position, old_position)
         view.cleanup()
 
+    def test_new_text_annotation_font_sizes_update_through_toolbar_workflow(self):
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            position=[100.0, 100.0, 40.0, 15.0],
+            properties={"Text": "Before", "FontColor": 0, "FontSize": 12},
+        )
+        item = QGraphicsTextItem("Before")
+        item.setData(0, "a1")
+        item.setTextWidth(40)
+        view._scene.addItem(item)
+        view._uid_to_items = {"a1": [item]}
+        view._current_annotations = {"a1": annotation}
+        view._selection_enabled = True
+        emitted = []
+        view.annotation_text_properties_flushed.connect(emitted.extend)
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        self.assertEqual(
+            [
+                view._condition_text_size_combo.itemData(index)
+                for index in range(view._condition_text_size_combo.count())
+            ],
+            [8, 9, 10, 11, 12, 14, 16, 18, 24, 36, 48, 72],
+        )
+        for size in (48, 72):
+            with self.subTest(size=size):
+                size_index = view._condition_text_size_combo.findData(size)
+                self.assertGreaterEqual(size_index, 0)
+                view._condition_text_size_combo.setCurrentIndex(size_index)
+                self.assertEqual(annotation.properties["FontSize"], size)
+                self.assertEqual(emitted[-1][3]["FontSize"], size)
+        view.cleanup()
+
     def test_text_annotation_style_and_centered_box_survive_overlay_refresh(self):
         view = self._make_plan_view()
         page = Page(uid="page-1", name="Page 1")
@@ -5398,7 +5432,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_render_identity = view._build_render_identity(page, bid_ref)
         view._selection_enabled = True
         self.assertTrue(view._select_text_annotation_label("a1"))
-        size_index = view._condition_text_size_combo.findData(24)
+        size_index = view._condition_text_size_combo.findData(72)
         self.assertGreaterEqual(size_index, 0)
         view._condition_text_size_combo.setCurrentIndex(size_index)
         item.setDefaultTextColor(QColor("#112233"))
@@ -5417,9 +5451,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         rebuilt = view._text_annotation_item("a1")
         self.assertIsInstance(rebuilt, ClippedTextGraphicsItem)
-        self.assertEqual(rebuilt.font().pointSize(), 24)
+        self.assertEqual(rebuilt.font().pointSize(), 72)
         self.assertEqual(rebuilt.defaultTextColor().name(), "#112233")
-        self.assertEqual(annotation.properties["FontSize"], 24)
+        self.assertEqual(annotation.properties["FontSize"], 72)
         self.assertEqual(annotation.properties["FontColor"], 0x332211)
         self.assertEqual(annotation.position, updated_position)
         self.assertEqual(

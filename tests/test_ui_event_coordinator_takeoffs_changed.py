@@ -2233,16 +2233,17 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         restored_navigation = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._pending_takeoff_page_uids = None
-        coordinator.ui_state_manager = SimpleNamespace(
+        ui_state = SimpleNamespace(
             selected_page_uids=["page-b"],
             active_page_uid="page-b",
             get_selected_bid_ref=lambda: bid_ref,
-            set_page_selection=lambda selected: setattr(
-                coordinator.ui_state_manager,
-                "selected_page_uids",
-                list(selected),
-            ),
         )
+
+        def set_page_selection(selected):
+            ui_state.selected_page_uids = list(selected)
+
+        ui_state.set_page_selection = set_page_selection
+        coordinator.ui_state_manager = ui_state
         coordinator.project_data = SimpleNamespace(
             get_page=pages.get,
             get_all_pages=lambda: list(pages.values()),
@@ -3208,7 +3209,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         self.assertEqual(
@@ -3308,7 +3308,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator._sync_selection(coordinator._SOURCE_2D, [])
@@ -3352,7 +3351,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator.highlight_sidebar({"c2"})
@@ -3399,7 +3397,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = SimpleNamespace(is_refreshing=False)
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator.highlight_sidebar({"c1"})
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
@@ -3486,7 +3483,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator._reset_takeoff_workspace_state(clear_sidebars=False)
@@ -3499,7 +3495,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(sidebar_clears, [])
         coordinator._reset_takeoff_workspace_state(clear_sidebars=True)
         self.assertEqual(coordinator._selected_takeoff_uids, ())
-        self.assertEqual(coordinator._selected_takeoff_condition_uids, set())
         self.assertEqual(coordinator._selection_projected_condition_uids, set())
         self.assertEqual(sidebar_clears, [True])
 
@@ -3540,7 +3535,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator.ui_state_manager.set_highlighted_conditions(set())
@@ -3592,13 +3586,15 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 coordinator.opengl_viewer = None
                 coordinator._mesh_window = None
                 coordinator._placement = FakePlacement()
+                coordinator._placement.is_active = True
+                coordinator._placement.condition_uid = "c2"
                 coordinator._toolbar = FakeToolbar()
                 coordinator._tab_widget = FakeTabWidget(index=1)
                 coordinator._nav = type("Nav", (), {"is_refreshing": False})()
                 coordinator._selected_takeoff_uids = ()
-                coordinator._selected_takeoff_condition_uids = set()
                 coordinator._selection_projected_condition_uids = set()
-                coordinator._sync_selection(source, ["t1", "t2"])
+                coordinator._sync_selection(source, ["t2", "t1", "t2"])
+                self.assertEqual(coordinator._selected_takeoff_uids, ("t1", "t2"))
                 self.assertEqual(
                     coordinator.ui_state_manager.highlighted_condition_uids,
                     {"c1", "c2"},
@@ -3620,6 +3616,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                     len(coordinator.conditions_sidebar.highlights),
                     projected_count + 1,
                 )
+                coordinator._sync_selection(source, ["t1"])
+                self.assertEqual(coordinator._placement.enter_calls, [])
 
     def test_takeoff_projection_deferred_during_refresh_repairs_when_idle(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -3657,7 +3655,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = SimpleNamespace(is_refreshing=True)
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         self.assertEqual(coordinator.conditions_sidebar.selected, {"c2"})
@@ -3709,7 +3706,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator.highlight_sidebar({"c2"})
@@ -3948,7 +3944,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator._sync_selection(coordinator._SOURCE_2D, [])
@@ -3974,7 +3969,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._toolbar = FakeToolbar()
         coordinator._sidebar = FakeSidebar()
         coordinator._selected_takeoff_uids = ("t1", "t2")
-        coordinator._selected_takeoff_condition_uids = {"c1", "c2"}
         coordinator._selection_projected_condition_uids = {"c1", "c2"}
         configure_mesh_state(coordinator)
         coordinator._sync_page_info_status = lambda: None
@@ -3984,7 +3978,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._toolbar.select_checked, 1)
         self.assertEqual(coordinator._sidebar.quantity_updates, 1)
         self.assertEqual(coordinator._selected_takeoff_uids, ("t1", "t2"))
-        self.assertEqual(coordinator._selected_takeoff_condition_uids, {"c1", "c2"})
 
     def test_late_view_stack_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -4591,7 +4584,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._page_settings_bar = None
         coordinator._mesh_scene_dirty = False
@@ -4806,7 +4798,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._selected_takeoff_uids = ("t1",)
-        coordinator._selected_takeoff_condition_uids = {"c1"}
         coordinator._selection_projected_condition_uids = {"c1"}
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
         coordinator._update_export_menu_state = lambda: None
@@ -4816,7 +4807,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._sidebar.clears, 0)
         self.assertIsNone(coordinator._takeoff_workspace_bid_ref)
         self.assertEqual(coordinator._selected_takeoff_uids, ("t1",))
-        self.assertEqual(coordinator._selected_takeoff_condition_uids, {"c1"})
         self.assertEqual(coordinator._selection_projected_condition_uids, {"c1"})
 
     def test_database_refresh_drops_deleted_project_selection_and_hides_takeoff(self):

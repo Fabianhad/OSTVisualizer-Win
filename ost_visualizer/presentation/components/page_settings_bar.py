@@ -39,6 +39,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         event_bus,
         refresh_areas_fn: Callable,
         ui_access_manager,
+        workspace_state_model,
         load_areas_fn: Optional[Callable] = None,
         save_areas_fn: Optional[Callable] = None,
         save_areas_async_fn: Optional[Callable] = None,
@@ -50,6 +51,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         self._icon_provider = icon_provider
         self._event_bus = event_bus
         self._access = ui_access_manager
+        self._workspace_state_model = workspace_state_model
         self._load_areas_fn = load_areas_fn
         self._save_areas_fn = save_areas_fn
         self._save_areas_async_fn = save_areas_async_fn
@@ -295,6 +297,7 @@ class PageSettingsBar(QtWidgets.QWidget):
             used_uids=self._bid_areas_in_use,
             on_saved_fn=_on_saved,
             bid_ref=bid_ref,
+            workspace_state_model=self._workspace_state_model,
         )
         selected_uid = None
         try:

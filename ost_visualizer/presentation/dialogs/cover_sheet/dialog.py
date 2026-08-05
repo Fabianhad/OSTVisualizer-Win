@@ -33,6 +33,7 @@ from ...utils.messagebox import (
     show_warning,
 )
 from ...utils.overlay_context_menu import IMAGE_FILE_FILTER
+from ...utils.persistent_header import PersistentHeaderController
 from ...utils.scales import ALL_SCALES, ARCH_SCALES, SCALES_BY_STYLE
 from ...utils.windows import remove_minimize, set_initial_window_size
 from ..areas_dialog import BidAreasDialog
@@ -47,10 +48,6 @@ from .components import (
 )
 from .context import CoverSheetContext
 from .delegates import ComboOption, CoverSheetComboDelegate
-from .header_state import (
-    load_cover_sheet_plan_header_state,
-    save_cover_sheet_plan_header_state,
-)
 from .pdf_metadata_loader import (
     IRunnablePool,
     PdfMetadataLoader,
@@ -131,6 +128,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         icon_provider,
         parent: QtWidgets.QWidget,
         cover_sheet_data: CoverSheetData,
+        workspace_state_model,
         used_employee_uids: Optional[set] = None,
         has_license: bool = True,
         context: Optional[CoverSheetContext] = None,
@@ -153,7 +151,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
         create_mode: bool = False,
         pages_with_takeoffs: Optional[set] = None,
         pages_requiring_delete_confirmation: Optional[set] = None,
-        workspace_state_model=None,
         pdf_metadata_pool: Optional[IRunnablePool] = None,
     ):
         super().__init__(parent)
@@ -227,6 +224,23 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._save_cover_sheet_async_fn = save_cover_sheet_async_fn
         self._setup_ui()
         self._populate()
+        self._plan_header_controller = PersistentHeaderController(
+            self.plan_tree,
+            "cover_sheet_pages",
+            (
+                "sheet_number",
+                "sheet_name",
+                "page_size",
+                "scale",
+                "image_file",
+                "overlay_image",
+                "page_index",
+                "show_mode",
+            ),
+            self._workspace_state_model,
+            sorting=False,
+            movable=True,
+        )
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("New Project" if self._create_mode else "Cover Sheet")
@@ -367,11 +381,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
         header = self.plan_tree.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(7, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.resizeSection(0, 140)
@@ -379,10 +393,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
         header.resizeSection(3, 120)
         header.resizeSection(6, 45)
         header.resizeSection(7, 90)
-        if self._workspace_state_model is not None:
-            self.restore_plan_header_state(
-                load_cover_sheet_plan_header_state(self._workspace_state_model)
-            )
         self.plan_tree.setVerticalScrollMode(
             QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel
         )
@@ -722,14 +732,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
             and abs(current_sf2 - option_sf2) < 0.01
         )
 
-    def save_plan_header_state(self) -> QtCore.QByteArray:
-        return self.plan_tree.header().saveState()
-
-    def restore_plan_header_state(self, state: QtCore.QByteArray) -> bool:
-        if state is None or state.isEmpty():
-            return False
-        return bool(self.plan_tree.header().restoreState(state))
-
     def done(self, result: int) -> None:
         if self._operation_pending:
             return
@@ -764,13 +766,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._closed = True
             self._metadata_loader.result_ready.disconnect(self._on_pdf_metadata_result)
             self._metadata_loader.close()
-        if self._workspace_state_model is not None:
-            try:
-                save_cover_sheet_plan_header_state(
-                    self._workspace_state_model, self.save_plan_header_state()
-                )
-            except OSError as exc:
-                logger.error("Failed to save Cover Sheet header state: %s", exc)
         super().done(result)
 
     def _setup_pref_tab(self) -> QtWidgets.QWidget:
@@ -1066,6 +1061,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             initial_name=initial_name,
             save_fn=self._save_job_statuses_fn,
             save_async_fn=self._save_job_statuses_async_fn,
+            workspace_state_model=self._workspace_state_model,
         )
         self._active_sub_dialog = dialog
         try:
@@ -1131,6 +1127,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             save_async_fn=self._save_employees_async_fn,
             pay_classes_save_fn=self._save_pay_classes_fn,
             pay_classes_save_async_fn=self._save_pay_classes_async_fn,
+            workspace_state_model=self._workspace_state_model,
         )
         self._active_sub_dialog = dialog
         try:
@@ -1206,6 +1203,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             used_uids=used_uids,
             has_license=self._has_license,
             bid_ref=self._bid_ref,
+            workspace_state_model=self._workspace_state_model,
         )
         self._active_sub_dialog = dialog
         try:

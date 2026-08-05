@@ -20,6 +20,9 @@ from ost_visualizer.presentation.components.toolbar_overflow import (
     add_overflow_widget,
 )
 from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
+from tests.workspace_state_test_support import with_workspace_state
+
+PageSettingsBar = with_workspace_state(PageSettingsBar)
 
 
 class _AllowPageSettingsAccess:

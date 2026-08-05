@@ -47,6 +47,9 @@ from ost_visualizer.presentation.managers.deferred_persistence_manager import (
 from ost_visualizer.application.dtos.collaboration_dtos import (
     CollaborationShutdownState,
 )
+from tests.workspace_state_test_support import with_workspace_state
+
+FileOperationHandler = with_workspace_state(FileOperationHandler)
 
 
 class FakeProjectWriteService:

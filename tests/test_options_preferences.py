@@ -134,6 +134,7 @@ from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer impor
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
 )
+from tests.workspace_state_test_support import make_workspace_state_model
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -1657,11 +1658,17 @@ class OptionsPreferencesTests(unittest.TestCase):
                 )
             )
             size_menu = _submenu_by_title(menu, "Font Size")
-            size_action = next(
-                action for action in size_menu.actions() if action.data() == 24
+            font_sizes = [action.data() for action in size_menu.actions()]
+            self.assertEqual(
+                font_sizes,
+                [8, 9, 10, 11, 12, 14, 16, 18, 24, 36, 48, 72],
             )
-            size_action.trigger()
-            self.assertEqual(selected[-1].font_size, 24)
+            for size in (48, 72):
+                size_action = next(
+                    action for action in size_menu.actions() if action.data() == size
+                )
+                size_action.trigger()
+                self.assertEqual(selected[-1].font_size, size)
             bold_action = next(
                 action for action in menu.actions() if action.text() == "Bold"
             )
@@ -1737,11 +1744,16 @@ class OptionsPreferencesTests(unittest.TestCase):
             ]
             self.assertEqual(width_actions, [])
             size_menu = _submenu_by_title(menu, "Font Size")
-            size_action = next(
-                action for action in size_menu.actions() if action.data() == 18
+            self.assertEqual(
+                [action.data() for action in size_menu.actions()],
+                [8, 9, 10, 11, 12, 14, 16, 18, 24, 36, 48, 72],
             )
-            size_action.trigger()
-            self.assertEqual(selected[-1].font_size, 18)
+            for size in (48, 72):
+                size_action = next(
+                    action for action in size_menu.actions() if action.data() == size
+                )
+                size_action.trigger()
+                self.assertEqual(selected[-1].font_size, size)
             for action_text, selected_state in (
                 ("Bold", lambda style: style.font_bold),
                 ("Italic", lambda style: style.font_italic),
@@ -1993,7 +2005,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         controller._infrastructure_provider = SimpleNamespace(
             get_pdf_page_sizes=lambda _path: []
         )
-        controller._workspace_state_model = None
+        controller._workspace_state_model = make_workspace_state_model()
         controller._event_bus = object()
         with (
             mock.patch(

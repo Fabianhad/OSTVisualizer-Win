@@ -60,6 +60,19 @@ _HEADER_BY_COLUMN_KEY = {
     SUMMARY_COLUMN_UOM3: "UOM3",
     SUMMARY_COLUMN_NOTES: "Notes",
 }
+_DEFAULT_WIDTH_BY_COLUMN_KEY = {
+    SUMMARY_COLUMN_NUMBER: 80,
+    SUMMARY_COLUMN_NAME: 150,
+    SUMMARY_COLUMN_HEIGHT: 75,
+    SUMMARY_COLUMN_AREA: 145,
+    SUMMARY_COLUMN_QUANTITY1: 80,
+    SUMMARY_COLUMN_UOM1: 55,
+    SUMMARY_COLUMN_QUANTITY2: 80,
+    SUMMARY_COLUMN_UOM2: 55,
+    SUMMARY_COLUMN_QUANTITY3: 80,
+    SUMMARY_COLUMN_UOM3: 55,
+    SUMMARY_COLUMN_NOTES: 180,
+}
 _RIGHT_ALIGNED_COLUMN_KEYS = {
     SUMMARY_COLUMN_HEIGHT,
     SUMMARY_COLUMN_AREA,
@@ -83,6 +96,8 @@ class ConditionSummaryTab(QtWidgets.QWidget):
     delete_requested = Signal(list)
     summary_ui_state_changed = Signal()
     summary_action_state_changed = Signal()
+    columns_about_to_change = Signal(object)
+    columns_changed = Signal()
 
     def __init__(
         self,
@@ -103,14 +118,15 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         ) = None
         self._grayscale = False
         self._column_keys = list(_BASE_COLUMN_KEYS)
-        self._column_widths_by_key: dict[str, int] = {}
-        self._column_widths_initialized = False
-        self._restoring_column_widths = False
         self._build_ui()
 
     @property
     def grouping(self) -> ConditionSummaryGrouping:
         return self._grouping
+
+    @property
+    def column_keys(self) -> tuple[str, ...]:
+        return tuple(self._column_keys)
 
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
@@ -137,12 +153,19 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         header = self.tree.header()
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(30)
+        self._configure_header_sections()
+        for col in range(self.tree.columnCount()):
+            header.resizeSection(
+                col, _DEFAULT_WIDTH_BY_COLUMN_KEY[self._column_keys[col]]
+            )
+        layout.addWidget(self.tree)
+
+    def _configure_header_sections(self) -> None:
+        header = self.tree.header()
         for col in range(self.tree.columnCount()):
             header.setSectionResizeMode(
                 col, QtWidgets.QHeaderView.ResizeMode.Interactive
             )
-        header.sectionResized.connect(self._on_header_section_resized)
-        layout.addWidget(self.tree)
 
     def clear(self) -> None:
         self._root_node = None
@@ -151,8 +174,6 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self.summary_action_state_changed.emit()
 
     def refresh_view(self) -> None:
-        if self._column_widths_initialized:
-            self._restore_column_widths()
         self.tree.viewport().update()
 
     def load_summary(
@@ -219,20 +240,6 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         if notify and changed:
             self.summary_ui_state_changed.emit()
 
-    def get_column_widths(self) -> dict[str, int]:
-        self._remember_column_widths()
-        return dict(self._column_widths_by_key)
-
-    def set_column_widths(self, widths: dict[str, int]) -> None:
-        self._column_widths_by_key = self._sanitize_column_widths(widths)
-        if not self._column_widths_by_key:
-            self._column_widths_initialized = False
-            if self._root_node is not None:
-                self._restore_column_widths()
-            return
-        self._column_widths_initialized = True
-        self._restore_column_widths()
-
     def _request_grouping(self, grouping: ConditionSummaryGrouping) -> None:
         changed = grouping != self._grouping
         self._grouping = grouping
@@ -253,13 +260,15 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         if self._root_node is None:
             self.clear()
             return
-        self._remember_column_widths()
-        self._column_keys = self._visible_column_keys()
+        column_keys = self._visible_column_keys()
+        self.columns_about_to_change.emit(tuple(column_keys))
+        self._column_keys = column_keys
         self.tree.setColumnCount(len(self._column_keys))
         self.tree.setHeaderLabels(
             [_HEADER_BY_COLUMN_KEY[key] for key in self._column_keys]
         )
         self._apply_header_alignment()
+        self._configure_header_sections()
         self.tree.setUpdatesEnabled(False)
         try:
             self.tree.clear()
@@ -271,9 +280,9 @@ class ConditionSummaryTab(QtWidgets.QWidget):
                     self._append_children(item, node.children)
                     item.setExpanded(True)
             self.tree.expandAll()
-            self._restore_column_widths()
         finally:
             self.tree.setUpdatesEnabled(True)
+        self.columns_changed.emit()
         self.tree.viewport().update()
 
     def _apply_header_alignment(self) -> None:
@@ -379,62 +388,6 @@ class ConditionSummaryTab(QtWidgets.QWidget):
                 font = item.font(col)
                 font.setBold(True)
                 item.setFont(col, font)
-
-    def _remember_column_widths(self) -> None:
-        if not self._column_widths_initialized:
-            return
-        if self.tree.columnCount() != len(self._column_keys):
-            return
-        header = self.tree.header()
-        for col, key in enumerate(self._column_keys):
-            width = header.sectionSize(col)
-            if width > 0:
-                self._column_widths_by_key[key] = width
-
-    def _on_header_section_resized(self, *_args) -> None:
-        if self._restoring_column_widths:
-            return
-        self._remember_column_widths()
-        self.summary_ui_state_changed.emit()
-
-    def _sanitize_column_widths(self, widths: dict[str, int]) -> dict[str, int]:
-        valid_keys = set(_BASE_COLUMN_KEYS)
-        sanitized: dict[str, int] = {}
-        for key, value in (widths or {}).items():
-            if key not in valid_keys:
-                continue
-            try:
-                width = int(value)
-            except (TypeError, ValueError):
-                continue
-            if width > 0:
-                sanitized[str(key)] = width
-        return sanitized
-
-    def _restore_column_widths(self) -> None:
-        widths = {
-            SUMMARY_COLUMN_NUMBER: 80,
-            SUMMARY_COLUMN_NAME: 150,
-            SUMMARY_COLUMN_HEIGHT: 75,
-            SUMMARY_COLUMN_AREA: 145,
-            SUMMARY_COLUMN_QUANTITY1: 80,
-            SUMMARY_COLUMN_UOM1: 55,
-            SUMMARY_COLUMN_QUANTITY2: 80,
-            SUMMARY_COLUMN_UOM2: 55,
-            SUMMARY_COLUMN_QUANTITY3: 80,
-            SUMMARY_COLUMN_UOM3: 55,
-            SUMMARY_COLUMN_NOTES: 180,
-        }
-        header = self.tree.header()
-        self._restoring_column_widths = True
-        try:
-            for col, key in enumerate(self._column_keys):
-                header.resizeSection(
-                    col, self._column_widths_by_key.get(key, widths[key])
-                )
-        finally:
-            self._restoring_column_widths = False
-            self._column_widths_initialized = True
 
     def _show_context_menu(self, pos: QtCore.QPoint) -> None:
         item = self.tree.itemAt(pos)

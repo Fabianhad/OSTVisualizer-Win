@@ -22,6 +22,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         icon_provider,
         employees: List[EmployeeRecord],
         current_index: int,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         pay_classes: Optional[List[PayClass]] = None,
         pay_classes_save_fn=None,
@@ -33,6 +34,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         self._current_index = current_index
         self._pay_classes_save_fn = pay_classes_save_fn
         self._pay_classes_save_async_fn = pay_classes_save_async_fn
+        self._workspace_state_model = workspace_state_model
         self._pay_classes: List[PayClassRecord] = [
             PayClassRecord.from_pay_class(pc) for pc in (pay_classes or [])
         ]
@@ -280,6 +282,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
             initial_name=initial_name,
             save_fn=self._pay_classes_save_fn,
             save_async_fn=self._pay_classes_save_async_fn,
+            workspace_state_model=self._workspace_state_model,
         )
         self._active_payroll_dialog = dialog
         try:

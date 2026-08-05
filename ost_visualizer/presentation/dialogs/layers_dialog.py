@@ -14,6 +14,7 @@ from ..config import (
 )
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
 
@@ -29,6 +30,7 @@ class LayersDialog(QtWidgets.QDialog):
     def __init__(
         self,
         icon_provider,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         layers: Optional[List[BidLayer]] = None,
         current_name: str = "",
@@ -79,6 +81,15 @@ class LayersDialog(QtWidgets.QDialog):
         self._pending_new_editor_connected = False
         self._setup_ui()
         self._populate(select_name=current_name.strip())
+        self._header_controller = PersistentHeaderController(
+            self.tree,
+            "layers_dialog",
+            ("sequence", "visible", "layer"),
+            workspace_state_model,
+            sorting=False,
+            movable=True,
+            persisted_width_keys=("layer",),
+        )
 
     def _filter_layers_for_mode(self, layers: List[BidLayer]) -> List[BidLayer]:
         if self._mode == LayersDialogMode.DEFAULT_LAYERS:
@@ -114,7 +125,8 @@ class LayersDialog(QtWidgets.QDialog):
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(2, 260)
         header.resizeSection(0, 36)
         header.resizeSection(1, 58)
         self.tree.itemSelectionChanged.connect(self._update_button_states)

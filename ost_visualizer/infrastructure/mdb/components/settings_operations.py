@@ -55,17 +55,23 @@ class SettingsOperationsMixin:
                     old_mb = int(row[0] or 0) if row else new_mb
                 notes = updates.get("notes", "") or ""
                 notes = encode_text_blob(notes)
+                job_status_uid = self._optional_integer(updates.get("job_status_uid"))
+                estimator_uid = self._optional_integer(updates.get("estimator_uid"))
+                bid_no = self._optional_integer(updates.get("bid_no"))
+                bid_date = updates.get("bid_date")
+                if bid_date in (None, ""):
+                    bid_date = None
                 self._execute_update_values(
                     cursor,
                     schema,
                     "Bids",
                     {
-                        "JobStatusUID": updates.get("job_status_uid"),
+                        "JobStatusUID": job_status_uid,
                         "JobName": updates.get("job_name", ""),
-                        "EstimatorUID": updates.get("estimator_uid"),
+                        "EstimatorUID": estimator_uid,
                         "Notes": notes,
-                        "BidDate": updates.get("bid_date"),
-                        "BidNo": updates.get("bid_no"),
+                        "BidDate": bid_date,
+                        "BidNo": bid_no,
                         "JobID": updates.get("job_id", ""),
                         "MeasureBase": new_mb,
                         "TakeoffIncrements": updates.get("takeoff_increments", 1.0),
@@ -265,6 +271,19 @@ class SettingsOperationsMixin:
             )
             return False
 
+    @staticmethod
+    def _optional_integer(value) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise TypeError("Boolean values are not valid Access integer identifiers")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            return int(stripped) if stripped else None
+        raise TypeError(f"Unsupported Access integer value: {type(value).__name__}")
+
     def delete_pages(self, db_path: str, page_uids: list[str]) -> bool:
         try:
             with self._connection(db_path) as conn:
@@ -284,11 +303,7 @@ class SettingsOperationsMixin:
     ) -> bool:
         try:
             bid_uid_int = int(bid_uid)
-            status_uid = (
-                int(job_status_uid)
-                if job_status_uid not in (None, "", "NULL")
-                else None
-            )
+            status_uid = self._optional_integer(job_status_uid)
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()

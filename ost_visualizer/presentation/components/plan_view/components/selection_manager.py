@@ -48,8 +48,8 @@ _TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
 
 
 @dataclass(frozen=True)
-class AreaControlPointTarget:
-    takeoff_uid: str
+class PolygonControlPointTarget:
+    plan_item_uid: str
     kind: str
     vertex_index: int = -1
     edge_index: int = -1
@@ -60,7 +60,7 @@ class SelectionManagerMixin:
     _CORNER_HALF = 4.0
     _MID_HALF = 2.0
     _TEXT_ANNOTATION_HIT_TOLERANCE_PX = 4.0
-    _AREA_CONTROL_POINT_HIT_TOLERANCE_PX = 8.0
+    _POLYGON_CONTROL_POINT_HIT_TOLERANCE_PX = 8.0
     _hidden_layer_uids: Collection[str] = ()
 
     def _on_selection_changed(self) -> None:
@@ -421,61 +421,77 @@ class SelectionManagerMixin:
                 return QtCore.QPointF(unrotated.x() * factor, unrotated.y() * factor)
         return QtCore.QPointF(scene_pos.x() * factor, scene_pos.y() * factor)
 
-    def _area_control_point_hit_tolerance(self) -> float:
+    def _polygon_control_point_hit_tolerance(self) -> float:
         m11 = self.transform().m11()
         return (
-            self._AREA_CONTROL_POINT_HIT_TOLERANCE_PX / m11
+            self._POLYGON_CONTROL_POINT_HIT_TOLERANCE_PX / m11
             if m11 > 0
-            else self._AREA_CONTROL_POINT_HIT_TOLERANCE_PX
+            else self._POLYGON_CONTROL_POINT_HIT_TOLERANCE_PX
         )
 
-    def _is_area_control_point_candidate(self, uid: str) -> bool:
+    def _polygon_control_point_model_position(self, uid: str) -> list[float] | None:
         if not self._selection_enabled or not self._is_selectable(uid):
-            return False
+            return None
         takeoff = self._current_takeoffs.get(uid)
-        if takeoff is None:
-            return False
-        condition = self._current_conditions.get(takeoff.condition_uid)
-        if condition is None or not condition.is_area:
-            return False
-        if takeoff.is_hole:
-            parent = self._current_takeoffs.get(takeoff.parent_uid)
-            parent_condition = (
-                self._current_conditions.get(parent.condition_uid) if parent else None
-            )
-            if (
-                parent is None
-                or parent.is_hole
-                or not (parent_condition and parent_condition.is_area)
-            ):
-                return False
-        raw_pos = self._scene_builder.get_coordinate_system().parse_position(
-            takeoff.position
-        )
+        if takeoff is not None:
+            condition = self._current_conditions.get(takeoff.condition_uid)
+            if condition is None or not condition.is_area:
+                return None
+            if takeoff.is_hole:
+                parent = self._current_takeoffs.get(takeoff.parent_uid)
+                parent_condition = (
+                    self._current_conditions.get(parent.condition_uid)
+                    if parent
+                    else None
+                )
+                if (
+                    parent is None
+                    or parent.is_hole
+                    or not (parent_condition and parent_condition.is_area)
+                ):
+                    return None
+            position = takeoff.position
+        else:
+            annotation = self._current_annotations.get(uid)
+            if annotation is None or not annotation.supports_polygon_control_points:
+                return None
+            position = annotation.position
+        raw_pos = self._scene_builder.get_coordinate_system().parse_position(position)
         if not raw_pos or len(raw_pos) < 6 or len(raw_pos) % 2 != 0:
-            return False
-        return True
+            return None
+        return raw_pos
 
-    def _area_control_point_candidate_uids(
+    def _polygon_control_point_candidates(
         self, scene_pos: QtCore.QPointF
-    ) -> list[str]:
+    ) -> list[tuple[str, list[float]]]:
         seen: set[str] = set()
-        ordered: list[str] = []
+        ordered: list[tuple[str, list[float]]] = []
         for item in self._scene.items(scene_pos):
             uid = item.data(0)
-            if uid and uid not in seen and self._is_area_control_point_candidate(uid):
+            raw_pos = (
+                self._polygon_control_point_model_position(uid)
+                if uid and uid not in seen
+                else None
+            )
+            if raw_pos is not None:
                 seen.add(uid)
-                ordered.append(uid)
-        remaining: list[tuple[float, int, str]] = []
-        for index, uid in enumerate(self._current_takeoffs):
-            if uid in seen or not self._is_area_control_point_candidate(uid):
+                ordered.append((uid, raw_pos))
+        remaining: list[tuple[float, int, str, list[float]]] = []
+        plan_item_uids = (*self._current_takeoffs, *self._current_annotations)
+        for index, uid in enumerate(plan_item_uids):
+            if uid in seen:
+                continue
+            raw_pos = self._polygon_control_point_model_position(uid)
+            if raw_pos is None:
                 continue
             z_value = max(
                 (item.zValue() for item in self._uid_to_items.get(uid, [])),
                 default=0.0,
             )
-            remaining.append((-z_value, index, uid))
-        ordered.extend(uid for _z_value, _index, uid in sorted(remaining))
+            remaining.append((-z_value, index, uid, raw_pos))
+        ordered.extend(
+            (uid, raw_pos) for _z_value, _index, uid, raw_pos in sorted(remaining)
+        )
         return ordered
 
     @staticmethod
@@ -495,15 +511,13 @@ class SelectionManagerMixin:
         t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / length_sq))
         return x1 + t * dx, y1 + t * dy
 
-    def area_control_point_target_at(
+    def polygon_control_point_target_at(
         self, scene_pos: QtCore.QPointF
-    ) -> AreaControlPointTarget | None:
-        tolerance = self._area_control_point_hit_tolerance()
+    ) -> PolygonControlPointTarget | None:
+        tolerance = self._polygon_control_point_hit_tolerance()
         cs = self._scene_builder.get_coordinate_system()
         candidates: list[tuple[str, list[float], list[QtCore.QPointF]]] = []
-        for uid in self._area_control_point_candidate_uids(scene_pos):
-            takeoff = self._current_takeoffs[uid]
-            raw_pos = cs.parse_position(takeoff.position)
+        for uid, raw_pos in self._polygon_control_point_candidates(scene_pos):
             tx_pos = cs.transform_vertices_to_2d(raw_pos)
             scene_points = [
                 self._pt_to_scene(tx_pos[index], tx_pos[index + 1])
@@ -517,13 +531,13 @@ class SelectionManagerMixin:
                     math.hypot(scene_pos.x() - point.x(), scene_pos.y() - point.y())
                     <= tolerance
                 ):
-                    return AreaControlPointTarget(
-                        takeoff_uid=uid,
+                    return PolygonControlPointTarget(
+                        plan_item_uid=uid,
                         kind="vertex",
                         vertex_index=index,
                     )
         ost_pos = self._scene_pos_to_ost(scene_pos)
-        best: tuple[float, AreaControlPointTarget] | None = None
+        best: tuple[float, PolygonControlPointTarget] | None = None
         for uid, raw_pos, scene_points in candidates:
             point_count = len(scene_points)
             for index in range(point_count):
@@ -551,8 +565,8 @@ class SelectionManagerMixin:
                 )
                 if insert_point is None:
                     continue
-                target = AreaControlPointTarget(
-                    takeoff_uid=uid,
+                target = PolygonControlPointTarget(
+                    plan_item_uid=uid,
                     kind="edge",
                     edge_index=index,
                     insert_point=insert_point,

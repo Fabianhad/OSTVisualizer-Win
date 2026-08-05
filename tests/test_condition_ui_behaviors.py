@@ -70,6 +70,12 @@ from ost_visualizer.presentation.visualization.pdf.renderers import pattern_rend
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
+from tests.workspace_state_test_support import (
+    make_workspace_state_model,
+    with_workspace_state,
+)
+
+EditConditionDialog = with_workspace_state(EditConditionDialog)
 
 
 def _app():
@@ -438,7 +444,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         coordinator._tab_widget = SimpleNamespace(currentIndex=lambda: 1)
         coordinator._nav = SimpleNamespace(is_refreshing=False)
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1", "t2"])
         self.assertEqual(set(sidebar.get_selected_condition_uids()), {"c1", "c2"})
@@ -748,6 +753,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             project_read_service=None,
             project_data=None,
             ui_state_manager=None,
+            workspace_state_model=make_workspace_state_model(),
         )
         handler._finish_condition_duplicate([duplicate_uid], sidebar=object())
         self.assertEqual(calls[0], "refresh")
@@ -825,6 +831,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             project_read_service=None,
             project_data=SimpleNamespace(),
             ui_state_manager=ui_state,
+            workspace_state_model=make_workspace_state_model(),
         )
 
     def test_condition_delete_handler_selects_previous_after_write_refresh(self):
@@ -922,6 +929,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: BidRef("database", "7")
             ),
+            workspace_state_model=make_workspace_state_model(),
         )
         original_confirm = condition_action_handler.confirm_delete_conditions
         condition_action_handler.confirm_delete_conditions = lambda _parent, names: [
@@ -1545,6 +1553,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
             ),
+            workspace_state_model=make_workspace_state_model(),
         )
         with patch(
             "ost_visualizer.presentation.handlers.condition_action_handler.EditConditionDialog",

@@ -13,6 +13,7 @@ from ..config import (
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.dialog import save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
 
@@ -23,6 +24,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
     def __init__(
         self,
         icon_provider,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         condition_types: Optional[List[CdnType]] = None,
         current_name: str = "",
@@ -53,6 +55,15 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._pending_new_editor_connected = False
         self._setup_ui()
         self._populate(select_name=current_name.strip())
+        self._header_controller = PersistentHeaderController(
+            self.tree,
+            "condition_types",
+            ("condition_type",),
+            workspace_state_model,
+            sorting=True,
+            movable=False,
+            default_sort_column="condition_type",
+        )
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("Condition Types")
@@ -87,7 +98,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         )
         self.tree.header().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.tree.header().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.ResizeMode.Stretch
+            0, QtWidgets.QHeaderView.ResizeMode.Interactive
         )
         self.tree.itemSelectionChanged.connect(self._update_button_states)
         self.tree.itemChanged.connect(self._on_item_changed)

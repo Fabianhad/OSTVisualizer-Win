@@ -29,8 +29,6 @@ def add_overflow_widget(
 
 
 class ToolbarOverflowWidgetAction(QtWidgets.QWidgetAction):
-    """A toolbar widget action that can also create a native overflow widget."""
-
     def __init__(
         self,
         toolbar_widget: QtWidgets.QWidget,
@@ -62,8 +60,6 @@ class ToolbarOverflowWidgetAction(QtWidgets.QWidgetAction):
 
 
 class SyncedComboOverflowWidget(QtWidgets.QWidget):
-    """A labelled overflow combo synchronized with one canonical toolbar combo."""
-
     def __init__(
         self,
         source: QtWidgets.QComboBox,
@@ -151,8 +147,6 @@ class SyncedComboOverflowWidget(QtWidgets.QWidget):
 
 
 class PageSettingsOverflowWidget(QtWidgets.QWidget):
-    """Overflow representation of the canonical scale and area controls."""
-
     _AREA_UID_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
     def __init__(self, source, parent: Optional[QtWidgets.QWidget] = None) -> None:

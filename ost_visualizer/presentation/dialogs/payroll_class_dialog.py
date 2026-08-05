@@ -9,6 +9,7 @@ from ..config import (
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.dialog import BasePickerDialog, ItemRecord
 from ..utils.tree_widget import set_tree_item_row_height
+from ..utils.persistent_header import PersistentHeaderController
 
 
 class PayrollClassListDialog(BasePickerDialog):
@@ -24,6 +25,7 @@ class PayrollClassListDialog(BasePickerDialog):
     def __init__(
         self,
         icon_provider,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         pay_classes: Optional[List[PayClass]] = None,
         selected_uid: str = "",
@@ -51,6 +53,15 @@ class PayrollClassListDialog(BasePickerDialog):
             show_cancel_button=not menu_mode,
             accept_requires_selection=not menu_mode,
         )
+        self._header_controller = PersistentHeaderController(
+            self.tree,
+            "payroll_classes",
+            ("payroll_class",),
+            workspace_state_model,
+            sorting=True,
+            movable=True,
+            default_sort_column="payroll_class",
+        )
 
     def _configure_tree(self) -> None:
         self.tree.setColumnCount(1)
@@ -58,8 +69,9 @@ class PayrollClassListDialog(BasePickerDialog):
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.tree.header().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.ResizeMode.Stretch
+            0, QtWidgets.QHeaderView.ResizeMode.Interactive
         )
+        self.tree.header().resizeSection(0, 260)
         self.tree.setSortingEnabled(True)
         self.tree.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
 

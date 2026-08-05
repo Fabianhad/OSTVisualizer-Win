@@ -5,6 +5,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
+from tests.workspace_state_test_support import with_workspace_state
+
+JobStatusesDialog = with_workspace_state(JobStatusesDialog)
 
 
 def _app():

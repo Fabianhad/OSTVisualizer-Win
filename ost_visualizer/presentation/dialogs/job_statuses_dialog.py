@@ -11,6 +11,7 @@ from ..config import (
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.dialog import BasePickerDialog, ItemRecord
 from ..utils.tree_widget import set_tree_item_row_height
+from ..utils.persistent_header import PersistentHeaderController
 
 
 class _StatusRecord(ItemRecord):
@@ -31,6 +32,7 @@ class JobStatusesDialog(BasePickerDialog):
     def __init__(
         self,
         icon_provider,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         job_statuses: Optional[List[JobStatus]] = None,
         selected_uid: str = "",
@@ -63,6 +65,14 @@ class JobStatusesDialog(BasePickerDialog):
             show_cancel_button=not menu_mode,
             accept_requires_selection=not menu_mode,
         )
+        self._header_controller = PersistentHeaderController(
+            self.tree,
+            "job_statuses",
+            ("locked", "description"),
+            workspace_state_model,
+            sorting=False,
+            movable=True,
+        )
 
     def _configure_tree(self) -> None:
         self.tree.setColumnCount(2)
@@ -70,7 +80,8 @@ class JobStatusesDialog(BasePickerDialog):
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(1, 300)
         header.resizeSection(0, 110)
 
     def _add_tree_item(self, record: _StatusRecord) -> QtWidgets.QTreeWidgetItem:

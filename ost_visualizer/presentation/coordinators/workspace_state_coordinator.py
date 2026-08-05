@@ -38,11 +38,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self.logger = logger_ or logging.getLogger(__name__)
         self._state = workspace_state_model.state
         self._tracked_toolbars = tuple(self._shell.get_workspace_toolbars())
-        self._tracked_headers = (
-            self._shell.get_project_header(),
-            self._shell.get_conditions_header(),
-            self._shell.get_layers_header(),
-        )
         self._tracked_detached_windows: Dict[str, QtWidgets.QWidget] = {}
         self._tracked_detached_destroy_callbacks: Dict[str, Callable] = {}
         self._detached_restore_applied: Dict[str, bool] = {}
@@ -68,8 +63,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._host_window.installEventFilter(self)
         for toolbar in self._tracked_toolbars:
             toolbar.installEventFilter(self)
-        for header in self._tracked_headers:
-            self._connect_header_tracking(header)
         self._shell.get_conditions_sidebar().group_by_type_changed.connect(
             self.request_save
         )
@@ -144,16 +137,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         self._shell.sync_contextual_shell_visibility()
 
-    def _connect_header_tracking(self, header: QtWidgets.QHeaderView) -> None:
-        header.sectionMoved.connect(self.request_save)
-        header.sectionResized.connect(self.request_save)
-        header.sortIndicatorChanged.connect(self.request_save)
-
     def _restore_project_workspace_state(self) -> None:
         state = self._state.project_workspace
-        header_state = self._decode_byte_array(state.header_state_b64)
-        if header_state and not header_state.isEmpty():
-            self._shell.restore_project_header_state(header_state)
         self._shell.set_project_group_by_job_status(state.group_by_job_status)
         self._shell.set_project_expanded_node_keys(state.expanded_node_keys)
         self._shell.set_project_selected_node(
@@ -161,11 +146,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
 
     def _restore_takeoff_sidebar_state(self) -> None:
-        conditions_header_state = self._decode_byte_array(
-            self._state.takeoff_workspace.conditions_header_state_b64
-        )
-        if conditions_header_state and not conditions_header_state.isEmpty():
-            self._shell.restore_conditions_header_state(conditions_header_state)
         self._shell.set_conditions_group_by_type(
             self._state.takeoff_workspace.conditions_group_by_type
         )
@@ -176,14 +156,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 by_area=self._state.takeoff_workspace.summary_group_by_area,
             )
         )
-        self._shell.set_summary_column_widths(
-            self._state.takeoff_workspace.summary_column_widths
-        )
-        layers_header_state = self._decode_byte_array(
-            self._state.takeoff_workspace.layers_header_state_b64
-        )
-        if layers_header_state and not layers_header_state.isEmpty():
-            self._shell.restore_layers_header_state(layers_header_state)
 
     def show_main_window(self) -> None:
         if self._state.main_window.is_maximized:
@@ -290,10 +262,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._host_window.removeEventFilter(self)
         for toolbar in self._tracked_toolbars:
             toolbar.removeEventFilter(self)
-        for header in self._tracked_headers:
-            self._disconnect(header.sectionMoved, self.request_save)
-            self._disconnect(header.sectionResized, self.request_save)
-            self._disconnect(header.sortIndicatorChanged, self.request_save)
         self._disconnect(
             self._shell.get_conditions_sidebar().group_by_type_changed,
             self.request_save,
@@ -353,7 +321,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         self._clear_tracked_detached_windows()
         self._tracked_toolbars = ()
-        self._tracked_headers = ()
         self._host_window = None
         self._shell = None
         self.workspace_state_model = None
@@ -696,7 +663,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             previous_splitter_sizes,
         )
         state = WorkspaceState()
-        state.cover_sheet = previous.cover_sheet
+        state.header_layouts = self.workspace_state_model.state.header_layouts
         state.main_window.geometry_b64 = self._encode_byte_array(
             self._shell.saveGeometry()
         )
@@ -705,9 +672,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         state.main_window.is_maximized = self._shell.isMaximized()
         state.main_window.status_bar_visible = self._shell.is_status_bar_visible()
-        state.project_workspace.header_state_b64 = self._encode_byte_array(
-            self._shell.save_project_header_state()
-        )
         state.project_workspace.expanded_node_keys = (
             self._shell.get_project_expanded_node_keys()
         )
@@ -750,9 +714,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         state.takeoff_workspace.annotation_styles = (
             self._shell.get_annotation_styles_by_tool()
         )
-        state.takeoff_workspace.conditions_header_state_b64 = self._encode_byte_array(
-            self._shell.save_conditions_header_state()
-        )
         state.takeoff_workspace.conditions_group_by_type = (
             self._shell.is_conditions_group_by_type_enabled()
         )
@@ -760,12 +721,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         state.takeoff_workspace.summary_group_by_page = summary_grouping.by_page
         state.takeoff_workspace.summary_group_by_type = summary_grouping.by_type
         state.takeoff_workspace.summary_group_by_area = summary_grouping.by_area
-        state.takeoff_workspace.summary_column_widths = (
-            self._shell.get_summary_column_widths()
-        )
-        state.takeoff_workspace.layers_header_state_b64 = self._encode_byte_array(
-            self._shell.save_layers_header_state()
-        )
         annotation_should_be_open = (
             self._shell.get_annotation_window() is not None
             or self._pending_annotation_restore

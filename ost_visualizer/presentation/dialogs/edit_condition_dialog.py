@@ -219,6 +219,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         layers: Dict[str, Layer],
         has_takeoffs_fn: Callable[[str], bool],
         save_fn: Callable[[str, UpdateConditionDto], object],
+        workspace_state_model,
         save_async_fn=None,
         has_license: bool = True,
         condition_type_save_fn=None,
@@ -242,6 +243,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         if read_service is None:
             raise ValueError("EditConditionDialog requires read_service")
         self._metric = metric
+        self._workspace_state_model = workspace_state_model
         self._display_to_inches = lambda text: read_service.display_to_inches(
             text, metric
         )
@@ -1009,6 +1011,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             delete_fn=self._condition_type_delete_fn,
             reload_fn=self._reload_condition_types,
             has_license=self._has_license,
+            workspace_state_model=self._workspace_state_model,
         )
         self._active_sub_dialog = dialog
         try:
@@ -1099,6 +1102,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             update_name_fn=self._layer_update_name_fn,
             move_fn=self._layer_move_fn,
             has_license=self._has_license,
+            workspace_state_model=self._workspace_state_model,
         )
         self._active_sub_dialog = dialog
         try:

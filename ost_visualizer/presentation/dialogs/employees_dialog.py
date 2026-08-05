@@ -16,6 +16,7 @@ from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.dialog import save_result_mapping, save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
 from .employee_detail_dialog import EmployeeDetailDialog
@@ -27,6 +28,7 @@ class EmployeesDialog(QtWidgets.QDialog):
     def __init__(
         self,
         icon_provider,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         employees: Optional[List[Employee]] = None,
         selected_uid: str = "",
@@ -46,6 +48,7 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._pay_classes_save_fn = pay_classes_save_fn
         self._pay_classes_save_async_fn = pay_classes_save_async_fn
         self._menu_mode = menu_mode
+        self._workspace_state_model = workspace_state_model
         self._save_done: bool = False
         self._employees: List[EmployeeRecord] = []
         self._new_counter: int = 0
@@ -62,6 +65,15 @@ class EmployeesDialog(QtWidgets.QDialog):
             self._employees.append(EmployeeRecord.from_employee(emp))
         self._setup_ui()
         self._populate()
+        self._header_controller = PersistentHeaderController(
+            self.tree,
+            "employees",
+            ("employee_number", "name", "home_phone", "mobile_phone"),
+            workspace_state_model,
+            sorting=True,
+            movable=True,
+            default_sort_column="employee_number",
+        )
         if initial_first_name is not None:
             self._on_new_with_first_name(initial_first_name)
 
@@ -81,7 +93,8 @@ class EmployeesDialog(QtWidgets.QDialog):
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(1, 220)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.resizeSection(0, 70)
@@ -97,6 +110,7 @@ class EmployeesDialog(QtWidgets.QDialog):
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.tree.setSortingEnabled(True)
+        self.tree.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
         self.tree.itemSelectionChanged.connect(self._update_button_states)
         self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         content_row.addWidget(self.tree, 1)
@@ -135,13 +149,15 @@ class EmployeesDialog(QtWidgets.QDialog):
 
     def _populate(self, select_uid: Optional[str] = None) -> None:
         target_uid = select_uid or self._selected_uid
+        sort_column = self.tree.header().sortIndicatorSection()
+        sort_order = self.tree.header().sortIndicatorOrder()
         self.tree.setSortingEnabled(False)
         self.tree.blockSignals(True)
         self.tree.clear()
         for emp in self._employees:
             self._add_tree_item(emp)
         self.tree.setSortingEnabled(True)
-        self.tree.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
+        self.tree.sortByColumn(sort_column, sort_order)
         self.tree.blockSignals(False)
         if target_uid:
             for i in range(self.tree.topLevelItemCount()):
@@ -249,6 +265,7 @@ class EmployeesDialog(QtWidgets.QDialog):
             pay_classes=pay_classes,
             pay_classes_save_fn=self._pay_classes_save_fn,
             pay_classes_save_async_fn=self._pay_classes_save_async_fn,
+            workspace_state_model=self._workspace_state_model,
         )
         self._active_detail_dialog = form
         try:

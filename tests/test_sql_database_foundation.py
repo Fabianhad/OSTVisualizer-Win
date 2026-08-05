@@ -110,6 +110,10 @@ from ost_visualizer.presentation.config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
+from tests.workspace_state_test_support import with_workspace_state
+
+FileOperationHandler = with_workspace_state(FileOperationHandler)
+OpenFilesDialog = with_workspace_state(OpenFilesDialog)
 
 
 def _app():

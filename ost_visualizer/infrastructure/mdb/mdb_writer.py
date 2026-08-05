@@ -68,9 +68,10 @@ class MdbWriter(
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)
 
-    @staticmethod
-    def _record_caught_mutation_error(_exc: BaseException) -> bool:
-        return False
+    def _record_caught_mutation_error(self, exc: BaseException) -> bool:
+        return (
+            isinstance(exc, pyodbc.Error) and self._access_transaction_depth.get() > 0
+        )
 
     def _require_write_columns(
         self, schema: IDatabaseSchemaInspector, table: str, columns: tuple[str, ...]

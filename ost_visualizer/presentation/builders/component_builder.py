@@ -265,6 +265,7 @@ class ComponentBuilder:
         ui_event_handler,
         deferred_persistence_manager,
         page_visualization_metadata_service,
+        workspace_state_model,
         ui_access_manager=None,
     ) -> ComponentBundle:
         central_widget = QtWidgets.QWidget()
@@ -630,6 +631,7 @@ class ComponentBuilder:
             refresh_areas_fn=project_write_service.reload_and_notify,
             parent=viewer_container,
             ui_access_manager=ui_access_manager,
+            workspace_state_model=workspace_state_model,
         )
         add_overflow_widget(
             main_toolbar,

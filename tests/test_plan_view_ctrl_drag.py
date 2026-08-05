@@ -19,8 +19,10 @@ from PySide6.QtWidgets import (
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_CLOUD,
     ANNOTATION_TYPE_DIMENSION,
     ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_POLYGON,
     BidAnnotation,
 )
 from ost_visualizer.domain.entities.condition import Condition
@@ -42,7 +44,7 @@ from ost_visualizer.presentation.components.plan_view.components.placement_mode 
     PlacementModeMixin,
 )
 from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
-    AreaControlPointTarget,
+    PolygonControlPointTarget,
     SelectionManagerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
@@ -1178,11 +1180,55 @@ class CtrlDragTests(unittest.TestCase):
         view.reset_ctrl_held = lambda: None
         return view
 
+    def _make_annotation_control_point_view(self, annotation_type, selected_uids=None):
+        view = self._make_area_control_point_view(set())
+        uid = f"{annotation_type}1"
+        position = [
+            400.0,
+            0.0,
+            500.0,
+            0.0,
+            500.0,
+            100.0,
+            400.0,
+            100.0,
+        ]
+        annotation = BidAnnotation(
+            uid=uid,
+            annotation_type=annotation_type,
+            page_uid="page-1",
+            position=list(position),
+        )
+        path = QPainterPath()
+        path.moveTo(400.0, 0.0)
+        path.lineTo(500.0, 0.0)
+        path.lineTo(500.0, 100.0)
+        path.lineTo(400.0, 100.0)
+        path.closeSubpath()
+        item = QGraphicsPathItem(path)
+        item.setData(0, uid)
+        item.setZValue(1.0)
+        view._scene.addItem(item)
+        view._current_annotations = {uid: annotation}
+        view._uid_to_items[uid] = [item]
+        view._selected_uids = {uid} if selected_uids is None else set(selected_uids)
+        return view, annotation
+
     def _capture_context_menu(self, view, x, y, action_text=None):
         CapturingMenu.instances = []
         CapturingMenu.action_text_to_return = action_text
-        with patch.object(input_handler_module, "QMenu", CapturingMenu), patch.object(
-            input_handler_module, "add_reassign_condition_submenu", return_value=None
+        with (
+            patch.object(input_handler_module, "QMenu", CapturingMenu),
+            patch.object(
+                input_handler_module,
+                "add_reassign_condition_submenu",
+                return_value=None,
+            ),
+            patch.object(
+                input_handler_module,
+                "add_selected_annotation_style_actions",
+                return_value=SimpleNamespace(color_action=None, width_actions={}),
+            ),
         ):
             InputHandlerMixin.contextMenuEvent(view, FakeContextMenuEvent(x, y))
         self.assertTrue(CapturingMenu.instances)
@@ -1194,70 +1240,80 @@ class CtrlDragTests(unittest.TestCase):
 
     def test_area_control_point_target_returns_edge_near_boundary(self):
         view = self._make_area_control_point_view()
-        target = view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0))
+        target = view.polygon_control_point_target_at(QtCore.QPointF(50.0, 0.0))
         self.assertEqual(target.kind, "edge")
-        self.assertEqual(target.takeoff_uid, "area1")
+        self.assertEqual(target.plan_item_uid, "area1")
         self.assertEqual(target.edge_index, 0)
         self.assertEqual(target.insert_point, (50.0, 0.0))
 
     def test_area_control_point_target_ignores_fill_click(self):
         view = self._make_area_control_point_view()
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 50.0)))
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(50.0, 50.0))
+        )
 
     def test_area_control_point_target_prefers_vertex_over_edge(self):
         view = self._make_area_control_point_view()
-        target = view.area_control_point_target_at(QtCore.QPointF(0.0, 0.0))
+        target = view.polygon_control_point_target_at(QtCore.QPointF(0.0, 0.0))
         self.assertEqual(target.kind, "vertex")
-        self.assertEqual(target.takeoff_uid, "area1")
+        self.assertEqual(target.plan_item_uid, "area1")
         self.assertEqual(target.vertex_index, 0)
 
     def test_area_control_point_target_ignores_non_area_takeoffs(self):
         view = self._make_area_control_point_view()
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(250.0, 0.0)))
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(250.0, 0.0))
+        )
 
     def test_area_control_point_target_respects_selection_edit_gate(self):
         view = self._make_area_control_point_view()
         view._selection_enabled = False
         view._editing_enabled = False
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0)))
-        target = AreaControlPointTarget(
-            takeoff_uid="area1",
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(50.0, 0.0))
+        )
+        target = PolygonControlPointTarget(
+            plan_item_uid="area1",
             kind="edge",
             edge_index=0,
             insert_point=(50.0, 0.0),
         )
-        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_area_control_point_target_supports_parent_with_child_holes(self):
         view = self._make_area_control_point_view(include_hole=True)
-        target = view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0))
+        target = view.polygon_control_point_target_at(QtCore.QPointF(50.0, 0.0))
         self.assertEqual(target.kind, "edge")
-        self.assertEqual(target.takeoff_uid, "area1")
+        self.assertEqual(target.plan_item_uid, "area1")
 
     def test_hole_control_point_target_returns_edge_near_boundary(self):
         view = self._make_area_control_point_view(include_hole=True)
-        target = view.area_control_point_target_at(QtCore.QPointF(30.0, 20.0))
+        target = view.polygon_control_point_target_at(QtCore.QPointF(30.0, 20.0))
         self.assertEqual(target.kind, "edge")
-        self.assertEqual(target.takeoff_uid, "hole1")
+        self.assertEqual(target.plan_item_uid, "hole1")
         self.assertEqual(target.edge_index, 0)
         self.assertEqual(target.insert_point, (30.0, 20.0))
 
     def test_hole_control_point_target_prefers_vertex_over_edge(self):
         view = self._make_area_control_point_view(include_hole=True)
-        target = view.area_control_point_target_at(QtCore.QPointF(20.0, 20.0))
+        target = view.polygon_control_point_target_at(QtCore.QPointF(20.0, 20.0))
         self.assertEqual(target.kind, "vertex")
-        self.assertEqual(target.takeoff_uid, "hole1")
+        self.assertEqual(target.plan_item_uid, "hole1")
         self.assertEqual(target.vertex_index, 0)
 
     def test_hole_control_point_target_ignores_fill_click(self):
         view = self._make_area_control_point_view(include_hole=True)
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(30.0, 30.0)))
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(30.0, 30.0))
+        )
 
     def test_hole_control_point_target_rejects_missing_parent(self):
         view = self._make_area_control_point_view(include_hole=True)
         view._current_takeoffs["hole1"].parent_uid = "missing-parent"
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(30.0, 20.0)))
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(30.0, 20.0))
+        )
 
     def test_hole_control_point_target_rejects_non_area_parent(self):
         view = self._make_area_control_point_view(include_hole=True)
@@ -1268,26 +1324,28 @@ class CtrlDragTests(unittest.TestCase):
             position=[200.0, 0.0, 300.0, 0.0],
         )
         view._current_takeoffs["hole1"].parent_uid = "parent-linear"
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(30.0, 20.0)))
-        target = AreaControlPointTarget(
-            takeoff_uid="hole1",
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(30.0, 20.0))
+        )
+        target = PolygonControlPointTarget(
+            plan_item_uid="hole1",
             kind="edge",
             edge_index=0,
             insert_point=(30.0, 20.0),
         )
-        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_add_area_control_point_flushes_old_and_new_position(self):
         view = self._make_area_control_point_view()
         old_pos = list(view._current_takeoffs["area1"].position)
-        target = AreaControlPointTarget(
-            takeoff_uid="area1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="area1",
             kind="edge",
             edge_index=0,
             insert_point=(50.0, 0.0),
         )
-        self.assertTrue(view._apply_area_control_point_target(target))
+        self.assertTrue(view._apply_polygon_control_point_target(target))
         new_pos = list(AREA_CP_ADDED_POSITION)
         self.assertEqual(view._current_takeoffs["area1"].position, new_pos)
         self.assertEqual(
@@ -1300,12 +1358,12 @@ class CtrlDragTests(unittest.TestCase):
     def test_subtract_area_control_point_flushes_old_and_new_position(self):
         view = self._make_area_control_point_view()
         old_pos = list(view._current_takeoffs["area1"].position)
-        target = AreaControlPointTarget(
-            takeoff_uid="area1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="area1",
             kind="vertex",
             vertex_index=1,
         )
-        self.assertTrue(view._apply_area_control_point_target(target))
+        self.assertTrue(view._apply_polygon_control_point_target(target))
         new_pos = list(AREA_CP_SUBTRACTED_SECOND_VERTEX_POSITION)
         self.assertEqual(view._current_takeoffs["area1"].position, new_pos)
         self.assertEqual(
@@ -1316,36 +1374,36 @@ class CtrlDragTests(unittest.TestCase):
     def test_subtract_area_control_point_rejects_triangle(self):
         view = self._make_area_control_point_view()
         view._current_takeoffs["area1"].position = [0.0, 0.0, 10.0, 0.0, 0.0, 10.0]
-        target = AreaControlPointTarget(
-            takeoff_uid="area1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="area1",
             kind="vertex",
             vertex_index=1,
         )
-        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_area_control_point_rejects_invalid_polygon_result(self):
         view = self._make_area_control_point_view()
-        target = AreaControlPointTarget(
-            takeoff_uid="area1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="area1",
             kind="edge",
             edge_index=0,
             insert_point=(50.0, 0.0),
         )
         with patch.object(input_handler_module, "polygon_is_valid", return_value=False):
-            self.assertFalse(view._apply_area_control_point_target(target))
+            self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_add_hole_control_point_flushes_old_and_new_position(self):
         view = self._make_area_control_point_view(include_hole=True)
         old_pos = list(view._current_takeoffs["hole1"].position)
-        target = AreaControlPointTarget(
-            takeoff_uid="hole1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="hole1",
             kind="edge",
             edge_index=0,
             insert_point=(30.0, 20.0),
         )
-        self.assertTrue(view._apply_area_control_point_target(target))
+        self.assertTrue(view._apply_polygon_control_point_target(target))
         new_pos = list(AREA_CP_HOLE_ADDED_POSITION)
         self.assertEqual(view._current_takeoffs["hole1"].position, new_pos)
         self.assertEqual(
@@ -1356,12 +1414,12 @@ class CtrlDragTests(unittest.TestCase):
     def test_subtract_hole_control_point_flushes_old_and_new_position(self):
         view = self._make_area_control_point_view(include_hole=True)
         old_pos = list(view._current_takeoffs["hole1"].position)
-        target = AreaControlPointTarget(
-            takeoff_uid="hole1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="hole1",
             kind="vertex",
             vertex_index=1,
         )
-        self.assertTrue(view._apply_area_control_point_target(target))
+        self.assertTrue(view._apply_polygon_control_point_target(target))
         new_pos = list(AREA_CP_HOLE_SUBTRACTED_SECOND_VERTEX_POSITION)
         self.assertEqual(view._current_takeoffs["hole1"].position, new_pos)
         self.assertEqual(
@@ -1372,35 +1430,35 @@ class CtrlDragTests(unittest.TestCase):
     def test_subtract_hole_control_point_rejects_triangle(self):
         view = self._make_area_control_point_view(include_hole=True)
         view._current_takeoffs["hole1"].position = [20.0, 20.0, 40.0, 20.0, 20.0, 40.0]
-        target = AreaControlPointTarget(
-            takeoff_uid="hole1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="hole1",
             kind="vertex",
             vertex_index=1,
         )
-        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_hole_control_point_rejects_invalid_polygon_result(self):
         view = self._make_area_control_point_view(include_hole=True)
-        target = AreaControlPointTarget(
-            takeoff_uid="hole1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="hole1",
             kind="edge",
             edge_index=0,
             insert_point=(30.0, 20.0),
         )
         with patch.object(input_handler_module, "polygon_is_valid", return_value=False):
-            self.assertFalse(view._apply_area_control_point_target(target))
+            self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_hole_control_point_rejects_position_outside_parent(self):
         view = self._make_area_control_point_view(include_hole=True)
-        target = AreaControlPointTarget(
-            takeoff_uid="hole1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="hole1",
             kind="edge",
             edge_index=1,
             insert_point=(150.0, 30.0),
         )
-        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_hole_control_point_rejects_sibling_overlap(self):
@@ -1412,13 +1470,13 @@ class CtrlDragTests(unittest.TestCase):
             parent_uid="area1",
             position=[45.0, 20.0, 65.0, 20.0, 65.0, 40.0, 45.0, 40.0],
         )
-        target = AreaControlPointTarget(
-            takeoff_uid="hole1",
+        target = PolygonControlPointTarget(
+            plan_item_uid="hole1",
             kind="edge",
             edge_index=1,
             insert_point=(55.0, 30.0),
         )
-        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertFalse(view._apply_polygon_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_context_menu_shows_add_control_point_only_for_edge_target(self):
@@ -1480,6 +1538,109 @@ class CtrlDragTests(unittest.TestCase):
             view.positions_flushed.emitted,
             [([("area1", old_pos, new_pos)], [])],
         )
+
+    def test_polygon_and_cloud_annotations_expose_existing_control_point_actions(self):
+        for annotation_type in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):
+            with self.subTest(annotation_type=annotation_type):
+                view, annotation = self._make_annotation_control_point_view(
+                    annotation_type
+                )
+                add_texts = self._capture_context_menu(view, 450.0, 0.0)
+                subtract_texts = self._capture_context_menu(view, 400.0, 0.0)
+                self.assertIn("Add Control Point", add_texts)
+                self.assertNotIn("Subtract Control Point", add_texts)
+                self.assertIn("Subtract Control Point", subtract_texts)
+                self.assertNotIn("Add Control Point", subtract_texts)
+                self.assertEqual(view._selected_uids, {annotation.uid})
+
+    def test_polygon_and_cloud_add_control_point_use_annotation_flush_path(self):
+        for annotation_type in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):
+            with self.subTest(annotation_type=annotation_type):
+                view, annotation = self._make_annotation_control_point_view(
+                    annotation_type
+                )
+                old_pos = list(annotation.position)
+                self._capture_context_menu(
+                    view, 450.0, 0.0, action_text="Add Control Point"
+                )
+                new_pos = [
+                    400.0,
+                    0.0,
+                    450.0,
+                    0.0,
+                    500.0,
+                    0.0,
+                    500.0,
+                    100.0,
+                    400.0,
+                    100.0,
+                ]
+                self.assertEqual(annotation.position, new_pos)
+                self.assertEqual(
+                    view.positions_flushed.emitted,
+                    [([], [(annotation.uid, annotation_type, old_pos, new_pos)])],
+                )
+                self.assertEqual(view.rebuild_count, 1)
+                self.assertEqual(view.selection_update_count, 1)
+                self.assertEqual(view._selected_uids, {annotation.uid})
+
+    def test_polygon_and_cloud_subtract_control_point_enforce_minimum(self):
+        for annotation_type in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):
+            with self.subTest(annotation_type=annotation_type):
+                view, annotation = self._make_annotation_control_point_view(
+                    annotation_type
+                )
+                old_pos = list(annotation.position)
+                target = PolygonControlPointTarget(
+                    plan_item_uid=annotation.uid,
+                    kind="vertex",
+                    vertex_index=0,
+                )
+                self.assertTrue(view._apply_polygon_control_point_target(target))
+                triangle = [500.0, 0.0, 500.0, 100.0, 400.0, 100.0]
+                self.assertEqual(annotation.position, triangle)
+                self.assertEqual(
+                    view.positions_flushed.emitted,
+                    [([], [(annotation.uid, annotation_type, old_pos, triangle)])],
+                )
+                self.assertFalse(view._apply_polygon_control_point_target(target))
+                self.assertEqual(len(view.positions_flushed.emitted), 1)
+
+    def test_non_polygon_annotations_do_not_expose_control_point_actions(self):
+        for annotation_type in ("text", "dimension", "line", "rect", "oval"):
+            with self.subTest(annotation_type=annotation_type):
+                view, _annotation = self._make_annotation_control_point_view(
+                    annotation_type
+                )
+                self.assertIsNone(
+                    view.polygon_control_point_target_at(QtCore.QPointF(450.0, 0.0))
+                )
+                texts = self._capture_context_menu(view, 450.0, 0.0)
+                self.assertNotIn("Add Control Point", texts)
+                self.assertNotIn("Subtract Control Point", texts)
+
+    def test_polygon_control_points_respect_visibility_and_editability(self):
+        view, annotation = self._make_annotation_control_point_view(
+            ANNOTATION_TYPE_POLYGON
+        )
+        annotation.visible = False
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(450.0, 0.0))
+        )
+        annotation.visible = True
+        view._editing_enabled = False
+        texts = self._capture_context_menu(view, 450.0, 0.0)
+        self.assertNotIn("Add Control Point", texts)
+        self.assertNotIn("Subtract Control Point", texts)
+
+    def test_mixed_selection_does_not_expose_polygon_control_point_actions(self):
+        view, annotation = self._make_annotation_control_point_view(
+            ANNOTATION_TYPE_POLYGON, {"area1", "polygon1"}
+        )
+        texts = self._capture_context_menu(view, 450.0, 50.0)
+        self.assertNotIn("Add Control Point", texts)
+        self.assertNotIn("Subtract Control Point", texts)
+        self.assertEqual(view._selected_uids, {"area1", annotation.uid})
 
     def _make_overlapping_text_cycle_view(self, selected_uid="t1"):
         view = self._make_view({selected_uid})
@@ -1714,7 +1875,11 @@ class CtrlDragTests(unittest.TestCase):
         view.enter_place_mode = lambda: True
         view._exit_place_mode = lambda: None
         view._clear_backout_state = lambda: None
-        view._apply_cursor_mode = lambda mode: setattr(view, "_cursor_mode", mode)
+
+        def apply_cursor_mode(mode):
+            view._cursor_mode = mode
+
+        view._apply_cursor_mode = apply_cursor_mode
         view._can_begin_annotation_placement = lambda: True
         view._enter_annotation_place_mode = enter_annotation_place_mode
         return view
@@ -1963,9 +2128,14 @@ class CtrlDragTests(unittest.TestCase):
         view._editing_named_view_item = ReentrantItem()
         view._clear_inline_text_item_selection = lambda _item: None
         view._clear_inline_text_document = lambda: None
-        view._set_inline_text_edit_target = lambda **_kwargs: setattr(
-            view, "_editing_named_view_uid", None
-        )
+
+        def set_inline_text_edit_target(
+            *, text_annotation_uid=None, named_view_uid=None, named_view_item=None
+        ):
+            del text_annotation_uid, named_view_uid, named_view_item
+            view._editing_named_view_uid = None
+
+        view._set_inline_text_edit_target = set_inline_text_edit_target
         view._update_cursor = lambda: None
         view._is_named_view_draft_uid = lambda uid: uid == view._draft_named_view_uid
 

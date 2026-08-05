@@ -10,6 +10,7 @@ from ost_visualizer.domain.services.takeoff_domain_service import (
 )
 from ost_visualizer.domain.entities.workspace_state import (
     WORKSPACE_VALID_ACTIVE_VIEWS,
+    HeaderLayoutState,
     TakeoffWorkspaceState,
     WorkspaceState,
 )
@@ -150,33 +151,72 @@ class DomainLifecycleTests(unittest.TestCase):
         self.assertTrue(state.takeoff_workspace.summary_group_by_area)
         self.assertTrue(state.takeoff_workspace.summary_group_by_type)
         self.assertFalse(state.takeoff_workspace.summary_group_by_page)
-        self.assertEqual(state.takeoff_workspace.summary_column_widths, {})
+        self.assertEqual(state.header_layouts, {})
 
-    def test_workspace_summary_state_round_trips_and_ignores_invalid_widths(self):
+    def test_workspace_semantic_header_state_round_trips_and_ignores_invalid_values(
+        self,
+    ):
         state = WorkspaceState.from_dict(
             {
                 "takeoff_workspace": {
                     "summary_group_by_area": False,
                     "summary_group_by_type": True,
                     "summary_group_by_page": True,
-                    "summary_column_widths": {
-                        "name": "220",
-                        "area": 0,
-                        "notes": -5,
-                        "quantity1": "bad",
+                },
+                "header_layouts": {
+                    "condition_summary": {
+                        "widths": {
+                            "name": "220",
+                            "area": 0,
+                            "notes": 5000,
+                            "quantity_1": "bad",
+                        },
+                        "order": ["name", "area"],
+                        "sort_column": "name",
+                        "sort_descending": True,
                     },
-                }
+                },
             }
         )
         self.assertFalse(state.takeoff_workspace.summary_group_by_area)
         self.assertTrue(state.takeoff_workspace.summary_group_by_type)
         self.assertTrue(state.takeoff_workspace.summary_group_by_page)
-        self.assertEqual(state.takeoff_workspace.summary_column_widths, {"name": 220})
-        payload = state.to_dict()["takeoff_workspace"]
-        self.assertEqual(payload["summary_column_widths"], {"name": 220})
-        self.assertFalse(payload["summary_group_by_area"])
-        self.assertTrue(payload["summary_group_by_type"])
-        self.assertTrue(payload["summary_group_by_page"])
+        layout = state.header_layouts["condition_summary"]
+        self.assertEqual(layout.widths, {"name": 220})
+        self.assertEqual(layout.order, ["name", "area"])
+        self.assertEqual(layout.sort_column, "name")
+        self.assertTrue(layout.sort_descending)
+        payload = state.to_dict()
+        self.assertEqual(
+            payload["header_layouts"]["condition_summary"]["widths"],
+            {"name": 220},
+        )
+        takeoff_payload = payload["takeoff_workspace"]
+        self.assertFalse(takeoff_payload["summary_group_by_area"])
+        self.assertTrue(takeoff_payload["summary_group_by_type"])
+        self.assertTrue(takeoff_payload["summary_group_by_page"])
+
+    def test_corrupt_header_order_resets_only_that_header_layout(self):
+        state = WorkspaceState.from_dict(
+            {
+                "header_layouts": {
+                    "corrupt": {
+                        "widths": {"name": 220},
+                        "order": ["name", "name"],
+                        "sort_column": "name",
+                        "sort_descending": True,
+                    },
+                    "valid": {
+                        "widths": {"name": 230},
+                        "order": ["name"],
+                        "sort_column": "name",
+                        "sort_descending": False,
+                    },
+                }
+            }
+        )
+        self.assertEqual(state.header_layouts["corrupt"], HeaderLayoutState())
+        self.assertEqual(state.header_layouts["valid"].widths, {"name": 230})
 
     def test_workspace_dropdown_popup_sizes_ignore_invalid_values(self):
         state = WorkspaceState.from_dict(

@@ -74,6 +74,7 @@ from ...utils.annotation_defaults import (
     annotation_default_style,
     text_annotation_properties,
 )
+from ...utils.annotation_style_controls import TEXT_FONT_SIZES
 from ...utils.color_swatch import rounded_color_swatch
 from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
@@ -527,7 +528,7 @@ class TakeoffPlanView(
         )
         layout.addWidget(self._condition_text_font_combo)
         self._condition_text_size_combo = QComboBox(toolbar)
-        for size in (8, 9, 10, 11, 12, 14, 16, 18, 24, 36):
+        for size in TEXT_FONT_SIZES:
             self._condition_text_size_combo.addItem(str(size), size)
         self._condition_text_size_combo.setCurrentText("9")
         self._condition_text_size_combo.currentIndexChanged.connect(

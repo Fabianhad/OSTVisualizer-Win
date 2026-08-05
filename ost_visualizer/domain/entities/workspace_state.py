@@ -12,9 +12,9 @@ WORKSPACE_KEY_SCHEMA_VERSION = "schema_version"
 WORKSPACE_KEY_MAIN_WINDOW = "main_window"
 WORKSPACE_KEY_TAKEOFF_WORKSPACE = "takeoff_workspace"
 WORKSPACE_KEY_PROJECT_WORKSPACE = "project_workspace"
-WORKSPACE_KEY_COVER_SHEET = "cover_sheet"
 WORKSPACE_KEY_TOOLBAR_VISIBILITY = "toolbar_visibility"
 WORKSPACE_KEY_DETACHED_WINDOWS = "detached_windows"
+WORKSPACE_KEY_HEADER_LAYOUTS = "header_layouts"
 WORKSPACE_KEY_ACTIVE_VIEW = "active_view"
 WORKSPACE_KEY_SELECTED_NODE = "selected_node"
 WORKSPACE_KEY_KIND = "kind"
@@ -86,6 +86,62 @@ def _coerce_str_list(value) -> List[str]:
     return [str(item) for item in value if item not in (None, "")]
 
 
+def _coerce_header_order(value) -> Optional[List[str]]:
+    if not isinstance(value, list):
+        return None
+    if any(not isinstance(item, str) or not item for item in value):
+        return None
+    if len(set(value)) != len(value):
+        return None
+    return list(value)
+
+
+@dataclass
+class HeaderLayoutState:
+    widths: Dict[str, int] = field(default_factory=dict)
+    order: List[str] = field(default_factory=list)
+    sort_column: Optional[str] = None
+    sort_descending: bool = False
+
+    def to_dict(self) -> dict:
+        order = _coerce_header_order(self.order)
+        if order is None:
+            return {
+                "widths": {},
+                "order": [],
+                "sort_column": None,
+                "sort_descending": False,
+            }
+        return {
+            "widths": {
+                key: width
+                for key, width in _coerce_positive_int_dict(self.widths).items()
+                if 30 <= width <= 2000
+            },
+            "order": order,
+            "sort_column": _coerce_optional_str(self.sort_column),
+            "sort_descending": bool(self.sort_descending),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> HeaderLayoutState:
+        if not isinstance(data, dict):
+            return cls()
+        order = _coerce_header_order(data.get("order", []))
+        if order is None:
+            return cls()
+        return cls(
+            widths={
+                key: width
+                for key, width in _coerce_positive_int_dict(data.get("widths")).items()
+                if 30 <= width <= 2000
+            },
+            order=order,
+            sort_column=_coerce_optional_str(data.get("sort_column")),
+            sort_descending=_coerce_bool(data.get("sort_descending"), False),
+        )
+
+
 @dataclass
 class MainWindowWorkspaceState:
     geometry_b64: Optional[str] = None
@@ -124,13 +180,10 @@ class TakeoffWorkspaceState:
     takeoff_splitter_sizes: List[int] = field(default_factory=list)
     left_splitter_sizes: List[int] = field(default_factory=list)
     dropdown_popup_sizes: Dict[str, List[int]] = field(default_factory=dict)
-    conditions_header_state_b64: Optional[str] = None
-    layers_header_state_b64: Optional[str] = None
     conditions_group_by_type: bool = True
     summary_group_by_area: bool = True
     summary_group_by_type: bool = True
     summary_group_by_page: bool = False
-    summary_column_widths: Dict[str, int] = field(default_factory=dict)
     annotation_styles: Dict[str, AnnotationStyle] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -146,15 +199,10 @@ class TakeoffWorkspaceState:
                 str(key): list(value)
                 for key, value in self.dropdown_popup_sizes.items()
             },
-            "conditions_header_state_b64": self.conditions_header_state_b64,
-            "layers_header_state_b64": self.layers_header_state_b64,
             "conditions_group_by_type": self.conditions_group_by_type,
             "summary_group_by_area": self.summary_group_by_area,
             "summary_group_by_type": self.summary_group_by_type,
             "summary_group_by_page": self.summary_group_by_page,
-            "summary_column_widths": _coerce_positive_int_dict(
-                self.summary_column_widths
-            ),
             "annotation_styles": {
                 str(key): style.to_dict()
                 for key, style in self.annotation_styles.items()
@@ -183,12 +231,6 @@ class TakeoffWorkspaceState:
             takeoff_splitter_sizes=_coerce_int_list(data.get("takeoff_splitter_sizes")),
             left_splitter_sizes=_coerce_int_list(data.get("left_splitter_sizes")),
             dropdown_popup_sizes=_coerce_size_dict(data.get("dropdown_popup_sizes")),
-            conditions_header_state_b64=_coerce_optional_str(
-                data.get("conditions_header_state_b64")
-            ),
-            layers_header_state_b64=_coerce_optional_str(
-                data.get("layers_header_state_b64")
-            ),
             conditions_group_by_type=_coerce_bool(
                 data.get("conditions_group_by_type"), True
             ),
@@ -196,9 +238,6 @@ class TakeoffWorkspaceState:
             summary_group_by_type=_coerce_bool(data.get("summary_group_by_type"), True),
             summary_group_by_page=_coerce_bool(
                 data.get("summary_group_by_page"), False
-            ),
-            summary_column_widths=_coerce_positive_int_dict(
-                data.get("summary_column_widths")
             ),
             annotation_styles={
                 str(key): AnnotationStyle.from_dict(value)
@@ -250,14 +289,12 @@ class ProjectTreeSelectionState:
 
 @dataclass
 class ProjectWorkspaceState:
-    header_state_b64: Optional[str] = None
     expanded_node_keys: Optional[List[str]] = None
     group_by_job_status: bool = False
     selected_node: Optional[ProjectTreeSelectionState] = None
 
     def to_dict(self) -> dict:
         return {
-            "header_state_b64": self.header_state_b64,
             "expanded_node_keys": (
                 list(self.expanded_node_keys)
                 if self.expanded_node_keys is not None
@@ -274,7 +311,6 @@ class ProjectWorkspaceState:
         if not isinstance(data, dict):
             return cls()
         return cls(
-            header_state_b64=_coerce_optional_str(data.get("header_state_b64")),
             expanded_node_keys=(
                 _coerce_str_list(data.get("expanded_node_keys"))
                 if "expanded_node_keys" in data
@@ -283,26 +319,6 @@ class ProjectWorkspaceState:
             group_by_job_status=_coerce_bool(data.get("group_by_job_status"), False),
             selected_node=ProjectTreeSelectionState.from_dict(
                 data.get(WORKSPACE_KEY_SELECTED_NODE)
-            ),
-        )
-
-
-@dataclass
-class CoverSheetWorkspaceState:
-    plan_header_state_b64: Optional[str] = None
-
-    def to_dict(self) -> dict:
-        return {
-            "plan_header_state_b64": self.plan_header_state_b64,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> CoverSheetWorkspaceState:
-        if not isinstance(data, dict):
-            return cls()
-        return cls(
-            plan_header_state_b64=_coerce_optional_str(
-                data.get("plan_header_state_b64")
             ),
         )
 
@@ -397,7 +413,7 @@ class ToolbarVisibilityState:
 
 @dataclass
 class WorkspaceState:
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 1
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 2
     schema_version: int = CURRENT_SCHEMA_VERSION
     main_window: MainWindowWorkspaceState = field(
         default_factory=MainWindowWorkspaceState
@@ -408,13 +424,11 @@ class WorkspaceState:
     project_workspace: ProjectWorkspaceState = field(
         default_factory=ProjectWorkspaceState
     )
-    cover_sheet: CoverSheetWorkspaceState = field(
-        default_factory=CoverSheetWorkspaceState
-    )
     toolbar_visibility: ToolbarVisibilityState = field(
         default_factory=ToolbarVisibilityState
     )
     detached_windows: DetachedWindowsState = field(default_factory=DetachedWindowsState)
+    header_layouts: Dict[str, HeaderLayoutState] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -422,9 +436,12 @@ class WorkspaceState:
             WORKSPACE_KEY_MAIN_WINDOW: self.main_window.to_dict(),
             WORKSPACE_KEY_TAKEOFF_WORKSPACE: self.takeoff_workspace.to_dict(),
             WORKSPACE_KEY_PROJECT_WORKSPACE: self.project_workspace.to_dict(),
-            WORKSPACE_KEY_COVER_SHEET: self.cover_sheet.to_dict(),
             WORKSPACE_KEY_TOOLBAR_VISIBILITY: self.toolbar_visibility.to_dict(),
             WORKSPACE_KEY_DETACHED_WINDOWS: self.detached_windows.to_dict(),
+            WORKSPACE_KEY_HEADER_LAYOUTS: {
+                str(key): layout.to_dict()
+                for key, layout in self.header_layouts.items()
+            },
         }
 
     @classmethod
@@ -447,13 +464,18 @@ class WorkspaceState:
             project_workspace=ProjectWorkspaceState.from_dict(
                 data.get(WORKSPACE_KEY_PROJECT_WORKSPACE, {})
             ),
-            cover_sheet=CoverSheetWorkspaceState.from_dict(
-                data.get(WORKSPACE_KEY_COVER_SHEET, {})
-            ),
             toolbar_visibility=ToolbarVisibilityState.from_dict(
                 data.get(WORKSPACE_KEY_TOOLBAR_VISIBILITY, {})
             ),
             detached_windows=DetachedWindowsState.from_dict(
                 data.get(WORKSPACE_KEY_DETACHED_WINDOWS, {})
             ),
+            header_layouts={
+                str(key): HeaderLayoutState.from_dict(value)
+                for key, value in (
+                    data.get(WORKSPACE_KEY_HEADER_LAYOUTS)
+                    if isinstance(data.get(WORKSPACE_KEY_HEADER_LAYOUTS), dict)
+                    else {}
+                ).items()
+            },
         )

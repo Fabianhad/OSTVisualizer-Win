@@ -41,12 +41,14 @@ class ConditionActionHandler:
         project_read_service,
         project_data,
         ui_state_manager,
+        workspace_state_model,
     ):
         self._coordinator = coordinator
         self._write_service = project_write_service
         self._read_service = project_read_service
         self._project_data = project_data
         self._ui_state = ui_state_manager
+        self._workspace_state_model = workspace_state_model
         self._pending_sql_operations: set[tuple[str, ...]] = set()
 
     def _get_bid_ref_and_write_service(self):
@@ -564,6 +566,7 @@ class ConditionActionHandler:
             read_service=self._read_service,
             read_only=False,
             metric=self._is_metric(),
+            workspace_state_model=self._workspace_state_model,
         )
         dialog._dirty = True
         dialog.set_apply_allowed(False)
@@ -1357,6 +1360,7 @@ class ConditionActionHandler:
             read_service=self._read_service,
             read_only=bid_locked,
             metric=self._is_metric(),
+            workspace_state_model=self._workspace_state_model,
         )
 
         def _on_navigated(uid):

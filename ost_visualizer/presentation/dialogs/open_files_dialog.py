@@ -27,6 +27,7 @@ from ..config import (
 )
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm, show_info, show_warning
+from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize
 from .select_database_type_dialog import SelectDatabaseTypeDialog
@@ -47,6 +48,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         parent,
         file_entries: List[FileEntry],
         working_directory_service,
+        workspace_state_model,
         sql_catalog: Optional[IDatabaseCatalog] = None,
         credential_store: Optional[ICredentialStore] = None,
         sql_database_creator: Optional[ISqlDatabaseCreator] = None,
@@ -59,6 +61,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self._credential_store = credential_store
         self._sql_database_creator = sql_database_creator
         self._schema_change_allowed_fn = schema_change_allowed_fn
+        self._workspace_state_model = workspace_state_model
         self.file_entries = [e.with_checked(e.is_checked) for e in file_entries]
         self._initial_entries_by_id = {
             entry.database_id: entry for entry in self.file_entries
@@ -67,6 +70,22 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self._credential_changes_committed = False
         self._setup_ui()
         self._populate_table()
+        self._header_controller = PersistentHeaderController(
+            self.table,
+            "open_databases",
+            ("open", "backend", "database", "location", "modified", "size"),
+            self._workspace_state_model,
+            sorting=True,
+            movable=False,
+            persisted_width_keys=(
+                "backend",
+                "database",
+                "location",
+                "modified",
+                "size",
+            ),
+            default_sort_column="database",
+        )
         self._update_remove_button_state()
 
     def _setup_ui(self) -> None:
@@ -100,15 +119,15 @@ class OpenFilesDialog(QtWidgets.QDialog):
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
         header.resizeSection(0, 50)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.resizeSection(1, 100)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.resizeSection(2, 120)
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.resizeSection(3, 150)
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.resizeSection(4, 150)
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)
         header.resizeSection(5, 100)
         content_layout = QtWidgets.QHBoxLayout()
         content_layout.addWidget(self.table)

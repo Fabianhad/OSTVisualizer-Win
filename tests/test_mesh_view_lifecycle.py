@@ -1188,7 +1188,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer.height = lambda: 100
         viewer.devicePixelRatioF = lambda: 1.0
         viewer.update = lambda: None
-        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(10, 20), ctrl=False)
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(10, 20), additive=False)
         self.assertEqual(viewer.get_selected_takeoff_uids(), ["selected"])
         self.assertEqual(scene.selected, {0})
         self.assertEqual(viewer.mesh_clicked.emitted, [["selected"]])
@@ -1205,8 +1205,37 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer.height = lambda: 603
         viewer.devicePixelRatioF = lambda: 1.25
         viewer.update = lambda: None
-        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(13, 17), ctrl=False)
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(13, 17), additive=False)
         self.assertEqual(renderer.pick_calls, [(16, 21)])
+
+    def test_mesh_shift_release_adds_to_existing_selection(self):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        scene = FakeMeshScene(["existing", "selected"])
+        scene.set_selected(0, True)
+        viewer._renderer = FakePickingMeshRenderer(scene, 1)
+        viewer._pick_enabled = True
+        viewer._selected_takeoff_uids = ["existing"]
+        viewer._pending_mutation_uids = set()
+        viewer.mesh_clicked = FakeMeshSignal()
+        viewer.width = lambda: 100
+        viewer.height = lambda: 100
+        viewer.devicePixelRatioF = lambda: 1.0
+        viewer.update = lambda: None
+        viewer._cursor_mode = CURSOR_MODE_DEFAULT
+        viewer._click_pos = QtCore.QPointF(1.0, 2.0)
+        viewer._dragged = False
+        viewer._last_mouse_pos = None
+        viewer._camera_moving = False
+        event = SimpleNamespace(
+            button=lambda: QtCore.Qt.MouseButton.LeftButton,
+            position=lambda: QtCore.QPointF(1.0, 2.0),
+            modifiers=lambda: QtCore.Qt.KeyboardModifier.ShiftModifier,
+            accept=lambda: None,
+        )
+        OpenGLViewer.mouseReleaseEvent(viewer, event)
+        self.assertEqual(viewer.get_selected_takeoff_uids(), ["existing", "selected"])
+        self.assertEqual(scene.selected, {0, 1})
+        self.assertEqual(viewer.mesh_clicked.emitted, [["existing", "selected"]])
 
     def test_orbit_keeps_fractional_qt_delta_in_logical_coordinates(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)

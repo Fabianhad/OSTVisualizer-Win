@@ -142,6 +142,7 @@ class UIEventCoordinator:
         deferred_persistence_manager,
         sql_collaboration_coordinator,
         plan_update_callback_bridge,
+        workspace_state_model,
     ):
         self.main_window = main_window
         self.ui_state_manager = ui_state_manager
@@ -156,6 +157,7 @@ class UIEventCoordinator:
         self._project_read_service = project_read_service
         self._deferred_persistence = deferred_persistence_manager
         self._sql_collaboration = sql_collaboration_coordinator
+        self._workspace_state_model = workspace_state_model
         self._plan_texture_provider = None
         self.conditions_sidebar = None
         self.condition_summary_tab = None
@@ -191,6 +193,7 @@ class UIEventCoordinator:
             project_read_service=project_read_service,
             project_data=self.project_data,
             ui_state_manager=ui_state_manager,
+            workspace_state_model=workspace_state_model,
         )
         self._view_stack = None
         self._status_panel = None
@@ -215,7 +218,6 @@ class UIEventCoordinator:
         self._pending_takeoff_place_condition_uid: Optional[str] = None
         self._pending_takeoff_place_condition_uids: List[str] = []
         self._selected_takeoff_uids: Tuple[str, ...] = ()
-        self._selected_takeoff_condition_uids: set[str] = set()
         self._selection_projected_condition_uids: set[str] = set()
         self._pending_hotlink_page_uid: Optional[str] = None
         self._pending_hotlink_named_view: Optional[NamedView] = None
@@ -788,7 +790,6 @@ class UIEventCoordinator:
         self._clear_staged_takeoff_restore()
         if clear_sidebars:
             self._selected_takeoff_uids = ()
-            self._selected_takeoff_condition_uids = set()
             self._selection_projected_condition_uids = set()
             self._sidebar.clear_sidebars()
             if self._page_settings_bar:
@@ -1153,7 +1154,7 @@ class UIEventCoordinator:
             for takeoff in self.project_data.get_all_takeoffs()
         }
         selected = tuple(
-            uid for uid in dict.fromkeys(uids) if uid in condition_uid_by_takeoff
+            sorted({uid for uid in uids if uid in condition_uid_by_takeoff})
         )
         condition_uids = {condition_uid_by_takeoff[uid] for uid in selected}
         return selected, condition_uids
@@ -1215,7 +1216,6 @@ class UIEventCoordinator:
         previous_selection = self._selected_takeoff_uids
         selection_changed = selected_uids != previous_selection
         self._selected_takeoff_uids = selected_uids
-        self._selected_takeoff_condition_uids = cond_uids
         projection_changed = self._project_takeoff_selection_conditions(
             cond_uids,
             selection_changed=selection_changed,
@@ -1236,17 +1236,6 @@ class UIEventCoordinator:
                 self.opengl_viewer.set_selected_takeoffs(mirrored_uids)
             if source != self._SOURCE_3D_WINDOW and self._mesh_window:
                 self._mesh_window.set_selected_takeoffs(mirrored_uids)
-            if (
-                source != self._SOURCE_2D
-                and self._placement.is_active
-                and len(cond_uids) == 1
-            ):
-                new_uid = next(iter(cond_uids))
-                if (
-                    new_uid != self._placement.condition_uid
-                    and self._is_condition_placeable(new_uid)
-                ):
-                    self._placement.enter(new_uid, list(cond_uids))
         else:
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.clear_selection(emit=False)
@@ -1493,6 +1482,7 @@ class UIEventCoordinator:
             used_uids=used_uids,
             has_license=True,
             bid_ref=bid_ref,
+            workspace_state_model=self._workspace_state_model,
         )
         area_bid_uid = (
             int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
@@ -1637,6 +1627,7 @@ class UIEventCoordinator:
                 else None
             ),
             menu_mode=True,
+            workspace_state_model=self._workspace_state_model,
         )
         resources = (
             ResourceRef(
@@ -1699,6 +1690,7 @@ class UIEventCoordinator:
                 else None
             ),
             menu_mode=True,
+            workspace_state_model=self._workspace_state_model,
         )
         self._exec_with_collaboration_lease(
             dialog,
@@ -1765,6 +1757,7 @@ class UIEventCoordinator:
             ),
             has_license=True,
             menu_mode=True,
+            workspace_state_model=self._workspace_state_model,
         )
         self._exec_with_collaboration_lease(
             dialog,
@@ -1818,6 +1811,7 @@ class UIEventCoordinator:
                 else None
             ),
             menu_mode=True,
+            workspace_state_model=self._workspace_state_model,
         )
         self._exec_with_collaboration_lease(
             dialog,
@@ -1950,6 +1944,7 @@ class UIEventCoordinator:
             ),
             has_license=True,
             mode=LayersDialogMode.DEFAULT_LAYERS,
+            workspace_state_model=self._workspace_state_model,
         )
         self._exec_with_collaboration_lease(
             dialog,

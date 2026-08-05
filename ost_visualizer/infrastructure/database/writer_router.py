@@ -121,7 +121,7 @@ class DatabaseProjectWriter(SqlProjectWriter):
     def _record_caught_mutation_error(self, exc: BaseException) -> bool:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
             return SqlProjectWriter._record_caught_mutation_error(self, exc)
-        return MdbWriter._record_caught_mutation_error(exc)
+        return MdbWriter._record_caught_mutation_error(self, exc)
 
     def _is_access_resource_exceeded(self, exc: BaseException) -> bool:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:

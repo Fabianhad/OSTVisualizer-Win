@@ -20,6 +20,8 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 )
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_POLYGON,
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
@@ -4006,6 +4008,142 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
         handler.on_positions_flushed(takeoff_changes, ann_changes)
         self.assertEqual(plan_view.restored_positions, [([], ann_changes)])
+
+    def test_polygon_control_point_edits_use_mdb_annotation_undo_path(self):
+        old_position = [0.0, 0.0, 100.0, 0.0, 100.0, 100.0, 0.0, 100.0]
+        new_position = [
+            0.0,
+            0.0,
+            50.0,
+            0.0,
+            100.0,
+            0.0,
+            100.0,
+            100.0,
+            0.0,
+            100.0,
+        ]
+        for annotation_type in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):
+            with self.subTest(annotation_type=annotation_type):
+                data = FakeProjectData()
+                data.annotations = [
+                    BidAnnotation(
+                        uid="a1",
+                        annotation_type=annotation_type,
+                        page_uid="p1",
+                        position=list(new_position),
+                    )
+                ]
+                annotation_write = FakeAnnotationWriteService()
+                undo = FakeUndoService()
+                handler = PlanViewActionHandler(
+                    plan_view=FakePlanView(data),
+                    ui_state_manager=FakeUiState(),
+                    project_data_svc=data,
+                    project_write_svc=FakeWriteService(),
+                    annotation_write_svc=annotation_write,
+                    page_settings_bar=FakePageSettingsBar(),
+                    undo_svc=undo,
+                    event_bus=FakeEventBus(),
+                    deferred_persistence_manager=FakeDeferredPersistence(),
+                    ui_access_manager=FakeAccess(set(Feature)),
+                )
+                changes = [
+                    (
+                        "a1",
+                        annotation_type,
+                        list(old_position),
+                        list(new_position),
+                    )
+                ]
+                handler.on_positions_flushed([], changes)
+                self.assertEqual(
+                    annotation_write.position_calls[0],
+                    (
+                        "bid.mdb",
+                        [("a1", annotation_type, new_position)],
+                        False,
+                    ),
+                )
+                self.assertEqual(undo.count, 1)
+                undo.undo()
+                undo.redo()
+                self.assertEqual(
+                    [call[1] for call in annotation_write.position_calls[1:]],
+                    [
+                        [("a1", annotation_type, old_position)],
+                        [("a1", annotation_type, new_position)],
+                    ],
+                )
+
+    def test_polygon_control_point_edits_use_sql_geometry_queue(self):
+        old_position = [0.0, 0.0, 100.0, 0.0, 100.0, 100.0, 0.0, 100.0]
+        new_position = [
+            0.0,
+            0.0,
+            50.0,
+            0.0,
+            100.0,
+            0.0,
+            100.0,
+            100.0,
+            0.0,
+            100.0,
+        ]
+        for annotation_type in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):
+            with self.subTest(annotation_type=annotation_type):
+                data = FakeProjectData()
+                data.annotations = [
+                    BidAnnotation(
+                        uid="a1",
+                        annotation_type=annotation_type,
+                        page_uid="p1",
+                        position=list(new_position),
+                    )
+                ]
+                write = FakeWriteService()
+                write.sql_collaboration_mutations = True
+                annotation_write = FakeAnnotationWriteService()
+                undo = FakeUndoService()
+                handler = PlanViewActionHandler(
+                    plan_view=FakePlanView(data),
+                    ui_state_manager=FakeUiState(),
+                    project_data_svc=data,
+                    project_write_svc=write,
+                    annotation_write_svc=annotation_write,
+                    page_settings_bar=FakePageSettingsBar(),
+                    undo_svc=undo,
+                    event_bus=FakeEventBus(),
+                    deferred_persistence_manager=FakeDeferredPersistence(),
+                    ui_access_manager=FakeAccess(set(Feature)),
+                )
+                handler.on_positions_flushed(
+                    [],
+                    [
+                        (
+                            "a1",
+                            annotation_type,
+                            list(old_position),
+                            list(new_position),
+                        )
+                    ],
+                )
+                self.assertEqual(annotation_write.position_calls, [])
+                self.assertEqual(len(write.queued_geometry), 1)
+                self.assertEqual(
+                    write.queued_geometry[0][2]["annotation_positions"],
+                    [("a1", annotation_type, new_position)],
+                )
+                self.assertEqual(undo.count, 0)
+                write.queued_geometry[0][-1](
+                    QueuedMutationResult(
+                        database_id="bid.mdb",
+                        runtime_generation=1,
+                        operation_id=str(uuid.uuid4()),
+                        outcome_status=MutationOutcomeStatus.COMMITTED,
+                    )
+                )
+                self.assertEqual(undo.count, 1)
 
     def test_shape_annotation_position_undo_redo_after_page_scale_change_uses_current_scale(
         self,

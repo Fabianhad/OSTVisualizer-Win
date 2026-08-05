@@ -73,6 +73,7 @@ from .coordinators.event_coordinator import EventCoordinator
 from .coordinators.license_ui_coordinator import LicenseUICoordinator
 from .coordinators.ui_event_coordinator import UIEventCoordinator
 from .coordinators.workspace_state_coordinator import WorkspaceStateCoordinator
+from .utils.persistent_header import PersistentHeaderController
 from .dialogs.create_database_dialog import CreateDatabaseDialog
 from .dialogs.update_dialog import UpdateDialog
 from .handlers.cover_sheet_handler import CoverSheetHandler
@@ -203,6 +204,7 @@ class MainWindow(QtWidgets.QMainWindow):
             database_capability_service=self.app_controller.get_service(
                 "database_capability_service"
             ),
+            workspace_state_model=self._workspace_state_model,
         )
         self._deferred_persistence_manager = DeferredPersistenceManager(
             self._project_write_service,
@@ -234,6 +236,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ui_access_manager=self.ui_access_manager,
             deferred_persistence_manager=self._deferred_persistence_manager,
             page_visualization_metadata_service=self._page_visualization_metadata_service,
+            workspace_state_model=self._workspace_state_model,
         )
         self.tab_widget = components.tab_widget
         self.takeoff_tab = components.takeoff_tab
@@ -498,6 +501,7 @@ class MainWindow(QtWidgets.QMainWindow):
             workspace_state_model=self._workspace_state_model,
         )
         self._workspace_state_coordinator.restore_initial_state()
+        self._configure_persistent_headers()
         self._mcp_context_bridge = McpContextBridge(
             main_window=self,
             ui_state_manager=self.ui_state_manager,
@@ -515,6 +519,71 @@ class MainWindow(QtWidgets.QMainWindow):
             self._pending_project_file_args.append(startup_project_file_args)
         QtCore.QTimer.singleShot(0, self._load_files_from_config)
         QtCore.QTimer.singleShot(0, self._show_main_window)
+
+    def _configure_persistent_headers(self) -> None:
+        layers_header = self._bid_layers_sidebar.table.header()
+        layers_header.setStretchLastSection(False)
+        layers_header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        layers_header.setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeMode.Interactive
+        )
+        self._header_controllers = [
+            PersistentHeaderController(
+                self.project_view.top_tree,
+                "project_tree",
+                (
+                    "number",
+                    "name",
+                    "status",
+                    "bid_date",
+                    "job_number",
+                    "estimator",
+                    "pages",
+                    "conditions",
+                    "notes",
+                    "copy_from",
+                    "copy_timestamp",
+                ),
+                self._workspace_state_model,
+                sorting=True,
+                movable=True,
+                default_sort_column="number",
+            ),
+            PersistentHeaderController(
+                self._conditions_sidebar.tree,
+                "conditions_sidebar",
+                ("number", "name", "quantity_1", "quantity_2", "quantity_3"),
+                self._workspace_state_model,
+                sorting=True,
+                movable=False,
+                default_sort_column="number",
+            ),
+            PersistentHeaderController(
+                self._bid_layers_sidebar.table,
+                "layers_sidebar",
+                ("visible", "layer"),
+                self._workspace_state_model,
+                sorting=False,
+                movable=True,
+                persisted_width_keys=("layer",),
+            ),
+            PersistentHeaderController(
+                self._condition_summary_tab.tree,
+                "condition_summary",
+                self._condition_summary_tab.column_keys,
+                self._workspace_state_model,
+                sorting=True,
+                movable=True,
+                default_sort_column="name",
+            ),
+        ]
+        summary_controller = self._header_controllers[-1]
+        self._condition_summary_tab.columns_about_to_change.connect(
+            summary_controller.begin_columns_update
+        )
+        self._condition_summary_tab.columns_changed.connect(
+            summary_controller.end_columns_update
+        )
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
@@ -582,6 +651,7 @@ class MainWindow(QtWidgets.QMainWindow):
             sql_collaboration_coordinator=self.app_controller.get_service(
                 "sql_collaboration_coordinator"
             ),
+            workspace_state_model=self._workspace_state_model,
             database_catalog=self._infrastructure_provider.get_database_catalog(),
             credential_store=self._infrastructure_provider.get_credential_store(),
             database_descriptor_registry=(
@@ -653,6 +723,7 @@ class MainWindow(QtWidgets.QMainWindow):
             plan_update_callback_bridge=(
                 self._infrastructure_provider.get_thread_callback_bridge()
             ),
+            workspace_state_model=self._workspace_state_model,
         )
         handlers.delete.set_ui_event_coordinator(handlers.ui_event)
         handlers.cover_sheet.set_ui_event_coordinator(handlers.ui_event)
@@ -1381,15 +1452,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def get_left_splitter(self) -> QtWidgets.QSplitter:
         return self._left_splitter
 
-    def get_project_header(self) -> QtWidgets.QHeaderView:
-        return self.project_view.header()
-
-    def get_conditions_header(self) -> QtWidgets.QHeaderView:
-        return self._conditions_sidebar.header()
-
-    def get_layers_header(self) -> QtWidgets.QHeaderView:
-        return self._bid_layers_sidebar.header()
-
     def get_project_tree(self) -> QtWidgets.QTreeWidget:
         return self.project_view.top_tree
 
@@ -1673,12 +1735,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if window is not None:
                 window.set_dropdown_popup_sizes(sizes)
 
-    def save_project_header_state(self) -> QtCore.QByteArray:
-        return self.project_view.save_header_state()
-
-    def restore_project_header_state(self, state: QtCore.QByteArray) -> None:
-        self.project_view.restore_header_state(state)
-
     def get_project_expanded_node_keys(self) -> list[str]:
         return self.project_view.get_expanded_node_keys()
 
@@ -1713,12 +1769,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def get_conditions_sidebar(self):
         return self._conditions_sidebar
 
-    def save_conditions_header_state(self) -> QtCore.QByteArray:
-        return self._conditions_sidebar.save_header_state()
-
-    def restore_conditions_header_state(self, state: QtCore.QByteArray) -> None:
-        self._conditions_sidebar.restore_header_state(state)
-
     def is_conditions_group_by_type_enabled(self) -> bool:
         return self._conditions_sidebar.is_group_by_type_enabled()
 
@@ -1731,20 +1781,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_summary_grouping(self, grouping: ConditionSummaryGrouping) -> None:
         self._condition_summary_tab.set_grouping(grouping, notify=False)
 
-    def get_summary_column_widths(self) -> dict[str, int]:
-        return self._condition_summary_tab.get_column_widths()
-
-    def set_summary_column_widths(self, widths: dict[str, int]) -> None:
-        self._condition_summary_tab.set_column_widths(widths)
-
     def get_condition_summary_tab(self):
         return self._condition_summary_tab
-
-    def save_layers_header_state(self) -> QtCore.QByteArray:
-        return self._bid_layers_sidebar.save_header_state()
-
-    def restore_layers_header_state(self, state: QtCore.QByteArray) -> None:
-        self._bid_layers_sidebar.restore_header_state(state)
 
     def _ensure_left_splitter_pane_visible(self, index: int) -> None:
         sizes = self.get_left_splitter_sizes()

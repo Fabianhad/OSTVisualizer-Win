@@ -40,6 +40,7 @@ from ost_visualizer.infrastructure.mdb.components.annotation_reader import (
 )
 from ost_visualizer.infrastructure.mdb.components.serialization import (
     encode_position,
+    parse_position_storage,
     serialize_position_for_table,
 )
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
@@ -1127,7 +1128,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                     "BidTakeoffToUID": "",
                     "FontName": "Arial",
                     "FontColor": "#ff0000",
-                    "FontSize": 12,
+                    "FontSize": 48,
                     "FontBold": False,
                     "FontItalic": False,
                     "FontUnderline": False,
@@ -1185,7 +1186,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                     "Text": "",
                     "FontName": "Arial",
                     "FontColor": 0x996633,
-                    "FontSize": 12,
+                    "FontSize": 72,
                     "FontBold": False,
                     "FontItalic": False,
                     "FontUnderline": False,
@@ -1240,14 +1241,14 @@ class BidDimensionAnnotationTests(unittest.TestCase):
               FROM BidDimensions
             """
         ).fetchone()
-        self.assertEqual(dimension_row, (1, 3, "Arial", 255, 12))
+        self.assertEqual(dimension_row, (1, 3, "Arial", 255, 48))
         text_row = conn.execute(
             """
             SELECT BidUID, BidPageUID, FontName, FontColor, FontSize, TextAlign, Position
               FROM BidTexts
             """
         ).fetchone()
-        self.assertEqual(text_row[:6], (1, 3, "Arial", 0x996633, 12, 0))
+        self.assertEqual(text_row[:6], (1, 3, "Arial", 0x996633, 72, 0))
         self.assertIsInstance(text_row[6], str)
         self.assertEqual(
             text_row[6],
@@ -1336,6 +1337,47 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             position_value,
             serialize_position_for_table("BidTexts", [7.0, 8.0, 12.0, 12.0]),
         )
+
+    def test_polygon_control_point_positions_persist_for_polygon_and_cloud_tables(self):
+        conn = sqlite3.connect(":memory:")
+        for table in ("BidAnnotationPolygons", "BidAnnotationClouds"):
+            conn.execute(
+                f"""
+                CREATE TABLE {table} (
+                    UID INTEGER PRIMARY KEY,
+                    Position BLOB
+                )
+                """
+            )
+            conn.execute(
+                f"INSERT INTO {table} (UID, Position) VALUES (1, ?)",
+                (encode_position([0.0, 0.0, 10.0, 0.0, 0.0, 10.0]),),
+            )
+        positions = {
+            "polygon": [0.0, 0.0, 5.0, 0.0, 10.0, 0.0, 0.0, 10.0],
+            "cloud": [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],
+        }
+        self.assertTrue(
+            _DimensionWriteOps(conn).save_annotation_positions(
+                "bid.mdb",
+                [
+                    ("1", annotation_type, position)
+                    for annotation_type, position in positions.items()
+                ],
+            )
+        )
+        for annotation_type, table in (
+            ("polygon", "BidAnnotationPolygons"),
+            ("cloud", "BidAnnotationClouds"),
+        ):
+            with self.subTest(annotation_type=annotation_type):
+                stored = conn.execute(
+                    f"SELECT Position FROM {table} WHERE UID=1"
+                ).fetchone()[0]
+                self.assertEqual(stored, encode_position(positions[annotation_type]))
+                self.assertEqual(
+                    parse_position_storage(stored), positions[annotation_type]
+                )
 
     def test_annotation_style_updates_are_per_annotation_and_per_type(self):
         conn = sqlite3.connect(":memory:")

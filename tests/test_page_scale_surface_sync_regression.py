@@ -130,7 +130,6 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._selected_takeoff_uids = ()
-        coordinator._selected_takeoff_condition_uids = set()
         coordinator._selection_projected_condition_uids = set()
         coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._tab_widget = SimpleNamespace(

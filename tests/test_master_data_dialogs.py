@@ -48,6 +48,20 @@ from ost_visualizer.presentation.utils.deferred_dialog_save import (
     DeferredDialogSaveController,
 )
 from ost_visualizer.presentation.utils.tree_widget import DEFAULT_TREE_ROW_HEIGHT
+from tests.workspace_state_test_support import (
+    make_workspace_state_model,
+    with_workspace_state,
+)
+
+BidAreaPickerDialog = with_workspace_state(BidAreaPickerDialog)
+BidAreasDialog = with_workspace_state(BidAreasDialog)
+ConditionTypesDialog = with_workspace_state(ConditionTypesDialog)
+EmployeesDialog = with_workspace_state(EmployeesDialog)
+JobStatusesDialog = with_workspace_state(JobStatusesDialog)
+LayersDialog = with_workspace_state(LayersDialog)
+OpenFilesDialog = with_workspace_state(OpenFilesDialog)
+PageSettingsBar = with_workspace_state(PageSettingsBar)
+PayrollClassListDialog = with_workspace_state(PayrollClassListDialog)
 
 
 def _app():
@@ -955,6 +969,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         load_calls = []
         save_calls = []
         refresh_calls = []
+        workspace_models = []
 
         def load_areas(file_path, bid_uid):
             load_calls.append((file_path, bid_uid))
@@ -973,6 +988,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             def __init__(self, **kwargs):
                 self._save_fn = kwargs["save_fn"]
                 self._on_saved_fn = kwargs["on_saved_fn"]
+                workspace_models.append(kwargs["workspace_state_model"])
 
             def set_interactive(self, _enabled):
                 pass
@@ -1028,6 +1044,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             )
             self.assertEqual(refresh_calls, ["db.mdb"])
             self.assertIn(("db.mdb", "bid-1"), load_calls)
+            self.assertEqual(workspace_models, [bar._workspace_state_model])
             self.assertEqual(bar.area_combo.get_current_area_uid(), "area-2")
             self.assertEqual(area_changes, [("db.mdb", "page-1", "area-2")])
         finally:
@@ -1288,6 +1305,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             end_edit_lease=lambda _handle: None,
         )
         coordinator.main_window = None
+        coordinator._workspace_state_model = make_workspace_state_model()
         coordinator.event_bus = object()
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
 
@@ -1465,6 +1483,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 pay_classes=None,
                 pay_classes_save_fn=None,
                 pay_classes_save_async_fn=None,
+                workspace_state_model=make_workspace_state_model(),
             ):
                 self._employees = list(employees)
                 self._current_index = current_index
@@ -1913,6 +1932,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._is_cleaning_up = False
         coordinator.main_window = main_window
+        coordinator._workspace_state_model = make_workspace_state_model()
         coordinator.ui_access_manager = access_manager
         coordinator.project_data = project_data
         coordinator._icon_provider = FakeIconProvider()
@@ -1987,6 +2007,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         main_window = QtWidgets.QWidget()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = main_window
+        coordinator._workspace_state_model = make_workspace_state_model()
         coordinator._icon_provider = FakeIconProvider()
         coordinator._editable_master_data_file_path = lambda: "master-data.mdb"
         coordinator._project_write_service = SimpleNamespace(
@@ -2160,12 +2181,18 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertFalse(dialog._checkboxes[0].isChecked())
             self.assertFalse(dialog._layers[0].show)
             self.assertFalse(sidebar._checkboxes[0].isChecked())
-            self.assertFalse(sidebar.get_layer("layer-1").show)
+            layer = next(
+                layer for layer in sidebar.get_layers() if layer.uid == "layer-1"
+            )
+            self.assertFalse(layer.show)
             self._click_checkbox(dialog._checkboxes[0])
             self.assertTrue(dialog._checkboxes[0].isChecked())
             self.assertTrue(dialog._layers[0].show)
             self.assertTrue(sidebar._checkboxes[0].isChecked())
-            self.assertTrue(sidebar.get_layer("layer-1").show)
+            layer = next(
+                layer for layer in sidebar.get_layers() if layer.uid == "layer-1"
+            )
+            self.assertTrue(layer.show)
         finally:
             dialog.close()
             dialog.cleanup()

@@ -13,6 +13,14 @@
 
 ### Changed
 
+- Changed Text and Dimension annotation formatting to include 48- and 72-point
+  font sizes in both default-style menus and the active text toolbar.
+- Changed polygon editing so Cloud and Polygon annotations use the existing Area
+  takeoff Add/Subtract Control Point actions, validation, undo, and persistence.
+- Changed application table and tree headers to use consistent sorting,
+  resizing, and column movement capabilities, with semantic per-user layouts
+  restored from the existing workspace state for every supported view and
+  reconciled safely when columns are added or removed.
 - Changed source builds to require Python 3.10 or newer, matching the client syntax and native extension configuration; HTML scene DTOs no longer require Python 3.11-only typing imports.
 - Changed Cover Sheet commits to perform a single post-save database refresh, reducing UI stalls after large page deletion batches.
 - Changed detached plan windows to keep a successfully loaded page visible when nearby-page prefetch fails and to reveal the normal canvas when named-view navigation cannot load its target page.
@@ -127,9 +135,14 @@
 - Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
 - Fixed takeoff selection synchronization so 2D and 3D share one canonical
   takeoff-to-condition projection while preserving explicit sidebar ownership,
-  including a duplicated condition selected during a same-bid refresh;
+  including stable mixed-condition multi-selection from Ctrl or Shift gestures
+  and a duplicated condition selected during a same-bid refresh;
   cursor-toolbar and radio-menu synchronization also preserve exclusive QAction
   group ownership.
+- Fixed adding a blank Cover Sheet page from the Takeoff tab failing when an
+  Access bid has blank optional numeric or date fields; failed Access mutations
+  now also roll back without replacing the original database error with a
+  closed-connection commit error.
 - Fixed hidden-layer line, arrow, and dimension annotations remaining selectable through geometric fallback hit-testing.
 - Fixed native 3D viewer cleanup so a renderer shutdown failure cannot retain a stale native renderer or prevent the remaining Qt-owned resources from being released.
 - Fixed native 3D renderer shutdown releasing all picking and selection GPU

@@ -31,6 +31,7 @@ from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
     ACCESS_BULK_CHUNK_SIZE,
 )
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
 from ost_visualizer.infrastructure.providers import RepositoryProvider
 from ost_visualizer.infrastructure.sql.reader import SqlProjectReader
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
@@ -97,6 +98,9 @@ from ost_visualizer.presentation.dialogs.sql_connection_dialog import (
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
+from tests.workspace_state_test_support import with_workspace_state
+
+FileOperationHandler = with_workspace_state(FileOperationHandler)
 
 
 def DatabaseMutationRequest(*args, **kwargs):
@@ -1914,6 +1918,111 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 DatabaseMutationRequest(database_id="example.mdb", session_id=None),
                 operation,
             )
+        self.assertEqual(connections.connection_value.commits, 0)
+        self.assertEqual(connections.connection_value.rollbacks, 1)
+
+    def test_access_caught_database_failure_preserves_original_and_rolls_back(self):
+        original = pyodbc.DataError("22018", "type mismatch")
+
+        class _Cursor:
+            def close(self):
+                return None
+
+        class _Connection:
+            def __init__(self):
+                self.commits = 0
+                self.rollbacks = 0
+                self.closes = 0
+
+            def cursor(self):
+                return _Cursor()
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+            def close(self):
+                self.closes += 1
+
+        class _Schema:
+            @staticmethod
+            def require_column(_table, _column):
+                return None
+
+            @staticmethod
+            def column_exists(_table, _column):
+                return False
+
+        raw = _Connection()
+        connections = MdbConnectionManager()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+
+        def fail_update(
+            _cursor,
+            _schema,
+            _table,
+            _values,
+            _required_columns,
+            _where_sql,
+            _params,
+            _operation,
+            allow_empty=False,
+        ):
+            del allow_empty
+            raise original
+
+        writer._schema = lambda _connection: _Schema()
+        writer._execute_update_values = fail_update
+        with patch("pyodbc.connect", return_value=raw):
+            with self.assertRaises(pyodbc.DataError) as captured:
+                writer.execute(
+                    DatabaseMutationRequest(database_id="example.mdb", session_id=None),
+                    lambda _recorder: writer.save_cover_sheet(
+                        "example.mdb", "7", {"job_name": "Bid"}
+                    ),
+                )
+        self.assertIs(captured.exception, original)
+        self.assertEqual(raw.commits, 0)
+        self.assertEqual(raw.rollbacks, 1)
+        self.assertEqual(raw.closes, 1)
+
+    def test_access_routed_annotation_database_failure_is_not_swallowed(self):
+        original = pyodbc.DataError("22018", "annotation type mismatch")
+        connections = _AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        spec = InsertAnnotationSpec(
+            page_uid="10",
+            annotation_type="rect",
+            position=[1.0, 2.0, 3.0, 4.0],
+            color="#ff0000",
+            width=1.0,
+        )
+        with (
+            patch.object(writer, "_schema", return_value=object()),
+            patch.object(writer, "_next_uid", return_value=1),
+            patch.object(writer, "_execute_annotation_insert", side_effect=original),
+            self.assertRaises(pyodbc.DataError) as captured,
+        ):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id="example.mdb",
+                    session_id=None,
+                ),
+                lambda _recorder: writer.insert_annotations("example.mdb", "1", [spec]),
+            )
+        self.assertIs(captured.exception, original)
         self.assertEqual(connections.connection_value.commits, 0)
         self.assertEqual(connections.connection_value.rollbacks, 1)
 

@@ -111,12 +111,6 @@ class BidLayersSidebar(QtWidgets.QWidget):
     def set_toggle_callback(self, callback: Callable[[str, bool], None]) -> None:
         self._on_toggle = callback
 
-    def get_layer(self, layer_uid: str) -> Optional[BidLayer]:
-        for layer in self._layers:
-            if str(layer.uid) == str(layer_uid):
-                return layer
-        return None
-
     def get_layers(self) -> List[BidLayer]:
         return list(self._layers)
 
@@ -141,14 +135,9 @@ class BidLayersSidebar(QtWidgets.QWidget):
         checkbox.setChecked(bool(checked))
         checkbox.blockSignals(False)
 
-    def save_header_state(self) -> QtCore.QByteArray:
-        return self._table.header().saveState()
-
-    def header(self) -> QtWidgets.QHeaderView:
-        return self._table.header()
-
-    def restore_header_state(self, state: QtCore.QByteArray) -> None:
-        self._table.header().restoreState(state)
+    @property
+    def table(self) -> QtWidgets.QTreeWidget:
+        return self._table
 
     def _sync_top_buttons(self) -> None:
         enabled = self._interactive and bool(self._layers)

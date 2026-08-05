@@ -23,6 +23,10 @@ from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
 from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
+from tests.workspace_state_test_support import with_workspace_state
+
+FileOperationHandler = with_workspace_state(FileOperationHandler)
+OpenFilesDialog = with_workspace_state(OpenFilesDialog)
 
 
 class StartupDatabaseRestoreTests(unittest.TestCase):

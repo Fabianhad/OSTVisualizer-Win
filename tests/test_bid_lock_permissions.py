@@ -57,6 +57,7 @@ from ost_visualizer.presentation.managers.ui_access_manager import (
 from ost_visualizer.presentation.services.bid_clipboard_service import (
     BidClipboardService,
 )
+from tests.workspace_state_test_support import make_workspace_state_model
 
 
 class _EventBus:
@@ -889,6 +890,7 @@ class BidLockPermissionTests(unittest.TestCase):
                 }
             ),
             ui_state_manager=ui_state,
+            workspace_state_model=make_workspace_state_model(),
         )
         return handler, access, write_service
 
@@ -950,6 +952,7 @@ class BidLockPermissionTests(unittest.TestCase):
             project_read_service=None,
             project_data=project_data,
             ui_state_manager=ui_state,
+            workspace_state_model=make_workspace_state_model(),
         )
         handler.on_condition_layer_change_requested(["cond-1", "cond-2"], "layer-1")
         self.assertEqual(len(write_service.condition_updates), 2)
@@ -986,6 +989,7 @@ class BidLockPermissionTests(unittest.TestCase):
             project_read_service=None,
             project_data=SimpleNamespace(),
             ui_state_manager=ui_state,
+            workspace_state_model=make_workspace_state_model(),
         )
         from ost_visualizer.presentation.handlers import condition_action_handler
 
@@ -2292,6 +2296,7 @@ class BidLockPermissionTests(unittest.TestCase):
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
             ),
+            workspace_state_model=make_workspace_state_model(),
         )
         with patch(
             "ost_visualizer.presentation.handlers.condition_action_handler."
@@ -2322,6 +2327,7 @@ class BidLockPermissionTests(unittest.TestCase):
             project_read_service=None,
             project_data=SimpleNamespace(),
             ui_state_manager=SimpleNamespace(),
+            workspace_state_model=make_workspace_state_model(),
         )
         from ost_visualizer.presentation.handlers import condition_action_handler
 
@@ -2360,6 +2366,7 @@ class BidLockPermissionTests(unittest.TestCase):
             project_read_service=None,
             project_data=SimpleNamespace(),
             ui_state_manager=SimpleNamespace(),
+            workspace_state_model=make_workspace_state_model(),
         )
         from ost_visualizer.presentation.handlers import condition_action_handler
 

@@ -20,6 +20,7 @@ from ..utils.dialog import (
     save_result_succeeded,
 )
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
 
 
@@ -29,6 +30,7 @@ class BidAreasDialog(BaseListDialog):
     def __init__(
         self,
         icon_provider,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         bid_areas: Optional[List[BidArea]] = None,
         save_fn: Optional[Callable[[dict], Optional[dict]]] = None,
@@ -59,6 +61,14 @@ class BidAreasDialog(BaseListDialog):
         self._setup_ui()
         self._populate()
         self._mark_saved_state()
+        self._header_controller = PersistentHeaderController(
+            self.tree,
+            "bid_areas",
+            ("area",),
+            workspace_state_model,
+            sorting=False,
+            movable=False,
+        )
         if not self._has_license:
             self._set_controls_interactive(False)
 
@@ -75,7 +85,7 @@ class BidAreasDialog(BaseListDialog):
         header = self.tree.header()
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.tree.header().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.ResizeMode.Stretch
+            0, QtWidgets.QHeaderView.ResizeMode.Interactive
         )
         self.tree.setRootIsDecorated(True)
         apply_tree_indentation(self.tree)
@@ -645,6 +655,7 @@ class BidAreaPickerDialog(BidAreasDialog):
     def __init__(
         self,
         icon_provider,
+        workspace_state_model,
         parent: Optional[QtWidgets.QWidget] = None,
         bid_areas: Optional[List[BidArea]] = None,
         save_fn: Optional[Callable[[dict], Optional[dict]]] = None,
@@ -657,6 +668,7 @@ class BidAreaPickerDialog(BidAreasDialog):
         self._selected_uid: Optional[str] = None
         super().__init__(
             icon_provider=icon_provider,
+            workspace_state_model=workspace_state_model,
             parent=parent,
             bid_areas=bid_areas,
             save_fn=save_fn,

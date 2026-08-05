@@ -318,15 +318,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._selected_condition_uids[-1] if self._selected_condition_uids else None
         )
 
-    def save_header_state(self) -> QtCore.QByteArray:
-        return self.tree.header().saveState()
-
-    def header(self) -> QtWidgets.QHeaderView:
-        return self.tree.header()
-
-    def restore_header_state(self, state: QtCore.QByteArray) -> None:
-        self.tree.header().restoreState(state)
-
     def collect_ordered_condition_uids(self) -> List[str]:
         ordered: List[str] = []
         for item in self._iter_child_items(self.tree.invisibleRootItem()):
