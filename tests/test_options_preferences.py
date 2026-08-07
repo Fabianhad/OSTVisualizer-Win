@@ -546,7 +546,12 @@ class FakeVisibleFrameRenderingService:
         self.cancelled_requests.append(request_id)
 
 
-def _visible_frame_lifecycle_view(kind="base"):
+def _visible_frame_lifecycle_view(
+    kind="base",
+    *,
+    source_size=(100.0, 100.0),
+    stored_size=None,
+):
     view = TakeoffPlanView.__new__(TakeoffPlanView)
     view._scene = QtWidgets.QGraphicsScene()
     view._scene_scale = 2.0
@@ -565,14 +570,16 @@ def _visible_frame_lifecycle_view(kind="base"):
         image_path = "base.pdf"
         loaded_visual_kind = VISUAL_KIND_PAGE
         can_zoom_rerender = True
+    source_width, source_height = source_size
+    stored_width, stored_height = stored_size or source_size
     view._current_page = Page(
         uid="page-1",
         name="Page 1",
         image_path=image_path,
         overlay_image_path="overlay.pdf",
         image_show_mode=image_show_mode,
-        width_pts=100.0,
-        height_pts=100.0,
+        width_pts=stored_width,
+        height_pts=stored_height,
     )
     view._loaded_visual_kind = loaded_visual_kind
     view._can_zoom_rerender = can_zoom_rerender
@@ -582,8 +589,8 @@ def _visible_frame_lifecycle_view(kind="base"):
     view._base_raster_request_scale = 0.0
     view._base_correction_request_generation_id = 0
     view._page_render_generation_id = 0
-    view._pdf_width_pts = 100.0
-    view._pdf_height_pts = 100.0
+    view._pdf_width_pts = source_width
+    view._pdf_height_pts = source_height
     view._overlay_pdf_width_pts = 100.0
     view._overlay_pdf_height_pts = 100.0
     view._overlay_items = []
@@ -615,8 +622,8 @@ def _visible_frame_lifecycle_view(kind="base"):
     view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
     background = ImageBackgroundItem(
         QtGui.QImage(20, 20, QtGui.QImage.Format.Format_ARGB32),
-        200.0,
-        200.0,
+        source_width * view._scene_scale,
+        source_height * view._scene_scale,
     )
     view._scene.addItem(background)
     view._background_item = background
@@ -3643,6 +3650,9 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_page_view_state_uses_ost_page_pixel_coordinates(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._scene_scale = 3.0
+        view._pdf_width_pts = 0.0
+        view._pdf_height_pts = 0.0
+        view._current_rotation = 0
         view._current_page = Page(
             uid="6420",
             name="S3.0.pdf",
@@ -3961,6 +3971,181 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         self.assertAlmostEqual(rect.width(), 101 * 2.0 / 3.25)
         self.assertAlmostEqual(rect.height(), 83 * 2.0 / 3.25)
+
+    def test_visible_frame_quality_threshold_keeps_canonical_page_geometry(self):
+        view = _visible_frame_lifecycle_view()
+        view._base_raster_scale = 1.0
+        view._update_optional_base_coverage = lambda _view_m11, _generation_id: None
+        view._scene.setSceneRect(QtCore.QRectF(0.0, 0.0, 200.0, 200.0))
+        page_rect = QtCore.QRectF(view._background_item.sceneBoundingRect())
+        page_pos = QtCore.QPointF(view._background_item.scenePos())
+        scene_rect = QtCore.QRectF(view._scene.sceneRect())
+        view_transform = QtGui.QTransform(view.transform())
+        scroll_values = {"horizontal": 417, "vertical": 263}
+        view.horizontalScrollBar = lambda: SimpleNamespace(
+            value=lambda: scroll_values["horizontal"],
+            setValue=lambda value: scroll_values.__setitem__("horizontal", value),
+        )
+        view.verticalScrollBar = lambda: SimpleNamespace(
+            value=lambda: scroll_values["vertical"],
+            setValue=lambda value: scroll_values.__setitem__("vertical", value),
+        )
+        initial_scroll_values = (
+            view.horizontalScrollBar().value(),
+            view.verticalScrollBar().value(),
+        )
+        for view_m11 in (0.50, 0.54, 0.56, 1.0, 2.0, 0.54) * 3:
+            view._update_tile_coverage(view_m11)
+            if view._visible_frame_request_id is not None:
+                request_id, frame_options = view._rendering_service.frame_calls[-1]
+                frame_options["callback"](
+                    RenderResult(
+                        request_id,
+                        True,
+                        _visible_frame_result_image(frame_options),
+                        None,
+                    )
+                )
+            self.assertEqual(view._background_item.scenePos(), page_pos)
+            self.assertEqual(view._background_item.sceneBoundingRect(), page_rect)
+            self.assertEqual(view._scene.sceneRect(), scene_rect)
+            self.assertEqual(view.transform(), view_transform)
+            self.assertEqual(
+                (
+                    view.horizontalScrollBar().value(),
+                    view.verticalScrollBar().value(),
+                ),
+                initial_scroll_values,
+            )
+            self.assertEqual(
+                view._visible_frame_item is not None,
+                view_m11 > 0.54,
+            )
+            if view._visible_frame_item is not None:
+                self.assertEqual(view._visible_frame_item.scenePos(), page_pos)
+                self.assertTrue(
+                    page_rect.contains(view._visible_frame_item.sceneBoundingRect())
+                )
+
+    def test_mismatched_import_metadata_uses_native_geometry_across_zoom_cycles(self):
+        view = _visible_frame_lifecycle_view(
+            source_size=(240.0, 160.0),
+            stored_size=(280.0, 200.0),
+        )
+        view._base_raster_scale = 1.0
+        view._update_optional_base_coverage = lambda _view_m11, _generation_id: None
+        page_rect = QtCore.QRectF(view._background_item.sceneBoundingRect())
+        self.assertEqual(page_rect, QtCore.QRectF(0.0, 0.0, 480.0, 320.0))
+        self.assertNotEqual(page_rect.size(), QtCore.QSizeF(560.0, 400.0))
+        _, context_width, context_height = view._current_page_scene_context()
+        self.assertEqual((context_width, context_height), (480.0, 320.0))
+        marker = view._scene.addRect(QtCore.QRectF(96.0, 64.0, 24.0, 16.0))
+        marker_rect = QtCore.QRectF(marker.sceneBoundingRect())
+        scroll_values = {"horizontal": 193, "vertical": 127}
+        view.horizontalScrollBar = lambda: SimpleNamespace(
+            value=lambda: scroll_values["horizontal"]
+        )
+        view.verticalScrollBar = lambda: SimpleNamespace(
+            value=lambda: scroll_values["vertical"]
+        )
+        initial_scroll_values = (
+            view.horizontalScrollBar().value(),
+            view.verticalScrollBar().value(),
+        )
+        for view_m11 in (0.50, 0.54, 0.56, 1.0, 2.0, 0.54) * 3:
+            view._update_tile_coverage(view_m11)
+            if view._visible_frame_request_id is not None:
+                request_id, frame_options = view._rendering_service.frame_calls[-1]
+                self.assertLessEqual(
+                    frame_options["frame_x_pts"] + frame_options["frame_w_pts"],
+                    240.0,
+                )
+                self.assertLessEqual(
+                    frame_options["frame_y_pts"] + frame_options["frame_h_pts"],
+                    160.0,
+                )
+                frame_options["callback"](
+                    RenderResult(
+                        request_id,
+                        True,
+                        _visible_frame_result_image(frame_options),
+                        None,
+                    )
+                )
+            self.assertEqual(view._background_item.sceneBoundingRect(), page_rect)
+            self.assertEqual(marker.sceneBoundingRect(), marker_rect)
+            self.assertEqual(
+                (
+                    view.horizontalScrollBar().value(),
+                    view.verticalScrollBar().value(),
+                ),
+                initial_scroll_values,
+            )
+            if view._visible_frame_item is not None:
+                self.assertTrue(
+                    page_rect.contains(view._visible_frame_item.sceneBoundingRect())
+                )
+
+    def test_high_dpi_visible_frame_changes_sampling_not_logical_geometry(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene_scale = 2.0
+        standard_context = _visible_frame_context("base")
+        high_dpi_context = dict(standard_context)
+        high_dpi_context["scale"] = standard_context["scale"] * 2.0
+        standard = QtGui.QImage(101, 83, QtGui.QImage.Format.Format_ARGB32)
+        high_dpi = QtGui.QImage(202, 166, QtGui.QImage.Format.Format_ARGB32)
+        high_dpi.setDevicePixelRatio(2.0)
+        standard_rect = view._visible_frame_local_rect(standard_context, standard)
+        high_dpi_rect = view._visible_frame_local_rect(high_dpi_context, high_dpi)
+        standard_item = TileGraphicsItem(
+            standard,
+            standard_rect,
+            QtCore.QRectF(0.0, 0.0, 101.0, 83.0),
+        )
+        high_dpi_item = TileGraphicsItem(
+            high_dpi,
+            high_dpi_rect,
+            QtCore.QRectF(0.0, 0.0, 202.0, 166.0),
+        )
+        self.assertEqual(high_dpi.devicePixelRatio(), 2.0)
+        self.assertEqual(high_dpi_rect, standard_rect)
+        self.assertEqual(high_dpi_item.boundingRect(), standard_item.boundingRect())
+
+    def test_stale_visible_frame_cannot_replace_current_geometry(self):
+        view = _visible_frame_lifecycle_view()
+        view._base_raster_scale = 1.0
+        view._update_tile_coverage(0.56)
+        stale_request_id, stale_options = view._rendering_service.frame_calls[-1]
+        view._viewport_scene_rect = QtCore.QRectF(50.0, 50.0, 50.0, 50.0)
+        view._update_tile_coverage(2.0)
+        current_request_id, current_options = view._rendering_service.frame_calls[-1]
+        stale_options["callback"](
+            RenderResult(
+                stale_request_id,
+                True,
+                _visible_frame_result_image(stale_options),
+                None,
+            )
+        )
+        self.assertIsNone(view._visible_frame_item)
+        current_image = _visible_frame_result_image(current_options)
+        current_options["callback"](
+            RenderResult(
+                current_request_id,
+                True,
+                current_image,
+                None,
+            )
+        )
+        self.assertEqual(
+            view._visible_frame_item.sceneBoundingRect(),
+            view._visible_frame_local_rect(current_options, current_image),
+        )
+        self.assertTrue(
+            view._background_item.sceneBoundingRect().contains(
+                view._visible_frame_item.sceneBoundingRect()
+            )
+        )
 
     def test_visible_frame_placement_uses_renderer_half_pixel_origin(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)

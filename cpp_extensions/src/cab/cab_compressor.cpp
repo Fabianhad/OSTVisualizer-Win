@@ -8,27 +8,119 @@
 #include <fdi.h>
 #include <filesystem>
 #include <cstring>
+#include <functional>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
 namespace nb = nanobind;
 namespace ost_cab
 {
+    static bool decode_multibyte(
+        const char *value,
+        UINT code_page,
+        DWORD flags,
+        std::wstring &decoded)
+    {
+        if (!value)
+            return false;
+        const int size = static_cast<int>(std::strlen(value));
+        if (size == 0)
+        {
+            decoded.clear();
+            return true;
+        }
+        const int required = MultiByteToWideChar(
+            code_page, flags, value, size, nullptr, 0);
+        if (required <= 0)
+            return false;
+        decoded.resize(required);
+        return MultiByteToWideChar(
+                   code_page, flags, value, size, decoded.data(), required) == required;
+    }
+
+    static bool decode_utf8(const char *value, std::wstring &decoded)
+    {
+        return decode_multibyte(value, CP_UTF8, MB_ERR_INVALID_CHARS, decoded);
+    }
+
+    static bool encode_utf8(const std::wstring &value, std::string &encoded)
+    {
+        if (value.empty())
+        {
+            encoded.clear();
+            return true;
+        }
+        const int required = WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            value.data(),
+            static_cast<int>(value.size()),
+            nullptr,
+            0,
+            nullptr,
+            nullptr);
+        if (required <= 0)
+            return false;
+        encoded.resize(required);
+        return WideCharToMultiByte(
+                   CP_UTF8,
+                   WC_ERR_INVALID_CHARS,
+                   value.data(),
+                   static_cast<int>(value.size()),
+                   encoded.data(),
+                   required,
+                   nullptr,
+                   nullptr) == required;
+    }
+
+    static bool decode_cab_member(
+        const char *value,
+        USHORT attributes,
+        std::wstring &decoded)
+    {
+        if (attributes & _A_NAME_IS_UTF)
+            return decode_utf8(value, decoded);
+        return decode_multibyte(value, CP_ACP, 0, decoded);
+    }
+
+    static bool split_utf8_path(
+        const std::string &path,
+        std::string &directory,
+        std::string &filename)
+    {
+        std::wstring wide_path;
+        if (!decode_utf8(path.c_str(), wide_path))
+            return false;
+        const std::filesystem::path filesystem_path(wide_path);
+        std::wstring wide_directory = filesystem_path.parent_path().wstring();
+        if (wide_directory.empty())
+            wide_directory = std::filesystem::current_path().wstring();
+        if (!wide_directory.empty() && wide_directory.back() != L'\\' &&
+            wide_directory.back() != L'/')
+            wide_directory += L'\\';
+        return encode_utf8(wide_directory, directory) &&
+               encode_utf8(filesystem_path.filename().wstring(), filename);
+    }
+
     static INT_PTR open_file(const char *path, int oflag)
     {
+        std::wstring wide_path;
+        if (!decode_utf8(path, wide_path))
+        {
+            SetLastError(ERROR_NO_UNICODE_TRANSLATION);
+            return -1;
+        }
         DWORD access = (oflag & _O_RDWR) ? (GENERIC_READ | GENERIC_WRITE) : (oflag & _O_WRONLY) ? GENERIC_WRITE
                                                                                                 : GENERIC_READ;
         DWORD disp = (oflag & _O_CREAT) ? CREATE_ALWAYS : OPEN_EXISTING;
-        HANDLE h = CreateFileA(path, access, FILE_SHARE_READ, nullptr,
+        HANDLE h = CreateFileW(wide_path.c_str(), access, FILE_SHARE_READ, nullptr,
                                disp, FILE_ATTRIBUTE_NORMAL, nullptr);
         return (h == INVALID_HANDLE_VALUE) ? -1 : (INT_PTR)h;
     }
-    static INT_PTR open_file_ro(const char *path)
+    static INT_PTR open_file_wo(const std::wstring &path)
     {
-        HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        return (h == INVALID_HANDLE_VALUE) ? -1 : (INT_PTR)h;
-    }
-    static INT_PTR open_file_wo(const char *path)
-    {
-        HANDLE h = CreateFileA(path, GENERIC_WRITE, 0, nullptr,
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         return (h == INVALID_HANDLE_VALUE) ? -1 : (INT_PTR)h;
     }
@@ -84,7 +176,8 @@ namespace ost_cab
     }
     static FNFCIDELETE(fci_delete)
     {
-        if (!DeleteFileA(pszFile))
+        std::wstring wide_path;
+        if (!decode_utf8(pszFile, wide_path) || !DeleteFileW(wide_path.c_str()))
         {
             *err = (int)GetLastError();
             return -1;
@@ -102,14 +195,19 @@ namespace ost_cab
     }
     static FNFCIGETTEMPFILE(fci_get_temp_file)
     {
-        char tp[MAX_PATH], tf[MAX_PATH];
-        GetTempPathA(MAX_PATH, tp);
-        if (!GetTempFileNameA(tp, "fci", 0, tf))
+        wchar_t temp_path[MAX_PATH], temp_file[MAX_PATH];
+        if (!GetTempPathW(MAX_PATH, temp_path) ||
+            !GetTempFileNameW(temp_path, L"fci", 0, temp_file))
             return FALSE;
-        if (strlen(tf) >= (size_t)cbTempName)
+        std::string encoded_temp_file;
+        if (!encode_utf8(temp_file, encoded_temp_file) ||
+            encoded_temp_file.size() >= static_cast<size_t>(cbTempName))
+        {
+            DeleteFileW(temp_file);
             return FALSE;
-        strcpy_s(pszTempName, cbTempName, tf);
-        DeleteFileA(tf);
+        }
+        strcpy_s(pszTempName, cbTempName, encoded_temp_file.c_str());
+        DeleteFileW(temp_file);
         return TRUE;
     }
     static FNFCISTATUS(fci_status)
@@ -129,8 +227,14 @@ namespace ost_cab
     }
     static FNFCIGETOPENINFO(fci_get_open_info)
     {
+        std::wstring wide_name;
+        if (!decode_utf8(pszName, wide_name))
+        {
+            *err = ERROR_NO_UNICODE_TRANSLATION;
+            return -1;
+        }
         WIN32_FILE_ATTRIBUTE_DATA fad = {};
-        if (GetFileAttributesExA(pszName, GetFileExInfoStandard, &fad))
+        if (GetFileAttributesExW(wide_name.c_str(), GetFileExInfoStandard, &fad))
         {
             FILETIME lft;
             FileTimeToLocalFileTime(&fad.ftLastWriteTime, &lft);
@@ -147,7 +251,8 @@ namespace ost_cab
             *ptime = 0;
             *pattribs = 0;
         }
-        INT_PTR h = open_file_ro(pszName);
+        *pattribs |= _A_NAME_IS_UTF;
+        INT_PTR h = open_file(pszName, _O_RDONLY);
         if (h == -1)
         {
             *err = (int)GetLastError();
@@ -185,10 +290,12 @@ namespace ost_cab
                                                                                     : FILE_END;
         return (long)SetFilePointer((HANDLE)hf, dist, nullptr, method);
     }
+    using ExtractionDirectory = std::reference_wrapper<const std::wstring>;
+    using MemberNames = std::reference_wrapper<std::vector<std::string>>;
+
     struct FdiContext
     {
-        const std::string *output_dir;
-        std::vector<std::string> *names;
+        std::variant<ExtractionDirectory, MemberNames> destination;
         bool success = true;
     };
     static FNFDINOTIFY(fdi_notify)
@@ -198,17 +305,28 @@ namespace ost_cab
         {
         case fdintCOPY_FILE:
         {
-            if (!ctx->output_dir)
+            std::wstring member_name;
+            if (!decode_cab_member(pfdin->psz1, pfdin->attribs, member_name))
             {
-                if (ctx->names)
-                    ctx->names->push_back(pfdin->psz1);
+                ctx->success = false;
+                return -1;
+            }
+            if (auto *names = std::get_if<MemberNames>(&ctx->destination))
+            {
+                std::string encoded_member_name;
+                if (!encode_utf8(member_name, encoded_member_name))
+                {
+                    ctx->success = false;
+                    return -1;
+                }
+                names->get().push_back(std::move(encoded_member_name));
                 return 0;
             }
-            std::string out = *ctx->output_dir;
-            if (!out.empty() && out.back() != '\\' && out.back() != '/')
-                out += '\\';
-            out += pfdin->psz1;
-            INT_PTR h = open_file_wo(out.c_str());
+            const auto &output_dir =
+                std::get<ExtractionDirectory>(ctx->destination).get();
+            std::filesystem::path out(output_dir);
+            out /= member_name;
+            INT_PTR h = open_file_wo(out.wstring());
             if (h == -1)
             {
                 ctx->success = false;
@@ -235,7 +353,14 @@ namespace ost_cab
             archive_names.reserve(input_files.size());
             for (const auto &fp : input_files)
             {
-                archive_names.push_back(std::filesystem::path(fp).filename().string());
+                std::wstring wide_path;
+                std::string filename;
+                if (!decode_utf8(fp.c_str(), wide_path) ||
+                    !encode_utf8(
+                        std::filesystem::path(wide_path).filename().wstring(),
+                        filename))
+                    return false;
+                archive_names.push_back(std::move(filename));
             }
             return create_cab_with_names(input_files, archive_names, output_file);
         }
@@ -246,14 +371,10 @@ namespace ost_cab
         {
             if (source_files.size() != archive_names.size())
                 return false;
-            std::filesystem::path out(output_file);
-            std::string cab_name = out.filename().string();
-            std::filesystem::path dir = out.parent_path();
-            if (dir.empty())
-                dir = std::filesystem::current_path();
-            std::string cab_dir = dir.string();
-            if (!cab_dir.empty() && cab_dir.back() != '\\' && cab_dir.back() != '/')
-                cab_dir += '\\';
+            std::string cab_dir;
+            std::string cab_name;
+            if (!split_utf8_path(output_file, cab_dir, cab_name))
+                return false;
             if (cab_name.size() >= CB_MAX_CABINET_NAME)
                 return false;
             if (cab_dir.size() >= CB_MAX_CAB_PATH)
@@ -302,14 +423,16 @@ namespace ost_cab
                                   cpuUNKNOWN, &erf);
             if (!hfdi)
                 return false;
-            std::filesystem::path cp(cab_file);
-            std::string cab_path = cp.parent_path().string();
-            if (!cab_path.empty() && cab_path.back() != '\\' && cab_path.back() != '/')
-                cab_path += '\\';
-            std::string cab_name = cp.filename().string();
-            FdiContext ctx;
-            ctx.output_dir = &output_dir;
-            ctx.names = nullptr;
+            std::string cab_path;
+            std::string cab_name;
+            std::wstring wide_output_dir;
+            if (!split_utf8_path(cab_file, cab_path, cab_name) ||
+                !decode_utf8(output_dir.c_str(), wide_output_dir))
+            {
+                FDIDestroy(hfdi);
+                return false;
+            }
+            FdiContext ctx{std::cref(wide_output_dir)};
             BOOL ok = FDICopy(hfdi,
                               const_cast<char *>(cab_name.c_str()),
                               const_cast<char *>(cab_path.c_str()),
@@ -326,19 +449,21 @@ namespace ost_cab
                                   cpuUNKNOWN, &erf);
             if (!hfdi)
                 return names;
-            std::filesystem::path cp(cab_file);
-            std::string cab_path = cp.parent_path().string();
-            if (!cab_path.empty() && cab_path.back() != '\\' && cab_path.back() != '/')
-                cab_path += '\\';
-            std::string cab_name = cp.filename().string();
-            FdiContext ctx;
-            ctx.output_dir = nullptr;
-            ctx.names = &names;
-            FDICopy(hfdi,
-                    const_cast<char *>(cab_name.c_str()),
-                    const_cast<char *>(cab_path.c_str()),
-                    0, fdi_notify, nullptr, &ctx);
+            std::string cab_path;
+            std::string cab_name;
+            if (!split_utf8_path(cab_file, cab_path, cab_name))
+            {
+                FDIDestroy(hfdi);
+                return names;
+            }
+            FdiContext ctx{std::ref(names)};
+            const BOOL ok = FDICopy(hfdi,
+                                    const_cast<char *>(cab_name.c_str()),
+                                    const_cast<char *>(cab_path.c_str()),
+                                    0, fdi_notify, nullptr, &ctx);
             FDIDestroy(hfdi);
+            if (!ok || !ctx.success)
+                names.clear();
             return names;
         }
     };

@@ -85,10 +85,6 @@ namespace ost_renderer
         void add_mesh(const MeshData &mesh);
         Box3 get_bounds() const;
         bool empty() const { return meshes_.empty(); }
-        // Attach the owning renderer's GL context so scene mutations
-        // (clear / add_mesh) can make that context current before making
-        // GL calls. Safe to leave unattached for default-constructed
-        // scenes — guards become no-ops and the current context is used.
         void attach_gl_context(void *hdc, void *hglrc);
         struct GLMesh
         {
@@ -127,7 +123,6 @@ namespace ost_renderer
         Renderer(const Renderer &) = delete;
         Renderer &operator=(const Renderer &) = delete;
         void render();
-        // Native viewport, render-target, and pick coordinates are physical pixels.
         void resize(int width_px, int height_px);
         void shutdown();
         void suspend();

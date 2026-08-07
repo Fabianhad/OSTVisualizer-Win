@@ -1,6 +1,8 @@
+import struct
 import tempfile
 import unittest
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
 from PySide6 import QtWidgets
 from ost_visualizer.application.services.import_service import ImportService
@@ -38,6 +40,27 @@ class FakeImporter:
             ("ost_mutation", source_path, target_path, project_uid, recorder)
         )
         return {"bid_uids": {"source": "target"}}
+
+
+class InspectingImporter(FakeImporter):
+    def __init__(self):
+        super().__init__()
+        self.imported_image_contents = []
+
+    def _record_imported_image(self, source_path):
+        root = ET.parse(source_path).getroot()
+        image_path = next(root.iter("BidPage")).get("ImagePath")
+        self.imported_image_contents.append(Path(image_path).read_bytes())
+
+    def import_ost(self, source_path, target_path, project_uid=None):
+        self._record_imported_image(source_path)
+        return super().import_ost(source_path, target_path, project_uid)
+
+    def import_ost_mutation(self, source_path, target_path, project_uid, recorder):
+        self._record_imported_image(source_path)
+        return super().import_ost_mutation(
+            source_path, target_path, project_uid, recorder
+        )
 
 
 class FakeOspCab:
@@ -179,6 +202,54 @@ def _write_packaged_image(tmp_path: Path, member_name: str, content: bytes) -> P
     return path
 
 
+def _write_legacy_ansi_cab(path: Path, members: list[tuple[str, bytes]]) -> None:
+    """Write the uncompressed CAB shape emitted by legacy OST on Windows."""
+    file_entries = []
+    folder_data = bytearray()
+    for member_name, content in members:
+        encoded_name = member_name.encode("cp1252")
+        file_entries.append(
+            struct.pack(
+                "<IIHHHH",
+                len(content),
+                len(folder_data),
+                0,
+                0,
+                0,
+                0,
+            )
+            + encoded_name
+            + b"\0"
+        )
+        folder_data.extend(content)
+    if len(folder_data) > 32768:
+        raise ValueError("minimal CAB fixture exceeds one uncompressed data block")
+    file_table = b"".join(file_entries)
+    files_offset = 36 + 8
+    data_offset = files_offset + len(file_table)
+    data_block = (
+        struct.pack("<IHH", 0, len(folder_data), len(folder_data)) + folder_data
+    )
+    header = struct.pack(
+        "<4sIIIIIBBHHHHH",
+        b"MSCF",
+        0,
+        data_offset + len(data_block),
+        0,
+        files_offset,
+        0,
+        3,
+        1,
+        1,
+        len(members),
+        0,
+        12345,
+        0,
+    )
+    folder = struct.pack("<IHH", data_offset, 1, 0)
+    path.write_bytes(header + folder + file_table + data_block)
+
+
 class ImportRefreshFlowTests(unittest.TestCase):
     def test_import_service_can_import_without_refreshing_or_publishing(self):
         importer = FakeImporter()
@@ -243,6 +314,104 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self.assertEqual(importer.calls[0][0], "ost_mutation")
         self.assertEqual(importer.calls[0][2:], ("target.sql", "project-1", recorder))
         self.assertFalse(fake_cab.root.exists())
+
+    def test_osp_imports_legacy_ansi_members_from_unicode_archive_path(self):
+        project_name = "26-061 412 – Corporate Lot K, KS"
+        ost_member = f"{project_name}.ost"
+        image_member = (
+            "TempImages!.tmp\\1 Estimates through 1-12-2015\\2026\\"
+            f"{project_name}\\01. Drawings\\A0-0.0.pdf"
+        )
+        source_image_path = (
+            "Q:\\1 Estimates through 1-12-2015\\2026\\"
+            f"{project_name}\\01. Drawings\\A0-0.0.pdf"
+        )
+        ost_xml = _write_osp_page_xml_text(source_image_path).encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            osp_path = tmp_path / f"{project_name}.osp"
+            _write_legacy_ansi_cab(
+                osp_path,
+                [(ost_member, ost_xml), (image_member, b"%PDF-1.4 fixture")],
+            )
+            self.assertEqual(
+                list(osp_importer_module.ost_cab.list_cab(str(osp_path))),
+                [ost_member, image_member],
+            )
+            working_dir = tmp_path / "working"
+            original_working_dir = osp_importer_module.get_default_working_dir
+            osp_importer_module.get_default_working_dir = lambda: working_dir
+            try:
+                mdb_importer = InspectingImporter()
+                self.assertTrue(
+                    OspImporter(mdb_importer).import_osp(
+                        str(osp_path), "target.mdb", "project-1"
+                    )
+                )
+                sql_importer = InspectingImporter()
+                recorder = object()
+                self.assertEqual(
+                    OspImporter(sql_importer).import_osp_mutation(
+                        str(osp_path), "target.sql", "project-1", recorder
+                    ),
+                    {"bid_uids": {"source": "target"}},
+                )
+            finally:
+                osp_importer_module.get_default_working_dir = original_working_dir
+            self.assertEqual(
+                mdb_importer.imported_image_contents[0], b"%PDF-1.4 fixture"
+            )
+            self.assertEqual(
+                sql_importer.imported_image_contents[0], b"%PDF-1.4 fixture"
+            )
+            self.assertEqual(mdb_importer.calls[0][0], "ost")
+            self.assertEqual(sql_importer.calls[0][0], "ost_mutation")
+
+    def test_invalid_osp_stops_before_mdb_or_sql_import_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            osp_path = Path(tmp) / "invalid – package.osp"
+            _write_legacy_ansi_cab(osp_path, [("not-a-project.txt", b"invalid")])
+            importer = FakeImporter()
+            osp_importer = OspImporter(importer)
+            with self.assertLogs(osp_importer_module.logger, level="ERROR"):
+                self.assertFalse(
+                    osp_importer.import_osp(str(osp_path), "target.mdb", "project-1")
+                )
+            with self.assertRaisesRegex(ValueError, "exactly one top-level .ost file"):
+                osp_importer.import_osp_mutation(
+                    str(osp_path), "target.sql", "project-1", object()
+                )
+            self.assertEqual(importer.calls, [])
+
+    def test_native_cab_round_trip_preserves_utf8_paths_and_member_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source_path = tmp_path / "source – drawing.pdf"
+            source_path.write_bytes(b"%PDF-1.4 unicode")
+            osp_path = tmp_path / "export – project.osp"
+            member_name = "TempImages!.tmp\\source – drawing.pdf"
+            self.assertTrue(
+                osp_importer_module.ost_cab.create_cab_with_names(
+                    [str(source_path)], [member_name], str(osp_path)
+                )
+            )
+            self.assertEqual(
+                list(osp_importer_module.ost_cab.list_cab(str(osp_path))),
+                [member_name],
+            )
+            extract_path = tmp_path / "extracted – project"
+            (extract_path / "TempImages!.tmp").mkdir(parents=True)
+            self.assertTrue(
+                osp_importer_module.ost_cab.extract_cab(
+                    str(osp_path), str(extract_path)
+                )
+            )
+            self.assertEqual(
+                (
+                    extract_path / "TempImages!.tmp" / "source – drawing.pdf"
+                ).read_bytes(),
+                b"%PDF-1.4 unicode",
+            )
 
     def test_osp_import_rejects_unsafe_cab_member_paths_before_extraction(self):
         unsafe_names = (

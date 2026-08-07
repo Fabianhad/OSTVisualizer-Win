@@ -118,8 +118,12 @@ class ZoomHandlerMixin:
         scene_scale = self._scene_scale
         if page is None or scene_scale <= 0.0:
             return None
-        width = page.effective_width_pts * scene_scale
-        height = page.effective_height_pts * scene_scale
+        width_pts = float(self._pdf_width_pts or page.width_pts or 0.0)
+        height_pts = float(self._pdf_height_pts or page.height_pts or 0.0)
+        if self._current_rotation in (90, 270):
+            width_pts, height_pts = height_pts, width_pts
+        width = width_pts * scene_scale
+        height = height_pts * scene_scale
         if width <= 0.0 or height <= 0.0:
             return None
         return page, width, height

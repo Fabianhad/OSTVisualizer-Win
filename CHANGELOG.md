@@ -29,6 +29,9 @@
 
 ### Fixed
 
+- Fixed OSP imports and exports with non-ASCII Windows paths or CAB member
+  names, including original On-Screen Takeoff packages that store member names
+  in the Windows ANSI encoding.
 - Fixed startup and recovery bid restoration traversing the navigation
   state machine without first projecting its loaded-file stage, which could
   leave page navigation state stale and log invalid-transition warnings.
@@ -68,6 +71,10 @@
   only one view available; the remaining view now opens without redundant tabs.
 - Fixed repeated page-scale changes shifting the visible plan viewport by one
   pixel per refresh at affected viewport sizes and zoom levels.
+- Fixed Plan View PDF scale changes while zooming when imported page dimensions
+  disagree with the PDF page box; low- and high-resolution layers now use the
+  native PDF geometry across render scales and display pixel ratios without
+  changing viewport scroll state.
 - Fixed rotated oval annotations exporting to PDF with axis-aligned, distorted
   dimensions, and prevented thick oval strokes from being clipped flat at the
   appearance bounds.

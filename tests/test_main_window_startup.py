@@ -7,9 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6 import QtCore, QtWidgets
-
 from ost_visualizer.config.di_config import configure_application
 from ost_visualizer.infrastructure.logging.logger_factory import LoggerFactory
 from ost_visualizer.presentation.main_window import MainWindow
@@ -49,7 +47,6 @@ class MainWindowStartupTests(unittest.TestCase):
                 container = configure_application(log_dir=app_data_dir / "logs")
                 controller = container.get("app_controller")
                 window = MainWindow(controller)
-
                 self.assertIs(window.app_controller, controller)
                 self.assertIsInstance(window.ui_access_manager, UIAccessManager)
                 self.assertIs(
