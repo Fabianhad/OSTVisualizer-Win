@@ -45,10 +45,13 @@ from ....visualization.pdf import ost_pdf
 from ....visualization.pdf.pdfium_lock import pdfium_lock
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
+    HighlightGraphicsItem,
     build_dimension_path,
+    build_highlight_path,
     create_dimension_text_item,
 )
 from ....visualization.pdf.renderers.annotation_renderer import (
+    HIGHLIGHT_OPACITY,
     calculate_dimension_geometry,
     create_cloud_path_points,
 )
@@ -841,10 +844,12 @@ class PlacementModeMixin:
             )
             return
         if annotation_type == ANNOTATION_TYPE_HIGHLIGHT:
-            item = QGraphicsPathItem()
-            item.setPath(path)
+            highlight_path = build_highlight_path(
+                [(rect.left(), rect.top()), (rect.right(), rect.bottom())]
+            )
+            item = HighlightGraphicsItem(highlight_path)
             highlight_color = QColor(color)
-            highlight_color.setAlphaF(0.3)
+            highlight_color.setAlphaF(HIGHLIGHT_OPACITY)
             item.setPen(QPen(Qt.PenStyle.NoPen))
             item.setBrush(QBrush(highlight_color))
             item.setZValue(15)

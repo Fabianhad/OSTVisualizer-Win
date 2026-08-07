@@ -679,23 +679,14 @@ namespace ost_pdf_writer
         QPDFObjectHandle annots = get_or_create_annots(page_dict);
         for (const auto &highlight_data : highlights)
         {
-            std::vector<std::vector<std::array<double, 2>>> strokes;
-            for (const auto &stroke : highlight_data.strokes)
-            {
-                if (stroke.size() >= 2)
-                {
-                    strokes.push_back(stroke);
-                }
-            }
-            if (strokes.empty())
+            if (highlight_data.paths.empty())
             {
                 continue;
             }
             BluebeamHighlight highlight;
-            highlight.strokes = strokes;
+            highlight.paths = highlight_data.paths;
             highlight.color = highlight_data.color;
-            highlight.width = std::max(1.0, highlight_data.width);
-            highlight.opacity = highlight_data.opacity;
+            highlight.opacity = std::clamp(highlight_data.opacity, 0.0, 1.0);
             highlight.content = highlight_data.content;
             std::string annot_dict_str = generate_bluebeam_highlight_dict(highlight);
             QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
@@ -703,7 +694,7 @@ namespace ost_pdf_writer
             QPDFObjectHandle gs = QPDFObjectHandle::newDictionary();
             gs.replaceKey("/Type", QPDFObjectHandle::newName("/ExtGState"));
             gs.replaceKey("/BM", QPDFObjectHandle::newName("/Multiply"));
-            gs.replaceKey("/CA", QPDFObjectHandle::newReal(highlight.opacity));
+            gs.replaceKey("/CA", QPDFObjectHandle::newReal(1.0));
             gs.replaceKey("/ca", QPDFObjectHandle::newReal(highlight.opacity));
             QPDFObjectHandle ext_gstate = QPDFObjectHandle::newDictionary();
             ext_gstate.replaceKey("/R0", gs);
@@ -831,35 +822,62 @@ namespace ost_pdf_writer
             return false;
         }
     }
-    std::vector<std::array<double, 4>> PDFWriter::get_page_sizes(const std::string &pdf_path)
+    static bool read_page_box(QPDFPageObjectHelper &page,
+                              const char *key,
+                              std::array<double, 4> &box)
     {
-        std::vector<std::array<double, 4>> sizes;
+        QPDFObjectHandle value = page.getAttribute(key, false);
+        if (!value.isArray() || value.getArrayNItems() < 4)
+            return false;
+        double x1 = value.getArrayItem(0).getNumericValue();
+        double y1 = value.getArrayItem(1).getNumericValue();
+        double x2 = value.getArrayItem(2).getNumericValue();
+        double y2 = value.getArrayItem(3).getNumericValue();
+        box = {std::min(x1, x2), std::min(y1, y2),
+               std::max(x1, x2), std::max(y1, y2)};
+        return box[2] > box[0] && box[3] > box[1];
+    }
+    std::vector<PDFWriter::PDFPageGeometryData> PDFWriter::get_page_geometries(
+        const std::string &pdf_path)
+    {
+        std::vector<PDFPageGeometryData> geometries;
         try
         {
             QPDF qpdf;
             qpdf.processFile(pdf_path.c_str());
-            std::vector<QPDFPageObjectHelper> pages = QPDFPageDocumentHelper(qpdf).getAllPages();
+            auto pages = QPDFPageDocumentHelper(qpdf).getAllPages();
+            geometries.reserve(pages.size());
             for (auto &page : pages)
             {
-                QPDFObjectHandle media_box = page.getAttribute("/MediaBox", false);
-                if (!media_box.isArray() || media_box.getArrayNItems() < 4)
+                PDFPageGeometryData geometry;
+                if (!read_page_box(page, "/MediaBox", geometry.media_box))
                 {
-                    sizes.push_back({0.0, 0.0, 0.0, 0.0});
+                    geometries.push_back(geometry);
                     continue;
                 }
-                double llx = media_box.getArrayItem(0).getNumericValue();
-                double lly = media_box.getArrayItem(1).getNumericValue();
-                double urx = media_box.getArrayItem(2).getNumericValue();
-                double ury = media_box.getArrayItem(3).getNumericValue();
-                double width = urx - llx;
-                double height = ury - lly;
-                sizes.push_back({width, height, llx, lly});
+                if (!read_page_box(page, "/CropBox", geometry.crop_box))
+                    geometry.crop_box = geometry.media_box;
+                geometry.visible_box = {
+                    std::max(geometry.media_box[0], geometry.crop_box[0]),
+                    std::max(geometry.media_box[1], geometry.crop_box[1]),
+                    std::min(geometry.media_box[2], geometry.crop_box[2]),
+                    std::min(geometry.media_box[3], geometry.crop_box[3])};
+                if (geometry.visible_box[2] <= geometry.visible_box[0] ||
+                    geometry.visible_box[3] <= geometry.visible_box[1])
+                    geometry.visible_box = geometry.media_box;
+                QPDFObjectHandle rotate = page.getAttribute("/Rotate", false);
+                if (rotate.isInteger())
+                {
+                    int value = rotate.getIntValueAsInt();
+                    geometry.rotation = ((value % 360) + 360) % 360;
+                }
+                geometries.push_back(geometry);
             }
         }
         catch (const std::exception &e)
         {
-            set_error(std::string("Failed to get page sizes: ") + e.what());
+            set_error(std::string("Failed to get page geometries: ") + e.what());
         }
-        return sizes;
+        return geometries;
     }
 }

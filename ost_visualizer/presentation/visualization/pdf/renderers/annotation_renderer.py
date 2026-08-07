@@ -1,5 +1,5 @@
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from .....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
     ANNOTATION_TYPE_CLOUD,
@@ -23,6 +23,116 @@ Segment = Tuple[float, float, float, float]
 CLOUD_SCALLOP_MIN_RADIUS = 15.0
 CLOUD_SCALLOP_MAX_RADIUS = 50.0
 CLOUD_SCALLOP_SIZE_SCALE = 0.25
+HIGHLIGHT_OPACITY = 1.0
+_BLUEBEAM_HIGHLIGHT_CURVE_DIVISOR = 4.2426
+
+
+def highlight_position_coordinates(position: Sequence[float]) -> List[float]:
+    coordinate_count = len(position) - len(position) % 2
+    if coordinate_count < 4:
+        return []
+    return list(position[:coordinate_count])
+
+
+def _normal_from_line(p1: Point, p2: Point, length: float) -> Point:
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    line_length = math.hypot(dx, dy)
+    if line_length == 0.0:
+        return p1
+    return (
+        p1[0] + length * dy / line_length,
+        p1[1] - length * dx / line_length,
+    )
+
+
+def _ordered_highlight_quad(points: List[Point]) -> Tuple[Point, Point, Point, Point]:
+    center_x = sum(point[0] for point in points) / 4.0
+    center_y = sum(point[1] for point in points) / 4.0
+    boundary = sorted(
+        points,
+        key=lambda point: math.atan2(point[1] - center_y, point[0] - center_x),
+    )
+    first_axis = math.hypot(
+        boundary[1][0] - boundary[0][0],
+        boundary[1][1] - boundary[0][1],
+    ) + math.hypot(
+        boundary[3][0] - boundary[2][0],
+        boundary[3][1] - boundary[2][1],
+    )
+    second_axis = math.hypot(
+        boundary[2][0] - boundary[1][0],
+        boundary[2][1] - boundary[1][1],
+    ) + math.hypot(
+        boundary[0][0] - boundary[3][0],
+        boundary[0][1] - boundary[3][1],
+    )
+    if first_axis >= second_axis:
+        return boundary[0], boundary[1], boundary[3], boundary[2]
+    return boundary[1], boundary[2], boundary[0], boundary[3]
+
+
+def canonical_highlight_quads(
+    points: List[Point],
+) -> List[Tuple[Point, Point, Point, Point]]:
+    if len(points) < 2:
+        return []
+    if len(points) == 2:
+        min_x = min(point[0] for point in points)
+        max_x = max(point[0] for point in points)
+        min_y = min(point[1] for point in points)
+        max_y = max(point[1] for point in points)
+        return [((min_x, min_y), (max_x, min_y), (min_x, max_y), (max_x, max_y))]
+    if len(points) % 4 != 0:
+        return []
+    groups = [points[index : index + 4] for index in range(0, len(points), 4)]
+    quads = []
+    for group in groups:
+        quads.append(_ordered_highlight_quad(group))
+    return quads
+
+
+def calculate_highlight_quad_path(
+    quad: Tuple[Point, Point, Point, Point],
+) -> Tuple[Point, Point, Point, Point, Point, Point, Point, Point]:
+    top_left, top_right, bottom_left, bottom_right = quad
+    curve_normal = (
+        math.hypot(
+            top_left[0] - bottom_left[0],
+            top_left[1] - bottom_left[1],
+        )
+        / _BLUEBEAM_HIGHLIGHT_CURVE_DIVISOR
+    )
+    right_control_1 = _normal_from_line(
+        _normal_from_line(top_right, top_left, -curve_normal),
+        top_right,
+        curve_normal,
+    )
+    right_control_2 = _normal_from_line(
+        _normal_from_line(bottom_right, bottom_left, curve_normal),
+        bottom_right,
+        -curve_normal,
+    )
+    left_control_1 = _normal_from_line(
+        _normal_from_line(bottom_left, bottom_right, -curve_normal),
+        bottom_left,
+        curve_normal,
+    )
+    left_control_2 = _normal_from_line(
+        _normal_from_line(top_left, top_right, curve_normal),
+        top_left,
+        -curve_normal,
+    )
+    return (
+        top_left,
+        top_right,
+        right_control_1,
+        right_control_2,
+        bottom_right,
+        bottom_left,
+        left_control_1,
+        left_control_2,
+    )
 
 
 def create_cloud_path_points(
@@ -201,11 +311,17 @@ def calculate_annotation_geometry(
                 for i in range(0, len(tx_position) - 1, 2)
             ]
         result["points"] = points
-    elif anno_type in (
-        ANNOTATION_TYPE_OVAL,
-        ANNOTATION_TYPE_RECT,
-        ANNOTATION_TYPE_HIGHLIGHT,
-    ):
+    elif anno_type == ANNOTATION_TYPE_HIGHLIGHT:
+        coordinates = highlight_position_coordinates(position)
+        if coordinates:
+            tx_coords = transform_func(coordinates)
+            result["highlight"] = {
+                "points": [
+                    (tx_coords[i], tx_coords[i + 1])
+                    for i in range(0, len(tx_coords) - 1, 2)
+                ]
+            }
+    elif anno_type in (ANNOTATION_TYPE_OVAL, ANNOTATION_TYPE_RECT):
         if len(position) >= 4:
             has_rotation = len(position) % 2 == 1
             n_coords = len(position) - 1 if has_rotation else len(position)

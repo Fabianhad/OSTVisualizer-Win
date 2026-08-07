@@ -59,6 +59,7 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer
     CLOUD_SCALLOP_SIZE_SCALE,
     calculate_annotation_geometry,
     calculate_cloud_scallop_radius,
+    calculate_highlight_quad_path,
     create_cloud_path_points,
     format_dimension_distance,
 )
@@ -903,10 +904,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         highlights = exporter._collect_highlights("p1", [annotation], _page_info())
         self.assertEqual(len(highlights), 1)
         self.assertEqual(
-            highlights[0].strokes,
-            [[[10.0, 752.0], [110.0, 752.0]]],
+            [highlights[0].paths[0][index] for index in (0, 1, 5, 4)],
+            [[10.0, 772.0], [110.0, 772.0], [10.0, 732.0], [110.0, 732.0]],
         )
-        self.assertAlmostEqual(highlights[0].width, 40.0)
+        self.assertEqual(len(highlights[0].paths[0]), 8)
         self.assertEqual(highlights[0].color, [255, 255, 0])
         self.assertAlmostEqual(highlights[0].opacity, 1.0)
 
@@ -924,10 +925,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         highlights = exporter._collect_highlights("p1", [annotation], _page_info())
         self.assertEqual(len(highlights), 1)
         self.assertEqual(
-            highlights[0].strokes,
-            [[[10.0, 752.0], [110.0, 752.0]]],
+            [highlights[0].paths[0][index] for index in (0, 1, 5, 4)],
+            [[10.0, 772.0], [110.0, 772.0], [10.0, 732.0], [110.0, 732.0]],
         )
-        self.assertAlmostEqual(highlights[0].width, 40.0)
 
     def test_dimension_label_style_persists_to_bid_dimensions_font_columns(self):
         conn = sqlite3.connect(":memory:")
@@ -1925,31 +1925,40 @@ class BidDimensionAnnotationTests(unittest.TestCase):
     def test_native_pdf_export_writes_highlight_annotation_fields(self):
         pdf_text = self._write_native_pdf(highlights=[self._native_highlight()])
         highlight_block = self._annot_block_by_subject(pdf_text, "Highlight")
-        self.assertIn("/Subtype /Ink", highlight_block)
+        self.assertIn("/Subtype /Highlight", highlight_block)
         self.assertIn("/BM /Multiply", highlight_block)
-        self.assertIn("/InkList [ [ 10 65 120 65 ] ]", highlight_block)
-        self.assertIn("/Rect [ -17 38 147 92 ]", highlight_block)
+        self.assertIn("/QuadPoints [ 10 90 120 90 10 40 120 40 ]", highlight_block)
         self.assertIn("/C [ 1 1 0 ]", highlight_block)
-        self.assertIn("/BS << /S /S /Type /Border /W 50 >>", highlight_block)
+        self.assertIn("/CA 1", highlight_block)
         self.assertIn("/NM (", highlight_block)
         self.assertIn("/AP <<", highlight_block)
-        self.assertNotIn("/QuadPoints", highlight_block)
+        self.assertNotIn("/InkList", highlight_block)
+        self.assertNotIn("/BS <<", highlight_block)
+        rect = self._array_values(highlight_block, "Rect")
         ap_block = self._ap_block_for_annotation(pdf_text, highlight_block)
+        bbox = self._array_values(ap_block, "BBox")
+        self._assert_ap_rect_bbox_and_matrix_match(rect, bbox, ap_block)
         self.assertIn("/BM /Multiply", ap_block)
         self.assertIn("/CA 1", ap_block)
+        self.assertIn("/ca 1", ap_block)
         stream_text = self._stream_text(ap_block)
         self.assertIn("/R0 gs", stream_text)
-        self.assertIn("1 1 0 RG", stream_text)
-        self.assertIn("50 w 1 j 1 J", stream_text)
-        self.assertIn("10 65 m 120 65 l S", stream_text)
+        self.assertIn("1 1 0 rg", stream_text)
+        self.assertIn("10 90 m 120 90 l", stream_text)
+        self.assertEqual(stream_text.count(" c "), 2)
+        self.assertIn(" c f ", stream_text)
+        self.assertNotIn(" S", stream_text)
 
     def test_native_pdf_export_highlights_on_multiple_pages_reference_their_pages(self):
         first = self._blank_page(400.0, 300.0)
         first.highlights = [self._native_highlight()]
         second = self._blank_page(500.0, 350.0)
         second_highlight = self._native_highlight()
-        second_highlight.strokes = [[[20.0, 100.0], [140.0, 100.0]]]
-        second_highlight.width = 40.0
+        second_highlight.paths = [
+            calculate_highlight_quad_path(
+                ((20.0, 120.0), (140.0, 120.0), (20.0, 80.0), (140.0, 80.0))
+            )
+        ]
         second.highlights = [second_highlight]
         pdf_text = self._write_native_pdf_pages([first, second])
         page_to_annots = self._page_annotation_refs(pdf_text)
@@ -1957,7 +1966,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         for page_object, annot_objects in page_to_annots.items():
             self.assertEqual(len(annot_objects), 1)
             annot_block = self._object_block(pdf_text, annot_objects[0])
-            self.assertIn("/Subtype /Ink", annot_block)
+            self.assertIn("/Subtype /Highlight", annot_block)
             self.assertIn("/BM /Multiply", annot_block)
             self.assertRegex(annot_block, rf"/P\s+{page_object}\s+0\s+R")
 
@@ -2187,9 +2196,12 @@ class BidDimensionAnnotationTests(unittest.TestCase):
 
     def _native_highlight(self):
         highlight = ost_pdf_writer.HighlightAnnotationData()
-        highlight.strokes = [[[10.0, 65.0], [120.0, 65.0]]]
+        highlight.paths = [
+            calculate_highlight_quad_path(
+                ((10.0, 90.0), (120.0, 90.0), (10.0, 40.0), (120.0, 40.0))
+            )
+        ]
         highlight.color = [255, 255, 0]
-        highlight.width = 50.0
         highlight.opacity = 1.0
         highlight.content = ""
         return highlight

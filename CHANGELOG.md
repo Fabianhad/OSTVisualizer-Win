@@ -71,10 +71,13 @@
   only one view available; the remaining view now opens without redundant tabs.
 - Fixed repeated page-scale changes shifting the visible plan viewport by one
   pixel per refresh at affected viewport sizes and zoom levels.
-- Fixed Plan View PDF scale changes while zooming when imported page dimensions
-  disagree with the PDF page box; low- and high-resolution layers now use the
-  native PDF geometry across render scales and display pixel ratios without
-  changing viewport scroll state.
+- Fixed Plan View and PDF export scale mismatches when imported page dimensions
+  disagree with the PDF page box; rendering and exported overlays now use the
+  native PDF geometry without changing viewport scroll state.
+- Fixed Highlights in Plan View, placement previews, and PDF export to use their
+  full stored color with multiply compositing and fill-only geometry; Plan View
+  keeps square ends while exported annotations remain editable Bluebeam-style
+  Highlights with curved appearances.
 - Fixed rotated oval annotations exporting to PDF with axis-aligned, distorted
   dimensions, and prevented thick oval strokes from being clipped flat at the
   appearance bounds.

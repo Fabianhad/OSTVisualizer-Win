@@ -24,12 +24,14 @@ from ....visualization.core.geometry.takeoff_geometry import compute_line_angle
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
     build_dimension_path,
+    build_highlight_path,
     create_dimension_text_item,
     update_dimension_text_item,
 )
 from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_geometry,
     create_cloud_path_points,
+    highlight_position_coordinates,
 )
 from .geometry_utils import polygon_is_valid, signed_area
 from .graphics_items import DIMENSION_LABEL_ITEM_KIND, ClippedTextGraphicsItem
@@ -659,7 +661,24 @@ class DragHandlerMixin:
                 )
             if not is_body:
                 tx = cs.transform_vertices_to_2d([bx1, by1, bx2, by2])
-                self._rebuild_ann_shape_path(atype, uid, tx[0], tx[1], tx[2], tx[3])
+                highlight_points = None
+                if atype == ANNOTATION_TYPE_HIGHLIGHT:
+                    highlight_tx = cs.transform_vertices_to_2d(
+                        highlight_position_coordinates(new_pos)
+                    )
+                    highlight_points = [
+                        (highlight_tx[index], highlight_tx[index + 1])
+                        for index in range(0, len(highlight_tx) - 1, 2)
+                    ]
+                self._rebuild_ann_shape_path(
+                    atype,
+                    uid,
+                    tx[0],
+                    tx[1],
+                    tx[2],
+                    tx[3],
+                    highlight_points,
+                )
         elif (
             atype in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD)
             and len(new_pos) >= 4
@@ -741,17 +760,24 @@ class DragHandlerMixin:
                 item.setPolygon(polygon)
                 return
 
-    def _rebuild_ann_shape_path(self, atype, uid, x1, y1, x2, y2):
+    def _rebuild_ann_shape_path(
+        self, atype, uid, x1, y1, x2, y2, highlight_points=None
+    ):
         items = self._uid_to_items.get(uid, [])
         if not items:
             return
         main = items[0]
         rect = QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
         if isinstance(main, QGraphicsPathItem):
-            new_path = QPainterPath()
+            if atype == ANNOTATION_TYPE_HIGHLIGHT:
+                new_path = build_highlight_path(
+                    highlight_points or [(x1, y1), (x2, y2)]
+                )
+            else:
+                new_path = QPainterPath()
             if atype == ANNOTATION_TYPE_OVAL:
                 new_path.addEllipse(rect)
-            else:
+            elif atype != ANNOTATION_TYPE_HIGHLIGHT:
                 new_path.addRect(rect)
             main.setPos(0.0, 0.0)
             main.setPath(new_path)

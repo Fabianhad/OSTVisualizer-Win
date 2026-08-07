@@ -207,17 +207,15 @@ namespace ost_pdf_writer
     std::string generate_text_appearance_stream(const BluebeamText &text);
     struct BluebeamHighlight
     {
-        std::vector<std::vector<std::array<double, 2>>> strokes;
+        std::vector<std::array<std::array<double, 2>, 8>> paths;
         std::array<uint8_t, 3> color;
-        double width;
         double opacity;
         std::string content;
         std::string author;
         std::string created_date;
         BluebeamHighlight()
             : color{255, 255, 0},
-              width(12.0),
-              opacity(0.3),
+              opacity(1.0),
               author("OST Visualizer") {}
     };
     std::string generate_bluebeam_highlight_dict(const BluebeamHighlight &highlight);

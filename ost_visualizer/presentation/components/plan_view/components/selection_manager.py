@@ -33,6 +33,8 @@ from .....domain.entities.named_view import named_view_edit_position
 from ....modes.cursor import CURSOR_MODE_SELECT
 from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_segments,
+    canonical_highlight_quads,
+    highlight_position_coordinates,
 )
 from .geometry_utils import (
     HandleInfo,
@@ -831,7 +833,22 @@ class SelectionManagerMixin:
         atype = ann.annotation_type
         if atype == ANNOTATION_TYPE_NAMED_VIEW:
             return named_view_edit_position(pos)
-        if atype in (ANNOTATION_TYPE_RECT, ANNOTATION_TYPE_HIGHLIGHT) and len(pos) >= 8:
+        if atype == ANNOTATION_TYPE_HIGHLIGHT and len(pos) >= 8:
+            coordinates = highlight_position_coordinates(pos)
+            points = [
+                (coordinates[index], coordinates[index + 1])
+                for index in range(0, len(coordinates), 2)
+            ]
+            quads = canonical_highlight_quads(points)
+            if len(quads) == 1:
+                top_left, top_right, bottom_left, bottom_right = quads[0]
+                return [
+                    *top_left,
+                    *top_right,
+                    *bottom_right,
+                    *bottom_left,
+                ]
+        if atype == ANNOTATION_TYPE_RECT and len(pos) >= 8:
             return [pos[0], pos[1], pos[6], pos[7], pos[2], pos[3], pos[4], pos[5]]
         if atype == ANNOTATION_TYPE_OVAL and len(pos) >= 4:
             geometry = ann.get_oval_geometry_ost()

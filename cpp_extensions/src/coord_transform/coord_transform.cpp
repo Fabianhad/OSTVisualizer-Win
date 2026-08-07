@@ -80,8 +80,6 @@ namespace ost_coord
         double scale_factor1, double scale_factor2,
         int rotation,
         bool flip_x, bool flip_y,
-        double coord_scale_x, double coord_scale_y,
-        bool is_page_rotated, bool auto_rotate_180,
         double coord_offset_x, double coord_offset_y)
     {
         size_t len = ost_position.size();
@@ -102,8 +100,6 @@ namespace ost_coord
             final_width_units = pdf_width_pts * units_per_point;
             final_height_units = pdf_height_pts * units_per_point;
         }
-        double actual_width = pdf_width_pts * coord_scale_x;
-        double actual_height = pdf_height_pts * coord_scale_y;
         std::vector<Vec2> vertices;
         vertices.reserve(len / 2);
         for (size_t i = 0; i + 1 < len; i += 2)
@@ -119,19 +115,6 @@ namespace ost_coord
                 ost_rotation,
                 pdf_width_pts, pdf_height_pts,
                 points_per_unit);
-            pdf_x *= coord_scale_x;
-            pdf_y *= coord_scale_y;
-            if (is_page_rotated)
-            {
-                double orig_x = pdf_x;
-                pdf_x = pdf_y;
-                pdf_y = actual_width - orig_x;
-            }
-            if (auto_rotate_180)
-            {
-                pdf_x = actual_width - pdf_x;
-                pdf_y = actual_height - pdf_y;
-            }
             pdf_x += coord_offset_x;
             pdf_y += coord_offset_y;
             vertices.push_back({pdf_x, pdf_y});

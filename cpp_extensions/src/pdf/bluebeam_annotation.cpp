@@ -1537,11 +1537,84 @@ namespace ost_pdf_writer
         oss << "ET Q";
         return oss.str();
     }
+    static double cubic_value(double p0, double p1, double p2, double p3, double t)
+    {
+        double inverse = 1.0 - t;
+        return inverse * inverse * inverse * p0 +
+               3.0 * inverse * inverse * t * p1 +
+               3.0 * inverse * t * t * p2 +
+               t * t * t * p3;
+    }
+    static void include_cubic_extrema(double p0, double p1, double p2, double p3,
+                                      double &minimum, double &maximum)
+    {
+        double a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+        double b = 3.0 * p0 - 6.0 * p1 + 3.0 * p2;
+        double c = -3.0 * p0 + 3.0 * p1;
+        constexpr double epsilon = 1e-12;
+        if (std::abs(a) < epsilon)
+        {
+            if (std::abs(b) < epsilon)
+                return;
+            double t = -c / (2.0 * b);
+            if (t > 0.0 && t < 1.0)
+            {
+                double value = cubic_value(p0, p1, p2, p3, t);
+                minimum = std::min(minimum, value);
+                maximum = std::max(maximum, value);
+            }
+            return;
+        }
+        double discriminant = 4.0 * b * b - 12.0 * a * c;
+        if (discriminant < 0.0)
+            return;
+        double root = std::sqrt(discriminant);
+        for (double t : {(-2.0 * b + root) / (6.0 * a),
+                         (-2.0 * b - root) / (6.0 * a)})
+        {
+            if (t > 0.0 && t < 1.0)
+            {
+                double value = cubic_value(p0, p1, p2, p3, t);
+                minimum = std::min(minimum, value);
+                maximum = std::max(maximum, value);
+            }
+        }
+    }
+    static void include_highlight_curve(
+        const std::array<double, 2> &p0,
+        const std::array<double, 2> &p1,
+        const std::array<double, 2> &p2,
+        const std::array<double, 2> &p3,
+        std::array<double, 4> &bounds)
+    {
+        bounds[0] = std::min({bounds[0], p0[0], p3[0]});
+        bounds[1] = std::min({bounds[1], p0[1], p3[1]});
+        bounds[2] = std::max({bounds[2], p0[0], p3[0]});
+        bounds[3] = std::max({bounds[3], p0[1], p3[1]});
+        include_cubic_extrema(p0[0], p1[0], p2[0], p3[0], bounds[0], bounds[2]);
+        include_cubic_extrema(p0[1], p1[1], p2[1], p3[1], bounds[1], bounds[3]);
+    }
     std::array<double, 4> compute_highlight_rect(const BluebeamHighlight &highlight)
     {
-        auto bb = compute_bbox_strokes(highlight.strokes);
-        double padding = highlight.width / 2.0 + 2.0;
-        return {bb[0] - padding, bb[1] - padding, bb[2] + padding, bb[3] + padding};
+        if (highlight.paths.empty())
+            return {0.0, 0.0, 0.0, 0.0};
+        const auto &first = highlight.paths.front();
+        std::array<double, 4> bounds{first[0][0], first[0][1], first[0][0], first[0][1]};
+        for (const auto &path : highlight.paths)
+        {
+            for (const auto &point : {path[0], path[1], path[4], path[5]})
+            {
+                bounds[0] = std::min(bounds[0], point[0]);
+                bounds[1] = std::min(bounds[1], point[1]);
+                bounds[2] = std::max(bounds[2], point[0]);
+                bounds[3] = std::max(bounds[3], point[1]);
+            }
+            include_highlight_curve(path[1], path[2], path[3], path[4], bounds);
+            include_highlight_curve(path[5], path[6], path[7], path[0], bounds);
+        }
+        for (double &value : bounds)
+            value = std::round(value * 1000000.0) / 1000000.0;
+        return bounds;
     }
     std::string generate_bluebeam_highlight_dict(const BluebeamHighlight &highlight)
     {
@@ -1551,8 +1624,9 @@ namespace ost_pdf_writer
         std::string pdf_date = highlight.created_date.empty() ? generate_pdf_date() : highlight.created_date;
         std::string nm = generate_nm();
         oss << "<<\n";
+        oss << std::setprecision(12);
         oss << "/BM /Multiply\n";
-        oss << "/BS << /S /S /Type /Border /W " << highlight.width << " >>\n";
+        oss << "/CA " << highlight.opacity << "\n";
         oss << "/C [ " << r << " " << g << " " << b << " ]\n";
         if (!highlight.content.empty())
         {
@@ -1560,22 +1634,21 @@ namespace ost_pdf_writer
         }
         oss << "/CreationDate (" << pdf_date << ")\n";
         oss << "/F 4\n";
-        oss << "/InkList [ ";
-        for (const auto &stroke : highlight.strokes)
+        oss << "/QuadPoints [ ";
+        for (const auto &path : highlight.paths)
         {
-            oss << "[ ";
-            for (const auto &point : stroke)
+            for (size_t index : {size_t(0), size_t(1), size_t(5), size_t(4)})
             {
+                const auto &point = path[index];
                 oss << point[0] << " " << point[1] << " ";
             }
-            oss << "] ";
         }
         oss << "]\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
         oss << "/Rect [ " << rect[0] << " " << rect[1] << " " << rect[2] << " " << rect[3] << " ]\n";
         oss << "/Subj (Highlight)\n";
-        oss << "/Subtype /Ink\n";
+        oss << "/Subtype /Highlight\n";
         oss << "/T (" << escape_pdf_string(highlight.author) << ")\n";
         oss << "/Type /Annot\n";
         oss << ">>";
@@ -1585,27 +1658,20 @@ namespace ost_pdf_writer
     {
         auto [r, g, b] = color_to_rgb(highlight.color);
         std::ostringstream oss;
+        oss << std::setprecision(12);
         oss << "/R0 gs ";
-        oss << r << " " << g << " " << b << " RG ";
-        oss << highlight.width << " w 1 j 1 J ";
-        for (const auto &stroke : highlight.strokes)
+        oss << r << " " << g << " " << b << " rg ";
+        for (const auto &path : highlight.paths)
         {
-            if (stroke.empty())
-                continue;
-            bool first = true;
-            for (const auto &point : stroke)
-            {
-                if (first)
-                {
-                    oss << point[0] << " " << point[1] << " m ";
-                    first = false;
-                }
-                else
-                {
-                    oss << point[0] << " " << point[1] << " l ";
-                }
-            }
-            oss << "S ";
+            oss << path[0][0] << " " << path[0][1] << " m ";
+            oss << path[1][0] << " " << path[1][1] << " l ";
+            oss << path[2][0] << " " << path[2][1] << " "
+                << path[3][0] << " " << path[3][1] << " "
+                << path[4][0] << " " << path[4][1] << " c ";
+            oss << path[5][0] << " " << path[5][1] << " l ";
+            oss << path[6][0] << " " << path[6][1] << " "
+                << path[7][0] << " " << path[7][1] << " "
+                << path[0][0] << " " << path[0][1] << " c f ";
         }
         return oss.str();
     }

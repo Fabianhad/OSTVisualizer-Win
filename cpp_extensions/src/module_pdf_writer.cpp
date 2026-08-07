@@ -169,18 +169,22 @@ NB_MODULE(ost_pdf_writer, m)
             .def_rw("text_align", &PDFWriter::TextAnnotationData::text_align,
                     "Text alignment: 'left', 'center', or 'right'");
         nb::class_<PDFWriter::HighlightAnnotationData>(m, "HighlightAnnotationData",
-                                                       "Data for a Bluebeam-style ink highlighter annotation")
+                                                       "Data for a PDF Highlight annotation with canonical filled paths")
             .def(nb::init<>())
-            .def_rw("strokes", &PDFWriter::HighlightAnnotationData::strokes,
-                    "List of highlighter stroke paths, each a list of (x, y) coordinates in PDF points")
+            .def_rw("paths", &PDFWriter::HighlightAnnotationData::paths,
+                    "Canonical Highlight paths as q0, q1, right controls, q3, q2, left controls")
             .def_rw("color", &PDFWriter::HighlightAnnotationData::color,
                     "RGB highlight color as [r, g, b] (0-255)")
-            .def_rw("width", &PDFWriter::HighlightAnnotationData::width,
-                    "Highlighter stroke width in PDF points")
             .def_rw("opacity", &PDFWriter::HighlightAnnotationData::opacity,
                     "Highlight opacity from 0.0 to 1.0")
             .def_rw("content", &PDFWriter::HighlightAnnotationData::content,
                     "Optional highlight contents text");
+        nb::class_<PDFWriter::PDFPageGeometryData>(m, "PDFPageGeometryData",
+                                                   "Native PDF page boxes and intrinsic rotation")
+            .def_ro("media_box", &PDFWriter::PDFPageGeometryData::media_box)
+            .def_ro("crop_box", &PDFWriter::PDFPageGeometryData::crop_box)
+            .def_ro("visible_box", &PDFWriter::PDFPageGeometryData::visible_box)
+            .def_ro("rotation", &PDFWriter::PDFPageGeometryData::rotation);
         nb::class_<PDFWriter::PageExportData>(m, "PageExportData",
                                               "Data for exporting a single page with takeoffs")
             .def(nb::init<>())
@@ -367,23 +371,9 @@ Example:
     if writer.merge_pages_with_annotations([page1], "merged.pdf"):
         print("Pages merged successfully")
 )doc")
-            .def("get_page_sizes", &PDFWriter::get_page_sizes,
+            .def("get_page_geometries", &PDFWriter::get_page_geometries,
                  nb::arg("pdf_path"),
-                 R"doc(
-Get the actual page sizes and MediaBox origins from a PDF file using QPDF.
-Returns the true visible dimensions (urx-llx, ury-lly) and the page origin
-(llx, lly), which are needed for correct coordinate transformations.
-Args:
-    pdf_path: Path to the PDF file
-Returns:
-    List of [width, height, llx, lly] arrays for each page in the PDF,
-    where width = urx - llx and height = ury - lly from the /MediaBox entry.
-Example:
-    writer = PDFWriter()
-    sizes = writer.get_page_sizes("plan.pdf")
-    for i, s in enumerate(sizes):
-        print(f"Page {i}: {s[0]}x{s[1]} points, origin ({s[2]}, {s[3]})")
-)doc")
+                 "Get inherited MediaBox, CropBox, clipped visible box, and /Rotate for every page")
             .def("get_last_error", &PDFWriter::get_last_error,
                  "Get the last error message from a failed operation");
         m.attr("__version__") = "1.0.0";

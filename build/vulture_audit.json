@@ -1,6 +1,6 @@
 {
-  "audit_date": "2026-08-06",
-  "repository_head": "9156946ee65ce5086dec1300d17078e87a6e2a8a",
+  "audit_date": "2026-08-07",
+  "repository_head": "d82d2b8857d536af80f8b884c4f9566dcbeec198",
   "vulture_version": "2.14",
   "scope": "ost_visualizer",
   "runs": [
@@ -8,19 +8,19 @@
       "minimum_confidence": 100,
       "exit_code": 0,
       "finding_count": 0,
-      "raw_output": "build/vulture_100.txt"
+      "raw_output": null
     },
     {
       "minimum_confidence": 80,
       "exit_code": 0,
       "finding_count": 0,
-      "raw_output": "build/vulture_80.txt"
+      "raw_output": null
     },
     {
       "minimum_confidence": 60,
       "exit_code": 3,
-      "finding_count": 185,
-      "raw_output": "build/vulture_60.txt",
+      "finding_count": 182,
+      "raw_output": null,
       "exit_code_note": "Vulture returns 3 when findings are present."
     }
   ],
@@ -101,6 +101,37 @@
       "removed_findings": [],
       "changed_classifications": [],
       "evidence": "The 60-percent finding set exactly matches build/vulture_60.txt. Only integration tests and temporary build evidence changed during this pass, and Vulture reports no production additions at 80 or 100 percent confidence."
+    },
+    {
+      "audit_date": "2026-08-07",
+      "reason": "Cleanup audit of the native PDF geometry and Highlight export worktree",
+      "cache_policy": "Unchanged categories were reused, while every modified Python production file and every changed-worktree finding was rechecked against callers, tests, and native bindings.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 182
+        }
+      ],
+      "new_findings": [],
+      "removed_findings": [
+        "PageRenderInfo.coord_scale_x",
+        "PageRenderInfo.coord_scale_y",
+        "PageRenderInfo.is_page_rotated",
+        "PageRenderInfo.auto_rotate_180"
+      ],
+      "changed_classifications": [],
+      "evidence": "The four removed TypedDict fields belonged only to the superseded stored-dimension scaling path. Current changed-worktree findings are dictionary protocol fields or nanobind assignments verified below."
     }
   ],
   "changed_worktree_relevant_findings": [
@@ -118,15 +149,27 @@
     },
     {
       "symbol": "PageExportData.is_blank assignments",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:469,473",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:492,496",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads the assigned field. Observable assertions exist in tests/test_pdf_overlay_export.py and native validation tests."
     },
     {
       "symbol": "OvalAnnotationData axis assignments",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1084-1087",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1076-1079",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads x_axis_dx, x_axis_dy, y_axis_dx, and y_axis_dy. tests/test_pdf_oval_export.py verifies the values and rendered geometry."
+    },
+    {
+      "symbol": "PageRenderInfo.coord_offset_x/coord_offset_y",
+      "location": "ost_visualizer/domain/dtos/page_render_info_dto.py:13-14",
+      "classification": "dictionary protocol fields",
+      "evidence": "PDFExporter writes the native visible-box origin under these keys and OSTCoordinateSystem reads them by key for CropBox-aware export coordinates."
+    },
+    {
+      "symbol": "InkAnnotationData.strokes assignment",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1139",
+      "classification": "native binding contract",
+      "evidence": "The nanobind PDF writer reads strokes for ordinary /Ink annotations; Highlight export now uses its separate typed paths field. Native annotation tests verify /Ink remains unchanged."
     }
   ],
   "remaining_60_percent_categories": [
@@ -196,6 +239,20 @@
         "reason": "Historical API-surface regression test introduced in commit a681b5da; it intentionally verifies that ConfigService exposes only the canonical write methods."
       }
     ],
-    "affected_worktree_has_getattr_hasattr_setattr_delattr_vars": false
+    "affected_worktree": {
+      "production_dynamic_access": [],
+      "retained_test_dynamic_access": [
+        {
+          "symbol": "PdfOvalCollectionTests.assertSameGeometry getattr",
+          "location": "tests/test_pdf_oval_export.py:124",
+          "reason": "Parameterized comparison of the six typed nanobind geometry fields."
+        },
+        {
+          "symbol": "NativePdfOvalAppearanceTests setattr",
+          "location": "tests/test_pdf_oval_export.py:543",
+          "reason": "Parameterized invalid-value coverage of the typed nanobind oval fields."
+        }
+      ]
+    }
   }
 }

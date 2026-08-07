@@ -4196,17 +4196,21 @@ class AnnotationPlacementTests(unittest.TestCase):
                 view.update_annotation_place_preview(QtCore.QPointF(13.0, 14.0))
                 paths = _preview_paths(view)
                 self.assertEqual(len(paths), 1)
-                self.assertEqual(
-                    paths[0].path().boundingRect(),
-                    QtCore.QRectF(1, 2, 12, 12),
-                )
+                drag_bounds = QtCore.QRectF(1, 2, 12, 12)
+                if annotation_type == "highlight":
+                    self.assertTrue(
+                        paths[0].path().boundingRect().contains(drag_bounds)
+                    )
+                else:
+                    self.assertEqual(paths[0].path().boundingRect(), drag_bounds)
                 if annotation_type == "text":
                     self.assertEqual(
                         paths[0].pen().style(), QtCore.Qt.PenStyle.DashLine
                     )
                 elif annotation_type == "highlight":
                     self.assertEqual(paths[0].pen().style(), QtCore.Qt.PenStyle.NoPen)
-                    self.assertGreater(paths[0].brush().color().alpha(), 0)
+                    self.assertEqual(paths[0].brush().color().alpha(), 255)
+                    self.assertFalse(_path_has_curve(paths[0].path()))
                 else:
                     self.assertEqual(
                         paths[0].pen().style(), QtCore.Qt.PenStyle.SolidLine

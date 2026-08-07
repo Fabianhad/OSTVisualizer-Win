@@ -117,11 +117,22 @@ namespace ost_pdf_writer
         };
         struct HighlightAnnotationData
         {
-            std::vector<std::vector<std::array<double, 2>>> strokes;
+            std::vector<std::array<std::array<double, 2>, 8>> paths;
             std::array<uint8_t, 3> color;
-            double width;
             double opacity;
             std::string content;
+        };
+        struct PDFPageGeometryData
+        {
+            std::array<double, 4> media_box;
+            std::array<double, 4> crop_box;
+            std::array<double, 4> visible_box;
+            int rotation;
+            PDFPageGeometryData()
+                : media_box{0.0, 0.0, 0.0, 0.0},
+                  crop_box{0.0, 0.0, 0.0, 0.0},
+                  visible_box{0.0, 0.0, 0.0, 0.0},
+                  rotation(0) {}
         };
         struct PageExportData
         {
@@ -146,7 +157,7 @@ namespace ost_pdf_writer
         bool merge_pages_with_annotations(const std::vector<PageExportData> &pages,
                                           const std::string &output_pdf);
         std::string get_last_error() const { return last_error_; }
-        std::vector<std::array<double, 4>> get_page_sizes(const std::string &pdf_path);
+        std::vector<PDFPageGeometryData> get_page_geometries(const std::string &pdf_path);
 
     private:
         std::string last_error_;

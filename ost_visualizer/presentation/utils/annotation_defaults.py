@@ -147,7 +147,6 @@ def set_annotation_styles_by_tool(
 
 
 def apply_config_owned_annotation_defaults(config: Config) -> None:
-    """Project durable creation defaults into the runtime annotation palette."""
     text = resolve_font_definition(config.default_text_font)
     set_annotation_style_for_tool(
         ANNOTATION_TYPE_TEXT,

@@ -12,7 +12,6 @@ def _font_traits(font: QtGui.QFont) -> tuple[int, bool]:
 
 
 def lossless_font_styles(family: str) -> tuple[str, ...]:
-    """Return styles exactly representable by family/bold/italic columns."""
     styles: list[str] = []
     for style_name in QtGui.QFontDatabase.styles(family):
         candidate = QtGui.QFontDatabase.font(family, style_name, 12)

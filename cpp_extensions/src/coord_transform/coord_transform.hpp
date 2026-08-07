@@ -37,7 +37,5 @@ namespace ost_coord
         double scale_factor1, double scale_factor2,
         int rotation,
         bool flip_x, bool flip_y,
-        double coord_scale_x, double coord_scale_y,
-        bool is_page_rotated, bool auto_rotate_180,
         double coord_offset_x, double coord_offset_y);
 }

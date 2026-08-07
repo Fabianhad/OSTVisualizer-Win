@@ -10,9 +10,5 @@ class PageRenderInfo(TypedDict, total=False):
     width: float
     height: float
     view_scale: float
-    coord_scale_x: float
-    coord_scale_y: float
     coord_offset_x: float
     coord_offset_y: float
-    is_page_rotated: bool
-    auto_rotate_180: bool

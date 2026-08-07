@@ -254,7 +254,16 @@ def _pdf_page_sizes(pdf_bytes: bytes):
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_path = Path(tmpdir) / "embedded.pdf"
         pdf_path.write_bytes(pdf_bytes)
-        return ost_pdf_writer.PDFWriter().get_page_sizes(str(pdf_path))
+        geometries = ost_pdf_writer.PDFWriter().get_page_geometries(str(pdf_path))
+        return [
+            [
+                geometry.visible_box[2] - geometry.visible_box[0],
+                geometry.visible_box[3] - geometry.visible_box[1],
+                geometry.visible_box[0],
+                geometry.visible_box[1],
+            ]
+            for geometry in geometries
+        ]
 
 
 class _ProjectData:

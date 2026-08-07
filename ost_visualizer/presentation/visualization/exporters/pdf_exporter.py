@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import tempfile
+from dataclasses import replace
 from typing import Any, Dict, List, Optional
 from PySide6.QtCore import QMarginsF, QRectF, QSizeF
 from PySide6.QtGui import (
@@ -64,19 +65,23 @@ from ..core.geometry.takeoff_geometry import (
     compute_straight_linear_vertices,
 )
 from ..pdf.page_cache import PageCache
-from ..pdf.renderers.annotation_renderer import format_dimension_distance
+from ..pdf.renderers.annotation_renderer import (
+    HIGHLIGHT_OPACITY,
+    calculate_highlight_quad_path,
+    canonical_highlight_quads,
+    format_dimension_distance,
+    highlight_position_coordinates,
+)
 from ..pdf.services.composite_renderer import CompositeRenderer
 from . import ost_pdf_writer
 
 logger = logging.getLogger(__name__)
 _PDF_RENDER_SCALE = 2.0
-_ROTATION_ASPECT_THRESHOLD = 0.5
 _AREA_CONDITION_TYPE = 1
 _LINEAR_CONDITION_TYPE = 0
 _COUNT_CONDITION_TYPE = 2
 _ATTACHMENT_CONDITION_TYPE = 3
 _DEFAULT_FILL_OPACITY = 0.5
-_DEFAULT_HIGHLIGHT_OPACITY = 1.0
 _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
 _OVERLAY_DIRECT_FULL_PAGE_TOLERANCE_POINTS = 3.0
@@ -330,10 +335,12 @@ class PDFExporter:
     def _create_overlay_rect_background_pdf(
         self, page: Page, page_info: PageRenderInfo, temp_dir: str
     ) -> Optional[str]:
-        image = self._render_positioned_overlay_background(page)
+        image = self._render_positioned_overlay_background(page, page_info)
         return self._write_raster_background_pdf(image, page_info, temp_dir, "overlay")
 
-    def _render_positioned_overlay_background(self, page: Page) -> Optional[QImage]:
+    def _render_positioned_overlay_background(
+        self, page: Page, page_info: PageRenderInfo
+    ) -> Optional[QImage]:
         if not page.overlay_image_path:
             return None
         if page.overlay_units_per_sheet_inch is None:
@@ -348,11 +355,18 @@ class PDFExporter:
             return None
         if overlay.width() <= 0 or overlay.height() <= 0:
             return None
-        canvas_w = max(1, int(round(page.effective_width_pts * _PDF_RENDER_SCALE)))
-        canvas_h = max(1, int(round(page.effective_height_pts * _PDF_RENDER_SCALE)))
+        export_page = self._page_with_export_geometry(page, page_info)
+        canvas_w = max(
+            1, int(round(export_page.effective_width_pts * _PDF_RENDER_SCALE))
+        )
+        canvas_h = max(
+            1, int(round(export_page.effective_height_pts * _PDF_RENDER_SCALE))
+        )
         result = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32)
         result.fill(0xFFFFFFFF)
-        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_canvas(canvas_w, canvas_h)
+        rect_x, rect_y, rect_w, rect_h = export_page.overlay_rect_canvas(
+            canvas_w, canvas_h
+        )
         if rect_w <= 0.0 or rect_h <= 0.0:
             return result
         transform = QTransform()
@@ -398,14 +412,23 @@ class PDFExporter:
     def _create_composite_background_pdf(
         self, page: Page, page_info: PageRenderInfo, temp_dir: str
     ) -> Optional[str]:
+        export_page = self._page_with_export_geometry(page, page_info)
         image = self._export_composite_renderer.render_composite(
-            page,
+            export_page,
             bid_ref=None,
             render_scale=_PDF_RENDER_SCALE,
             raster_rotation=0,
         )
         return self._write_raster_background_pdf(
             image, page_info, temp_dir, "composite"
+        )
+
+    @staticmethod
+    def _page_with_export_geometry(page: Page, page_info: PageRenderInfo) -> Page:
+        return replace(
+            page,
+            width_pts=float(page_info["width"]),
+            height_pts=float(page_info["height"]),
         )
 
     def _create_image_source_background_pdf(
@@ -433,8 +456,8 @@ class PDFExporter:
     ) -> Optional[str]:
         if image is None or image.isNull():
             return None
-        page_width = float(page_info.get("width", 612.0) or 612.0)
-        page_height = float(page_info.get("height", 792.0) or 792.0)
+        page_width = float(page_info["width"])
+        page_height = float(page_info["height"])
         fd, output_path = tempfile.mkstemp(
             prefix=f"{prefix}_", suffix=".pdf", dir=temp_dir
         )
@@ -471,9 +494,9 @@ class PDFExporter:
     @staticmethod
     def _use_blank_background(export_data: Any, page_info: PageRenderInfo) -> None:
         export_data.is_blank = True
-        export_data.page_width = page_info.get("width", 612.0)
-        export_data.page_height = page_info.get("height", 792.0)
-        export_data.rotation = page_info.get("rotation", 0)
+        export_data.page_width = page_info["width"]
+        export_data.page_height = page_info["height"]
+        export_data.rotation = page_info["rotation"]
 
     @staticmethod
     def _is_annotation_exportable(
@@ -503,75 +526,44 @@ class PDFExporter:
             return "left"
 
     def _build_page_info(self, page: Page) -> PageRenderInfo:
-        stored_width_pts = page.width_pts
-        stored_height_pts = page.height_pts
-        scale_x = 1.0
-        scale_y = 1.0
+        page_width_pts = page.width_pts
+        page_height_pts = page.height_pts
         offset_x = 0.0
         offset_y = 0.0
-        is_rotated = False
+        native_rotation = 0
         image_path = page.image_path or ""
         if is_pdf_suffix(image_path):
-            try:
-                sizes = self._writer.get_page_sizes(image_path)
-                page_idx = page.page_index or 0
-                if page_idx < len(sizes):
-                    size_data = sizes[page_idx]
-                    actual_width = size_data[0]
-                    actual_height = size_data[1]
-                    offset_x = size_data[2] if len(size_data) > 2 else 0.0
-                    offset_y = size_data[3] if len(size_data) > 3 else 0.0
-                    stored_ratio = (
-                        stored_width_pts / stored_height_pts
-                        if stored_height_pts
-                        else 1.0
-                    )
-                    actual_ratio = (
-                        actual_width / actual_height if actual_height else 1.0
-                    )
-                    is_rotated = (
-                        abs(stored_ratio - actual_ratio) > _ROTATION_ASPECT_THRESHOLD
-                    )
-                    if is_rotated:
-                        scale_x = (
-                            actual_height / stored_width_pts
-                            if stored_width_pts
-                            else 1.0
-                        )
-                        scale_y = (
-                            actual_width / stored_height_pts
-                            if stored_height_pts
-                            else 1.0
-                        )
-                    else:
-                        scale_x = (
-                            actual_width / stored_width_pts if stored_width_pts else 1.0
-                        )
-                        scale_y = (
-                            actual_height / stored_height_pts
-                            if stored_height_pts
-                            else 1.0
-                        )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to get PDF page size for '%s': %s", image_path, exc
+            geometries = self._writer.get_page_geometries(image_path)
+            page_idx = page.page_index or 0
+            if page_idx < 0 or page_idx >= len(geometries):
+                raise ValueError(
+                    f"Native PDF page geometry is unavailable for page {page_idx}"
                 )
-        rotation = page.rotation
+            geometry = geometries[page_idx]
+            min_x, min_y, max_x, max_y = geometry.visible_box
+            native_width = max_x - min_x
+            native_height = max_y - min_y
+            if native_width <= 0.0 or native_height <= 0.0:
+                raise ValueError(
+                    f"Native PDF page geometry is invalid for page {page_idx}"
+                )
+            page_width_pts = native_width
+            page_height_pts = native_height
+            offset_x = min_x
+            offset_y = min_y
+            native_rotation = int(geometry.rotation or 0) % 360
+        rotation = (native_rotation + page.rotation) % 360
         return {
             "scale_factor1": page.scale_factor1 or 1.0,
             "scale_factor2": page.scale_factor2 or 1.0,
             "rotation": rotation,
             "flip_x": 1 if page.flip_x else 0,
             "flip_y": 1 if page.flip_y else 0,
-            "width": stored_width_pts,
-            "height": stored_height_pts,
+            "width": page_width_pts,
+            "height": page_height_pts,
             "view_scale": _PDF_RENDER_SCALE,
-            "coord_scale_x": scale_x,
-            "coord_scale_y": scale_y,
             "coord_offset_x": offset_x,
             "coord_offset_y": offset_y,
-            "is_page_rotated": is_rotated,
-            "auto_rotate_180": False,
         }
 
     def _collect_takeoffs(
@@ -1162,87 +1154,28 @@ class PDFExporter:
                 annotation, page_uid, ANNOTATION_TYPE_HIGHLIGHT
             ):
                 continue
-            position = annotation.position
-            n_coords = len(position) - 1 if len(position) % 2 == 1 else len(position)
-            if n_coords < 4:
+            position = highlight_position_coordinates(annotation.position)
+            if not position:
                 continue
-            pdf_points = self._coord_system.ost_to_pdf_coordinates(
-                position[:n_coords], page_info
-            )
-            if len(pdf_points) < 2:
-                continue
-            strokes, width = self._highlight_ink_strokes(pdf_points)
-            if not strokes:
+            ost_points = list(zip(position[::2], position[1::2]))
+            paths = []
+            for ost_quad in canonical_highlight_quads(ost_points):
+                flat_quad = [coordinate for point in ost_quad for coordinate in point]
+                pdf_quad = self._coord_system.ost_to_pdf_coordinates(
+                    flat_quad, page_info
+                )
+                if len(pdf_quad) != 4:
+                    continue
+                paths.append(calculate_highlight_quad_path(tuple(pdf_quad)))
+            if not paths:
                 continue
             highlight_data = ost_pdf_writer.HighlightAnnotationData()
-            highlight_data.strokes = strokes
+            highlight_data.paths = paths
             highlight_data.color = self._color_service.hex_to_rgb_int(annotation.color)
-            highlight_data.width = width
-            highlight_data.opacity = _DEFAULT_HIGHLIGHT_OPACITY
+            highlight_data.opacity = HIGHLIGHT_OPACITY
             highlight_data.content = annotation.get_text_content()
             highlights.append(highlight_data)
         return highlights
-
-    @staticmethod
-    def _highlight_ink_strokes(pdf_points):
-        strokes = []
-        widths = []
-        if len(pdf_points) >= 4 and len(pdf_points) % 4 == 0:
-            for idx in range(0, len(pdf_points), 4):
-                quad = PDFExporter._order_highlight_quad(pdf_points[idx : idx + 4])
-                stroke, width = PDFExporter._highlight_stroke_from_quad(quad)
-                strokes.append(stroke)
-                widths.append(width)
-        else:
-            quad = PDFExporter._highlight_rect_quad(pdf_points)
-            stroke, width = PDFExporter._highlight_stroke_from_quad(quad)
-            strokes.append(stroke)
-            widths.append(width)
-        if not strokes:
-            return [], 0.0
-        return strokes, max(widths)
-
-    @staticmethod
-    def _highlight_rect_quad(pdf_points):
-        min_x = min(point[0] for point in pdf_points)
-        max_x = max(point[0] for point in pdf_points)
-        min_y = min(point[1] for point in pdf_points)
-        max_y = max(point[1] for point in pdf_points)
-        return [
-            [min_x, max_y],
-            [max_x, max_y],
-            [min_x, min_y],
-            [max_x, min_y],
-        ]
-
-    @staticmethod
-    def _highlight_stroke_from_quad(quad_points):
-        left_x = (quad_points[0][0] + quad_points[2][0]) / 2.0
-        left_y = (quad_points[0][1] + quad_points[2][1]) / 2.0
-        right_x = (quad_points[1][0] + quad_points[3][0]) / 2.0
-        right_y = (quad_points[1][1] + quad_points[3][1]) / 2.0
-        left_height = math.hypot(
-            quad_points[0][0] - quad_points[2][0],
-            quad_points[0][1] - quad_points[2][1],
-        )
-        right_height = math.hypot(
-            quad_points[1][0] - quad_points[3][0],
-            quad_points[1][1] - quad_points[3][1],
-        )
-        width = max(1.0, (left_height + right_height) / 2.0)
-        return [[left_x, left_y], [right_x, right_y]], width
-
-    @staticmethod
-    def _order_highlight_quad(pdf_points):
-        by_y = sorted(pdf_points, key=lambda point: point[1], reverse=True)
-        top = sorted(by_y[:2], key=lambda point: point[0])
-        bottom = sorted(by_y[2:4], key=lambda point: point[0])
-        return [
-            [top[0][0], top[0][1]],
-            [top[1][0], top[1][1]],
-            [bottom[0][0], bottom[0][1]],
-            [bottom[1][0], bottom[1][1]],
-        ]
 
     def _collect_texts(
         self,

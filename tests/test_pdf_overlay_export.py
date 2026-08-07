@@ -32,8 +32,14 @@ class _FakeWriter:
         self.pages = []
         self.merge_calls = 0
 
-    def get_page_sizes(self, _path):
-        return [(612.0, 792.0, 0.0, 0.0)]
+    def get_page_geometries(self, _path):
+        geometry = SimpleNamespace(
+            media_box=(0.0, 0.0, 612.0, 792.0),
+            crop_box=(0.0, 0.0, 612.0, 792.0),
+            visible_box=(0.0, 0.0, 612.0, 792.0),
+            rotation=0,
+        )
+        return [geometry, geometry, geometry]
 
     def merge_pages_with_annotations(self, pages, _output_path):
         self.merge_calls += 1
@@ -196,6 +202,21 @@ def _read_pdf_stream_text(path):
 
 
 class PDFOverlayExportTests(unittest.TestCase):
+    def test_pdf_export_rejects_missing_native_geometry_instead_of_using_stored_size(
+        self,
+    ):
+        writer = _FakeWriter()
+        writer.get_page_geometries = lambda _path: []
+        exporter = _make_exporter(writer)
+        with self.assertLogs(
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
+            level="ERROR",
+        ):
+            result = _export_single_page(exporter, _page())
+        self.assertFalse(result.success)
+        self.assertIn("Native PDF page geometry is unavailable", result.error_message)
+        self.assertEqual(writer.merge_calls, 0)
+
     def test_main_only_export_uses_main_pdf_source(self):
         writer = _FakeWriter()
         exporter = _make_exporter(writer)
@@ -323,10 +344,37 @@ class PDFOverlayExportTests(unittest.TestCase):
                 width_pts=72.0,
                 height_pts=72.0,
                 overlay_rect=(-32.0, -32.0, 64.0, 64.0),
-            )
+            ),
+            {"width": 72.0, "height": 72.0},
         )
         self.assertIsNotNone(image)
         self.assertEqual((image.width(), image.height()), (144, 144))
+
+    def test_composite_export_uses_native_page_geometry_not_stored_dimensions(self):
+        exporter = _make_exporter(_FakeWriter())
+        image = QImage(20, 10, QImage.Format.Format_ARGB32)
+        captured_pages = []
+        exporter._export_composite_renderer = SimpleNamespace(
+            render_composite=lambda page, **_kwargs: captured_pages.append(page)
+            or image
+        )
+        exporter._write_raster_background_pdf = (
+            lambda rendered, _page_info, _temp_dir, _prefix: (
+                "composite.pdf" if rendered is image else None
+            )
+        )
+        page = _page(width_pts=42.0 * 72.0, height_pts=30.0 * 72.0)
+        result = exporter._create_composite_background_pdf(
+            page,
+            {"width": 36.0 * 72.0, "height": 24.0 * 72.0},
+            "unused",
+        )
+        self.assertEqual(result, "composite.pdf")
+        self.assertEqual(len(captured_pages), 1)
+        self.assertEqual(captured_pages[0].width_pts, 36.0 * 72.0)
+        self.assertEqual(captured_pages[0].height_pts, 24.0 * 72.0)
+        self.assertEqual(page.width_pts, 42.0 * 72.0)
+        self.assertEqual(page.height_pts, 30.0 * 72.0)
 
     def test_overlay_only_raster_export_uses_single_image_source_path(self):
         writer = _FakeWriter()

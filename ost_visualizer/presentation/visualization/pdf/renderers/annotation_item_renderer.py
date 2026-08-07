@@ -1,7 +1,15 @@
 import math
 from typing import Any, Dict, List, Optional, Tuple
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainterPath, QPen, QTextOption
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QTextOption,
+)
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPathItem,
@@ -32,8 +40,10 @@ from ....components.plan_view.components.graphics_items import (
     ClippedTextGraphicsItem,
 )
 from .annotation_renderer import (
+    HIGHLIGHT_OPACITY,
     calculate_annotation_geometry,
     calculate_dimension_segments,
+    canonical_highlight_quads,
     create_cloud_path_points,
     process_text_for_box,
 )
@@ -45,6 +55,30 @@ AnnotationItemsResult = Tuple[
 DIMENSION_FONT_SIZE_ADJUSTMENT = 0.75
 NAMED_VIEW_FONT_SIZE_ADJUSTMENT = 0.75
 PAPER_HIGHLIGHT_Z = 0.4
+
+
+def build_highlight_path(points: List[Tuple[float, float]]) -> QPainterPath:
+    path = QPainterPath()
+    for top_left, top_right, bottom_left, bottom_right in canonical_highlight_quads(
+        points
+    ):
+        path.moveTo(*top_left)
+        path.lineTo(*top_right)
+        path.lineTo(*bottom_right)
+        path.lineTo(*bottom_left)
+        path.closeSubpath()
+    return path
+
+
+class HighlightGraphicsItem(QGraphicsPathItem):
+    def paint(self, painter, option, widget=None) -> None:
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.brush())
+        painter.drawPath(self.path())
+        painter.restore()
 
 
 def create_named_view_label_font(coord_system) -> QFont:
@@ -189,10 +223,9 @@ class AnnotationItemRenderer:
             return self._render_path(anno_type, geom["points"], color, width)
         elif anno_type == ANNOTATION_TYPE_OVAL and "oval" in geom:
             return self._render_oval(geom["oval"], color, width)
-        elif (
-            anno_type in (ANNOTATION_TYPE_RECT, ANNOTATION_TYPE_HIGHLIGHT)
-            and "shape" in geom
-        ):
+        elif anno_type == ANNOTATION_TYPE_HIGHLIGHT and "highlight" in geom:
+            return self._render_highlight(geom["highlight"]["points"], color)
+        elif anno_type == ANNOTATION_TYPE_RECT and "shape" in geom:
             return self._render_rotated_shape(anno_type, geom["shape"], color, width)
         elif (
             anno_type in (ANNOTATION_TYPE_OVAL, ANNOTATION_TYPE_RECT)
@@ -206,8 +239,6 @@ class AnnotationItemRenderer:
             return self._render_line(anno_type, geom["line"], color, width)
         elif anno_type == ANNOTATION_TYPE_DIMENSION and "dimension" in geom:
             return self._render_dimension(geom["dimension"], color, width)
-        elif anno_type == ANNOTATION_TYPE_HIGHLIGHT and "bounds" in geom:
-            return self._render_highlight(geom["bounds"], color)
         elif anno_type == ANNOTATION_TYPE_NAMED_VIEW and "namedview" in geom:
             return self._render_namedview(geom["namedview"])
         elif anno_type == ANNOTATION_TYPE_HOTLINK and "hotlink" in geom:
@@ -322,11 +353,6 @@ class AnnotationItemRenderer:
         item = self._create_path_item(path, color, width)
         if item is None:
             return []
-        if anno_type == ANNOTATION_TYPE_HIGHLIGHT:
-            qcolor = QColor(color)
-            qcolor.setAlphaF(0.3)
-            item.setBrush(qcolor)
-            item.setZValue(PAPER_HIGHLIGHT_Z)
         return [(item, None)]
 
     def _render_shape(
@@ -395,15 +421,15 @@ class AnnotationItemRenderer:
                 results.append((text_item, None))
         return results
 
-    def _render_highlight(self, bounds: Dict, color: str) -> List[AnnotationItemResult]:
-        min_x = bounds["min_x"]
-        max_x = bounds["max_x"]
-        min_y = bounds["min_y"]
-        max_y = bounds["max_y"]
-        rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
-        item = QGraphicsRectItem(rect)
+    def _render_highlight(
+        self, points: List[Tuple[float, float]], color: str
+    ) -> List[AnnotationItemResult]:
+        path = build_highlight_path(points)
+        if path.isEmpty():
+            return []
+        item = HighlightGraphicsItem(path)
         qcolor = QColor(color)
-        qcolor.setAlphaF(0.3)
+        qcolor.setAlphaF(HIGHLIGHT_OPACITY)
         item.setBrush(qcolor)
         item.setPen(Qt.PenStyle.NoPen)
         item.setZValue(PAPER_HIGHLIGHT_Z)

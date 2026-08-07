@@ -148,10 +148,6 @@ class OSTCoordinateSystem:
             int(page_info.get("rotation", 0)),
             bool(page_info.get("flip_x", False)),
             bool(page_info.get("flip_y", False)),
-            float(page_info.get("coord_scale_x", 1.0) or 1.0),
-            float(page_info.get("coord_scale_y", 1.0) or 1.0),
-            bool(page_info.get("is_page_rotated", False)),
-            bool(page_info.get("auto_rotate_180", False)),
             float(page_info.get("coord_offset_x", 0.0) or 0.0),
             float(page_info.get("coord_offset_y", 0.0) or 0.0),
         )

@@ -42,12 +42,8 @@ def _page_info(**overrides):
         "width": 500.0,
         "height": 400.0,
         "view_scale": 1.0,
-        "coord_scale_x": 1.0,
-        "coord_scale_y": 1.0,
         "coord_offset_x": 0.0,
         "coord_offset_y": 0.0,
-        "is_page_rotated": False,
-        "auto_rotate_180": False,
     }
     result.update(overrides)
     return result
@@ -212,21 +208,19 @@ class PdfOvalCollectionTests(unittest.TestCase):
             y_axis=(0.0, -10.0),
         )
 
-    def test_nonuniform_page_scale_and_crop_offset_transform_each_axis_once(self):
+    def test_crop_offset_translates_geometry_without_rescaling_it(self):
         oval = self._collect(
             _rotated_oval_position(100.0, 120.0, 80.0, 20.0, 30.0),
             _page_info(
-                coord_scale_x=2.0,
-                coord_scale_y=0.5,
                 coord_offset_x=17.0,
                 coord_offset_y=23.0,
             ),
         )
         self.assertOvalGeometry(
             oval,
-            center=(217.0, 163.0),
-            x_axis=(80.0 * math.cos(math.radians(30.0)), -10.0),
-            y_axis=(-10.0, -5.0 * math.cos(math.radians(30.0))),
+            center=(117.0, 303.0),
+            x_axis=(40.0 * math.cos(math.radians(30.0)), -20.0),
+            y_axis=(-5.0, -10.0 * math.cos(math.radians(30.0))),
         )
 
     def test_page_rotations_preserve_transformed_center_and_radius_vectors(self):
@@ -274,31 +268,6 @@ class PdfOvalCollectionTests(unittest.TestCase):
                         expected[2][1] - expected[0][1],
                     ),
                 )
-
-    def test_nested_rotated_page_transform_preserves_affine_ellipse_geometry(self):
-        position = _rotated_oval_position(100.0, 120.0, 80.0, 20.0, -45.0)
-        page_info = _page_info(
-            width=600.0,
-            height=800.0,
-            coord_scale_x=0.75,
-            coord_scale_y=1.25,
-            coord_offset_x=11.0,
-            coord_offset_y=19.0,
-            is_page_rotated=True,
-            auto_rotate_180=True,
-        )
-        oval = self._collect(position, page_info)
-        for value in (
-            oval.center_x,
-            oval.center_y,
-            oval.x_axis_dx,
-            oval.x_axis_dy,
-            oval.y_axis_dx,
-            oval.y_axis_dy,
-        ):
-            self.assertTrue(math.isfinite(value))
-        determinant = oval.x_axis_dx * oval.y_axis_dy - oval.x_axis_dy * oval.y_axis_dx
-        self.assertNotAlmostEqual(determinant, 0.0)
 
     def test_rectangle_and_line_collection_remain_unchanged(self):
         rectangle = self._annotation([10.0, 20.0, 130.0, 60.0], annotation_type="rect")
