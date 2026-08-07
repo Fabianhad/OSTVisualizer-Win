@@ -213,7 +213,6 @@ class MainWindow(QtWidgets.QMainWindow):
             database_capability_service=self.app_controller.get_service(
                 "database_capability_service"
             ),
-            workspace_state_model=self._workspace_state_model,
         )
         self._deferred_persistence_manager = DeferredPersistenceManager(
             self._project_write_service,

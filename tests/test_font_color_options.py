@@ -246,7 +246,7 @@ class FontColorOptionsTests(unittest.TestCase):
     def test_font_dialog_contract_and_shared_size_list(self):
         dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, True))
         try:
-            self.assertEqual((dialog.width(), dialog.height()), (433, 351))
+            self.assertEqual((dialog.width(), dialog.height()), (450, 370))
             self.assertEqual(dialog.width(), FONT_DIALOG_WIDTH)
             self.assertEqual(dialog.height(), FONT_DIALOG_HEIGHT)
             self.assertTrue(dialog.isModal())
@@ -325,6 +325,38 @@ class FontColorOptionsTests(unittest.TestCase):
                     dialog.rect().contains(QtCore.QRect(top_left, widget.size())),
                     f"{type(widget).__name__} extends outside the fixed dialog",
                 )
+        finally:
+            dialog.close()
+
+    def test_font_dialog_cancel_is_stacked_directly_below_ok(self):
+        dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, False))
+        try:
+            dialog.show()
+            self.app.processEvents()
+            self.assertEqual(dialog.cancel_button.x(), dialog.ok_button.x())
+            self.assertGreaterEqual(
+                dialog.cancel_button.y(), dialog.ok_button.geometry().bottom()
+            )
+            self.assertLess(dialog.cancel_button.y(), dialog.font_list.y())
+        finally:
+            dialog.close()
+
+    def test_font_dialog_size_changes_do_not_resize_sample_group(self):
+        dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, False))
+        try:
+            dialog.show()
+            self.app.processEvents()
+            sample_size = dialog.sample_group.size()
+            list_geometry = dialog.font_list.geometry()
+            for point_size in (72, 8):
+                size_item = dialog.size_list.findItems(
+                    str(point_size), QtCore.Qt.MatchFlag.MatchFixedString
+                )[0]
+                dialog.size_list.setCurrentItem(size_item)
+                self.app.processEvents()
+                self.assertEqual(dialog.sample_group.size(), sample_size)
+                self.assertEqual(dialog.font_list.geometry(), list_geometry)
+                self.assertEqual(dialog.sample_label.font().pointSize(), point_size)
         finally:
             dialog.close()
 

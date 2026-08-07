@@ -31,6 +31,7 @@ class FontDialog(QtWidgets.QDialog):
         self._syncing = False
         self._build_ui()
         self._load_selection()
+        self.sample_group.setFixedHeight(self.sample_group.sizeHint().height())
 
     def selected_font(self) -> FontDefinition | None:
         if self.result() != QtWidgets.QDialog.DialogCode.Accepted:
@@ -66,9 +67,14 @@ class FontDialog(QtWidgets.QDialog):
         for button in (self.ok_button, self.cancel_button):
             button.setFixedWidth(DIALOG_BUTTON_WIDTH)
         self.ok_button.setDefault(True)
-        sample_group = QtWidgets.QGroupBox("Sample", self)
-        sample_layout = QtWidgets.QVBoxLayout(sample_group)
-        self.sample_label = QtWidgets.QLabel(self.SAMPLE_TEXT, sample_group)
+        button_layout = QtWidgets.QVBoxLayout()
+        button_layout.setSpacing(COMPACT_SPACING)
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addStretch()
+        self.sample_group = QtWidgets.QGroupBox("Sample", self)
+        sample_layout = QtWidgets.QVBoxLayout(self.sample_group)
+        self.sample_label = QtWidgets.QLabel(self.SAMPLE_TEXT, self.sample_group)
         self.sample_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.sample_label.setFrameShape(QtWidgets.QFrame.Shape.Panel)
         self.sample_label.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -79,12 +85,11 @@ class FontDialog(QtWidgets.QDialog):
         layout.addWidget(self.font_edit, 1, 0)
         layout.addWidget(self.style_edit, 1, 1)
         layout.addWidget(self.size_edit, 1, 2)
-        layout.addWidget(self.ok_button, 0, 3, 2, 1, QtCore.Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.font_list, 2, 0)
         layout.addWidget(self.style_list, 2, 1)
         layout.addWidget(self.size_list, 2, 2)
-        layout.addWidget(self.cancel_button, 2, 3, QtCore.Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(sample_group, 3, 0, 1, 3)
+        layout.addWidget(self.sample_group, 3, 0, 1, 3)
+        layout.addLayout(button_layout, 0, 3, 4, 1)
         layout.setColumnStretch(0, 3)
         layout.setColumnStretch(1, 2)
         layout.setColumnStretch(2, 1)
