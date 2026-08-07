@@ -3190,6 +3190,7 @@ class UIEventCoordinator:
             self._request_or_defer_mesh_refresh(selected_pages)
         if self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view_for_active()
+            self.main_window.refresh_detached_plan_views()
 
     def _on_license_status_changed(self, has_license: bool) -> None:
         del has_license

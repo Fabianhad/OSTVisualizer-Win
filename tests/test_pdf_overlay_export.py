@@ -15,6 +15,7 @@ from ost_visualizer.application.dtos.page_export_data_dto import (
     PageExportData as PageExportDto,
 )
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.presentation.utils.image_show_mode import (
     SHOW_BOTH,
     SHOW_ORIGINAL,
@@ -51,8 +52,17 @@ class _ColorService:
         text = color.lstrip("#")
         return [int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)]
 
-    def should_gray_out_takeoff(self, _takeoff, _page_area_selections):
-        return False
+    def get_2d_color_for_takeoff(
+        self,
+        takeoff,
+        condition,
+        color_map,
+        page_area_selections=None,
+        *,
+        inactive_object_color,
+    ):
+        _ = (takeoff, page_area_selections, inactive_object_color)
+        return color_map[condition.uid]
 
     def get_condition_color(self, _condition):
         return [0, 0, 0]
@@ -144,6 +154,7 @@ def _export_single_page(exporter, page):
             grayscale_enabled=False,
             caption_settings=_DISABLED_CAPTION_SETTINGS,
             elevation_callouts_enabled=False,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
 
 
@@ -527,6 +538,7 @@ class PDFOverlayExportTests(unittest.TestCase):
                 grayscale_enabled=False,
                 caption_settings=_DISABLED_CAPTION_SETTINGS,
                 elevation_callouts_enabled=False,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
                 on_progress=lambda current, total, name: progress_calls.append(
                     (current, total, name)
                 ),

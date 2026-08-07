@@ -631,6 +631,8 @@ class TakeoffRenderer:
         opacity: float = 0.5,
         page_info: dict[str, Any] | None = None,
         page_area_selections: dict[str, str | None] | None = None,
+        *,
+        inactive_object_color: str,
     ) -> list[tuple[str, QGraphicsItem | list[QGraphicsItem]]]:
         if page_info:
             self.set_page_info(page_info)
@@ -664,13 +666,15 @@ class TakeoffRenderer:
             condition = conditions[condition_uid]
             if condition_uid not in color_map:
                 continue
-            color_entry = color_map[condition_uid]
+            color_entry = self._color_service.get_2d_color_for_takeoff(
+                takeoff,
+                condition,
+                color_map,
+                page_area_selections,
+                inactive_object_color=inactive_object_color,
+            )
             color = color_entry.hex
             item_opacity = color_entry.opacity
-            if self._color_service.should_gray_out_takeoff(
-                takeoff, page_area_selections
-            ):
-                color = "#808080"
             holes = area_holes_map.get(takeoff_uid, [])
             if holes and condition.condition_type == Condition.TYPE_AREA:
                 result = self._create_area_with_holes(

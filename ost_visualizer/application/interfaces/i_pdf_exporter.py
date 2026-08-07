@@ -23,6 +23,8 @@ class IPDFExporter(Protocol):
             DEFAULT_ELEVATION_CALLOUT_SETTINGS
         ),
         elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
+        *,
+        inactive_object_color: str,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,
         on_progress: Optional[ExportProgressCallback] = None,

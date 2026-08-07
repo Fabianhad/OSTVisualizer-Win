@@ -9,6 +9,7 @@ from ...config import (
     OPTIONS_DIALOG_TITLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_EXPORT,
+    OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_WINDOW_HEIGHT,
@@ -17,6 +18,7 @@ from ...config import (
 from ...utils.messagebox import confirm, show_warning
 from ...utils.windows import remove_minimize_maximize
 from .components import ExportTab, McpSetupTab, OptionsTab
+from .fonts_colors_tab import FontsColorsTab
 
 
 class OptionsDialog(QtWidgets.QDialog):
@@ -46,6 +48,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._reset_all_button: Optional[QtWidgets.QPushButton] = None
         self._tabs: Optional[QtWidgets.QTabWidget] = None
         self._options_tab: Optional[OptionsTab] = None
+        self._fonts_colors_tab: Optional[FontsColorsTab] = None
         self._export_tab: Optional[ExportTab] = None
         self._mcp_setup_tab: Optional[McpSetupTab] = None
         self._mcp_helper_path = Path(mcp_helper_path) if mcp_helper_path else None
@@ -69,6 +72,8 @@ class OptionsDialog(QtWidgets.QDialog):
         self._options_tab = OptionsTab(self._tabs)
         self._bind_options_tab_widgets()
         self._tabs.addTab(self._options_tab, OPTIONS_TAB_OPTIONS)
+        self._fonts_colors_tab = FontsColorsTab(self._tabs)
+        self._tabs.addTab(self._fonts_colors_tab, OPTIONS_TAB_FONTS_COLORS)
         self._export_tab = ExportTab(self._tabs)
         self._caption_master_check = self._export_tab.captions_enabled_check
         self._caption_checks = self._export_tab.caption_checks
@@ -286,6 +291,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._pdf_elevation_callout_color_button.set_color(
             self._applied_config.pdf_elevation_callout_color
         )
+        self._fonts_colors_tab.load_config(self._applied_config)
         self._export_tab.update_callout_controls_enabled()
 
     def _connect_change_signals(self) -> None:
@@ -345,6 +351,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._pdf_elevation_callout_color_button.colorChanged.connect(
             self._update_apply_enabled
         )
+        self._fonts_colors_tab.changed.connect(self._update_apply_enabled)
         self._crosshair_line_thickness_spin.valueChanged.connect(
             self._update_apply_enabled
         )
@@ -374,7 +381,7 @@ class OptionsDialog(QtWidgets.QDialog):
         display_modes_synced = self._display_modes_sync_check.isChecked()
         if display_modes_synced:
             display_mode_2d = display_mode_3d
-        return replace(
+        config = replace(
             self._applied_config,
             display_modes_synced=display_modes_synced,
             display_mode_3d=display_mode_3d,
@@ -450,6 +457,7 @@ class OptionsDialog(QtWidgets.QDialog):
                 self._pdf_elevation_callout_color_button.color()
             ),
         )
+        return self._fonts_colors_tab.apply_to_config(config)
 
     def _selected_display_mode(self, target: str) -> str:
         if target == "3d":
@@ -563,6 +571,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._apply_callback = None
         self._reset_callback = None
         self._options_tab = None
+        self._fonts_colors_tab = None
         self._export_tab = None
         self._mcp_setup_tab = None
         self._tabs = None

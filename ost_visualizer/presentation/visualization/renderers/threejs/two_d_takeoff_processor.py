@@ -40,6 +40,7 @@ def process_takeoffs_2d_for_threejs(
     page_info: PageRenderInfo,
     *,
     include_elevation_callouts: bool,
+    inactive_object_color: str,
     display_mode: str = Config.DISPLAY_MODE_SOLID,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict[str, Optional[str]]] = None,
@@ -65,7 +66,11 @@ def process_takeoffs_2d_for_threejs(
         if not rings:
             continue
         color_hex, opacity = color_service.get_2d_color_for_takeoff(
-            takeoff, condition, color_map, page_area_selections
+            takeoff,
+            condition,
+            color_map,
+            page_area_selections,
+            inactive_object_color=inactive_object_color,
         )
         entry: SceneTakeoff2DEntry = {
             "takeoff_uid": str(takeoff.uid or ""),

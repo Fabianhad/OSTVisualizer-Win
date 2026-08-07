@@ -45,7 +45,11 @@ from ....application.interfaces.i_page_load_strategy_service import (
     IPageLoadStrategyService,
 )
 from ....application.interfaces.i_page_rendering_service import IPageRenderingService
-from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
+from ....domain.entities.annotation import (
+    BidAnnotation,
+    hex_color_to_int,
+    int_color_to_hex,
+)
 from ....domain.entities.condition import Condition
 from ....domain.entities.config import Config
 from ....domain.entities.file_extensions import is_pdf_suffix
@@ -388,6 +392,7 @@ class TakeoffPlanView(
         self._current_conditions: Dict[str, Condition] = {}
         self._current_color_map: Dict[str, str] = {}
         self._current_page_area_selections: Optional[Dict[str, Optional[str]]] = None
+        self._inactive_object_color: str = Config.DEFAULT_INACTIVE_OBJECT_COLOR
         self._current_annotations: Dict[str, BidAnnotation] = {}
         self._uid_to_items: Dict[str, List] = {}
         self._hidden_layer_uids: Set[str] = set()
@@ -1853,7 +1858,7 @@ class TakeoffPlanView(
             font_size = font.pointSize()
         if font_size <= 0:
             font_size = int(ann.properties.get("FontSize", 12) or 12)
-        font_color = color.red() | (color.green() << 8) | (color.blue() << 16)
+        font_color = hex_color_to_int(color.name())
         return {
             "Text": (
                 text_override
@@ -2050,9 +2055,7 @@ class TakeoffPlanView(
         prefix = "dimension_font" if label_kind == "display_dimension" else "name_font"
         new_props = {
             f"{prefix}_name": font.family(),
-            f"{prefix}_color": color.red()
-            | (color.green() << 8)
-            | (color.blue() << 16),
+            f"{prefix}_color": hex_color_to_int(color.name()),
             f"{prefix}_size": int(self._selected_text_model_font_size or 9),
             f"{prefix}_bold": bool(font.bold()),
             f"{prefix}_italic": bool(font.italic()),
@@ -2076,7 +2079,7 @@ class TakeoffPlanView(
             return
         font = item.font()
         color = item.defaultTextColor()
-        font_color = color.red() | (color.green() << 8) | (color.blue() << 16)
+        font_color = hex_color_to_int(color.name())
         new_props = {
             "FontName": font.family(),
             "FontColor": font_color,
@@ -2200,13 +2203,7 @@ class TakeoffPlanView(
         color = QColor(str(value or annotation.color))
         if not color.isValid():
             return 0
-        return color.red() | (color.green() << 8) | (color.blue() << 16)
-
-    def _annotation_color_int(self, color_hex: str) -> int:
-        color = QColor(color_hex)
-        if not color.isValid():
-            return 0
-        return color.red() | (color.green() << 8) | (color.blue() << 16)
+        return hex_color_to_int(color.name())
 
     def apply_annotation_style_to_selection(
         self, *, color: Optional[str] = None, width: Optional[float] = None
@@ -2238,7 +2235,7 @@ class TakeoffPlanView(
             if "Color" in new_style:
                 ann.color = str(new_style["Color"])
                 if ann.is_text or ann.is_dimension:
-                    ann.properties["FontColor"] = self._annotation_color_int(ann.color)
+                    ann.properties["FontColor"] = hex_color_to_int(ann.color)
             if "Width" in new_style:
                 ann.width = float(new_style["Width"])
             changes.append(
@@ -3127,9 +3124,7 @@ class TakeoffPlanView(
                 if "Color" in old_style:
                     ann.color = str(old_style["Color"])
                     if ann.is_text or ann.is_dimension:
-                        ann.properties["FontColor"] = self._annotation_color_int(
-                            ann.color
-                        )
+                        ann.properties["FontColor"] = hex_color_to_int(ann.color)
                 if "Width" in old_style:
                     ann.width = float(old_style["Width"])
                 changed = True
@@ -3292,6 +3287,9 @@ class TakeoffPlanView(
         self._roping_selection_method = (
             "inclusive" if method == "inclusive" else "touching"
         )
+
+    def set_inactive_object_color(self, color: str) -> None:
+        self._inactive_object_color = color
 
     def set_disable_high_resolution_images(self, disabled: bool) -> None:
         disabled = bool(disabled)
@@ -4642,6 +4640,7 @@ class TakeoffPlanView(
                 color_map,
                 page_info,
                 page_area_selections,
+                inactive_object_color=self._inactive_object_color,
             )
         )
         self._uid_to_items = {}
@@ -5535,6 +5534,7 @@ class TakeoffPlanView(
                         color_map,
                         page_info,
                         page_area_selections,
+                        inactive_object_color=self._inactive_object_color,
                     )
                 )
         except ValueError:
@@ -5975,3 +5975,5 @@ class TakeoffPlanView(
         self._color_service = None
         self._scene_builder = None
         self._pending_page_data = None
+        self._takeoff_snap_index = None
+        self._pdf_snap_index = None

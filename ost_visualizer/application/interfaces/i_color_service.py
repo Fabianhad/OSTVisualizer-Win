@@ -14,7 +14,7 @@ class IColorService(Protocol):
     def as_hex_with_opacity(
         self, color_entry: Union[str, dict, Sequence[object]]
     ) -> ColorWithOpacity: ...
-    def should_gray_out_takeoff(
+    def is_inactive_area_takeoff(
         self,
         takeoff: Takeoff,
         page_area_selections: Optional[Dict[str, Optional[str]]],
@@ -35,6 +35,8 @@ class IColorService(Protocol):
         color_map: Dict,
         display_mode: str,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> ColorWithOpacity: ...
     def get_2d_color_for_takeoff(
         self,
@@ -42,6 +44,8 @@ class IColorService(Protocol):
         condition: Condition,
         color_map: Dict,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> ColorWithOpacity: ...
     def int_to_hex(self, color_fill: int) -> str: ...
     def hex_to_rgb_int(self, hex_color: str) -> List[int]: ...

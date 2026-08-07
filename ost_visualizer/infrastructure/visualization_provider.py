@@ -93,6 +93,8 @@ class _MeshGeneratorAdapter(IMeshGenerator):
         page_area_selections: Optional[Dict] = None,
         display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
+        *,
+        inactive_object_color: str,
     ):
         coord_system = self._coord_factory.create()
         meshes, mesh_colors, bounds = process_takeoffs_to_meshes(
@@ -104,6 +106,7 @@ class _MeshGeneratorAdapter(IMeshGenerator):
             page_area_selections=page_area_selections,
             display_mode=display_mode,
             grayscale_enabled=grayscale_enabled,
+            inactive_object_color=inactive_object_color,
         )
         return meshes, mesh_colors, bounds
 
@@ -137,41 +140,40 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         areas: Optional[List[BidArea]] = None,
         page_image_layer: Optional[ScenePageImageLayer] = None,
         *,
+        inactive_object_color: str,
         include_elevation_callouts: bool,
         elevation_callout_settings: ElevationCalloutSettings = (
             DEFAULT_ELEVATION_CALLOUT_SETTINGS
         ),
         elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
     ) -> bool:
-        try:
-            coord_system = self._coord_factory.create()
-            return bool(
-                visualize_with_threejs(
-                    bid_conditions,
-                    bid_takeoffs,
-                    coord_system,
-                    self._color_service,
-                    self._takeoff_service,
-                    title=title,
-                    output_path=output_path,
-                    auto_open=auto_open,
-                    display_mode_3d=display_mode_3d,
-                    display_mode_2d=display_mode_2d,
-                    display_modes_synced=display_modes_synced,
-                    grayscale_enabled=grayscale_enabled,
-                    page_area_selections=page_area_selections,
-                    pages=pages,
-                    active_page_uid=active_page_uid,
-                    layers=layers,
-                    areas=areas,
-                    page_image_layer=page_image_layer,
-                    include_elevation_callouts=include_elevation_callouts,
-                    elevation_callout_settings=elevation_callout_settings,
-                    elevation_callout_color=elevation_callout_color,
-                )
+        coord_system = self._coord_factory.create()
+        return bool(
+            visualize_with_threejs(
+                bid_conditions,
+                bid_takeoffs,
+                coord_system,
+                self._color_service,
+                self._takeoff_service,
+                title=title,
+                output_path=output_path,
+                auto_open=auto_open,
+                display_mode_3d=display_mode_3d,
+                display_mode_2d=display_mode_2d,
+                display_modes_synced=display_modes_synced,
+                grayscale_enabled=grayscale_enabled,
+                inactive_object_color=inactive_object_color,
+                page_area_selections=page_area_selections,
+                pages=pages,
+                active_page_uid=active_page_uid,
+                layers=layers,
+                areas=areas,
+                page_image_layer=page_image_layer,
+                include_elevation_callouts=include_elevation_callouts,
+                elevation_callout_settings=elevation_callout_settings,
+                elevation_callout_color=elevation_callout_color,
             )
-        except Exception:
-            return False
+        )
 
 
 class _ExportStrategyAdapter(IExportStrategy):
@@ -217,6 +219,7 @@ class _ExportStrategyAdapter(IExportStrategy):
         export_options = {
             "display_mode": display_mode,
             "grayscale_enabled": config.grayscale_enabled,
+            "inactive_object_color": config.inactive_object_color,
         }
         if page_area_selections is not None:
             export_options["page_area_selections"] = page_area_selections
@@ -264,6 +267,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             "display_mode_2d": config.display_mode_2d,
             "display_modes_synced": config.display_modes_synced,
             "grayscale_enabled": config.grayscale_enabled,
+            "inactive_object_color": config.inactive_object_color,
             "include_elevation_callouts": config.html_elevation_callouts_enabled,
             "elevation_callout_settings": config.elevation_callout_settings(),
             "elevation_callout_color": config.html_elevation_callout_color,
@@ -302,6 +306,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             display_mode_2d=export_options["display_mode_2d"],
             display_modes_synced=export_options["display_modes_synced"],
             grayscale_enabled=export_options.get("grayscale_enabled", True),
+            inactive_object_color=export_options["inactive_object_color"],
             page_area_selections=export_options.get("page_area_selections"),
             auto_open=False,
             pages=export_options.get("pages"),

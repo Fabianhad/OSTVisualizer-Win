@@ -280,7 +280,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             get_page_area_selections=lambda: {},
         )
         service.config_model = SimpleNamespace(
-            display_mode_3d="condition", grayscale_enabled=False
+            display_mode_3d="condition",
+            grayscale_enabled=False,
+            inactive_object_color="#2468ac",
         )
         service.event_bus = SimpleNamespace(
             publish=lambda event, **payload: published.append((event, payload))
@@ -321,7 +323,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             get_page_area_selections=lambda: {},
         )
         service.config_model = SimpleNamespace(
-            display_mode_3d="condition", grayscale_enabled=False
+            display_mode_3d="condition",
+            grayscale_enabled=False,
+            inactive_object_color="#2468ac",
         )
         service.event_bus = SimpleNamespace(
             publish=lambda event, **payload: published.append((event, payload))
@@ -368,7 +372,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             get_page_area_selections=lambda: {},
         )
         service.config_model = SimpleNamespace(
-            display_mode_3d="condition", grayscale_enabled=False
+            display_mode_3d="condition",
+            grayscale_enabled=False,
+            inactive_object_color="#2468ac",
         )
         service._visualization_provider = SimpleNamespace(
             convert_meshes_to_geometries=lambda _meshes, _colors: []
@@ -434,7 +440,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
                 get_page_area_selections=lambda: {},
             )
             service.config_model = SimpleNamespace(
-                display_mode_3d="condition", grayscale_enabled=False
+                display_mode_3d="condition",
+                grayscale_enabled=False,
+                inactive_object_color="#2468ac",
             )
             service.event_bus = SimpleNamespace(
                 publish=lambda event, **payload: published.append((event, payload))

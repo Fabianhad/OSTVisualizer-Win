@@ -22,6 +22,7 @@ Built for estimators and construction teams who work with OST project files dail
 - **Import/Export** -- Move data between OST, OSP, HTML, PDF, CSV, DXF, OBJ, and FBX formats *(Commercial)*
 - **PDF Annotation Captions** -- Choose which Bluebeam-compatible measurement captions appear on exported takeoff annotations from the Options dialog *(Commercial)*
 - **HTML/PDF Elevation Callouts** -- Independently include visibility-aware four-row takeoff callouts with elevations and cubic-yard quantities in HTML and PDF exports from the Options dialog *(Commercial)*
+- **Font and Color Defaults** -- Set creation defaults for text, area labels, dimensions, style labels, highlights, and hot links from the Options dialog, and choose the live inactive-object color used across 2D, 3D, and exports
 - **Condition Management** -- Create, edit, duplicate, and organize conditions across bids *(Commercial)*
 - **Realtime Sync** -- Detects when On-Screen Takeoff is active and picks up changes automatically ([free companion tool](https://fabianhad.com/ost3d/download))
 

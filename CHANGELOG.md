@@ -8,13 +8,12 @@
 - Added ownership-guarded Ubuntu SQL Server container provisioning, multi-address source-IP allowlisting, WireGuard admission, TLS, validation, least-privilege repair, credential rotation, backup/restore verification, recovery, and uninstall tooling; new SQL connections now validate the server certificate and hostname by default.
 - Added persistent PDF annotation caption options with disabled-by-default global and per-caption controls plus Bluebeam-compatible selection, ordering, units, and formatting for all captions supported by exported polygon measurements.
 - Added persistent elevation callout options for HTML and PDF exports, including independent export enablement, red default text colors, and shared condition, top elevation, bottom elevation, and cubic-yard line selection.
+- Added a persistent Fonts/Colors Options tab with On-Screen Takeoff-compatible creation defaults for annotation and takeoff-label fonts and colors, 48- and 72-point choices, a custom lossless font picker, and a live inactive-object color shared by 2D, 3D, PDF, and HTML rendering.
 - Added a read-only MCP bid comparison tool that matches conditions by reference number, ignores insignificant floating-point quantity noise, and returns bounded condition-type aggregates for metadata, quantities, takeoff counts, and the pages containing affected conditions.
 - Added a responsive, single-click page selector to each Cover Sheet Index cell; large projects now open without eagerly parsing every PDF, while each row still offers all available pages and labels on demand.
 
 ### Changed
 
-- Changed Text and Dimension annotation formatting to include 48- and 72-point
-  font sizes in both default-style menus and the active text toolbar.
 - Changed polygon editing so Cloud and Polygon annotations use the existing Area
   takeoff Add/Subtract Control Point actions, validation, undo, and persistence.
 - Changed application table and tree headers to use consistent sorting,

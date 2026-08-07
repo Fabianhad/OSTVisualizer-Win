@@ -821,6 +821,20 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                 ResourceRef("condition", condition_key, bid_uid),
                 ResourceRef("page", page_key, bid_uid),
             )
+            label_extras = {
+                "FontName": "Arial",
+                "FontColor": 0x332211,
+                "FontSize": 10,
+                "FontBold": True,
+                "FontItalic": False,
+                "FontUnderline": False,
+                "NameFontName": "Arial",
+                "NameFontColor": 0x665544,
+                "NameFontSize": 12,
+                "NameFontBold": False,
+                "NameFontItalic": True,
+                "NameFontUnderline": True,
+            }
 
             def place(client_index, x):
                 session = session_rows[client_index]
@@ -849,6 +863,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                                 page_uid=page_key,
                                 area_uid="0",
                                 position=[x, 20.0],
+                                raw_extras=label_extras,
                             )
                         ],
                     )
@@ -960,6 +975,71 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                 }
                 self.assertEqual(first_client_uids, expected_uids)
                 self.assertEqual(second_client_uids, expected_uids)
+                for hydrated_takeoff in (
+                    *remote_second.remote_batch.bid_data_by_bid[bid_uid].bid_takeoffs,
+                    *second_local_completion.bid_data_by_bid[bid_uid].bid_takeoffs,
+                ):
+                    self.assertEqual(
+                        (
+                            hydrated_takeoff.dimension_font_name,
+                            hydrated_takeoff.dimension_font_color,
+                            hydrated_takeoff.dimension_font_size,
+                            hydrated_takeoff.dimension_font_bold,
+                            hydrated_takeoff.dimension_font_italic,
+                            hydrated_takeoff.dimension_font_underline,
+                        ),
+                        ("Arial", 0x332211, 10, True, False, False),
+                    )
+                    self.assertEqual(
+                        (
+                            hydrated_takeoff.name_font_name,
+                            hydrated_takeoff.name_font_color,
+                            hydrated_takeoff.name_font_size,
+                            hydrated_takeoff.name_font_bold,
+                            hydrated_takeoff.name_font_italic,
+                            hydrated_takeoff.name_font_underline,
+                        ),
+                        ("Arial", 0x665544, 12, False, True, True),
+                    )
+                with database.connections.connection(
+                    SqlConnectionRequest(
+                        database.location,
+                        password=configuration.password,
+                        read_only=True,
+                    ),
+                    autocommit=True,
+                ) as verification:
+                    with verification.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT [ChangedFields], [Payload] FROM "
+                            "[ostv].[ChangeLog] WHERE [TransactionId] IN (?, ?)",
+                            first_operation,
+                            second_operation,
+                        )
+                        change_rows = cursor.fetchall()
+                        self.assertEqual(len(change_rows), 4)
+                        self.assertTrue(
+                            all(
+                                changed_fields is None and payload is None
+                                for changed_fields, payload in change_rows
+                            )
+                        )
+                        cursor.execute(
+                            "SELECT [ResultPayload] FROM [ostv].[ChangeTransactions] "
+                            "WHERE [TransactionId] IN (?, ?)",
+                            first_operation,
+                            second_operation,
+                        )
+                        marker_payloads = [
+                            json.loads(str(row[0])) for row in cursor.fetchall()
+                        ]
+                        self.assertEqual(
+                            {
+                                (payload["value_available"], *payload["value"])
+                                for payload in marker_payloads
+                            },
+                            {(True, first_uid), (True, second_uid)},
+                        )
                 own_second = store.poll_changes(
                     descriptor.database_id,
                     remote_first.observed_batch.delivered_through_version,

@@ -17,6 +17,7 @@ from ....application.dtos.export_dto import (
     ExportProgressCallback,
     ExportResultDto,
 )
+from ....application.dtos.color_dtos import ColorWithOpacity
 from ....application.dtos.annotation_caption_dto import AnnotationCaptionSettingsDto
 from ....application.dtos.page_export_data_dto import PageExportData
 from ....application.interfaces.i_color_service import IColorService
@@ -76,7 +77,6 @@ _COUNT_CONDITION_TYPE = 2
 _ATTACHMENT_CONDITION_TYPE = 3
 _DEFAULT_FILL_OPACITY = 0.5
 _DEFAULT_HIGHLIGHT_OPACITY = 1.0
-_GRAY_COLOR_HEX = "#808080"
 _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
 _OVERLAY_DIRECT_FULL_PAGE_TOLERANCE_POINTS = 3.0
@@ -116,6 +116,8 @@ class PDFExporter:
             DEFAULT_ELEVATION_CALLOUT_SETTINGS
         ),
         elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
+        *,
+        inactive_object_color: str,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,
         on_progress: Optional[ExportProgressCallback] = None,
@@ -139,7 +141,8 @@ class PDFExporter:
                         bid_conditions,
                         page_info,
                         color_map,
-                        page_area_selections,
+                        page_area_selections=page_area_selections,
+                        inactive_object_color=inactive_object_color,
                         caption_settings=caption_settings,
                         elevation_callouts_enabled=elevation_callouts_enabled,
                         elevation_callout_settings=elevation_callout_settings,
@@ -579,6 +582,7 @@ class PDFExporter:
         color_map: Optional[Dict[str, Any]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         *,
+        inactive_object_color: str,
         caption_settings: AnnotationCaptionSettingsDto,
         elevation_callouts_enabled: bool,
         elevation_callout_settings: ElevationCalloutSettings = (
@@ -624,19 +628,15 @@ class PDFExporter:
                 )
                 if hole_vertices and len(hole_vertices) >= 3:
                     pdf_holes.append(hole_vertices)
-            if self._color_service.should_gray_out_takeoff(
-                takeoff, page_area_selections
-            ):
-                color_rgb = self._color_service.hex_to_rgb_int(_GRAY_COLOR_HEX)
-                fill_opacity = _DEFAULT_FILL_OPACITY
-            elif color_map and condition_uid in color_map:
-                color_entry = color_map[condition_uid]
-                hex_color = color_entry.hex
-                fill_opacity = color_entry.opacity
-                color_rgb = self._color_service.hex_to_rgb_int(hex_color)
-            else:
-                color_rgb = self._color_service.get_condition_color(condition)
-                fill_opacity = _DEFAULT_FILL_OPACITY
+            color_entry = self._resolved_takeoff_color(
+                takeoff,
+                condition,
+                color_map,
+                page_area_selections,
+                inactive_object_color,
+            )
+            color_rgb = self._color_service.hex_to_rgb_int(color_entry.hex)
+            fill_opacity = color_entry.opacity
             condition_name = condition.name if condition.name else "Takeoff"
             ref_no = condition.ref_no if condition.ref_no else ""
             label = f"{ref_no} - {condition_name}" if ref_no else condition_name
@@ -755,19 +755,15 @@ class PDFExporter:
             )
             if not pdf_vertices or len(pdf_vertices) < 3:
                 continue
-            if self._color_service.should_gray_out_takeoff(
-                takeoff, page_area_selections
-            ):
-                color_rgb = self._color_service.hex_to_rgb_int(_GRAY_COLOR_HEX)
-                fill_opacity = _DEFAULT_FILL_OPACITY
-            elif color_map and condition_uid in color_map:
-                color_entry = color_map[condition_uid]
-                hex_color = color_entry.hex
-                fill_opacity = color_entry.opacity
-                color_rgb = self._color_service.hex_to_rgb_int(hex_color)
-            else:
-                color_rgb = self._color_service.get_condition_color(condition)
-                fill_opacity = _DEFAULT_FILL_OPACITY
+            color_entry = self._resolved_takeoff_color(
+                takeoff,
+                condition,
+                color_map,
+                page_area_selections,
+                inactive_object_color,
+            )
+            color_rgb = self._color_service.hex_to_rgb_int(color_entry.hex)
+            fill_opacity = color_entry.opacity
             condition_name = condition.name if condition.name else "Takeoff"
             ref_no = condition.ref_no if condition.ref_no else ""
             label = f"{ref_no} - {condition_name}" if ref_no else condition_name
@@ -803,6 +799,33 @@ class PDFExporter:
                 if callout is not None:
                     elevation_callouts.append(callout)
         return polygons, elevation_callouts
+
+    def _resolved_takeoff_color(
+        self,
+        takeoff: Takeoff,
+        condition: Condition,
+        color_map: Optional[Dict[str, Any]],
+        page_area_selections: Optional[Dict[str, Optional[str]]],
+        inactive_object_color: str,
+    ) -> ColorWithOpacity:
+        effective_color_map = color_map
+        if not effective_color_map or condition.uid not in effective_color_map:
+            fallback_hex = "#{:02x}{:02x}{:02x}".format(
+                *self._color_service.get_condition_color(condition)
+            )
+            effective_color_map = {
+                condition.uid: ColorWithOpacity(
+                    fallback_hex,
+                    _DEFAULT_FILL_OPACITY,
+                )
+            }
+        return self._color_service.get_2d_color_for_takeoff(
+            takeoff,
+            condition,
+            effective_color_map,
+            page_area_selections,
+            inactive_object_color=inactive_object_color,
+        )
 
     def _build_elevation_callout_text(
         self,

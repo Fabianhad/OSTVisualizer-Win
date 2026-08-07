@@ -1,4 +1,3 @@
-import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 from ....application.interfaces.i_color_service import IColorService
@@ -12,8 +11,6 @@ from ..core.boolean_operations import apply_boolean_operations
 from ..core.mesh_generator import MeshData
 from ..meshing.mesh_builder import get_holes_for_takeoff
 from ..meshing.mesh_factory import MeshFactory
-
-logger = logging.getLogger(__name__)
 
 
 class BaseExporter(ABC):
@@ -47,6 +44,8 @@ class BaseExporter(ABC):
         display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> bool:
         exportable_takeoffs = None
         hierarchy_map = None
@@ -68,7 +67,12 @@ class BaseExporter(ABC):
                 bid_conditions, exportable_takeoffs, display_mode, grayscale_enabled
             )
             takeoffs_by_group, materials_info = self._prepare_hierarchical_export(
-                exportable_takeoffs, bid_conditions, color_map, page_area_selections
+                exportable_takeoffs,
+                bid_conditions,
+                color_map,
+                display_mode,
+                page_area_selections=page_area_selections,
+                inactive_object_color=inactive_object_color,
             )
             self._apply_boolean_operations(takeoffs_by_group)
             write_result = self._write_output(
@@ -79,25 +83,17 @@ class BaseExporter(ABC):
                 display_mode,
             )
             return write_result is not False
-        except Exception:
-            logger.exception("Error during export")
-            return False
         finally:
             if exportable_takeoffs is not None:
                 exportable_takeoffs.clear()
-                del exportable_takeoffs
             if hierarchy_map is not None:
                 hierarchy_map.clear()
-                del hierarchy_map
             if color_map is not None:
                 color_map.clear()
-                del color_map
             if takeoffs_by_group is not None:
                 takeoffs_by_group.clear()
-                del takeoffs_by_group
             if materials_info is not None:
                 materials_info.clear()
-                del materials_info
             self.cleanup()
 
     def _filter_exportable_takeoffs(
@@ -115,20 +111,25 @@ class BaseExporter(ABC):
         exportable_takeoffs,
         bid_conditions,
         condition_color_map,
+        display_mode: str,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> Tuple[Dict, Dict]:
         takeoffs_by_condition = {}
         materials_info = {}
         for takeoff in exportable_takeoffs:
             condition_uid = takeoff.condition_uid
             condition = bid_conditions[condition_uid]
-            if self._color_service.should_gray_out_takeoff(
-                takeoff, page_area_selections
-            ):
-                hex_color = "#808080"
-            else:
-                color_entry = condition_color_map.get(condition_uid, "#808080")
-                hex_color, _ = self._color_service.as_hex_with_opacity(color_entry)
+            color_entry = self._color_service.get_color_for_takeoff(
+                takeoff,
+                condition,
+                condition_color_map,
+                display_mode,
+                page_area_selections,
+                inactive_object_color=inactive_object_color,
+            )
+            hex_color = color_entry.hex
             condition_name = (
                 condition.name if condition.name else f"Condition_{condition_uid}"
             )

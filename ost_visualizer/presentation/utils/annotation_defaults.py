@@ -8,6 +8,7 @@ from ...domain.entities.annotation import (
     ANNOTATION_TYPE_LINE,
     ANNOTATION_TYPE_NAMED_VIEW,
     ANNOTATION_TYPE_TEXT,
+    hex_color_to_int,
 )
 from ...domain.entities.annotation_style import (
     AnnotationStyle,
@@ -17,10 +18,11 @@ from ...domain.entities.annotation_style import (
     normalize_text_font_name,
     normalize_text_font_size,
 )
+from ...domain.entities.config import Config
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
+from .font_catalog import resolve_font_definition
 
 DIMENSION_ANNOTATION_WIDTH = 1.0
-HOTLINK_DEFAULT_COLOR = "#ff0000"
 NAMED_VIEW_DEFAULT_COLOR = "#008000"
 PLACEABLE_ANNOTATION_TYPES = frozenset(
     spec.annotation_type
@@ -34,7 +36,7 @@ def _default_style_for_tool(annotation_type: str) -> AnnotationStyle:
     if annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
         return AnnotationStyle(color=NAMED_VIEW_DEFAULT_COLOR)
     if annotation_type == ANNOTATION_TYPE_HOTLINK:
-        return AnnotationStyle(color=HOTLINK_DEFAULT_COLOR)
+        return AnnotationStyle(color=Config.DEFAULT_HOTLINK_COLOR)
     return AnnotationStyle()
 
 
@@ -127,6 +129,7 @@ def set_annotation_style_for_tool(
 
 def set_annotation_styles_by_tool(
     styles: Mapping[str, AnnotationStyle | Mapping[str, object]],
+    config: Config,
 ) -> dict[str, AnnotationStyle]:
     next_styles = {key: _default_style_for_tool(key) for key in _STYLE_KEYS}
     for annotation_type, raw_style in styles.items():
@@ -139,7 +142,40 @@ def set_annotation_styles_by_tool(
             next_styles[key] = AnnotationStyle.from_dict(raw_style)
     _ANNOTATION_STYLES.clear()
     _ANNOTATION_STYLES.update(next_styles)
+    apply_config_owned_annotation_defaults(config)
     return get_annotation_styles_by_tool()
+
+
+def apply_config_owned_annotation_defaults(config: Config) -> None:
+    """Project durable creation defaults into the runtime annotation palette."""
+    text = resolve_font_definition(config.default_text_font)
+    set_annotation_style_for_tool(
+        ANNOTATION_TYPE_TEXT,
+        color=config.default_text_color,
+        font_name=text.family,
+        font_size=text.point_size,
+        font_bold=text.weight == 700,
+        font_italic=text.italic,
+        font_underline=text.underline,
+    )
+    dimension = resolve_font_definition(config.default_dimension_annotation_font)
+    set_annotation_style_for_tool(
+        ANNOTATION_TYPE_DIMENSION,
+        color=config.default_dimension_annotation_color,
+        font_name=dimension.family,
+        font_size=dimension.point_size,
+        font_bold=dimension.weight == 700,
+        font_italic=dimension.italic,
+        font_underline=dimension.underline,
+    )
+    set_annotation_style_for_tool(
+        ANNOTATION_TYPE_HIGHLIGHT,
+        color=config.default_highlight_color,
+    )
+    set_annotation_style_for_tool(
+        ANNOTATION_TYPE_HOTLINK,
+        color=config.default_hotlink_color,
+    )
 
 
 def dimension_annotation_properties() -> dict:
@@ -157,20 +193,12 @@ def dimension_annotation_properties() -> dict:
     }
 
 
-def _annotation_color_int(color: str) -> int:
-    text = normalize_annotation_color(color).lstrip("#")
-    red = int(text[0:2], 16)
-    green = int(text[2:4], 16)
-    blue = int(text[4:6], 16)
-    return red | (green << 8) | (blue << 16)
-
-
 def text_annotation_properties() -> dict:
     style = _style_for(ANNOTATION_TYPE_TEXT)
     return {
         "Text": "",
         "FontName": style.font_name,
-        "FontColor": _annotation_color_int(style.color),
+        "FontColor": hex_color_to_int(normalize_annotation_color(style.color)),
         "FontSize": style.font_size,
         "FontBold": style.font_bold,
         "FontItalic": style.font_italic,

@@ -2,8 +2,10 @@ import unittest
 import uuid
 import weakref
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from PySide6 import QtGui, QtWidgets
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
@@ -25,9 +27,12 @@ from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
+    hex_color_to_int,
 )
 from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.font_definition import FontDefinition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.page_selection_service import PageSelectionService
@@ -49,10 +54,12 @@ from ost_visualizer.presentation.services.selection_commands import (
     PasteTakeoffsCommand,
 )
 from ost_visualizer.presentation.utils.annotation_defaults import (
+    apply_config_owned_annotation_defaults,
     build_placed_annotation_spec,
     set_annotation_style_for_tool,
     set_annotation_styles_by_tool,
 )
+from ost_visualizer.presentation.utils.font_catalog import resolve_font_definition
 
 
 def _named_view_annotation(uid: str, name: str) -> BidAnnotation:
@@ -276,9 +283,18 @@ class FakePlanView:
         self.geometry_lease_granted = set()
 
 
+class _FakeConfigModel:
+    def __init__(self, config: Config):
+        self._config = config
+
+    def snapshot(self) -> Config:
+        return self._config
+
+
 class FakeUiState:
     place_condition_uids = []
     active_page_uid = "p1"
+    config_model = _FakeConfigModel(Config())
 
     def get_selected_bid_ref(self):
         return BidRef(file_path="bid.mdb", bid_uid="7")
@@ -1104,6 +1120,16 @@ class FakeAccess:
 
 
 class PlanViewActionHandlerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        font_directory = Path(r"C:\Windows\Fonts")
+        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
+
+    def setUp(self):
+        apply_config_owned_annotation_defaults(Config())
+
     def tearDown(self):
         for annotation_type in (
             "dimension",
@@ -1128,6 +1154,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 font_underline=False,
                 text_align=0,
             )
+        apply_config_owned_annotation_defaults(Config())
 
     def test_multi_page_changes_publish_one_event_per_transaction(self):
         event_bus = FakeEventBus()
@@ -1193,7 +1220,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "highlight", "p1", [1.0, 2.0, 13.0, 14.0]
         )
         self.assertEqual(highlight_spec.width, 0.0)
-        self.assertEqual(highlight_spec.color, "#ff0000")
+        self.assertEqual(highlight_spec.color, "#ffff00")
 
     def test_per_tool_annotation_style_applies_to_new_markup_annotations(self):
         for annotation_type in (
@@ -1315,12 +1342,13 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 {
                     "rect": AnnotationStyle(color="#123456", line_width=6.0),
                     "retired-tool": AnnotationStyle(color="#abcdef"),
-                }
+                },
+                Config(),
             )
             self.assertEqual(styles["rect"].color, "#123456")
             self.assertNotIn("retired-tool", styles)
         finally:
-            set_annotation_styles_by_tool({})
+            set_annotation_styles_by_tool({}, Config())
 
     def _overlay_handler(self, data, deferred, *, allowed=True):
         return PlanViewActionHandler(
@@ -1616,8 +1644,13 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 self.assertEqual(specs[0].position, position)
                 self.assertFalse(publish_database_refreshed_after_write)
                 if annotation_type == "dimension":
-                    self.assertEqual(specs[0].properties["FontName"], "Arial")
-                    self.assertEqual(specs[0].properties["FontColor"], "#ff0000")
+                    expected_font = resolve_font_definition(
+                        Config().default_dimension_annotation_font
+                    )
+                    self.assertEqual(
+                        specs[0].properties["FontName"], expected_font.family
+                    )
+                    self.assertEqual(specs[0].properties["FontColor"], "#000080")
                 self.assertEqual(plan_view.selected, {"ann-1"})
                 self.assertEqual(undo.count, 1)
 
@@ -2466,9 +2499,22 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         write = FakeWriteService()
         undo = FakeUndoService()
         event_bus = FakeEventBus()
+        ui_state = FakeUiState()
+        ui_state.config_model = _FakeConfigModel(
+            Config(
+                default_area_label_font=FontDefinition(
+                    "Arial", "Bold Italic", 24, 700, True, True
+                ),
+                default_style_label_font=FontDefinition(
+                    "Arial", "Regular", 18, 400, False, False
+                ),
+                default_area_label_color="#112233",
+                default_style_label_color="#445566",
+            )
+        )
         handler = PlanViewActionHandler(
             plan_view=plan_view,
-            ui_state_manager=FakeUiState(),
+            ui_state_manager=ui_state,
             project_data_svc=data,
             project_write_svc=write,
             annotation_write_svc=None,
@@ -2486,6 +2532,11 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.added_takeoffs[0].uid, "100")
         self.assertEqual(data.added_takeoffs[0].condition_uid, "42")
         self.assertEqual(data.added_takeoffs[0].page_uid, "9")
+        extras = write.calls[0][2][0].raw_extras
+        self.assertEqual(extras["FontColor"], hex_color_to_int("#112233"))
+        self.assertEqual(extras["NameFontColor"], hex_color_to_int("#445566"))
+        self.assertEqual((extras["FontSize"], extras["FontItalic"]), (24, True))
+        self.assertEqual((extras["NameFontSize"], extras["NameFontBold"]), (18, False))
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
@@ -3362,7 +3413,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(viewer.opengl_viewer.clears, 1)
         self.assertEqual(visualization.mesh_pages, [[]])
 
-    def test_raw_extra_insert_keeps_full_reload(self):
+    def test_approved_raw_extra_insert_keeps_fast_refresh(self):
         plan_view = FakePlanView()
         data = FakeProjectData()
         write = FakeWriteService()
@@ -3390,8 +3441,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [spec],
             fast_refresh=True,
         )
-        self.assertEqual(write.calls[0][3], True)
-        self.assertEqual(data.added_takeoffs, [])
+        self.assertEqual(write.calls[0][3], False)
+        self.assertEqual(len(data.added_takeoffs), 1)
 
     def test_reassign_condition_writes_selected_takeoffs(self):
         data = FakeProjectData()

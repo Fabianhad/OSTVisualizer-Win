@@ -120,8 +120,17 @@ class FakeCoordinateSystem:
 
 
 class FakeColorService:
-    def should_gray_out_takeoff(self, _takeoff, _page_area_selections):
-        return False
+    def get_2d_color_for_takeoff(
+        self,
+        takeoff,
+        _condition,
+        color_map,
+        _page_area_selections=None,
+        *,
+        inactive_object_color,
+    ):
+        _ = inactive_object_color
+        return color_map[takeoff.condition_uid]
 
 
 class ConditionUiBehaviorTests(unittest.TestCase):
@@ -307,6 +316,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             [takeoff],
             {condition.uid: condition},
             {condition.uid: SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         items = rendered[0][1]
         return items if isinstance(items, list) else [items]
@@ -1063,6 +1073,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             [takeoff],
             {"c1": condition},
             {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         self.assertEqual([uid for uid, _item in rendered], ["t1"])
 
@@ -1742,6 +1753,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             [takeoff],
             {"c1": condition},
             {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         items = rendered[0][1]
         items = items if isinstance(items, list) else [items]
@@ -1909,6 +1921,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                     [parent, backout],
                     {"c1": condition},
                     {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+                    inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
                 )
                 items = rendered[0][1]
                 items = items if isinstance(items, list) else [items]
@@ -1958,6 +1971,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             [parent, backout],
             {"c1": condition},
             {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         items = rendered[0][1]
         items = items if isinstance(items, list) else [items]
@@ -2004,6 +2018,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             [takeoff],
             {"c1": condition},
             {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         items = rendered[0][1]
         items = items if isinstance(items, list) else [items]
@@ -2039,6 +2054,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             [takeoff],
             {"c1": condition},
             {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         items = rendered[0][1]
         items = items if isinstance(items, list) else [items]
@@ -2090,6 +2106,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             [takeoff],
             {"c1": condition},
             {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         items = rendered[0][1]
         items = items if isinstance(items, list) else [items]

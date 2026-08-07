@@ -397,7 +397,7 @@ class SelectionManagerMixin:
                 continue
             if uid not in self._uid_to_items or not self._is_selectable(uid):
                 continue
-            if self._color_service.should_gray_out_takeoff(
+            if self._color_service.is_inactive_area_takeoff(
                 takeoff, page_area_selections
             ):
                 continue

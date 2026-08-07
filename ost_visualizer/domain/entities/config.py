@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 from .annotation_caption import DEFAULT_ANNOTATION_CAPTION_IDS
 from .elevation_callout import ElevationCalloutSettings
+from .font_definition import FontDefinition
 
 
 def _config_bool(data: dict, key: str) -> bool:
@@ -32,6 +33,25 @@ class Config:
     DEFAULT_MOUSE_PRESSED_SNAP_ANGLE: ClassVar[int] = 0
     DEFAULT_SNAP_THRESHOLD_PX: ClassVar[int] = 8
     DEFAULT_ELEVATION_CALLOUT_COLOR: ClassVar[str] = "#ff0000"
+    DEFAULT_TEXT_FONT: ClassVar[FontDefinition] = FontDefinition(
+        "Arial", "Bold", 12, 700, False, False
+    )
+    DEFAULT_AREA_LABEL_FONT: ClassVar[FontDefinition] = FontDefinition(
+        "Arial", "Bold", 10, 700, False, False
+    )
+    DEFAULT_DIMENSION_ANNOTATION_FONT: ClassVar[FontDefinition] = FontDefinition(
+        "Arial", "Bold", 12, 700, False, False
+    )
+    DEFAULT_STYLE_LABEL_FONT: ClassVar[FontDefinition] = FontDefinition(
+        "Arial", "Bold", 12, 700, False, False
+    )
+    DEFAULT_TEXT_COLOR: ClassVar[str] = "#ff0000"
+    DEFAULT_AREA_LABEL_COLOR: ClassVar[str] = "#0000ff"
+    DEFAULT_DIMENSION_ANNOTATION_COLOR: ClassVar[str] = "#000080"
+    DEFAULT_STYLE_LABEL_COLOR: ClassVar[str] = "#000080"
+    DEFAULT_HIGHLIGHT_COLOR: ClassVar[str] = "#ffff00"
+    DEFAULT_HOTLINK_COLOR: ClassVar[str] = "#ff0000"
+    DEFAULT_INACTIVE_OBJECT_COLOR: ClassVar[str] = "#d0d0d0"
     display_modes_synced: bool = True
     display_mode_3d: str = DEFAULT_DISPLAY_MODE
     display_mode_2d: str = DEFAULT_DISPLAY_MODE
@@ -69,6 +89,19 @@ class Config:
     elevation_callout_include_cubic_yards: bool = True
     html_elevation_callout_color: str = DEFAULT_ELEVATION_CALLOUT_COLOR
     pdf_elevation_callout_color: str = DEFAULT_ELEVATION_CALLOUT_COLOR
+    default_text_font: FontDefinition = DEFAULT_TEXT_FONT
+    default_area_label_font: FontDefinition = DEFAULT_AREA_LABEL_FONT
+    default_dimension_annotation_font: FontDefinition = (
+        DEFAULT_DIMENSION_ANNOTATION_FONT
+    )
+    default_style_label_font: FontDefinition = DEFAULT_STYLE_LABEL_FONT
+    default_text_color: str = DEFAULT_TEXT_COLOR
+    default_area_label_color: str = DEFAULT_AREA_LABEL_COLOR
+    default_dimension_annotation_color: str = DEFAULT_DIMENSION_ANNOTATION_COLOR
+    default_style_label_color: str = DEFAULT_STYLE_LABEL_COLOR
+    default_highlight_color: str = DEFAULT_HIGHLIGHT_COLOR
+    default_hotlink_color: str = DEFAULT_HOTLINK_COLOR
+    inactive_object_color: str = DEFAULT_INACTIVE_OBJECT_COLOR
 
     def to_dict(self) -> dict:
         return {
@@ -117,6 +150,21 @@ class Config:
             ),
             "html_elevation_callout_color": self.html_elevation_callout_color,
             "pdf_elevation_callout_color": self.pdf_elevation_callout_color,
+            "default_text_font": self.default_text_font.to_dict(),
+            "default_area_label_font": self.default_area_label_font.to_dict(),
+            "default_dimension_annotation_font": (
+                self.default_dimension_annotation_font.to_dict()
+            ),
+            "default_style_label_font": self.default_style_label_font.to_dict(),
+            "default_text_color": self.default_text_color,
+            "default_area_label_color": self.default_area_label_color,
+            "default_dimension_annotation_color": (
+                self.default_dimension_annotation_color
+            ),
+            "default_style_label_color": self.default_style_label_color,
+            "default_highlight_color": self.default_highlight_color,
+            "default_hotlink_color": self.default_hotlink_color,
+            "inactive_object_color": self.inactive_object_color,
         }
 
     def elevation_callout_settings(self) -> ElevationCalloutSettings:
@@ -255,4 +303,36 @@ class Config:
             config.pdf_elevation_callout_color = str(
                 data["pdf_elevation_callout_color"]
             )
+        if "default_text_font" in data:
+            config.default_text_font = FontDefinition.from_dict(
+                data["default_text_font"]
+            )
+        if "default_area_label_font" in data:
+            config.default_area_label_font = FontDefinition.from_dict(
+                data["default_area_label_font"]
+            )
+        if "default_dimension_annotation_font" in data:
+            config.default_dimension_annotation_font = FontDefinition.from_dict(
+                data["default_dimension_annotation_font"]
+            )
+        if "default_style_label_font" in data:
+            config.default_style_label_font = FontDefinition.from_dict(
+                data["default_style_label_font"]
+            )
+        if "default_text_color" in data:
+            config.default_text_color = data["default_text_color"]
+        if "default_area_label_color" in data:
+            config.default_area_label_color = data["default_area_label_color"]
+        if "default_dimension_annotation_color" in data:
+            config.default_dimension_annotation_color = data[
+                "default_dimension_annotation_color"
+            ]
+        if "default_style_label_color" in data:
+            config.default_style_label_color = data["default_style_label_color"]
+        if "default_highlight_color" in data:
+            config.default_highlight_color = data["default_highlight_color"]
+        if "default_hotlink_color" in data:
+            config.default_hotlink_color = data["default_hotlink_color"]
+        if "inactive_object_color" in data:
+            config.inactive_object_color = data["inactive_object_color"]
         return config

@@ -1,5 +1,7 @@
 from PySide6 import QtCore
 from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
+from ...domain.aggregates.config_aggregate import ConfigAggregate
+from ..utils.annotation_defaults import apply_config_owned_annotation_defaults
 
 
 class AppConfigPresentationManager:
@@ -9,10 +11,13 @@ class AppConfigPresentationManager:
             "display_mode_3d",
             "display_mode_2d",
             "grayscale_enabled",
+            "inactive_object_color",
         }
     )
 
-    def apply(self, window, config_model) -> None:
+    def apply(self, window, config_model: ConfigAggregate) -> None:
+        apply_config_owned_annotation_defaults(config_model.snapshot())
+        window._refresh_annotation_style_controls()
         self.apply_toolbar_text(window, config_model)
         if window.takeoff_sidebar:
             window.takeoff_sidebar.set_label_options(
@@ -48,6 +53,7 @@ class AppConfigPresentationManager:
 
     def apply_plan_view_config(self, plan_view, config_model) -> None:
         plan_view.set_roping_selection_method(config_model.roping_selection_method)
+        plan_view.set_inactive_object_color(config_model.inactive_object_color)
         plan_view.set_disable_high_resolution_images(
             config_model.disable_high_resolution_images
         )
@@ -77,6 +83,7 @@ class AppConfigPresentationManager:
             show_page_index=config_model.display_page_index_with_sheet_name,
             show_sheet_number=config_model.display_sheet_number_with_sheet_name,
             roping_selection_method=config_model.roping_selection_method,
+            inactive_object_color=config_model.inactive_object_color,
             disable_high_resolution_images=config_model.disable_high_resolution_images,
             intelligent_paste_enabled=config_model.enable_intelligent_paste,
             advanced_mouse_controls_enabled=config_model.enable_advanced_mouse_controls,

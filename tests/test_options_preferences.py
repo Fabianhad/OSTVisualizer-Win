@@ -79,6 +79,7 @@ from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanVie
 from ost_visualizer.presentation.config import (
     OPTIONS_DIALOG_TITLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
+    OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_EXPORT,
@@ -714,6 +715,9 @@ class OptionsPreferencesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = _app()
+        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
 
     def tearDown(self):
         self.app.processEvents()
@@ -1103,10 +1107,11 @@ class OptionsPreferencesTests(unittest.TestCase):
 
     def test_options_dialog_contains_options_export_and_mcp_setup_tabs(self):
         dialog = OptionsDialog(Config())
-        self.assertEqual(dialog._tabs.count(), 3)
+        self.assertEqual(dialog._tabs.count(), 4)
         self.assertEqual(dialog._tabs.tabText(0), OPTIONS_TAB_OPTIONS)
-        self.assertEqual(dialog._tabs.tabText(1), OPTIONS_TAB_EXPORT)
-        self.assertEqual(dialog._tabs.tabText(2), OPTIONS_TAB_MCP_SETUP)
+        self.assertEqual(dialog._tabs.tabText(1), OPTIONS_TAB_FONTS_COLORS)
+        self.assertEqual(dialog._tabs.tabText(2), OPTIONS_TAB_EXPORT)
+        self.assertEqual(dialog._tabs.tabText(3), OPTIONS_TAB_MCP_SETUP)
         dialog.close()
 
     def test_export_tab_defaults_off_with_every_caption_unselected_and_disabled(self):
@@ -2937,8 +2942,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.accepted = False
 
-            def pos(self):
-                return QtCore.QPoint(0, 0)
+            def position(self):
+                return QtCore.QPointF(0, 0)
 
             def accept(self):
                 self.accepted = True
@@ -4980,6 +4985,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             def set_roping_selection_method(self, value):
                 self.calls.append(("roping", value))
 
+            def set_inactive_object_color(self, value):
+                self.calls.append(("inactive", value))
+
             def set_disable_high_resolution_images(self, value):
                 self.calls.append(("high_res", value))
 
@@ -5008,36 +5016,61 @@ class OptionsPreferencesTests(unittest.TestCase):
             def apply_config_preferences(self, **config_options):
                 self.calls.append(config_options)
 
-        window = MainWindow.__new__(MainWindow)
-        window.get_workspace_toolbars = lambda: []
-        window._cover_sheet_button = QtWidgets.QToolButton()
-        window.takeoff_sidebar = None
-        window.plan_view = FakePlanView()
         annotation_window = FakeDetachedWindow()
         view_window = FakeDetachedWindow()
-        window.get_annotation_window = lambda: annotation_window
-        window.get_view_window = lambda: view_window
-        window._config_model = SimpleNamespace(
-            show_toolbar_text=False,
-            display_page_index_with_sheet_name=True,
-            display_sheet_number_with_sheet_name=True,
-            roping_selection_method="inclusive",
-            disable_high_resolution_images=True,
-            enable_intelligent_paste=False,
-            enable_advanced_mouse_controls=False,
-            use_full_window_crosshairs=True,
-            crosshair_color="#123456",
-            crosshair_line_thickness=4,
-            mouse_unpressed_snap_angle=30,
-            mouse_pressed_snap_angle=45,
-            **SNAP_PREF_UPDATE,
-            default_auto_zoom_level=125,
+        config_model = ConfigAggregate(
+            FakeConfigRepository(
+                Config(
+                    show_toolbar_text=False,
+                    display_page_index_with_sheet_name=True,
+                    display_sheet_number_with_sheet_name=True,
+                    roping_selection_method="inclusive",
+                    inactive_object_color="#2468ac",
+                    disable_high_resolution_images=True,
+                    enable_intelligent_paste=False,
+                    enable_advanced_mouse_controls=False,
+                    use_full_window_crosshairs=True,
+                    crosshair_color="#123456",
+                    crosshair_line_thickness=4,
+                    mouse_unpressed_snap_angle=30,
+                    mouse_pressed_snap_angle=45,
+                    **SNAP_PREF_UPDATE,
+                    default_auto_zoom_level=125,
+                )
+            )
         )
+
+        class FakeWindow:
+            def __init__(self):
+                self._config_model = config_model
+                self.takeoff_sidebar = None
+                self.plan_view = FakePlanView()
+                self.cover_sheet_button = QtWidgets.QToolButton()
+                self.annotation_style_refreshes = 0
+
+            def get_workspace_toolbars(self):
+                return []
+
+            def get_toolbar_text_buttons(self):
+                return [self.cover_sheet_button]
+
+            def get_annotation_window(self):
+                return annotation_window
+
+            def get_view_window(self):
+                return view_window
+
+            def _refresh_annotation_style_controls(self):
+                self.annotation_style_refreshes += 1
+
+        window = FakeWindow()
         MainWindow.apply_config_preferences(window)
+        self.assertEqual(window.annotation_style_refreshes, 1)
         self.assertEqual(
             window.plan_view.calls,
             [
                 ("roping", "inclusive"),
+                ("inactive", "#2468ac"),
                 ("high_res", True),
                 ("paste", False),
                 ("mouse", False),
@@ -5054,6 +5087,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             "show_page_index": True,
             "show_sheet_number": True,
             "roping_selection_method": "inclusive",
+            "inactive_object_color": "#2468ac",
             "disable_high_resolution_images": True,
             "intelligent_paste_enabled": False,
             "advanced_mouse_controls_enabled": False,
@@ -5122,6 +5156,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             menu_controller=SimpleNamespace(
                 update_menu_states=lambda: calls.append("menu")
             ),
+            refresh_detached_plan_views=lambda: calls.append("detached"),
         )
         coordinator.ui_state_manager = SimpleNamespace(
             sync_from_config=lambda: calls.append("sync"),
@@ -5168,12 +5203,16 @@ class OptionsPreferencesTests(unittest.TestCase):
                 ("highlight", ["cond-1"]),
                 ("viewers", ["page-1"]),
                 "plan_view",
+                "detached",
             ],
         )
 
     def test_condition_display_refresh_does_not_request_unlicensed_3d_scene(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: calls.append("detached")
+        )
         coordinator.ui_state_manager = SimpleNamespace(highlighted_condition_uids=[])
         coordinator._sidebar = SimpleNamespace(
             refresh_conditions_from_memory=lambda: calls.extend(
@@ -5192,7 +5231,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         coordinator._update_plan_view_for_active = lambda: calls.append("plan")
         coordinator._refresh_condition_display_after_app_config_change()
-        self.assertEqual(calls, ["conditions", "summary", "plan"])
+        self.assertEqual(calls, ["conditions", "summary", "plan", "detached"])
 
 
 if __name__ == "__main__":

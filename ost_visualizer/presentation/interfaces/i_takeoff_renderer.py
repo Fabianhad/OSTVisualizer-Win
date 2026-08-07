@@ -19,6 +19,8 @@ class ITakeoffRenderer(Protocol):
         opacity: float = 0.5,
         page_info: Optional[Dict[str, Any]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> List[Tuple[str, QGraphicsItem | List[QGraphicsItem]]]: ...
     def build_pattern_fill(
         self,

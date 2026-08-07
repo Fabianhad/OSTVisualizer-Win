@@ -26,6 +26,7 @@ from ost_visualizer.domain.entities.annotation import (
     BidAnnotation,
 )
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.components import (
     input_handler as input_handler_module,
@@ -335,6 +336,7 @@ class InputHandlerHarness(
 ):
     def __init__(self):
         self._editing_enabled = True
+        self._inactive_object_color = Config.DEFAULT_INACTIVE_OBJECT_COLOR
         self._pending_mutation_uids = set()
         self.selected_text_annotation_uids = []
         self.editing_text_annotation_uids = []
@@ -708,7 +710,13 @@ class FakeColorService:
         return "#123456", 1.0
 
     def get_2d_color_for_takeoff(
-        self, takeoff, _condition, color_map, page_area_selections=None
+        self,
+        takeoff,
+        _condition,
+        color_map,
+        page_area_selections=None,
+        *,
+        inactive_object_color,
     ):
         color = color_map.get(takeoff.condition_uid, "#123456")
         if (
@@ -716,7 +724,7 @@ class FakeColorService:
             and page_area_selections.get(takeoff.page_uid) is not None
             and takeoff.area_uid != page_area_selections[takeoff.page_uid]
         ):
-            color = "#808080"
+            color = inactive_object_color
         return color, 1.0
 
 
@@ -3483,7 +3491,7 @@ class CtrlDragTests(unittest.TestCase):
             view._uid_to_items["t1"][1].path().boundingRect().right(), 20.0
         )
 
-    def test_inactive_area_resize_preview_stays_grayed_out(self):
+    def test_inactive_area_resize_preview_uses_configured_appearance(self):
         view, main_item, _old_pattern = self._make_pattern_resize_view(
             Condition.TYPE_AREA
         )
@@ -3492,7 +3500,7 @@ class CtrlDragTests(unittest.TestCase):
         view.update_drag_handle_positions(
             [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0], "t1"
         )
-        self.assertEqual(main_item.pen().color().name(), "#808080")
+        self.assertEqual(main_item.pen().color().name(), "#d0d0d0")
 
     def test_hole_resize_preview_keeps_child_item_invisible(self):
         view, parent_item, hole_item, stale_hole_pattern = self._make_hole_resize_view()

@@ -29,6 +29,8 @@ class IMeshGenerator(Protocol):
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
+        *,
+        inactive_object_color: str,
     ) -> Tuple[
         List[MeshData],
         Dict[str, Union[str, Dict[str, object]]],

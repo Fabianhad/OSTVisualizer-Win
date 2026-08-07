@@ -26,6 +26,7 @@ from ost_visualizer.application.services.annotation_caption_resolver import (
 from ost_visualizer.domain.entities.annotation_caption import AnnotationCaptionId
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.layer import Layer
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
@@ -217,6 +218,18 @@ class _ColorService:
     def hex_to_rgb_int(self, color):
         text = color.lstrip("#")
         return [int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)]
+
+    def get_2d_color_for_takeoff(
+        self,
+        _takeoff,
+        condition,
+        color_map,
+        _page_area_selections=None,
+        *,
+        inactive_object_color,
+    ):
+        _ = inactive_object_color
+        return color_map[condition.uid]
 
 
 def _page_info():
@@ -820,6 +833,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             [takeoff],
             {"c1": condition},
             _page_info(),
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
             elevation_callouts_enabled=False,
         )
@@ -830,7 +844,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         exporter = PDFExporter.__new__(PDFExporter)
         exporter._coord_system = OSTCoordinateSystem()
         exporter._color_service = _ColorService()
-        exporter._color_service.should_gray_out_takeoff = lambda *_args: False
         exporter._color_service.get_condition_color = lambda _condition: [255, 0, 0]
         exporter._takeoff_service = SimpleNamespace(
             group_area_takeoffs_with_holes=lambda takeoffs, _conditions: (takeoffs, {})
@@ -855,6 +868,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             [takeoff],
             {condition.uid: condition},
             _page_info(),
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             caption_settings=AnnotationCaptionSettingsDto(
                 enabled=True,
                 selected_ids=(AnnotationCaptionId.AREA, AnnotationCaptionId.VOLUME),
@@ -863,6 +877,8 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         self.assertEqual(len(polygons), 1)
         self.assertEqual(callouts, [])
+        self.assertEqual(polygons[0].color, [255, 0, 0])
+        self.assertEqual(polygons[0].fill_opacity, 0.5)
         self.assertEqual(
             polygons[0].caption.lines,
             ["A = 144.00 sf", "V = 5.33 cu yd"],

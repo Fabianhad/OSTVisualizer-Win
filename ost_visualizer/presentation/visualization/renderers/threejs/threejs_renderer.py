@@ -50,6 +50,7 @@ def visualize_with_threejs(
     areas: Optional[List[BidArea]] = None,
     page_image_layer: Optional[ScenePageImageLayer] = None,
     *,
+    inactive_object_color: str,
     include_elevation_callouts: bool,
     elevation_callout_settings: ElevationCalloutSettings = (
         DEFAULT_ELEVATION_CALLOUT_SETTINGS
@@ -66,6 +67,7 @@ def visualize_with_threejs(
         takeoff_service=takeoff_service,
         display_mode=display_mode_3d,
         grayscale_enabled=grayscale_enabled,
+        inactive_object_color=inactive_object_color,
         page_area_selections=page_area_selections,
         areas=areas,
     )
@@ -95,6 +97,7 @@ def visualize_with_threejs(
             display_mode_2d,
             grayscale_enabled,
             page_area_selections,
+            inactive_object_color=inactive_object_color,
             include_elevation_callouts=include_elevation_callouts,
             elevation_callout_settings=elevation_callout_settings,
             elevation_callout_color=elevation_callout_color,
@@ -143,6 +146,7 @@ def _build_multi_page_data(
     grayscale_enabled: bool,
     page_area_selections: Optional[Dict],
     *,
+    inactive_object_color: str,
     include_elevation_callouts: bool,
     page_floor_elevations: Dict[str, float],
     elevation_callout_settings: ElevationCalloutSettings = (
@@ -232,6 +236,7 @@ def _build_multi_page_data(
                 include_elevation_callouts=include_elevation_callouts,
                 display_mode=display_mode,
                 grayscale_enabled=grayscale_enabled,
+                inactive_object_color=inactive_object_color,
                 page_area_selections=page_area_selections,
                 elevation_callout_settings=elevation_callout_settings,
                 elevation_callout_color=elevation_callout_color,

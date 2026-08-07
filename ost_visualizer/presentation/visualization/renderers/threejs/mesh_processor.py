@@ -26,6 +26,8 @@ def process_meshes_for_threejs(
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict] = None,
     areas: Optional[List[BidArea]] = None,
+    *,
+    inactive_object_color: str,
 ) -> Tuple[List[Tuple[MeshData, MeshMetadata]], Bounds]:
     area_names_by_uid = {
         str(area.uid): str(area.name or area.uid) for area in (areas or []) if area.uid
@@ -52,7 +54,12 @@ def process_meshes_for_threejs(
             mesh_data = mesh_factory.create_mesh_for_takeoff(takeoff, condition, holes)
             if mesh_data and mesh_data.vertices and mesh_data.faces:
                 color_hex, opacity = color_service.get_color_for_takeoff(
-                    takeoff, condition, color_map, display_mode, page_area_selections
+                    takeoff,
+                    condition,
+                    color_map,
+                    display_mode,
+                    page_area_selections,
+                    inactive_object_color=inactive_object_color,
                 )
                 takeoff_area_uid = area_group_uid(takeoff.area_uid)
                 metadata: MeshMetadata = {

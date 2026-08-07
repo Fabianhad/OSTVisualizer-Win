@@ -551,6 +551,9 @@ class DetachedPageViewManager(IShutdownAware):
         self._update_window_navigation(view)
         self._apply_window_page(view, page_data)
 
+    def refresh_active_view(self) -> None:
+        self._refresh_window()
+
     def _apply_window_page(self, view: AnnotationView, page_data: PageViewDto) -> None:
         self._window.set_access_state(self._get_access_state(view, page_data))
         self._window.update_page(page_data)

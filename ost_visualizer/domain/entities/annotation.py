@@ -233,3 +233,18 @@ def int_color_to_hex(color_fill: int) -> str:
     g = (color_fill >> 8) & 0xFF
     b = (color_fill >> 16) & 0xFF
     return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def hex_color_to_int(color: str) -> int:
+    if (
+        not isinstance(color, str)
+        or len(color) != 7
+        or color[0] != "#"
+        or any(ch not in "0123456789abcdefABCDEF" for ch in color[1:])
+    ):
+        raise ValueError(f"Invalid RGB color: {color!r}")
+    text = color[1:]
+    red = int(text[0:2], 16)
+    green = int(text[2:4], 16)
+    blue = int(text[4:6], 16)
+    return red | (green << 8) | (blue << 16)

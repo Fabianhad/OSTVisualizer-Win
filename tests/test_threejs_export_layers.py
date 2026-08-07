@@ -238,6 +238,7 @@ def _build_pages_without_takeoffs(pages, page_floor_elevations=None):
         Config.DISPLAY_MODE_SOLID,
         True,
         {},
+        inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         include_elevation_callouts=False,
         page_floor_elevations=page_floor_elevations or {},
     )
@@ -395,10 +396,30 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 {},
                 [],
                 "missing.html",
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
                 include_elevation_callouts=False,
             )
         self.assertFalse(result)
         renderer.assert_called_once()
+
+    def test_html_renderer_adapter_does_not_hide_rendering_errors(self):
+        adapter = _HtmlRendererAdapter(
+            SimpleNamespace(create=lambda: object()),
+            ColorService(),
+            _TakeoffService(),
+        )
+        renderer_module = "ost_visualizer.infrastructure.visualization_provider"
+        with patch(
+            f"{renderer_module}.visualize_with_threejs",
+            side_effect=RuntimeError("render failed"),
+        ), self.assertRaisesRegex(RuntimeError, "render failed"):
+            adapter.render(
+                {},
+                [],
+                "missing.html",
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                include_elevation_callouts=False,
+            )
 
     def test_page_floor_elevation_reducer_is_order_independent(self):
         page_a = MeshData(
@@ -442,6 +463,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
             html_elevation_callouts_enabled=False,
             elevation_callout_include_bottom=False,
             html_elevation_callout_color="#123456",
+            inactive_object_color="#345678",
         )
         options = strategy.get_export_options(config)
         result = strategy.execute_export(
@@ -455,6 +477,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertFalse(calls[0]["include_elevation_callouts"])
         self.assertFalse(calls[0]["elevation_callout_settings"].include_bottom)
         self.assertEqual(calls[0]["elevation_callout_color"], "#123456")
+        self.assertEqual(calls[0]["inactive_object_color"], "#345678")
 
     def test_collect_takeoffs_for_pages_can_include_hidden_layer_takeoffs(self):
         service = ProjectDataService(_ProjectModel())
@@ -855,6 +878,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "view_scale": 1.0,
             },
             include_elevation_callouts=False,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             grayscale_enabled=False,
         )
         self.assertEqual(len(entries), 1)
@@ -907,6 +931,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     "height": 500.0,
                 },
                 include_elevation_callouts=True,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
                 elevation_callout_color="#abcdef",
             )
         group_takeoffs.assert_called_once_with([takeoff], {"condition-1": condition})
@@ -962,6 +987,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "height": 500.0,
             },
             include_elevation_callouts=True,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             elevation_callout_settings=ElevationCalloutSettings(
                 include_condition=False,
                 include_top=True,
@@ -1003,6 +1029,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     "height": 500.0,
                 },
                 include_elevation_callouts=False,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             )
         self.assertEqual(len(entries), 1)
         self.assertEqual(callouts, [])
@@ -1109,6 +1136,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     output_path=output_path,
                     auto_open=True,
                     pages=[],
+                    inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
                     include_elevation_callouts=True,
                 )
         self.assertEqual(result, output_path)
@@ -1202,6 +1230,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     output_path=str(Path(tmpdir) / "scene.html"),
                     auto_open=False,
                     pages=[],
+                    inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
                     include_elevation_callouts=False,
                 )
         self.assertFalse(
@@ -1240,6 +1269,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "height": 72.0,
             },
             include_elevation_callouts=False,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         self.assertEqual(entries[0]["area_uid"], "")
         self.assertEqual(callouts, [])
@@ -1270,11 +1300,18 @@ class ThreejsExportLayerTests(unittest.TestCase):
             False,
         )
         _solid_hex, solid_opacity = color_service.get_color_for_takeoff(
-            takeoff, condition, solid_color_map, Config.DISPLAY_MODE_SOLID
+            takeoff,
+            condition,
+            solid_color_map,
+            Config.DISPLAY_MODE_SOLID,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         _transparent_hex, transparent_2d_opacity = (
             color_service.get_2d_color_for_takeoff(
-                takeoff, condition, transparent_color_map
+                takeoff,
+                condition,
+                transparent_color_map,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             )
         )
         self.assertEqual(solid_opacity, 1.0)
@@ -1291,6 +1328,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "height": 72.0,
             },
             include_elevation_callouts=False,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             display_mode=Config.DISPLAY_MODE_TRANSPARENT,
             grayscale_enabled=False,
         )
@@ -1322,6 +1360,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "height": 72.0,
             },
             include_elevation_callouts=False,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             display_mode=Config.DISPLAY_MODE_ORIGINAL,
             grayscale_enabled=False,
         )

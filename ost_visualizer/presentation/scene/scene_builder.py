@@ -111,9 +111,11 @@ class SceneBuilder:
         scene: QGraphicsScene,
         takeoffs: List[Takeoff],
         conditions: Dict[str, Condition],
-        color_map: Dict[str, str],
+        color_map: Dict[str, ColorWithOpacity],
         page_info: Dict,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> Tuple[List[Any], Dict[str, List[Any]]]:
         return self.add_takeoff_overlays_subset(
             scene=scene,
@@ -123,6 +125,7 @@ class SceneBuilder:
             color_map=color_map,
             page_info=page_info,
             page_area_selections=page_area_selections,
+            inactive_object_color=inactive_object_color,
         )
 
     def add_takeoff_overlays_subset(
@@ -134,6 +137,8 @@ class SceneBuilder:
         color_map: Dict[str, ColorWithOpacity],
         page_info: Dict,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> Tuple[List[Any], Dict[str, List[Any]]]:
         takeoff_items = []
         uid_to_items: Dict[str, List[Any]] = {}
@@ -153,6 +158,7 @@ class SceneBuilder:
             opacity=0.5,
             page_info=page_info,
             page_area_selections=page_area_selections,
+            inactive_object_color=inactive_object_color,
         )
         for uid, item_or_items in items:
             uid_key = str(uid)

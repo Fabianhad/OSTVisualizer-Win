@@ -239,6 +239,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             elevation_callouts_enabled,
             elevation_callout_settings,
             elevation_callout_color,
+            inactive_object_color,
             page_area_selections,
             bid_annotations,
             on_progress: Optional[ExportProgressCallback] = None,
@@ -252,6 +253,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     elevation_callouts_enabled,
                     elevation_callout_settings,
                     elevation_callout_color,
+                    inactive_object_color,
                 )
             )
             return ExportResultDto(success=True, format_name="PDF", page_count=1)
@@ -272,6 +274,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                         pdf_elevation_callouts_enabled=True,
                         elevation_callout_include_top=False,
                         pdf_elevation_callout_color="#abcdef",
+                        inactive_object_color="#345678",
                     )
                 ),
                 project_data_service=_FakeProjectData(["A1"]),
@@ -294,6 +297,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertTrue(calls[0][4])
         self.assertFalse(calls[0][5].include_top)
         self.assertEqual(calls[0][6], "#abcdef")
+        self.assertEqual(calls[0][7], "#345678")
 
     def test_pdf_export_rejects_case_variant_of_source_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

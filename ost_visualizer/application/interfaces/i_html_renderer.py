@@ -31,6 +31,7 @@ class IHtmlRenderer(Protocol):
         areas: Optional[List[BidArea]] = None,
         page_image_layer: Optional[ScenePageImageLayer] = None,
         *,
+        inactive_object_color: str,
         include_elevation_callouts: bool,
         elevation_callout_settings: ElevationCalloutSettings = (
             DEFAULT_ELEVATION_CALLOUT_SETTINGS

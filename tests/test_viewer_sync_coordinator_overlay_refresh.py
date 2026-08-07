@@ -148,7 +148,7 @@ class FakeColorService:
     def get_color_mapping(self, *_args):
         return {}, {}
 
-    def should_gray_out_takeoff(self, takeoff, page_area_selections):
+    def is_inactive_area_takeoff(self, takeoff, page_area_selections):
         if not page_area_selections:
             return False
         selected_area_uid = page_area_selections.get(str(takeoff.page_uid))
@@ -199,8 +199,10 @@ class FakeTakeoffRenderer:
         opacity,
         page_info,
         page_area_selections=None,
+        *,
+        inactive_object_color,
     ):
-        _ = (color_map, opacity, page_area_selections)
+        _ = (color_map, opacity, page_area_selections, inactive_object_color)
         return []
 
 
@@ -218,6 +220,8 @@ class RecordingPathTakeoffRenderer:
         opacity,
         page_info,
         page_area_selections=None,
+        *,
+        inactive_object_color,
     ):
         _ = (conditions, color_map, opacity, page_info, page_area_selections)
         self.calls.append([takeoff.uid for takeoff in takeoffs])
@@ -760,6 +764,14 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNotNone(view._condition_text_toolbar)
         self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
+
+    def test_plan_view_cleanup_releases_native_snap_indexes(self):
+        view = self._make_plan_view()
+        self.assertIsNotNone(view._ensure_takeoff_snap_index())
+        self.assertIsNotNone(view._ensure_pdf_snap_index())
+        view.cleanup()
+        self.assertIsNone(view._takeoff_snap_index)
+        self.assertIsNone(view._pdf_snap_index)
 
     def test_plan_view_cleanup_is_idempotent_after_services_are_released(self):
         view = self._make_plan_view()
@@ -4741,7 +4753,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._select_text_annotation_label("a1"))
         self.assertTrue(view._enter_annotation_place_mode("line"))
         event = SimpleNamespace(
-            pos=lambda: QtCore.QPoint(10, 12),
+            position=lambda: QtCore.QPointF(10, 12),
             accept=lambda: None,
         )
         self.assertTrue(view.handle_annotation_place_press(event))
@@ -5180,8 +5192,18 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_render_identity = view._build_render_identity(page, bid_ref)
 
         def add_takeoff_overlays(
-            scene, _takeoffs, _conditions, _color_map, _page_info, _area_selections
+            scene,
+            _takeoffs,
+            _conditions,
+            _color_map,
+            _page_info,
+            _area_selections,
+            *,
+            inactive_object_color,
         ):
+            self.assertEqual(
+                inactive_object_color, Config.DEFAULT_INACTIVE_OBJECT_COLOR
+            )
             new_path = self._make_condition_label_path_item("t1")
             new_label = QGraphicsTextItem("Area")
             new_label.setData(0, "t1")
@@ -6980,6 +7002,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         }
         view._current_color_map = {"c1": "#000000"}
         view._current_page_area_selections = {}
+        view._inactive_object_color = Config.DEFAULT_INACTIVE_OBJECT_COLOR
         view._hidden_layer_uids = set()
         view._takeoff_items = []
         view._hotlink_items = []

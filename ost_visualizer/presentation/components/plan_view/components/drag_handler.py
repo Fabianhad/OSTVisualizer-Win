@@ -143,6 +143,7 @@ class DragHandlerMixin:
             condition,
             self._current_color_map,
             self._current_page_area_selections,
+            inactive_object_color=self._inactive_object_color,
         )
 
     def _refresh_takeoff_pattern_preview(

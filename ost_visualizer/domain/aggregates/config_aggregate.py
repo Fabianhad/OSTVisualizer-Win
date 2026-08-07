@@ -3,6 +3,7 @@ from dataclasses import replace
 from typing import Optional
 from ..entities.annotation_caption import SUPPORTED_ANNOTATION_CAPTION_IDS
 from ..entities.config import Config
+from ..entities.font_definition import FontDefinition
 from ..repositories.i_config_repository import IConfigRepository
 
 
@@ -150,6 +151,50 @@ class ConfigAggregate:
     def snap_to_right_angle_threshold_px(self) -> int:
         return self._config.snap_to_right_angle_threshold_px
 
+    @property
+    def default_text_font(self) -> FontDefinition:
+        return self._config.default_text_font
+
+    @property
+    def default_area_label_font(self) -> FontDefinition:
+        return self._config.default_area_label_font
+
+    @property
+    def default_dimension_annotation_font(self) -> FontDefinition:
+        return self._config.default_dimension_annotation_font
+
+    @property
+    def default_style_label_font(self) -> FontDefinition:
+        return self._config.default_style_label_font
+
+    @property
+    def default_text_color(self) -> str:
+        return self._config.default_text_color
+
+    @property
+    def default_area_label_color(self) -> str:
+        return self._config.default_area_label_color
+
+    @property
+    def default_dimension_annotation_color(self) -> str:
+        return self._config.default_dimension_annotation_color
+
+    @property
+    def default_style_label_color(self) -> str:
+        return self._config.default_style_label_color
+
+    @property
+    def default_highlight_color(self) -> str:
+        return self._config.default_highlight_color
+
+    @property
+    def default_hotlink_color(self) -> str:
+        return self._config.default_hotlink_color
+
+    @property
+    def inactive_object_color(self) -> str:
+        return self._config.inactive_object_color
+
     def snapshot(self) -> Config:
         return replace(self._config)
 
@@ -207,6 +252,9 @@ class ConfigAggregate:
             config_changed = True
         colors, colors_changed = self._validated_color_fields(config)
         if colors_changed:
+            config_changed = True
+        fonts, fonts_changed = self._validated_font_fields(config)
+        if fonts_changed:
             config_changed = True
         crosshair_line_thickness = int(config.crosshair_line_thickness)
         if crosshair_line_thickness < self.MIN_CROSSHAIR_LINE_THICKNESS:
@@ -303,6 +351,21 @@ class ConfigAggregate:
             ),
             html_elevation_callout_color=colors["html_elevation_callout_color"],
             pdf_elevation_callout_color=colors["pdf_elevation_callout_color"],
+            default_text_font=fonts["default_text_font"],
+            default_area_label_font=fonts["default_area_label_font"],
+            default_dimension_annotation_font=(
+                fonts["default_dimension_annotation_font"]
+            ),
+            default_style_label_font=fonts["default_style_label_font"],
+            default_text_color=colors["default_text_color"],
+            default_area_label_color=colors["default_area_label_color"],
+            default_dimension_annotation_color=(
+                colors["default_dimension_annotation_color"]
+            ),
+            default_style_label_color=colors["default_style_label_color"],
+            default_highlight_color=colors["default_highlight_color"],
+            default_hotlink_color=colors["default_hotlink_color"],
+            inactive_object_color=colors["inactive_object_color"],
         )
         self._config = validated
         if config_changed and save_corrections:
@@ -415,6 +478,41 @@ class ConfigAggregate:
                 config.pdf_elevation_callout_color,
                 Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
             ),
+            (
+                "default_text_color",
+                config.default_text_color,
+                Config.DEFAULT_TEXT_COLOR,
+            ),
+            (
+                "default_area_label_color",
+                config.default_area_label_color,
+                Config.DEFAULT_AREA_LABEL_COLOR,
+            ),
+            (
+                "default_dimension_annotation_color",
+                config.default_dimension_annotation_color,
+                Config.DEFAULT_DIMENSION_ANNOTATION_COLOR,
+            ),
+            (
+                "default_style_label_color",
+                config.default_style_label_color,
+                Config.DEFAULT_STYLE_LABEL_COLOR,
+            ),
+            (
+                "default_highlight_color",
+                config.default_highlight_color,
+                Config.DEFAULT_HIGHLIGHT_COLOR,
+            ),
+            (
+                "default_hotlink_color",
+                config.default_hotlink_color,
+                Config.DEFAULT_HOTLINK_COLOR,
+            ),
+            (
+                "inactive_object_color",
+                config.inactive_object_color,
+                Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            ),
         )
         colors = {}
         changed = False
@@ -425,8 +523,72 @@ class ConfigAggregate:
                 changed = True
         return colors, changed
 
+    def _validated_font_fields(
+        self, config: Config
+    ) -> tuple[dict[str, FontDefinition], bool]:
+        font_fields = (
+            ("default_text_font", config.default_text_font, Config.DEFAULT_TEXT_FONT),
+            (
+                "default_area_label_font",
+                config.default_area_label_font,
+                Config.DEFAULT_AREA_LABEL_FONT,
+            ),
+            (
+                "default_dimension_annotation_font",
+                config.default_dimension_annotation_font,
+                Config.DEFAULT_DIMENSION_ANNOTATION_FONT,
+            ),
+            (
+                "default_style_label_font",
+                config.default_style_label_font,
+                Config.DEFAULT_STYLE_LABEL_FONT,
+            ),
+        )
+        fonts: dict[str, FontDefinition] = {}
+        changed = False
+        for field_name, value, default in font_fields:
+            font, font_changed = self._validated_font_definition(
+                value, default, field_name
+            )
+            fonts[field_name] = font
+            changed = changed or font_changed
+        return fonts, changed
+
+    def _validated_font_definition(
+        self,
+        value: FontDefinition,
+        default: FontDefinition,
+        field_name: str,
+    ) -> tuple[FontDefinition, bool]:
+        valid = (
+            isinstance(value, FontDefinition)
+            and isinstance(value.family, str)
+            and bool(value.family.strip())
+            and isinstance(value.style_name, str)
+            and bool(value.style_name.strip())
+            and type(value.point_size) is int
+            and 1 <= value.point_size <= 144
+            and type(value.weight) is int
+            and value.weight in (400, 700)
+            and type(value.italic) is bool
+            and type(value.underline) is bool
+        )
+        if not valid:
+            self.logger.warning(
+                "Invalid %s '%s' in config; using canonical default",
+                field_name,
+                value,
+            )
+            return default, True
+        normalized = replace(
+            value,
+            family=value.family.strip(),
+            style_name=value.style_name.strip(),
+        )
+        return normalized, normalized != value
+
     def _validated_hex_color(self, value: str, default: str, field_name: str) -> str:
-        color = str(value or "").strip()
+        color = value.strip() if isinstance(value, str) else ""
         if (
             len(color) == 7
             and color[0] == "#"

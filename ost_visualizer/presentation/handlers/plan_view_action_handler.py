@@ -22,6 +22,7 @@ from ...domain.entities.annotation import (
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_NAMED_VIEW,
     ANNOTATION_TYPE_TEXT,
+    hex_color_to_int,
     int_color_to_hex,
 )
 from ...domain.entities.area import normalize_area_uid
@@ -39,6 +40,7 @@ from ..services.selection_commands import (
     InsertTakeoffsCommand,
 )
 from ..utils.annotation_defaults import build_placed_annotation_spec
+from ..utils.font_catalog import resolve_font_definition
 from ..utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
     plan_named_view_hotlink_delete,
@@ -1094,7 +1096,29 @@ class PlanViewActionHandler:
         return set(extras).issubset(_SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS)
 
     def _takeoff_specs_allow_fast_refresh(self, specs: List[InsertTakeoffSpec]) -> bool:
-        return all(not spec.raw_extras for spec in specs)
+        return all(
+            self._same_bid_takeoff_extras_allow_fast_refresh(spec.raw_extras)
+            for spec in specs
+        )
+
+    def _default_takeoff_label_extras(self) -> dict:
+        config = self._ui_state.config_model.snapshot()
+        area = resolve_font_definition(config.default_area_label_font)
+        style = resolve_font_definition(config.default_style_label_font)
+        return {
+            "FontName": area.family,
+            "FontColor": hex_color_to_int(config.default_area_label_color),
+            "FontSize": area.point_size,
+            "FontBold": area.weight == 700,
+            "FontItalic": area.italic,
+            "FontUnderline": area.underline,
+            "NameFontName": style.family,
+            "NameFontColor": hex_color_to_int(config.default_style_label_color),
+            "NameFontSize": style.point_size,
+            "NameFontBold": style.weight == 700,
+            "NameFontItalic": style.italic,
+            "NameFontUnderline": style.underline,
+        }
 
     def _takeoffs_allow_fast_delete(
         self, takeoffs: List[Takeoff], saved_takeoff_extras: dict
@@ -1739,6 +1763,7 @@ class PlanViewActionHandler:
         area_uid = self._page_settings_bar.get_current_area_uid()
         place_uids = self._ui_state.place_condition_uids
         target_uids = self._target_place_condition_uids(condition_uid, place_uids)
+        label_extras = self._default_takeoff_label_extras()
         if len(target_uids) > 1:
             specs = [
                 InsertTakeoffSpec(
@@ -1746,6 +1771,7 @@ class PlanViewActionHandler:
                     page_uid=page_uid,
                     area_uid=area_uid,
                     position=position,
+                    raw_extras=dict(label_extras),
                 )
                 for cuid in target_uids
             ]
@@ -1766,6 +1792,7 @@ class PlanViewActionHandler:
                     area_uid=area_uid,
                     position=position,
                     curve=curve,
+                    raw_extras=label_extras,
                 )
             ]
         if self._uses_sql_mutation_queue(bid_ref.file_path):
@@ -2332,6 +2359,7 @@ class PlanViewActionHandler:
             area_uid=area_uid,
             position=position,
             parent_uid=parent_uid,
+            raw_extras=self._default_takeoff_label_extras(),
         )
         if self._uses_sql_mutation_queue(bid_ref.file_path):
             self._queue_takeoff_placement(bid_ref, [spec])

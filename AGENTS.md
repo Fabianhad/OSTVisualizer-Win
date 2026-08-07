@@ -72,6 +72,11 @@ Persistence:
 - JSON state lives under `~/.ost_visualizer/`.
 - Durable preferences belong in `config.json`.
 - Restorable workspace shell state belongs in `workspace_state.json`.
+- Font and color creation defaults plus the live inactive-object color belong to
+  `Config` in `config.json`. Workspace annotation styles retain only alignment
+  and unrelated tool defaults; explicit font and color columns on existing
+  annotations and takeoffs remain authoritative. Do not mirror these settings
+  into QSettings, the On-Screen Takeoff registry, or another JSON store.
 - User-adjustable table and tree headers use semantic view and column IDs in
   `WorkspaceState.header_layouts`; do not add Qt opaque header blobs, QSettings,
   or per-dialog layout stores. Restore only after canonical columns exist, and

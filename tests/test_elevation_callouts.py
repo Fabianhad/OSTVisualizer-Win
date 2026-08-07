@@ -324,6 +324,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
                 [self.takeoff],
                 {self.condition.uid: self.condition},
                 self.page_info,
+                inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
                 caption_settings=AnnotationCaptionSettingsDto(False, ()),
                 elevation_callouts_enabled=False,
             )
@@ -336,6 +337,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
             [self.takeoff],
             {self.condition.uid: self.condition},
             self.page_info,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
             elevation_callouts_enabled=True,
             elevation_callout_color="#abcdef",
@@ -383,6 +385,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
             False,
             AnnotationCaptionSettingsDto(False, ()),
             True,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
         )
         self.assertTrue(result.success)
         self.assertEqual(len(writer.pages), 1)
@@ -397,6 +400,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
             [self.takeoff],
             {self.condition.uid: self.condition},
             self.page_info,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
             elevation_callouts_enabled=True,
             elevation_callout_settings=ElevationCalloutSettings(
@@ -414,6 +418,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
             [self.takeoff],
             {self.condition.uid: self.condition},
             self.page_info,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
             elevation_callouts_enabled=True,
             elevation_callout_settings=ElevationCalloutSettings(
@@ -430,6 +435,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
             [self.takeoff],
             {self.condition.uid: self.condition},
             self.page_info,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
             elevation_callouts_enabled=True,
         )

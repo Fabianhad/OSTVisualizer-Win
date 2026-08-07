@@ -1108,6 +1108,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         show_page_index: bool,
         show_sheet_number: bool,
         roping_selection_method: str,
+        inactive_object_color: str,
         disable_high_resolution_images: bool,
         intelligent_paste_enabled: bool,
         advanced_mouse_controls_enabled: bool,
@@ -1129,6 +1130,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._show_page_index = bool(show_page_index)
         self._show_sheet_number = bool(show_sheet_number)
         self._roping_selection_method = roping_selection_method
+        self._inactive_object_color = inactive_object_color
         self._disable_high_resolution_images = bool(disable_high_resolution_images)
         self._intelligent_paste_enabled = bool(intelligent_paste_enabled)
         self._advanced_mouse_controls_enabled = bool(advanced_mouse_controls_enabled)
@@ -1153,6 +1155,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self.plan_view is None:
             return
         self.plan_view.set_roping_selection_method(self._roping_selection_method)
+        self.plan_view.set_inactive_object_color(self._inactive_object_color)
         self.plan_view.set_disable_high_resolution_images(
             self._disable_high_resolution_images
         )

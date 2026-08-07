@@ -165,6 +165,7 @@ class ExportHandler:
                     elevation_callouts_enabled=config.pdf_elevation_callouts_enabled,
                     elevation_callout_settings=config.elevation_callout_settings(),
                     elevation_callout_color=config.pdf_elevation_callout_color,
+                    inactive_object_color=config.inactive_object_color,
                     page_area_selections=(self.project_data.get_page_area_selections()),
                     bid_annotations=bid_annotations,
                     on_progress=_progress_callback(reporter),

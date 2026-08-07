@@ -208,7 +208,7 @@ class ColorService:
         opacity = max(0.0, min(1.0, float(opacity)))
         return ColorWithOpacity(hex=color, opacity=opacity)
 
-    def should_gray_out_takeoff(
+    def is_inactive_area_takeoff(
         self,
         takeoff,
         page_area_selections: Optional[Dict[str, Optional[str]]],
@@ -268,6 +268,8 @@ class ColorService:
         color_map: Dict,
         display_mode: str,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> ColorWithOpacity:
         condition_uid = takeoff.condition_uid
         color_entry = color_map.get(condition_uid, "#808080")
@@ -275,8 +277,8 @@ class ColorService:
         if display_mode == Config.DISPLAY_MODE_ORIGINAL:
             pattern_type = condition.pattern if condition.pattern else pt.SOLID
             opacity = pt.get_3d_opacity(pattern_type)
-        if self.should_gray_out_takeoff(takeoff, page_area_selections):
-            color_hex = "#808080"
+        if self.is_inactive_area_takeoff(takeoff, page_area_selections):
+            color_hex = inactive_object_color
         return ColorWithOpacity(hex=color_hex, opacity=opacity)
 
     def get_2d_color_for_takeoff(
@@ -285,12 +287,14 @@ class ColorService:
         condition,
         color_map: Dict,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        inactive_object_color: str,
     ) -> ColorWithOpacity:
         condition_uid = takeoff.condition_uid
         color_entry = color_map.get(condition_uid, "#808080")
         color_hex, opacity = self.as_hex_with_opacity(color_entry)
-        if self.should_gray_out_takeoff(takeoff, page_area_selections):
-            color_hex = "#808080"
+        if self.is_inactive_area_takeoff(takeoff, page_area_selections):
+            color_hex = inactive_object_color
         return ColorWithOpacity(hex=color_hex, opacity=opacity)
 
     def int_to_hex(self, color_fill: int) -> str:

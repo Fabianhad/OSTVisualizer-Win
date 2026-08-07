@@ -1015,7 +1015,7 @@ class PlacementModeMixin:
     def handle_annotation_place_press(self, event) -> bool:
         if self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
-        scene_pos = self.mapToScene(event.pos())
+        scene_pos = self.mapToScene(event.position().toPoint())
         if self._annotation_place_type in _POINT_ANNOTATION_TYPES:
             ost_x, ost_y, _cx, _cy, _snap_kind = self._placement_snap_from_scene(
                 scene_pos
@@ -1097,7 +1097,7 @@ class PlacementModeMixin:
             return False
         if self._annotation_place_type in _AREA_ANNOTATION_TYPES:
             if self._annotation_area_rect_dragging:
-                scene_pos = self.mapToScene(event.pos())
+                scene_pos = self.mapToScene(event.position().toPoint())
                 ost_x2, ost_y2, _cx, _cy, _snap_kind = self._placement_snap_from_scene(
                     scene_pos
                 )
@@ -1120,7 +1120,7 @@ class PlacementModeMixin:
         if self._annotation_place_type in _INK_ANNOTATION_TYPES:
             if not self._annotation_place_dragging:
                 return False
-            scene_pos = self.mapToScene(event.pos())
+            scene_pos = self.mapToScene(event.position().toPoint())
             self._append_ink_annotation_point(scene_pos)
             position = [v for point in self._annotation_place_points for v in point]
             if self._commit_annotation_placement(self._annotation_place_type, position):
@@ -1133,7 +1133,7 @@ class PlacementModeMixin:
             return True
         if not self._annotation_place_dragging:
             return False
-        scene_pos = self.mapToScene(event.pos())
+        scene_pos = self.mapToScene(event.position().toPoint())
         position, _snap_kind = self._drag_annotation_placement_position(scene_pos)
         if self._commit_annotation_placement(self._annotation_place_type, position):
             event.accept()
@@ -1455,7 +1455,7 @@ class PlacementModeMixin:
         if self._place_flashing:
             event.accept()
             return
-        scene_pos = self.mapToScene(event.pos())
+        scene_pos = self.mapToScene(event.position().toPoint())
         ost_x, ost_y, _cx, _cy, snap_kind = self._placement_snap_from_scene(scene_pos)
         cs = self._scene_builder.get_coordinate_system()
         active_uid = self._backout_active_uid or self._place_session_uid
@@ -1568,7 +1568,7 @@ class PlacementModeMixin:
             and self._place_points
         ):
             return False
-        scene_pos = self.mapToScene(event.pos())
+        scene_pos = self.mapToScene(event.position().toPoint())
         ost_x2, ost_y2, _cx, _cy, _snap_kind = self._placement_snap_from_scene(
             scene_pos
         )
@@ -1628,7 +1628,7 @@ class PlacementModeMixin:
             and self._place_points
         ):
             return False
-        scene_pos = self.mapToScene(event.pos())
+        scene_pos = self.mapToScene(event.position().toPoint())
         ost_x2, ost_y2, _cx, _cy, snap_kind = self._placement_snap_from_scene(scene_pos)
         x1, y1 = self._place_points[0]
         ost_x2, ost_y2 = self._snap_angle_for_placement(
@@ -1992,7 +1992,7 @@ class PlacementModeMixin:
     def handle_paste_backout_press(self, event) -> bool:
         if not self._paste_backout_active:
             return False
-        scene_pos = self.mapToScene(event.pos())
+        scene_pos = self.mapToScene(event.position().toPoint())
         translated_list = self._paste_backout_compute_translations(scene_pos)
         results, all_valid = self._paste_backout_validate_all(translated_list)
         if not all_valid:

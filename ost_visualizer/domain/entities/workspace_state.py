@@ -2,6 +2,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar, Dict, List, Optional
 from .annotation_style import AnnotationStyle
+from .annotation import (
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_TEXT,
+)
 
 WORKSPACE_ACTIVE_VIEW_2D = "2d"
 WORKSPACE_ACTIVE_VIEW_3D = "3d"
@@ -29,6 +35,13 @@ WORKSPACE_SELECTED_NODE_KINDS = frozenset(
         WORKSPACE_NODE_KIND_DATABASE,
         WORKSPACE_NODE_KIND_PROJECT,
         WORKSPACE_NODE_KIND_BID,
+    }
+)
+_FULLY_CONFIG_OWNED_ANNOTATION_STYLE_KEYS = frozenset(
+    {
+        ANNOTATION_TYPE_DIMENSION,
+        ANNOTATION_TYPE_HIGHLIGHT,
+        ANNOTATION_TYPE_HOTLINK,
     }
 )
 
@@ -94,6 +107,21 @@ def _coerce_header_order(value) -> Optional[List[str]]:
     if len(set(value)) != len(value):
         return None
     return list(value)
+
+
+def _load_workspace_annotation_styles(value) -> Dict[str, AnnotationStyle]:
+    if not isinstance(value, dict):
+        return {}
+    styles: Dict[str, AnnotationStyle] = {}
+    for raw_key, raw_style in value.items():
+        key = str(raw_key)
+        if key in _FULLY_CONFIG_OWNED_ANNOTATION_STYLE_KEYS:
+            continue
+        style = AnnotationStyle.from_dict(raw_style)
+        if key == ANNOTATION_TYPE_TEXT:
+            style = AnnotationStyle(text_align=style.text_align)
+        styles[key] = style
+    return styles
 
 
 @dataclass
@@ -204,8 +232,13 @@ class TakeoffWorkspaceState:
             "summary_group_by_type": self.summary_group_by_type,
             "summary_group_by_page": self.summary_group_by_page,
             "annotation_styles": {
-                str(key): style.to_dict()
+                str(key): (
+                    {"text_align": style.text_align}
+                    if str(key) == ANNOTATION_TYPE_TEXT
+                    else style.to_dict()
+                )
                 for key, style in self.annotation_styles.items()
+                if str(key) not in _FULLY_CONFIG_OWNED_ANNOTATION_STYLE_KEYS
             },
         }
 
@@ -239,14 +272,9 @@ class TakeoffWorkspaceState:
             summary_group_by_page=_coerce_bool(
                 data.get("summary_group_by_page"), False
             ),
-            annotation_styles={
-                str(key): AnnotationStyle.from_dict(value)
-                for key, value in (
-                    data.get("annotation_styles")
-                    if isinstance(data.get("annotation_styles"), dict)
-                    else {}
-                ).items()
-            },
+            annotation_styles=_load_workspace_annotation_styles(
+                data.get("annotation_styles")
+            ),
         )
 
 

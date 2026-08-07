@@ -130,6 +130,7 @@ class VisualizationService:
         page_area_selections = self.project_data.get_page_area_selections()
         display_mode = self.config_model.display_mode_3d
         grayscale_enabled = self.config_model.grayscale_enabled
+        inactive_object_color = self.config_model.inactive_object_color
         with self._mesh_generation_lock:
             identity = self._start_mesh_generation_locked(bid_ref, normalized_page_uids)
             self._mesh_pending_task = (
@@ -138,6 +139,7 @@ class VisualizationService:
                 page_area_selections,
                 display_mode,
                 grayscale_enabled,
+                inactive_object_color,
                 identity.generation,
             )
         self._mesh_task_event.set()
@@ -173,6 +175,7 @@ class VisualizationService:
                 page_area_selections,
                 display_mode,
                 grayscale_enabled,
+                inactive_object_color,
                 gen_id,
             ) = task
             try:
@@ -184,6 +187,7 @@ class VisualizationService:
                     page_area_selections=page_area_selections,
                     display_mode=display_mode,
                     grayscale_enabled=grayscale_enabled,
+                    inactive_object_color=inactive_object_color,
                 )
                 if not self._is_current_mesh_generation(gen_id):
                     continue

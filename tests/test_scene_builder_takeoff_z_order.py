@@ -56,8 +56,17 @@ class RecordingTakeoffRenderer:
         opacity=0.5,
         page_info=None,
         page_area_selections=None,
+        *,
+        inactive_object_color,
     ):
-        _ = (conditions, color_map, opacity, page_info, page_area_selections)
+        _ = (
+            conditions,
+            color_map,
+            opacity,
+            page_info,
+            page_area_selections,
+            inactive_object_color,
+        )
         self.rendered_uid_order = [takeoff.uid for takeoff in takeoffs]
         results = []
         for takeoff in takeoffs:
@@ -129,6 +138,7 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
             conditions={"c1": Condition(uid="c1", condition_type=Condition.TYPE_AREA)},
             color_map={"c1": "#000000"},
             page_info={},
+            inactive_object_color="#d0d0d0",
         )
         return scene, renderer, uid_to_items
 
@@ -226,6 +236,7 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
             conditions={"c1": Condition(uid="c1", condition_type=Condition.TYPE_AREA)},
             color_map={"c1": "#000000"},
             page_info={},
+            inactive_object_color="#d0d0d0",
         )
         self.assertEqual(renderer.rendered_uid_order, ["2", "10"])
         older_body, older_label = uid_to_items["2"]

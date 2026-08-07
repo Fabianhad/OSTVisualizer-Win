@@ -1,5 +1,6 @@
 import logging
 import threading
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -19,6 +20,13 @@ from ..application.use_cases.project.import_project_files_from_args_use_case imp
     ProjectImportTarget,
 )
 from ..domain.entities.annotation_style import AnnotationStyle
+from ..domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_TEXT,
+)
+from ..domain.entities.font_definition import FontDefinition
 from ..domain.entities.file_state import normalize_path
 from ..domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_NAME,
@@ -192,7 +200,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "workspace_state_model"
         )
         set_active_annotation_styles_by_tool(
-            self._workspace_state_model.state.takeoff_workspace.annotation_styles
+            self._workspace_state_model.state.takeoff_workspace.annotation_styles,
+            self._config_model.snapshot(),
         )
         self.ui_state_manager = UIStateManager(self._config_model)
         self.ui_access_manager = UIAccessManager(
@@ -1336,13 +1345,72 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._refresh_annotation_style_controls(annotation_type)
         if persist:
+            config_update = self._config_update_for_annotation_style(
+                annotation_type,
+                style,
+                color=color,
+                font_changed=any(
+                    value is not None
+                    for value in (
+                        font_name,
+                        font_size,
+                        font_bold,
+                        font_italic,
+                        font_underline,
+                    )
+                ),
+            )
+            if config_update is not None:
+                self._config_service.update_app_options(config_update)
             self._request_workspace_state_save()
         return style
+
+    def _config_update_for_annotation_style(
+        self,
+        annotation_type: str,
+        style: AnnotationStyle,
+        *,
+        color: str | None,
+        font_changed: bool,
+    ):
+        config = self._config_service.get_config_snapshot()
+        changes = {}
+        if annotation_type == ANNOTATION_TYPE_TEXT:
+            if color is not None:
+                changes["default_text_color"] = style.color
+            if font_changed:
+                changes["default_text_font"] = self._font_definition_for_style(style)
+        elif annotation_type == ANNOTATION_TYPE_DIMENSION:
+            if color is not None:
+                changes["default_dimension_annotation_color"] = style.color
+            if font_changed:
+                changes["default_dimension_annotation_font"] = (
+                    self._font_definition_for_style(style)
+                )
+        elif annotation_type == ANNOTATION_TYPE_HIGHLIGHT and color is not None:
+            changes["default_highlight_color"] = style.color
+        elif annotation_type == ANNOTATION_TYPE_HOTLINK and color is not None:
+            changes["default_hotlink_color"] = style.color
+        return replace(config, **changes) if changes else None
+
+    @staticmethod
+    def _font_definition_for_style(style: AnnotationStyle) -> FontDefinition:
+        style_name = "Bold" if style.font_bold else "Regular"
+        if style.font_italic:
+            style_name = "Bold Italic" if style.font_bold else "Italic"
+        return FontDefinition(
+            family=style.font_name,
+            style_name=style_name,
+            point_size=style.font_size,
+            weight=700 if style.font_bold else 400,
+            italic=style.font_italic,
+            underline=style.font_underline,
+        )
 
     def set_annotation_styles_by_tool(
         self, styles: dict[str, AnnotationStyle], *, persist: bool = False
     ) -> None:
-        set_active_annotation_styles_by_tool(styles)
+        set_active_annotation_styles_by_tool(styles, self._config_model.snapshot())
         self._refresh_annotation_style_controls()
         if persist:
             self._request_workspace_state_save()
@@ -1394,6 +1462,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def apply_config_preferences(self) -> None:
         AppConfigPresentationManager().apply(self, self._config_model)
+
+    def refresh_detached_plan_views(self) -> None:
+        self._annotation_view_manager.refresh_active_view()
+        self._view_window_manager.refresh_active_view()
 
     def _on_workspace_toolbar_visibility_changed(self, key: str, visible: bool) -> None:
         if self._syncing_toolbar_visibility:
