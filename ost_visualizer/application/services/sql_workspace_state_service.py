@@ -24,11 +24,6 @@ class _WorkspaceWriteRequest:
 
 
 class SqlWorkspaceStateService:
-    """Own per-user SQL workspace reads and serialized background writes.
-    Navigation calls the read path from its worker. UI callers enqueue writes
-    here so SQL connections remain off the Qt thread.
-    """
-
     def __init__(
         self,
         descriptor_registry: IDatabaseDescriptorRegistry,
