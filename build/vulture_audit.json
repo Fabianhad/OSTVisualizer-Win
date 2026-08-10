@@ -1,6 +1,6 @@
 {
-  "audit_date": "2026-08-07",
-  "repository_head": "d82d2b8857d536af80f8b884c4f9566dcbeec198",
+  "audit_date": "2026-08-10",
+  "repository_head": "bb773041a97949ec5890a87286c0b3bdeac7a9c5",
   "vulture_version": "2.14",
   "scope": "ost_visualizer",
   "runs": [
@@ -132,6 +132,32 @@
       ],
       "changed_classifications": [],
       "evidence": "The four removed TypedDict fields belonged only to the superseded stored-dimension scaling path. Current changed-worktree findings are dictionary protocol fields or nanobind assignments verified below."
+    },
+    {
+      "audit_date": "2026-08-10",
+      "reason": "Focused completion of the two dependency-bootstrap lineages previously requiring deeper investigation",
+      "cache_policy": "Production Python code was unchanged; all current Vulture findings were recounted and compared with the existing classifications.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 182
+        }
+      ],
+      "new_findings": [],
+      "removed_findings": [],
+      "changed_classifications": [],
+      "evidence": "The exact 100/80/60 counts remain unchanged. The setup and dependency manifest changes introduce no production Python symbols for Vulture to classify."
     }
   ],
   "changed_worktree_relevant_findings": [

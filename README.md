@@ -338,6 +338,10 @@ Requires Python 3.10+, Visual Studio 2022 (MSVC x64), CMake 3.20+, and Qt 6.10.2
 .\scripts\run.ps1             # Run the application
 ```
 
+The Python setup retains the required PySide6 6.10.2 version while allowing the
+other Python packages to resolve normally. Native setup downloads pinned,
+SHA-256-verified PDFium and QPDF archives.
+
 For release builds:
 
 ```powershell

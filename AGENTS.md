@@ -38,6 +38,10 @@ vulture ost_visualizer
 ```
 
 C++ extensions require Visual Studio 2022, CMake, and Qt 6.10.2 at `C:\Qt\6.10.2\msvc2022_64`. If native snap code changes, rebuild `ost_snap` from the configured CMake build directory, usually `cpp_extensions/build`.
+PySide6 6.10.2 and the downloaded PDFium/QPDF archives are exact-version inputs;
+the other Python requirements intentionally remain unpinned. Native archive URLs
+and SHA-256 digests must be updated together from the authoritative upstream
+release when intentionally upgrading a dependency.
 
 ## Architecture Guardrails
 

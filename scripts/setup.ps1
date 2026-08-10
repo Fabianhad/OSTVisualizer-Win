@@ -24,11 +24,11 @@ else {
     Write-Host "Virtual environment already exists." -ForegroundColor Green
 }
 
-# Activate and install
-$ActivateScript = Join-Path $VenvPath 'Scripts\Activate.ps1'
-. $ActivateScript
-
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
-pip install -r (Join-Path $ProjectRoot 'requirements.txt') --quiet
+$VenvPython = Join-Path $VenvPath 'Scripts\python.exe'
+& $VenvPython -m pip install --requirement (Join-Path $ProjectRoot 'requirements.txt') --quiet
+if ($LASTEXITCODE -ne 0) {
+    throw 'Python dependency installation failed'
+}
 
 Write-Host "Python setup complete." -ForegroundColor Green

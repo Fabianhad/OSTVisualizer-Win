@@ -14,6 +14,9 @@
 
 ### Changed
 
+- Changed source setup to preserve the required PySide6 6.10.2 version, pin and
+  SHA-256-verify native PDFium/QPDF archives, and fail explicitly when Python
+  dependency installation or native extraction fails.
 - Changed polygon editing so Cloud and Polygon annotations use the existing Area
   takeoff Add/Subtract Control Point actions, validation, undo, and persistence.
 - Changed application table and tree headers to use consistent sorting,
