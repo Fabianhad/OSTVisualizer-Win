@@ -44,18 +44,30 @@ class MdbWriter(
             "mdb_writer_transaction_depth",
             default=0,
         )
+        self._access_transaction_error = contextvars.ContextVar(
+            "mdb_writer_transaction_error",
+            default=None,
+        )
 
     @contextmanager
     def _connection(self, db_path: str) -> Generator[ConnectionWrapper, None, None]:
         depth = self._access_transaction_depth.get()
-        token = self._access_transaction_depth.set(depth + 1)
+        depth_token = self._access_transaction_depth.set(depth + 1)
+        error_token = None
+        if depth == 0:
+            error_token = self._access_transaction_error.set(None)
         try:
             with self._conn_manager.connection(db_path, autocommit=False) as conn:
                 try:
                     yield conn
                     if depth == 0:
+                        transaction_error = self._access_transaction_error.get()
+                        if transaction_error is not None:
+                            raise transaction_error
                         conn.commit()
-                except Exception:
+                except Exception as exc:
+                    if depth > 0 and self._access_transaction_error.get() is None:
+                        self._access_transaction_error.set(exc)
                     if depth == 0:
                         try:
                             conn.rollback()
@@ -63,7 +75,9 @@ class MdbWriter(
                             pass
                     raise
         finally:
-            self._access_transaction_depth.reset(token)
+            self._access_transaction_depth.reset(depth_token)
+            if error_token is not None:
+                self._access_transaction_error.reset(error_token)
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)

@@ -54,7 +54,9 @@ class MdbFileParserTests(unittest.TestCase):
 
             @staticmethod
             def _schema(_connection):
-                return SimpleNamespace(require_column=lambda *_args: None)
+                return SimpleNamespace(
+                    require_column=lambda _table_name, _column_name: None
+                )
 
             @staticmethod
             def _hydrates_bid_navigation_snapshots():
@@ -209,6 +211,13 @@ class MdbFileParserTests(unittest.TestCase):
         repository._active_file_path = "old.mdb"
         self.assertTrue(repository.unload_file("old.mdb"))
         self.assertEqual(parser.closed, ["old.mdb"])
+
+    def test_legacy_bid_load_for_unloaded_file_returns_empty_result(self):
+        repository = FileProjectRepository(FakeLifecycleParser())
+        with self.assertLogs(repository.logger, level="WARNING"):
+            result = repository.load_bid("bid-1", "missing.mdb")
+        self.assertEqual(result.bid_pages, {})
+        self.assertIsNone(repository.active_file_path)
 
     def test_reload_refreshes_read_connection_without_closing_write_connection(self):
         parser = FakeLifecycleParser()

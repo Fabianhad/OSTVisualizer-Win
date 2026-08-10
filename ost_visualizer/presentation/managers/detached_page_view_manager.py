@@ -162,56 +162,68 @@ class DetachedPageViewManager(IShutdownAware):
         )
 
     def shutdown(self) -> None:
-        self._release_access_tracking()
-        if self.event_bus is not None:
-            self.event_bus.unsubscribe(
-                AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
+        def cleanup_step(description: str, action: Callable[[], None]) -> None:
+            try:
+                action()
+            except Exception:
+                self.logger.exception(
+                    "Failed to %s during detached-view manager shutdown", description
+                )
+
+        self._release_access_tracking(suppress_errors=True)
+        event_bus = self.event_bus
+        if event_bus is not None:
+            subscriptions = (
+                (AppEvents.DATABASE_REFRESHED, self._on_database_refreshed),
+                (AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed),
+                (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
+                (AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed),
+                (
+                    AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                    self._on_remote_bid_content_changed,
+                ),
+                (
+                    AppEvents.REMOTE_CONDITIONS_CHANGED,
+                    self._on_remote_conditions_changed,
+                ),
+                (AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed),
+                (AppEvents.REMOTE_HIERARCHY_CHANGED, self._on_remote_hierarchy_changed),
+                (
+                    AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+                    self._on_remote_plan_projection_requested,
+                ),
             )
-            self.event_bus.unsubscribe(
-                AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.REMOTE_BID_CONTENT_CHANGED,
-                self._on_remote_bid_content_changed,
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.REMOTE_CONDITIONS_CHANGED,
-                self._on_remote_conditions_changed,
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.REMOTE_AREAS_CHANGED,
-                self._on_remote_areas_changed,
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.REMOTE_HIERARCHY_CHANGED,
-                self._on_remote_hierarchy_changed,
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
-                self._on_remote_plan_projection_requested,
-            )
+            for event_name, callback in subscriptions:
+                cleanup_step(
+                    f"unsubscribe {event_name}",
+                    lambda event_name=event_name, callback=callback: event_bus.unsubscribe(
+                        event_name, callback
+                    ),
+                )
         self._remote_update_generation += 1
         if self._remote_plan_pipeline is not None:
-            self._remote_plan_pipeline.cleanup()
+            cleanup_step(
+                "clean up the remote plan pipeline", self._remote_plan_pipeline.cleanup
+            )
             self._remote_plan_pipeline = None
         if self._refresh_signaler is not None:
-            self._refresh_signaler.cleanup()
-            self._refresh_signaler.deleteLater()
+            cleanup_step(
+                "clean up the refresh signaler", self._refresh_signaler.cleanup
+            )
+            cleanup_step(
+                "delete the refresh signaler", self._refresh_signaler.deleteLater
+            )
             self._refresh_signaler = None
         if self._window is not None:
             window = self._window
-            window.close()
+            cleanup_step("close the detached window", window.close)
             if self._window is window:
                 self._window = None
                 self._window_undo_service = None
                 self._opening = False
-                self._notify_visibility_changed()
+                cleanup_step(
+                    "publish detached visibility", self._notify_visibility_changed
+                )
         self._visibility_changed_callback = None
         self._ui_access_manager = None
         self.event_bus = None
@@ -231,7 +243,7 @@ class DetachedPageViewManager(IShutdownAware):
     def _on_window_destroyed(self, window_identity: int) -> None:
         if self._window is None or id(self._window) != window_identity:
             return
-        self._release_access_tracking()
+        self._release_access_tracking(suppress_errors=True)
         self._window = None
         self._window_undo_service = None
         self._opening = False
@@ -521,9 +533,20 @@ class DetachedPageViewManager(IShutdownAware):
                 self._remote_surface_id
             )
 
-    def _release_access_tracking(self) -> None:
-        self._unregister_access_listener()
-        self._clear_surface_interaction()
+    def _release_access_tracking(self, *, suppress_errors: bool = False) -> None:
+        errors = []
+        try:
+            self._unregister_access_listener()
+        except Exception as exc:
+            self.logger.exception("Failed to unregister detached-view access listener")
+            errors.append(exc)
+        try:
+            self._clear_surface_interaction()
+        except Exception as exc:
+            self.logger.exception("Failed to clear detached-view interaction state")
+            errors.append(exc)
+        if errors and not suppress_errors:
+            raise errors[0]
 
     def _on_window_area_placement_changed(self, active: bool) -> None:
         if self._ui_access_manager is None or not self.is_view_open():
@@ -675,7 +698,7 @@ class DetachedPageViewManager(IShutdownAware):
 
     def close_view(self) -> None:
         self._remote_update_generation += 1
-        self._release_access_tracking()
+        self._release_access_tracking(suppress_errors=True)
         if self._window is not None:
             window = self._window
             window.close()
@@ -894,7 +917,7 @@ class DetachedPageViewManager(IShutdownAware):
             self._register_access_listener()
             window.show_when_page_ready()
         except Exception:
-            self._release_access_tracking()
+            self._release_access_tracking(suppress_errors=True)
             if self._window is window:
                 self._window = None
                 self._window_undo_service = None

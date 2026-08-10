@@ -45,6 +45,16 @@ class FakePlacement:
         self.is_active = active
 
 
+def _empty_color_mapping(
+    _bid_conditions,
+    _bid_takeoffs,
+    _display_mode="solid",
+    _grayscale_enabled=True,
+    extra_condition_uids=None,
+):
+    return {}, {}
+
+
 class NavigationStateMachineTests(unittest.TestCase):
     def setUp(self):
         self.logger = logging.getLogger(
@@ -336,9 +346,7 @@ class NavigationStateMachineTests(unittest.TestCase):
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
                 set_area_placement_active=lambda _active, *, surface_id: None,
             ),
-            color_service=SimpleNamespace(
-                get_color_mapping=lambda *_args, **_call_options: ({}, {})
-            ),
+            color_service=SimpleNamespace(get_color_mapping=_empty_color_mapping),
             project_data=project_data,
         )
         placement._plan_view = plan_view
@@ -390,9 +398,7 @@ class NavigationStateMachineTests(unittest.TestCase):
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
                 set_area_placement_active=lambda _active, *, surface_id: None,
             ),
-            color_service=SimpleNamespace(
-                get_color_mapping=lambda *_args, **_call_options: ({}, {})
-            ),
+            color_service=SimpleNamespace(get_color_mapping=_empty_color_mapping),
             project_data=project_data,
         )
         placement._plan_view = plan_view
@@ -435,8 +441,14 @@ class NavigationStateMachineTests(unittest.TestCase):
 
         color_map_requests = []
 
-        def record_color_map_request(*_args, **color_options):
-            color_map_requests.append(color_options["extra_condition_uids"])
+        def record_color_map_request(
+            _bid_conditions,
+            _bid_takeoffs,
+            _display_mode="solid",
+            _grayscale_enabled=True,
+            extra_condition_uids=None,
+        ):
+            color_map_requests.append(extra_condition_uids)
             return {}, {}
 
         ui_state = UiState()
@@ -525,9 +537,7 @@ class NavigationStateMachineTests(unittest.TestCase):
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
                 set_area_placement_active=lambda _active, *, surface_id: None,
             ),
-            color_service=SimpleNamespace(
-                get_color_mapping=lambda *_args, **_options: ({}, {})
-            ),
+            color_service=SimpleNamespace(get_color_mapping=_empty_color_mapping),
             project_data=SimpleNamespace(
                 get_bid_conditions=lambda: conditions,
                 get_page_takeoffs=lambda _page_uid: [],
@@ -580,9 +590,7 @@ class NavigationStateMachineTests(unittest.TestCase):
                 is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
                 set_area_placement_active=lambda _active, *, surface_id: None,
             ),
-            color_service=SimpleNamespace(
-                get_color_mapping=lambda *_args, **_options: ({}, {})
-            ),
+            color_service=SimpleNamespace(get_color_mapping=_empty_color_mapping),
             project_data=SimpleNamespace(
                 get_bid_conditions=lambda: {
                     "c1": Condition(

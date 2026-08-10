@@ -532,12 +532,66 @@ class FakeVisibleFrameRenderingService:
         self._next_id += 1
         return request_id
 
-    def render_frame_async(self, **render_options):
+    def render_frame_async(
+        self,
+        file_path,
+        page_index,
+        scale,
+        rotation,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        callback,
+        priority=1,
+        invert=False,
+        bitonal=False,
+        tint_rgb=None,
+    ):
+        render_options = {
+            "file_path": file_path,
+            "page_index": page_index,
+            "scale": scale,
+            "rotation": rotation,
+            "frame_x_pts": frame_x_pts,
+            "frame_y_pts": frame_y_pts,
+            "frame_w_pts": frame_w_pts,
+            "frame_h_pts": frame_h_pts,
+            "callback": callback,
+            "priority": priority,
+            "invert": invert,
+            "bitonal": bitonal,
+            "tint_rgb": tint_rgb,
+        }
         request_id = self._request_id("frame")
         self.frame_calls.append((request_id, render_options))
         return request_id
 
-    def render_composite_frame_async(self, **render_options):
+    def render_composite_frame_async(
+        self,
+        page,
+        bid_ref,
+        scale,
+        rotation,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        callback,
+        priority=1,
+    ):
+        render_options = {
+            "page": page,
+            "bid_ref": bid_ref,
+            "scale": scale,
+            "rotation": rotation,
+            "frame_x_pts": frame_x_pts,
+            "frame_y_pts": frame_y_pts,
+            "frame_w_pts": frame_w_pts,
+            "frame_h_pts": frame_h_pts,
+            "callback": callback,
+            "priority": priority,
+        }
         request_id = self._request_id("composite-frame")
         self.composite_frame_calls.append((request_id, render_options))
         return request_id
@@ -1990,8 +2044,42 @@ class OptionsPreferencesTests(unittest.TestCase):
         captured = {}
 
         class FakeDialog:
-            def __init__(self, *_args, **kwargs):
-                captured.update(kwargs)
+            def __init__(
+                self,
+                icon_provider,
+                parent,
+                cover_sheet_data,
+                workspace_state_model,
+                used_employee_uids=None,
+                has_license=True,
+                context=None,
+                save_job_statuses_fn=None,
+                save_job_statuses_async_fn=None,
+                reload_job_statuses_fn=None,
+                save_employees_fn=None,
+                save_employees_async_fn=None,
+                save_pay_classes_fn=None,
+                save_pay_classes_async_fn=None,
+                reload_employees_fn=None,
+                save_bid_areas_fn=None,
+                save_bid_areas_async_fn=None,
+                reload_bid_areas_fn=None,
+                refresh_fn=None,
+                save_cover_sheet_async_fn=None,
+                get_used_area_uids_fn=None,
+                pdf_page_sizes_fn=None,
+                bid_ref=None,
+                create_mode=False,
+                pages_with_takeoffs=None,
+                pages_requiring_delete_confirmation=None,
+                pdf_metadata_pool=None,
+            ):
+                captured.update(
+                    save_job_statuses_async_fn=save_job_statuses_async_fn,
+                    save_employees_async_fn=save_employees_async_fn,
+                    save_pay_classes_async_fn=save_pay_classes_async_fn,
+                    save_cover_sheet_async_fn=save_cover_sheet_async_fn,
+                )
 
             def deleteLater(self):
                 pass
@@ -4336,7 +4424,37 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.frame_calls = []
 
-            def render_frame_async(self, **render_options):
+            def render_frame_async(
+                self,
+                file_path,
+                page_index,
+                scale,
+                rotation,
+                frame_x_pts,
+                frame_y_pts,
+                frame_w_pts,
+                frame_h_pts,
+                callback,
+                priority=1,
+                invert=False,
+                bitonal=False,
+                tint_rgb=None,
+            ):
+                render_options = {
+                    "file_path": file_path,
+                    "page_index": page_index,
+                    "scale": scale,
+                    "rotation": rotation,
+                    "frame_x_pts": frame_x_pts,
+                    "frame_y_pts": frame_y_pts,
+                    "frame_w_pts": frame_w_pts,
+                    "frame_h_pts": frame_h_pts,
+                    "callback": callback,
+                    "priority": priority,
+                    "invert": invert,
+                    "bitonal": bitonal,
+                    "tint_rgb": tint_rgb,
+                }
                 self.frame_calls.append(render_options)
                 return "frame-request"
 
@@ -4409,7 +4527,31 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.composite_frame_calls = []
 
-            def render_composite_frame_async(self, **render_options):
+            def render_composite_frame_async(
+                self,
+                page,
+                bid_ref,
+                scale,
+                rotation,
+                frame_x_pts,
+                frame_y_pts,
+                frame_w_pts,
+                frame_h_pts,
+                callback,
+                priority=1,
+            ):
+                render_options = {
+                    "page": page,
+                    "bid_ref": bid_ref,
+                    "scale": scale,
+                    "rotation": rotation,
+                    "frame_x_pts": frame_x_pts,
+                    "frame_y_pts": frame_y_pts,
+                    "frame_w_pts": frame_w_pts,
+                    "frame_h_pts": frame_h_pts,
+                    "callback": callback,
+                    "priority": priority,
+                }
                 self.composite_frame_calls.append(render_options)
                 return "composite-frame-request"
 
@@ -5191,14 +5333,82 @@ class OptionsPreferencesTests(unittest.TestCase):
             def set_mouse_snap_angles(self, unpressed_angle, pressed_angle):
                 self.calls.append(("snap_angles", unpressed_angle, pressed_angle))
 
-            def set_snap_preferences(self, **snap_options):
+            def set_snap_preferences(
+                self,
+                *,
+                snap_to_grid_enabled,
+                snap_to_grid_threshold_px,
+                snap_to_pdf_lines_enabled,
+                snap_to_pdf_lines_threshold_px,
+                snap_to_takeoffs_enabled,
+                snap_to_takeoffs_threshold_px,
+                snap_to_right_angle_enabled,
+                snap_to_right_angle_threshold_px,
+            ):
+                snap_options = {
+                    "snap_to_grid_enabled": snap_to_grid_enabled,
+                    "snap_to_grid_threshold_px": snap_to_grid_threshold_px,
+                    "snap_to_pdf_lines_enabled": snap_to_pdf_lines_enabled,
+                    "snap_to_pdf_lines_threshold_px": snap_to_pdf_lines_threshold_px,
+                    "snap_to_takeoffs_enabled": snap_to_takeoffs_enabled,
+                    "snap_to_takeoffs_threshold_px": snap_to_takeoffs_threshold_px,
+                    "snap_to_right_angle_enabled": snap_to_right_angle_enabled,
+                    "snap_to_right_angle_threshold_px": snap_to_right_angle_threshold_px,
+                }
                 self.calls.append(("snap_preferences", snap_options))
 
         class FakeDetachedWindow:
             def __init__(self):
                 self.calls = []
 
-            def apply_config_preferences(self, **config_options):
+            def apply_config_preferences(
+                self,
+                *,
+                show_page_index,
+                show_sheet_number,
+                roping_selection_method,
+                inactive_object_color,
+                disable_high_resolution_images,
+                intelligent_paste_enabled,
+                advanced_mouse_controls_enabled,
+                default_auto_zoom_level,
+                use_full_window_crosshairs,
+                crosshair_color,
+                crosshair_line_thickness,
+                mouse_unpressed_snap_angle,
+                mouse_pressed_snap_angle,
+                snap_to_grid_enabled,
+                snap_to_grid_threshold_px,
+                snap_to_pdf_lines_enabled,
+                snap_to_pdf_lines_threshold_px,
+                snap_to_takeoffs_enabled,
+                snap_to_takeoffs_threshold_px,
+                snap_to_right_angle_enabled,
+                snap_to_right_angle_threshold_px,
+            ):
+                config_options = {
+                    "show_page_index": show_page_index,
+                    "show_sheet_number": show_sheet_number,
+                    "roping_selection_method": roping_selection_method,
+                    "inactive_object_color": inactive_object_color,
+                    "disable_high_resolution_images": disable_high_resolution_images,
+                    "intelligent_paste_enabled": intelligent_paste_enabled,
+                    "advanced_mouse_controls_enabled": advanced_mouse_controls_enabled,
+                    "default_auto_zoom_level": default_auto_zoom_level,
+                    "use_full_window_crosshairs": use_full_window_crosshairs,
+                    "crosshair_color": crosshair_color,
+                    "crosshair_line_thickness": crosshair_line_thickness,
+                    "mouse_unpressed_snap_angle": mouse_unpressed_snap_angle,
+                    "mouse_pressed_snap_angle": mouse_pressed_snap_angle,
+                    "snap_to_grid_enabled": snap_to_grid_enabled,
+                    "snap_to_grid_threshold_px": snap_to_grid_threshold_px,
+                    "snap_to_pdf_lines_enabled": snap_to_pdf_lines_enabled,
+                    "snap_to_pdf_lines_threshold_px": snap_to_pdf_lines_threshold_px,
+                    "snap_to_takeoffs_enabled": snap_to_takeoffs_enabled,
+                    "snap_to_takeoffs_threshold_px": snap_to_takeoffs_threshold_px,
+                    "snap_to_right_angle_enabled": snap_to_right_angle_enabled,
+                    "snap_to_right_angle_threshold_px": snap_to_right_angle_threshold_px,
+                }
                 self.calls.append(config_options)
 
         annotation_window = FakeDetachedWindow()

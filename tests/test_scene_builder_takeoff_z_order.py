@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsTextItem,
 )
+from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -185,6 +186,58 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         )
         selection._current_page_transform = lambda: None
         self.assertIsNone(selection.find_linear_annotation_near(QPointF(50.0, 0.0)))
+
+    def test_hidden_layer_text_annotation_is_not_hit_testable(self):
+        annotation = BidAnnotation(
+            uid="text-1",
+            annotation_type="text",
+            page_uid="page-1",
+            layer_uid="hidden",
+            position=[0.0, 0.0, 100.0, 30.0],
+            properties={"Text": "Hidden note"},
+        )
+        scene = QGraphicsScene()
+        item = QGraphicsTextItem("Hidden note")
+        item.setData(0, annotation.uid)
+        scene.addItem(item)
+        selection = _SelectionHarness(
+            scene,
+            takeoffs={},
+            annotations={annotation.uid: annotation},
+            conditions={},
+        )
+        selection._hidden_layer_uids = {"hidden"}
+        selection._uid_to_items = {annotation.uid: [item]}
+        self.assertIsNone(selection.find_text_annotation_at(QPointF(1.0, 1.0)))
+
+    def test_hidden_layer_hotlink_annotation_is_not_hit_testable(self):
+        annotation = BidAnnotation(
+            uid="hotlink-1",
+            annotation_type="hotlink",
+            page_uid="page-1",
+            layer_uid="hidden",
+            position=[10.0, 10.0, 5.0],
+        )
+        scene = QGraphicsScene()
+        item = QGraphicsRectItem(5.0, 5.0, 10.0, 10.0)
+        scene.addItem(item)
+        link = HotlinkDto(
+            uid=annotation.uid,
+            bid_page_uid="page-1",
+            target_view_uid="view-1",
+            center_x=10.0,
+            center_y=10.0,
+            radius=5.0,
+        )
+        selection = _SelectionHarness(
+            scene,
+            takeoffs={},
+            annotations={annotation.uid: annotation},
+            conditions={},
+        )
+        selection._hidden_layer_uids = {"hidden"}
+        selection._hotlink_items = [(item, link)]
+        self.assertIsNone(selection.find_hotlink_at(QPointF(10.0, 10.0)))
 
     def test_pending_takeoff_preview_draws_after_committed_takeoffs(self):
         pending_uid = "pending:takeoff-placement:operation-1:0"

@@ -284,6 +284,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._read_only = read_only
         self._dirty = False
         self._building = False
+        self._interactive_requested = True
         self._interactive_enabled = True
         self._save_pending = False
         self._allow_apply = True
@@ -1647,14 +1648,14 @@ class EditConditionDialog(QtWidgets.QDialog):
             return False
         if self._save_async_fn is not None:
             self._save_pending = True
-            self.set_interactive(False)
+            self._apply_interactivity()
 
             def completed(result) -> None:
                 if not isValid(self):
                     return
                 self._save_pending = False
                 if not result.success:
-                    self.set_interactive(True)
+                    self._apply_interactivity()
                     if not result.error_presented:
                         show_warning(
                             self,
@@ -1664,7 +1665,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                     return
                 self._dirty = False
                 self._saved_form_state = self._current_form_state()
-                self.set_interactive(True)
+                self._apply_interactivity()
                 self._update_apply_button()
                 if after_success is not None:
                     after_success()
@@ -1673,12 +1674,12 @@ class EditConditionDialog(QtWidgets.QDialog):
                 started = self._save_async_fn(cond.uid, dto, completed)
             except Exception as exc:
                 self._save_pending = False
-                self.set_interactive(True)
+                self._apply_interactivity()
                 show_warning(self, "Save Failed", str(exc))
                 return False
             if not started:
                 self._save_pending = False
-                self.set_interactive(True)
+                self._apply_interactivity()
                 return False
             return False
         result = self._save_fn(cond.uid, dto)
@@ -1762,8 +1763,16 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._conditions_map = dict(conditions_map)
 
     def set_interactive(self, enabled: bool) -> None:
-        self._interactive_enabled = bool(enabled)
-        editable = bool(enabled) and self._has_license and not self._read_only
+        self._interactive_requested = bool(enabled)
+        self._apply_interactivity()
+
+    def _apply_interactivity(self) -> None:
+        self._interactive_enabled = (
+            self._interactive_requested and not self._save_pending
+        )
+        editable = (
+            self._interactive_enabled and self._has_license and not self._read_only
+        )
         for widget in (
             self._name_edit,
             self._type_edit,
@@ -1778,10 +1787,12 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._ok_btn,
         ):
             widget.setEnabled(editable)
-        self._cancel_btn.setEnabled(bool(enabled))
+        self._cancel_btn.setEnabled(self._interactive_enabled)
         self._update_style_combo_state()
         self._update_apply_button()
-        can_navigate = (bool(enabled) and self._has_license) or self._read_only
+        can_navigate = (
+            self._interactive_enabled and self._has_license
+        ) or self._read_only
         current_index = self._get_current_index()
         self._prev_btn.setEnabled(can_navigate and current_index > 0)
         self._next_btn.setEnabled(

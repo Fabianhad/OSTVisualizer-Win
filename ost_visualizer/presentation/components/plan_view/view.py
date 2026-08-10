@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import uuid
@@ -130,6 +131,7 @@ from .components.placement_mode import (
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
 
+logger = logging.getLogger(__name__)
 SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
 SLOPE_ROTATE_HANDLE_RGB = (47, 158, 68)
 _INTELLIGENT_PASTE_AXIS_SNAP_PX = 8
@@ -5948,13 +5950,31 @@ class TakeoffPlanView(
         if self._is_cleaning_up:
             return
         self._is_cleaning_up = True
-        self._zoom_debouncer.cancel()
-        self._finish_active_inline_text_edit(commit=True)
-        self._cancel_pending_renders()
-        self.clear()
-        self._rendering_service.shutdown()
-        self._scene.focusItemChanged.disconnect(self._on_scene_focus_item_changed)
-        self._condition_text_toolbar.deleteLater()
+
+        def cleanup_step(description: str, action: Callable[[], None]) -> None:
+            try:
+                action()
+            except Exception:
+                logger.exception("Failed to %s during plan-view cleanup", description)
+
+        cleanup_step("cancel zoom debounce", self._zoom_debouncer.cancel)
+        cleanup_step(
+            "finish the active inline text edit",
+            lambda: self._finish_active_inline_text_edit(commit=True),
+        )
+        cleanup_step("cancel pending renders", self._cancel_pending_renders)
+        cleanup_step("clear the plan scene", self.clear)
+        cleanup_step("shut down page rendering", self._rendering_service.shutdown)
+        cleanup_step(
+            "disconnect scene focus notifications",
+            lambda: self._scene.focusItemChanged.disconnect(
+                self._on_scene_focus_item_changed
+            ),
+        )
+        cleanup_step(
+            "delete the condition text toolbar",
+            self._condition_text_toolbar.deleteLater,
+        )
         self._condition_text_toolbar = None
         self._selected_text_item = None
         self._selected_text_annotation_uid = None

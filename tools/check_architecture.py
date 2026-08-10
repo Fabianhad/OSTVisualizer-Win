@@ -1,5 +1,5 @@
 """
-Automated architecture checks derived from CLAUDE.md.
+Automated architecture checks derived from AGENTS.md.
 Usage:
     python tools/check_architecture.py                  # full scan
     python tools/check_architecture.py --changed-only   # only staged/modified .py files
@@ -446,7 +446,7 @@ def check_logging():
 # ---------------------------------------------------------------------------
 # 6. C++ extension rules
 # ---------------------------------------------------------------------------
-# Canonical .pyd locations from CLAUDE.md
+# Canonical .pyd locations from AGENTS.md
 PYD_ALLOWED_DIRS = {
     "ost_geometry": "presentation/visualization/core",
     "ost_renderer": "presentation/components",

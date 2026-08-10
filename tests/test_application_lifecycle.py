@@ -55,7 +55,9 @@ class QtSceneNotifierLifecycleTests(unittest.TestCase):
         notifier = QtSceneNotifier()
         scene_calls = []
         notifier.set_handlers(
-            on_scene_ready=lambda *args: scene_calls.append(args),
+            on_scene_ready=lambda geometries, generation, scene_failed: scene_calls.append(
+                (geometries, generation, scene_failed)
+            ),
             on_full_refresh=lambda _file_path: None,
         )
         notifier.notify_scene_ready([], 7, True)
@@ -124,19 +126,28 @@ class FakeInfrastructureProvider:
     def get_color_service(self):
         return object()
 
-    def get_pdf_exporter(self, *_args):
+    def get_pdf_exporter(
+        self,
+        _coord_system,
+        _color_service,
+        _takeoff_service,
+        _uom_service,
+        _annotation_caption_resolver,
+    ):
         return object()
 
     def get_ost_exporter(self, _uom_service):
         return object()
 
-    def get_osp_exporter(self, *_args):
+    def get_osp_exporter(self, _uom_service, _version):
         return object()
 
-    def get_ost_importer(self, **_call_options):
+    def get_ost_importer(self, conn_manager=None):
+        _ = conn_manager
         return object()
 
-    def get_osp_importer(self, **_call_options):
+    def get_osp_importer(self, conn_manager=None):
+        _ = conn_manager
         return object()
 
     def get_database_creator(self):
@@ -171,7 +182,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
             file_loading_service=None,
             load_files_from_config_use_case=None,
             working_directory_service=SimpleNamespace(
-                create_database=lambda *_args, **_kwargs: created_path
+                create_database=lambda name=None, progress_callback=None: created_path
             ),
             file_state_model=state,
             database_descriptor_registry=registry,
@@ -586,7 +597,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
             thread = manager.spawn_with_bridge(
                 operation=lambda: (True, "ok", None),
                 callback_bridge=RaisingBridge(),
-                on_main_thread=lambda *_args: None,
+                on_main_thread=lambda _success, _message, _extra_data: None,
             )
             thread.join(timeout=2)
         self.assertEqual(manager._active_threads, [])

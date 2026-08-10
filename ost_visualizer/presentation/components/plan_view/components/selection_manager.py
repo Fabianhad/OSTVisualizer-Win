@@ -248,9 +248,8 @@ class SelectionManagerMixin:
     def find_text_annotation_at(self, scene_pos: QtCore.QPointF) -> Optional[str]:
         for uid, ann in self._current_annotations.items():
             if (
-                ann.visible
-                and ann.is_text
-                and ann.is_interactive
+                ann.is_text
+                and self._is_selectable(uid)
                 and self._text_annotation_contains_scene_point(uid, scene_pos)
             ):
                 return uid
@@ -292,12 +291,13 @@ class SelectionManagerMixin:
     def find_selected_movable_at(self, scene_pos: QtCore.QPointF) -> Optional[str]:
         for uid in self._selected_uids:
             ann = self._current_annotations.get(uid)
-            if ann is not None and ann.visible and ann.is_text:
+            if ann is not None and ann.is_text and self._is_selectable(uid):
                 if self._text_annotation_contains_scene_point(uid, scene_pos):
                     return uid
         for item, link_info in self._hotlink_items:
             if (
                 link_info.uid in self._selected_uids
+                and self._is_selectable(link_info.uid)
                 and self._hotlink_item_contains_scene_point(item, link_info, scene_pos)
             ):
                 return link_info.uid
@@ -309,8 +309,7 @@ class SelectionManagerMixin:
             ann = self._current_annotations.get(uid)
             if (
                 ann is not None
-                and ann.visible
-                and ann.is_interactive
+                and self._is_selectable(uid)
                 and ann.annotation_type in ann.LINEAR_TYPES
             ):
                 selected_ann_pairs.append((uid, ann))
@@ -321,7 +320,9 @@ class SelectionManagerMixin:
 
     def find_hotlink_at(self, scene_pos) -> Optional[HotlinkDto]:
         for item, link_info in self._hotlink_items:
-            if self._hotlink_item_contains_scene_point(item, link_info, scene_pos):
+            if self._is_selectable(
+                link_info.uid
+            ) and self._hotlink_item_contains_scene_point(item, link_info, scene_pos):
                 return link_info
         return None
 

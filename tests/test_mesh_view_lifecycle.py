@@ -143,8 +143,37 @@ class FakeMeshRenderer:
     def clear_plan_texture(self):
         self.clear_plan_texture_calls += 1
 
-    def set_plan_texture(self, *args):
-        self.plan_texture_calls.append(args)
+    def set_plan_texture(
+        self,
+        pixels_rgba,
+        width_px,
+        height_px,
+        page_width,
+        page_height,
+        plane_x,
+        plane_y,
+        plane_z,
+        opacity,
+        visible,
+        flip_u,
+        flip_v,
+    ):
+        self.plan_texture_calls.append(
+            (
+                pixels_rgba,
+                width_px,
+                height_px,
+                page_width,
+                page_height,
+                plane_x,
+                plane_y,
+                plane_z,
+                opacity,
+                visible,
+                flip_u,
+                flip_v,
+            )
+        )
 
     def set_plan_texture_visibility(self, visible):
         self.plan_texture_visibility_calls.append(bool(visible))
@@ -400,6 +429,11 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertFalse(viewer._negative_check_fn(["uid"]))
         self.assertEqual((False, False), viewer._curved_check_fn(["uid"]))
         self.assertEqual({}, viewer._context_menu_conditions_fn())
+        with patch(
+            "ost_visualizer.presentation.components.mesh_view.ost_renderer.Renderer",
+            side_effect=AssertionError("renderer must not restart after cleanup"),
+        ):
+            self.assertFalse(viewer._ensure_renderer())
 
     def test_cleanup_releases_viewer_ownership_when_renderer_shutdown_fails(self):
         self._app()
@@ -419,6 +453,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
 
     def test_failed_renderer_initialization_releases_partial_renderer(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
+        viewer._destroyed = False
         viewer._renderer = None
         viewer._render_surface_size = None
         viewer._surface_window = None

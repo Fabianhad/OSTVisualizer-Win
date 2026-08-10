@@ -613,7 +613,29 @@ class FakeWriteService:
         self.cancelled_mutations.append((database_id, operation_id))
         return self.cancel_queued_mutation_result
 
-    def queue_plan_geometry(self, database_id, bid_uid, callback, **updates):
+    def queue_plan_geometry(
+        self,
+        database_id,
+        bid_uid,
+        callback,
+        *,
+        takeoff_positions=(),
+        takeoff_rotations=(),
+        annotation_positions=(),
+        page_uids=(),
+        dependency_resources=(),
+        owning_surface="main-plan",
+        edit_lease_handle=None,
+    ):
+        updates = {
+            "takeoff_positions": takeoff_positions,
+            "takeoff_rotations": takeoff_rotations,
+            "annotation_positions": annotation_positions,
+            "page_uids": page_uids,
+            "dependency_resources": dependency_resources,
+            "owning_surface": owning_surface,
+            "edit_lease_handle": edit_lease_handle,
+        }
         self.queued_geometry.append((database_id, bid_uid, updates, callback))
         return len(self.queued_geometry)
 
@@ -623,8 +645,14 @@ class FakeWriteService:
         resources,
         dependency_resources,
         callback,
-        **options,
+        *,
+        operation_id,
+        owning_surface,
     ):
+        options = {
+            "operation_id": operation_id,
+            "owning_surface": owning_surface,
+        }
         self.edit_lease_requests.append(
             (database_id, resources, dependency_resources, options, callback)
         )
@@ -639,8 +667,16 @@ class FakeWriteService:
         property_kind,
         updates,
         callback,
-        **options,
+        *,
+        page_uids=(),
+        dependency_resources=(),
+        owning_surface="main-plan",
     ):
+        options = {
+            "page_uids": page_uids,
+            "dependency_resources": dependency_resources,
+            "owning_surface": owning_surface,
+        }
         self.queued_properties.append(
             (database_id, bid_uid, property_kind, updates, options, callback)
         )
@@ -653,8 +689,16 @@ class FakeWriteService:
         takeoff_uids,
         annotations,
         callback,
-        **options,
+        *,
+        page_uids=(),
+        dependency_resources=(),
+        owning_surface="main-plan",
     ):
+        options = {
+            "page_uids": page_uids,
+            "dependency_resources": dependency_resources,
+            "owning_surface": owning_surface,
+        }
         self.queued_deletes.append(
             (database_id, bid_uid, takeoff_uids, annotations, options, callback)
         )
@@ -665,8 +709,14 @@ class FakeWriteService:
         database_id,
         payload,
         callback,
-        **options,
+        *,
+        dependency_resources=(),
+        owning_surface="main-plan",
     ):
+        options = {
+            "dependency_resources": dependency_resources,
+            "owning_surface": owning_surface,
+        }
         self.queued_pastes.append((database_id, payload, options, callback))
         return len(self.queued_pastes)
 
@@ -676,8 +726,18 @@ class FakeWriteService:
         bid_uid,
         takeoff_uids,
         annotations,
-        **options,
+        *,
+        page_uids=(),
+        dependency_resources=(),
+        publish_database_refreshed_after_write=True,
     ):
+        options = {
+            "page_uids": page_uids,
+            "dependency_resources": dependency_resources,
+            "publish_database_refreshed_after_write": (
+                publish_database_refreshed_after_write
+            ),
+        }
         self.local_deletes.append(
             (database_id, bid_uid, list(takeoff_uids), list(annotations), options)
         )
@@ -708,7 +768,20 @@ class FakeWriteService:
             ),
         )
 
-    def execute_plan_items_paste_local(self, database_id, payload, **options):
+    def execute_plan_items_paste_local(
+        self,
+        database_id,
+        payload,
+        *,
+        dependency_resources=(),
+        publish_database_refreshed_after_write=True,
+    ):
+        options = {
+            "dependency_resources": dependency_resources,
+            "publish_database_refreshed_after_write": (
+                publish_database_refreshed_after_write
+            ),
+        }
         self.local_pastes.append((database_id, payload, options))
         condition_map = {}
         if payload.source_bid_uid != payload.destination_bid_uid:

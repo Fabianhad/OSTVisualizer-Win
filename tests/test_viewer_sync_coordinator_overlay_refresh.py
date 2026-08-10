@@ -359,35 +359,156 @@ class FakeRenderingService:
         self._request_counter += 1
         return f"{prefix}-{self._request_counter}"
 
-    def render_page_async(self, **render_options):
+    def render_page_async(
+        self,
+        file_path,
+        page_index,
+        scale,
+        rotation,
+        callback,
+        priority=0,
+        invert=False,
+        bitonal=False,
+        tint_rgb=None,
+        apply_invert_effect=True,
+        apply_bitonal_effect=True,
+    ):
         request_id = self._next_request_id("page")
+        render_options = {
+            "file_path": file_path,
+            "page_index": page_index,
+            "scale": scale,
+            "rotation": rotation,
+            "callback": callback,
+            "priority": priority,
+            "invert": invert,
+            "bitonal": bitonal,
+            "tint_rgb": tint_rgb,
+            "apply_invert_effect": apply_invert_effect,
+            "apply_bitonal_effect": apply_bitonal_effect,
+        }
         self.page_requests.append((request_id, render_options))
         return request_id
 
-    def render_overlay_async(self, **render_options):
+    def render_overlay_async(
+        self,
+        page,
+        bid_ref,
+        view_scale,
+        show_mode,
+        rotation,
+        callback,
+        priority=0,
+        render_scale=None,
+        apply_invert_effect=True,
+        apply_bitonal_effect=True,
+    ):
         request_id = self._next_request_id("overlay")
+        render_options = {
+            "page": page,
+            "bid_ref": bid_ref,
+            "view_scale": view_scale,
+            "show_mode": show_mode,
+            "rotation": rotation,
+            "callback": callback,
+            "priority": priority,
+            "render_scale": render_scale,
+            "apply_invert_effect": apply_invert_effect,
+            "apply_bitonal_effect": apply_bitonal_effect,
+        }
         self.overlay_requests.append((request_id, render_options))
         return request_id
 
-    def render_composite_async(self, **render_options):
+    def render_composite_async(
+        self,
+        page,
+        bid_ref,
+        render_scale,
+        rotation,
+        callback,
+        priority=0,
+    ):
         request_id = self._next_request_id("composite")
+        render_options = {
+            "page": page,
+            "bid_ref": bid_ref,
+            "render_scale": render_scale,
+            "rotation": rotation,
+            "callback": callback,
+            "priority": priority,
+        }
         self.composite_requests.append((request_id, render_options))
         return request_id
 
-    def render_frame_async(self, **render_options):
+    def render_frame_async(
+        self,
+        file_path,
+        page_index,
+        scale,
+        rotation,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        callback,
+        priority=1,
+        invert=False,
+        bitonal=False,
+        tint_rgb=None,
+    ):
         request_id = self._next_request_id("frame")
+        render_options = {
+            "file_path": file_path,
+            "page_index": page_index,
+            "scale": scale,
+            "rotation": rotation,
+            "frame_x_pts": frame_x_pts,
+            "frame_y_pts": frame_y_pts,
+            "frame_w_pts": frame_w_pts,
+            "frame_h_pts": frame_h_pts,
+            "callback": callback,
+            "priority": priority,
+            "invert": invert,
+            "bitonal": bitonal,
+            "tint_rgb": tint_rgb,
+        }
         self.frame_requests.append((request_id, render_options))
         return request_id
 
-    def render_composite_frame_async(self, **render_options):
+    def render_composite_frame_async(
+        self,
+        page,
+        bid_ref,
+        scale,
+        rotation,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        callback,
+        priority=1,
+    ):
         request_id = self._next_request_id("composite-frame")
+        render_options = {
+            "page": page,
+            "bid_ref": bid_ref,
+            "scale": scale,
+            "rotation": rotation,
+            "frame_x_pts": frame_x_pts,
+            "frame_y_pts": frame_y_pts,
+            "frame_w_pts": frame_w_pts,
+            "frame_h_pts": frame_h_pts,
+            "callback": callback,
+            "priority": priority,
+        }
         self.composite_frame_requests.append((request_id, render_options))
         return request_id
 
     def cancel_request(self, request_id):
         self.cancelled_requests.append(request_id)
 
-    def extract_pdf_text_async(self, **_call_options):
+    def extract_pdf_text_async(self, file_path, page_index, callback, priority=2):
+        del file_path, page_index, callback, priority
         return self._next_request_id("text")
 
     def shutdown(self):
@@ -779,6 +900,34 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.cleanup()
         view.cleanup()
         self.assertEqual(rendering_service.shutdown_calls, 1)
+
+    def test_plan_view_cleanup_continues_after_independent_stage_failures(self):
+        view = self._make_plan_view()
+        rendering_service = view._rendering_service
+
+        def fail_inline_edit(*, commit):
+            self.assertTrue(commit)
+            raise RuntimeError("inline edit failed")
+
+        def fail_render_shutdown():
+            rendering_service.shutdown_calls += 1
+            raise RuntimeError("render shutdown failed")
+
+        view._finish_active_inline_text_edit = fail_inline_edit
+        rendering_service.shutdown = fail_render_shutdown
+        with self.assertLogs(
+            "ost_visualizer.presentation.components.plan_view.view", level="ERROR"
+        ) as captured:
+            view.cleanup()
+        messages = "\n".join(captured.output)
+        self.assertIn("finish the active inline text edit", messages)
+        self.assertIn("shut down page rendering", messages)
+        self.assertEqual(rendering_service.shutdown_calls, 1)
+        self.assertIsNone(view._condition_text_toolbar)
+        self.assertIsNone(view._rendering_service)
+        self.assertIsNone(view._scene_builder)
+        self.assertIsNone(view._takeoff_snap_index)
+        self.assertIsNone(view._pdf_snap_index)
 
     def test_place_preview_secondary_conditions_match_active_type(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -1363,30 +1512,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.cleanup()
 
     def test_show_both_loads_composite_instead_of_separate_layers(self):
-        class RecordingRenderingService:
-            def __init__(self):
-                self.page_calls = []
-                self.composite_calls = []
-
-            def render_page_async(self, **render_options):
-                self.page_calls.append(render_options)
-                return "page-1"
-
-            def render_composite_async(self, **render_options):
-                self.composite_calls.append(render_options)
-                return "composite-1"
-
-            def extract_pdf_text_async(self, **_call_options):
-                return "text-1"
-
-            def cancel_request(self, _request_id):
-                pass
-
-            def shutdown(self):
-                pass
-
         view = self._make_plan_view()
-        rendering_service = RecordingRenderingService()
+        rendering_service = FakeRenderingService()
         view._rendering_service = rendering_service
         view._load_coordinator = PageLoadStrategyService(FakePageSizeProvider())
         page = Page(
@@ -1407,36 +1534,14 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             )
         )
         self.assertTrue(view._can_zoom_rerender)
-        self.assertEqual(rendering_service.page_calls, [])
-        self.assertEqual(len(rendering_service.composite_calls), 1)
-        self.assertEqual(rendering_service.composite_calls[0]["page"], page)
+        self.assertEqual(rendering_service.page_requests, [])
+        self.assertEqual(len(rendering_service.composite_requests), 1)
+        self.assertEqual(rendering_service.composite_requests[0][1]["page"], page)
         view.cleanup()
 
     def test_show_both_tif_overlay_loads_composite_instead_of_separate_layers(self):
-        class RecordingRenderingService:
-            def __init__(self):
-                self.page_calls = []
-                self.composite_calls = []
-
-            def render_page_async(self, **render_options):
-                self.page_calls.append(render_options)
-                return "page-1"
-
-            def render_composite_async(self, **render_options):
-                self.composite_calls.append(render_options)
-                return "composite-1"
-
-            def extract_pdf_text_async(self, **_call_options):
-                return "text-1"
-
-            def cancel_request(self, _request_id):
-                pass
-
-            def shutdown(self):
-                pass
-
         view = self._make_plan_view()
-        rendering_service = RecordingRenderingService()
+        rendering_service = FakeRenderingService()
         view._rendering_service = rendering_service
         view._load_coordinator = PageLoadStrategyService(FakePageSizeProvider())
         page = Page(
@@ -1457,29 +1562,17 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             )
         )
         self.assertTrue(view._can_zoom_rerender)
-        self.assertEqual(rendering_service.page_calls, [])
-        self.assertEqual(len(rendering_service.composite_calls), 1)
-        self.assertEqual(rendering_service.composite_calls[0]["page"], page)
-        self.assertEqual(rendering_service.composite_calls[0]["render_scale"], 2.0)
+        self.assertEqual(rendering_service.page_requests, [])
+        self.assertEqual(len(rendering_service.composite_requests), 1)
+        self.assertEqual(rendering_service.composite_requests[0][1]["page"], page)
+        self.assertEqual(
+            rendering_service.composite_requests[0][1]["render_scale"], 2.0
+        )
         view.cleanup()
 
     def test_show_both_optional_overlay_base_correction_uses_page_rotation(self):
-        class RecordingRenderingService:
-            def __init__(self):
-                self.calls = []
-
-            def render_overlay_async(self, **render_options):
-                self.calls.append(render_options)
-                return "overlay-base-1"
-
-            def cancel_request(self, _request_id):
-                pass
-
-            def shutdown(self):
-                pass
-
         view = self._make_plan_view()
-        rendering_service = RecordingRenderingService()
+        rendering_service = FakeRenderingService()
         view._rendering_service = rendering_service
         page = Page(
             uid="p1",
@@ -1505,8 +1598,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             base_raster_scale=3.0,
             generation_id=7,
         )
-        self.assertEqual(len(rendering_service.calls), 1)
-        call = rendering_service.calls[0]
+        self.assertEqual(len(rendering_service.overlay_requests), 1)
+        call = rendering_service.overlay_requests[0][1]
         self.assertIs(call["page"], page)
         self.assertEqual(call["show_mode"], 2)
         self.assertEqual(call["rotation"], 90)

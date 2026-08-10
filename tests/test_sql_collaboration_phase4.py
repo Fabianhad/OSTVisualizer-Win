@@ -187,6 +187,18 @@ class _EventBus:
             callback(**payload)
 
 
+class _FailingUnsubscribeEventBus(_EventBus):
+    def __init__(self):
+        super().__init__()
+        self.unsubscribe_attempts = []
+
+    def unsubscribe(self, event, callback):
+        self.unsubscribe_attempts.append(event)
+        if event == AppEvents.FILE_OPENED:
+            raise RuntimeError("listener registry unavailable")
+        super().unsubscribe(event, callback)
+
+
 class _PermissionProbe:
     def can_edit(self, _database_id):
         return True
@@ -391,13 +403,12 @@ class _Reconciliation:
 
     def apply(
         self,
-        batch,
-        _projection_barrier=None,
-        *,
+        hydrated,
         projection_barrier=None,
+        *,
         local_completion=False,
     ):
-        self.batches.append(batch)
+        self.batches.append(hydrated)
         self.projection_barriers.append(projection_barrier)
         return ReconciliationResult(
             applied=self.result,
@@ -406,7 +417,7 @@ class _Reconciliation:
 
 
 class _RaisingReconciliation:
-    def apply(self, _batch, _projection_barrier=None, **_kwargs):
+    def apply(self, _batch, projection_barrier=None, *, local_completion=False):
         raise RuntimeError("reconciliation callback failed")
 
 
@@ -414,7 +425,7 @@ class _DeferredProjectionReconciliation:
     def __init__(self):
         self.token = None
 
-    def apply(self, _batch, projection_barrier=None, **_kwargs):
+    def apply(self, _batch, projection_barrier=None, *, local_completion=False):
         self.token = projection_barrier.register("test-plan")
         return ReconciliationResult(applied=True)
 
@@ -481,9 +492,9 @@ class _CollaborationStore:
         database_id,
         session_id,
         acknowledged_version,
-        _bid_uid,
-        _page_uid,
-        _mode,
+        bid_uid,
+        page_uid,
+        mode,
     ):
         return DatabaseSession(
             database_id=database_id,
@@ -491,16 +502,16 @@ class _CollaborationStore:
             last_acknowledged_version=acknowledged_version,
         )
 
-    def close_session(self, _database_id, _session_id, _reason):
+    def close_session(self, database_id, session_id, reason):
         self.closed.set()
 
-    def list_presence(self, *_args):
+    def list_presence(self, database_id, bid_uid, excluding_session_id):
         return ()
 
-    def list_locks(self, *_args):
+    def list_locks(self, database_id, excluding_session_id, bid_uid=None):
         return ()
 
-    def acquire_lock(self, *_args):
+    def acquire_lock(self, database_id, session_id, resource, operation_description):
         raise AssertionError("No edit lock was requested")
 
     def acquire_locks(self, database_id, session_id, resources, operation_description):
@@ -514,13 +525,13 @@ class _CollaborationStore:
             for resource in resources
         )
 
-    def renew_lock(self, *_args):
+    def renew_lock(self, database_id, session_id, lock_token):
         raise AssertionError("No edit lock was requested")
 
-    def release_lock(self, *_args):
+    def release_lock(self, database_id, session_id, lock_token):
         raise AssertionError("No edit lock was requested")
 
-    def poll_changes(self, database_id, _after_version, _limit, excluding_session_id):
+    def poll_changes(self, database_id, after_version, limit, excluding_session_id):
         self.polled.set()
         if self.batch is not None:
             observed = self.batch
@@ -550,7 +561,7 @@ class _CollaborationStore:
             remote_batch=HydratedDatabaseChangeBatch(remote),
         )
 
-    def hydrate_operation(self, database_id, _operation_id):
+    def hydrate_operation(self, database_id, operation_id):
         return HydratedDatabaseChangeBatch(_batch(database_id, "epoch", 0, 0))
 
 
@@ -593,7 +604,15 @@ class _AlwaysUnavailableStore(_CollaborationStore):
         self.repeated_failure = threading.Event()
         self.start_threads = []
 
-    def start_session(self, *_args):
+    def start_session(
+        self,
+        database_id,
+        session_id,
+        client_instance_id,
+        display_name,
+        machine_name,
+        application_version,
+    ):
         self.start_threads.append(threading.get_ident())
         self.start_count += 1
         if self.start_count == 1:
@@ -700,7 +719,7 @@ class _FailedCloseStore(_CollaborationStore):
 
 
 class _ReleaseFailsCloseSucceedsStore(_LockingStore):
-    def release_lock(self, *_args):
+    def release_lock(self, database_id, session_id, lock_token):
         raise DatabaseCatalogError("test individual release failure")
 
 
@@ -709,7 +728,7 @@ class _BatchAcquireFailureStore(_CollaborationStore):
         super().__init__()
         self.acquire_failed = threading.Event()
 
-    def acquire_locks(self, *_args):
+    def acquire_locks(self, database_id, session_id, resources, operation_description):
         self.acquire_failed.set()
         raise ValueError("second lock was denied")
 
@@ -758,13 +777,31 @@ class _ProjectData:
     def replace_database_hierarchy(self, _file_entry, _cdn_types):
         raise AssertionError("No hierarchy change was requested")
 
-    def replace_remote_bid_families(self, *_args):
+    def replace_remote_bid_families(self, bid_ref, bid_data, families):
         return True
 
     def remove_transient_takeoffs(self, takeoff_uids):
         self.removed_transient_takeoff_uids.extend(takeoff_uids)
 
-    def replace_database_settings(self, database_id, **values):
+    def replace_database_settings(
+        self,
+        database_id,
+        *,
+        default_layers=None,
+        job_statuses=None,
+        employees=None,
+        pay_classes=None,
+        used_job_status_uids=None,
+        used_employee_uids=None,
+    ):
+        values = {
+            "default_layers": default_layers,
+            "job_statuses": job_statuses,
+            "employees": employees,
+            "pay_classes": pay_classes,
+            "used_job_status_uids": used_job_status_uids,
+            "used_employee_uids": used_employee_uids,
+        }
         self.database_settings[database_id] = values
 
     def replace_cover_sheet_data(self, database_id, bid_uid, cover_sheet):
@@ -4725,6 +4762,104 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertFalse(insert_calls[0]["publish_conflict_event"])
 
+    def test_takeoff_insert_rejects_incomplete_identities_before_commit(self):
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._bid_write_guard = SimpleNamespace(
+            blocks_active_locked_bid_write=lambda _database_id, _bid_uid: False
+        )
+        service._insert_takeoffs = SimpleNamespace(
+            execute=lambda _database_id, _bid_uid, _specs: ["501"]
+        )
+        specs = [
+            InsertTakeoffSpec(
+                condition_uid="10",
+                page_uid="20",
+                area_uid=None,
+                position=[1.0, 2.0],
+            ),
+            InsertTakeoffSpec(
+                condition_uid="10",
+                page_uid="20",
+                area_uid=None,
+                position=[3.0, 4.0],
+            ),
+        ]
+
+        class RejectingRecorder:
+            def record(
+                self,
+                _resource,
+                _operation,
+                *,
+                changed_fields=(),
+                payload="",
+            ):
+                del changed_fields, payload
+                self.fail("an incomplete identity batch must not be recorded")
+
+            def fail(self, message):
+                raise AssertionError(message)
+
+        def execute_mutation(
+            _database_id,
+            _resources,
+            operation,
+            *,
+            operation_id="",
+            mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
+            request_hash="",
+            result_format_version=1,
+            block_bid_child_locks=False,
+            block_bid_active_editors=False,
+            publish_conflict_event=True,
+        ):
+            del (
+                operation_id,
+                mutation_type,
+                request_hash,
+                result_format_version,
+                block_bid_child_locks,
+                block_bid_active_editors,
+                publish_conflict_event,
+            )
+            return operation(RejectingRecorder())
+
+        service._execute_database_mutation = execute_mutation
+        with self.assertRaisesRegex(RuntimeError, "authoritative identity set"):
+            service._insert_takeoffs_mutation("database", "8", specs)
+
+    def test_empty_takeoff_inserts_do_not_create_mutation_requests(self):
+        service = ProjectWriteService.__new__(ProjectWriteService)
+
+        def reject_local_mutation(
+            _database_id,
+            _bid_uid,
+            _specs,
+            *,
+            consistency_resources=(),
+            publish_conflict_event=True,
+            operation_id="",
+            request_hash="",
+        ):
+            del (
+                consistency_resources,
+                publish_conflict_event,
+                operation_id,
+                request_hash,
+            )
+            self.fail("an empty insert must not enter the mutation boundary")
+
+        service._insert_takeoffs_mutation = reject_local_mutation
+        self.assertEqual(service.insert_takeoffs("database", "8", []), [])
+        with self.assertRaisesRegex(ValueError, "requires at least one takeoff"):
+            service.queue_takeoff_placement(
+                "database",
+                "8",
+                [],
+                "7b3c5ac1-e623-44aa-8203-26a0125873b9",
+                lambda _result: None,
+            )
+
     def test_queue_rejects_mutation_when_initial_journal_write_fails(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -5257,6 +5392,51 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(journal.records, {})
         self.assertNotIn(request.operation_id, coordinator._uncertain_callbacks)
         _shutdown_coordinator(coordinator)
+
+    def test_recovered_operation_rejects_non_authoritative_identity_sets(self):
+        request = QueuedMutationRequest(
+            database_id="database",
+            operation_id="b4d0e10f-1547-4c68-8a42-4526fd23a188",
+            mutation_type=CollaborationMutationType.TAKEOFF_PLACEMENT,
+            owning_surface="main-plan",
+            resources=(ResourceRef("takeoffs_collection", "8", 8),),
+        )
+        malformed_values = (
+            None,
+            "501",
+            [None],
+            ["501", "501"],
+            {
+                "takeoff_uids": {"preview-1": None},
+                "annotation_uids": {},
+                "condition_uids": {},
+            },
+            {
+                "takeoff_uids": {"preview-1": "501", "preview-2": "501"},
+                "annotation_uids": {},
+                "condition_uids": {},
+            },
+        )
+        for value in malformed_values:
+            with self.subTest(value=value):
+                durable = DurableOperationResult(
+                    database_id="database",
+                    operation_id=request.operation_id,
+                    found=True,
+                    mutation_type=request.mutation_type.value,
+                    request_hash=request.request_hash,
+                    result_format_version=1,
+                    result_payload=json.dumps(
+                        {"value": value, "value_available": True},
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+                self.assertIsNone(
+                    SqlCollaborationCoordinator._recovered_authoritative_result(
+                        request, durable
+                    )
+                )
 
     def test_database_stop_rejects_queued_mutations_without_retrying_inflight_write(
         self,
@@ -7567,6 +7747,45 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertTrue(completed.wait(2))
         self.assertCountEqual(results, [("first", True), ("second", True)])
         self.assertEqual(store.start_count, 1)
+
+    def test_shutdown_reports_unsubscribe_failure_after_attempting_all_events(self):
+        event_bus = _FailingUnsubscribeEventBus()
+        coordinator = _coordinator(
+            DatabaseDescriptorRegistry(),
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(DatabaseDescriptorRegistry(), _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            *_token_service(),
+            event_bus,
+            SQL_SCHEMA_V1.version,
+        )
+        results = []
+        with self.assertLogs(
+            "ost_visualizer.application.services.sql_collaboration_coordinator",
+            level="ERROR",
+        ):
+            coordinator.request_shutdown(
+                lambda success, message: results.append((success, message))
+            )
+        self.assertEqual(
+            event_bus.unsubscribe_attempts,
+            [
+                AppEvents.FILE_OPENED,
+                AppEvents.FILE_UNLOADED,
+                AppEvents.DATABASE_REFRESHED,
+                AppEvents.DATABASE_CAPABILITIES_CHANGED,
+            ],
+        )
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0][0])
+        self.assertIn("event unsubscription failed", results[0][1])
+        self.assertEqual(
+            coordinator.shutdown_state,
+            CollaborationShutdownState.CLEANUP_FAILED,
+        )
 
     def test_shutdown_reports_session_cleanup_failure(self):
         descriptors = DatabaseDescriptorRegistry()

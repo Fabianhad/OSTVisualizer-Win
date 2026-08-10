@@ -2,8 +2,22 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
+
 namespace ost_linear
 {
+    static void require_positive_segments(int segments)
+    {
+        if (segments < 1)
+            throw std::invalid_argument("segments must be at least 1");
+    }
+
+    static void require_curve_point_count(int point_count)
+    {
+        if (point_count < 2)
+            throw std::invalid_argument("curve point count must be at least 2");
+    }
+
     static inline bool has_slope_factor(std::optional<double> rise,
                                         std::optional<double> run,
                                         double &rise_v, double &run_v)
@@ -26,6 +40,7 @@ namespace ost_linear
         double x1, double y1, double x2, double y2,
         double cx, double cy, int segs)
     {
+        require_positive_segments(segs);
         double m1x = (x1 + cx) * 0.5, m1y = (y1 + cy) * 0.5;
         double m2x = (cx + x2) * 0.5, m2y = (cy + y2) * 0.5;
         double ps1 = perp_slope(cx - x1, cy - y1);
@@ -132,6 +147,7 @@ namespace ost_linear
     std::vector<Vec2> gen_adv_curve_pts(double x1, double y1, double x2, double y2,
                                         double cx, double cy, int segments)
     {
+        require_positive_segments(segments);
         double m1x = (x1 + cx) * 0.5, m1y = (y1 + cy) * 0.5;
         double m2x = (cx + x2) * 0.5, m2y = (cy + y2) * 0.5;
         double ps1 = perp_slope(cx - x1, cy - y1);
@@ -258,6 +274,7 @@ namespace ost_linear
     }
     std::vector<Face> get_curved_mesh_faces(int n)
     {
+        require_curve_point_count(n);
         std::vector<Face> faces;
         faces.reserve(static_cast<size_t>((n - 1) * 8 + 4));
         auto u = [](int v) -> uint32_t
@@ -290,6 +307,7 @@ namespace ost_linear
     }
     std::vector<Edge> get_curved_mesh_edges(int n)
     {
+        require_curve_point_count(n);
         std::vector<Edge> edges;
         edges.reserve(static_cast<size_t>((n - 1) * 4 + n * 2));
         auto u = [](int v) -> uint32_t
@@ -339,6 +357,7 @@ namespace ost_linear
     {
         if (!segments.has_value())
             return calc_adaptive_segs(x1, y1, x2, y2, cx, cy);
+        require_positive_segments(*segments);
         return *segments;
     }
     std::tuple<bool, double, bool> proc_slope_params(

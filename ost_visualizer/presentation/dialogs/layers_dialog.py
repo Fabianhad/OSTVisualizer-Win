@@ -71,6 +71,7 @@ class LayersDialog(QtWidgets.QDialog):
         self._update_all_show_async_fn = update_all_show_async_fn
         self._selected_name: str = ""
         self._has_license = has_license
+        self._interactive_requested = has_license
         self._is_interactive = has_license
         self._operation_pending = False
         self._checkboxes: List[QtWidgets.QCheckBox] = []
@@ -402,6 +403,7 @@ class LayersDialog(QtWidgets.QDialog):
             return
         after_sequence = self._pending_new_after_sequence
         if self._insert_async_fn is not None:
+            previous_uid = self._pending_new_prev_uid
             self._disconnect_pending_new_editor_signal()
             self._pending_new_item = None
             self._pending_new_prev_uid = None
@@ -409,14 +411,23 @@ class LayersDialog(QtWidgets.QDialog):
 
             def inserted(value) -> None:
                 new_uid = str(value or "")
-                if new_uid:
-                    self._reload_items(select_uid=new_uid, select_name=name)
+                self._reload_items(select_uid=new_uid, select_name=name)
+
+            def failed() -> None:
+                row = self.tree.indexOfTopLevelItem(item)
+                if row >= 0:
+                    self.tree.takeTopLevelItem(row)
+                if previous_uid:
+                    self._populate(select_uid=previous_uid)
+                else:
+                    self._update_button_states()
 
             self._run_async_operation(
                 lambda completed: self._insert_async_fn(
                     name, after_sequence, completed
                 ),
                 inserted,
+                failed,
             )
             return
         try:
@@ -631,7 +642,15 @@ class LayersDialog(QtWidgets.QDialog):
         )
 
     def set_interactive(self, enabled: bool) -> None:
-        self._is_interactive = bool(enabled) and self._has_license
+        self._interactive_requested = bool(enabled)
+        self._apply_interactivity()
+
+    def _apply_interactivity(self) -> None:
+        self._is_interactive = (
+            self._interactive_requested
+            and self._has_license
+            and not self._operation_pending
+        )
         self._set_controls_interactive(self._is_interactive)
 
     def _run_async_operation(
@@ -643,13 +662,13 @@ class LayersDialog(QtWidgets.QDialog):
         if self._operation_pending:
             return
         self._operation_pending = True
-        self.set_interactive(False)
+        self._apply_interactivity()
 
         def completed(success: bool, value=None) -> None:
             if not isValid(self):
                 return
             self._operation_pending = False
-            self.set_interactive(True)
+            self._apply_interactivity()
             if success:
                 on_success(value)
             elif on_failure is not None:
@@ -659,14 +678,14 @@ class LayersDialog(QtWidgets.QDialog):
             started = submit(completed)
         except Exception as exc:
             self._operation_pending = False
-            self.set_interactive(True)
+            self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
             show_warning(self, "Layer Update", str(exc))
             return
         if not started:
             self._operation_pending = False
-            self.set_interactive(True)
+            self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
 

@@ -50,6 +50,10 @@ class DatabaseProjectWriter(SqlProjectWriter):
             "database_project_writer_access_transaction_depth",
             default=0,
         )
+        self._access_transaction_error = contextvars.ContextVar(
+            "database_project_writer_access_transaction_error",
+            default=None,
+        )
         self._active_backend = contextvars.ContextVar(
             "database_writer_backend",
             default=None,

@@ -411,11 +411,10 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self._credential_store.write_password(target, username, password)
 
     def _on_remove(self) -> None:
-        current_item = self.table.currentItem()
-        row = self.table.indexOfTopLevelItem(current_item)
-        if row < 0 or row >= len(self.file_entries):
+        entry_index = self._selected_entry_index()
+        if entry_index < 0:
             return
-        entry = self.file_entries[row]
+        entry = self.file_entries[entry_index]
         descriptor = entry.descriptor
         item_name = descriptor.display_name
         message = f"Are you sure you want to remove '{item_name}' from the list?"
@@ -426,7 +425,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
             "Confirm Removal",
             message,
         ):
-            del self.file_entries[row]
+            del self.file_entries[entry_index]
             self._populate_table()
 
     def _on_close(self) -> None:
@@ -489,11 +488,27 @@ class OpenFilesDialog(QtWidgets.QDialog):
         selection_model = self.table.selectionModel()
         has_selection = bool(selection_model and selection_model.hasSelection())
         if has_selection:
-            row = self.table.indexOfTopLevelItem(self.table.currentItem())
-            if 0 <= row < len(self.file_entries):
-                entry = self.file_entries[row]
+            entry_index = self._selected_entry_index()
+            if entry_index >= 0:
+                entry = self.file_entries[entry_index]
                 has_selection = (
                     entry.backend == DatabaseBackend.SQL_SERVER
                     or not self._is_in_working_dir(entry.file_path)
                 )
+            else:
+                has_selection = False
         self.remove_button.setEnabled(has_selection)
+
+    def _selected_entry_index(self) -> int:
+        current_item = self.table.currentItem()
+        if current_item is None:
+            return -1
+        database_id = current_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        return next(
+            (
+                index
+                for index, entry in enumerate(self.file_entries)
+                if entry.database_id == database_id
+            ),
+            -1,
+        )

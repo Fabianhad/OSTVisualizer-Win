@@ -356,7 +356,24 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             def __init__(self):
                 self.calls = 0
 
-            def generate_meshes(self, *_args, **_kwargs):
+            def generate_meshes(
+                self,
+                bid_conditions,
+                bid_takeoffs,
+                page_area_selections=None,
+                display_mode="solid",
+                grayscale_enabled=True,
+                *,
+                inactive_object_color,
+            ):
+                del (
+                    bid_conditions,
+                    bid_takeoffs,
+                    page_area_selections,
+                    display_mode,
+                    grayscale_enabled,
+                    inactive_object_color,
+                )
                 self.calls += 1
                 if self.calls == 1:
                     raise RuntimeError("generation failed")

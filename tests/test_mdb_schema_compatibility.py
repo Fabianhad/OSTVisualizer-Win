@@ -8,6 +8,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 import pyodbc
 
 pyodbc.pooling = False
@@ -531,6 +532,23 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
             {"missing optional table BidHotLinks"},
         )
 
+    def test_optional_write_skip_logs_once_per_database_column_and_operation(self):
+        MdbSchemaInspector._logged_optional_write_skips.clear()
+        self.addCleanup(MdbSchemaInspector._logged_optional_write_skips.clear)
+        logger = Mock()
+        inspector = MdbSchemaInspector(
+            _FakeConnection({"BidPages"}, {"BidPages": {"UID"}}),
+            logger=logger,
+        )
+        inspector.log_optional_write_skip("BidPages", "Name", "rename_page")
+        inspector.log_optional_write_skip("BidPages", "Name", "rename_page")
+        logger.warning.assert_called_once_with(
+            "Skipping optional MDB write during %s because %s.%s is unavailable.",
+            "rename_page",
+            "BidPages",
+            "Name",
+        )
+
     def test_require_column_raises_and_records_missing_required_column(self):
         inspector = MdbSchemaInspector(
             _FakeConnection({"BidLayers"}, {"BidLayers": {"UID"}})
@@ -637,34 +655,38 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
             finally:
                 cursor.close()
                 connection.close()
-            self.assertTrue(
-                MdbWriter().save_cover_sheet(
-                    str(db_path),
-                    str(ids["bid_uid"]),
-                    {
-                        "job_status_uid": "",
-                        "job_name": "Compatibility Bid",
-                        "estimator_uid": "",
-                        "bid_date": "",
-                        "bid_no": "",
-                        "measure_base": 0,
-                        "pages": [
-                            {
-                                "uid": None,
-                                "sequence": 3,
-                                "sheet_no": "3",
-                                "name": "",
-                                "width": 42.0,
-                                "height": 30.0,
-                                "scale_factor1": 0.25,
-                                "scale_factor2": 12.0,
-                                "show_mode": 0,
-                                "index": 1,
-                            }
-                        ],
-                    },
+            writer = MdbWriter()
+            try:
+                self.assertTrue(
+                    writer.save_cover_sheet(
+                        str(db_path),
+                        str(ids["bid_uid"]),
+                        {
+                            "job_status_uid": "",
+                            "job_name": "Compatibility Bid",
+                            "estimator_uid": "",
+                            "bid_date": "",
+                            "bid_no": "",
+                            "measure_base": 0,
+                            "pages": [
+                                {
+                                    "uid": None,
+                                    "sequence": 3,
+                                    "sheet_no": "3",
+                                    "name": "",
+                                    "width": 42.0,
+                                    "height": 30.0,
+                                    "scale_factor1": 0.25,
+                                    "scale_factor2": 12.0,
+                                    "show_mode": 0,
+                                    "index": 1,
+                                }
+                            ],
+                        },
+                    )
                 )
-            )
+            finally:
+                writer._conn_manager.close()
             connection = _connect_mdb(db_path)
             cursor = connection.cursor()
             try:

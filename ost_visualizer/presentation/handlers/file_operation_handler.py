@@ -57,8 +57,13 @@ class FileOperationHandler:
         self._sql_database_creator = sql_database_creator
         self._database_capability_service = database_capability_service
         self._workspace_state_model = workspace_state_model
+        self._file_operation_pending = False
+        self._file_operation_serial = 0
 
     def open_files(self) -> None:
+        if self._file_operation_pending:
+            self._warn_file_operation_pending()
+            return
         self._file_state_model.reload()
         self._cleanup_deleted_files_use_case.execute_and_save()
         self._file_state_model.reload()
@@ -179,6 +184,7 @@ class FileOperationHandler:
                 )
                 pending.discard(database_id)
         applied = False
+        operation_token = None
 
         def complete(database_id: str, success: bool, message: str) -> None:
             nonlocal applied
@@ -188,6 +194,10 @@ class FileOperationHandler:
                 )
             pending.discard(database_id)
             if pending or applied:
+                return
+            if operation_token is not None and not self._finish_pending_file_operation(
+                operation_token
+            ):
                 return
             applied = True
             self._apply_open_files_changes(
@@ -202,13 +212,17 @@ class FileOperationHandler:
         if not drain_ids:
             complete("", True, "")
             return
+        operation_token = self._begin_pending_file_operation()
         for database_id in drain_ids:
-            self._sql_collaboration.drain_database_mutations_async(
-                database_id,
-                lambda success, message, current=database_id: complete(
-                    current, success, message
-                ),
-            )
+            try:
+                self._sql_collaboration.drain_database_mutations_async(
+                    database_id,
+                    lambda success, message, current=database_id: complete(
+                        current, success, message
+                    ),
+                )
+            except Exception as exc:
+                complete(database_id, False, str(exc))
 
     def _apply_open_files_changes(
         self,
@@ -575,6 +589,9 @@ class FileOperationHandler:
             )
 
     def unload_file(self) -> None:
+        if self._file_operation_pending:
+            self._warn_file_operation_pending()
+            return
         file_path = None
         selected_entry = None
         if self.ui_state_manager and self.ui_state_manager.selected_file_path:
@@ -600,16 +617,28 @@ class FileOperationHandler:
             if not self._deferred_persistence.flush_for_file(file_path):
                 return
             if is_sql:
-                self._sql_collaboration.drain_database_mutations_async(
-                    selected_entry.database_id,
-                    lambda success, message: self._complete_sql_file_unload(
+                operation_token = self._begin_pending_file_operation()
+                try:
+                    self._sql_collaboration.drain_database_mutations_async(
+                        selected_entry.database_id,
+                        lambda success, message: self._complete_sql_file_unload(
+                            file_path,
+                            selected_entry,
+                            original_entries,
+                            operation_token,
+                            success,
+                            message,
+                        ),
+                    )
+                except Exception as exc:
+                    self._complete_sql_file_unload(
                         file_path,
                         selected_entry,
                         original_entries,
-                        success,
-                        message,
-                    ),
-                )
+                        operation_token,
+                        False,
+                        str(exc),
+                    )
                 return
         self._complete_file_unload(file_path, selected_entry, original_entries)
 
@@ -618,9 +647,12 @@ class FileOperationHandler:
         file_path: str,
         selected_entry: FileEntry,
         original_entries: list[FileEntry],
+        operation_token: int,
         success: bool,
         message: str,
     ) -> None:
+        if not self._finish_pending_file_operation(operation_token):
+            return
         if not success:
             show_warning(
                 self.window,
@@ -698,3 +730,22 @@ class FileOperationHandler:
                 self._database_capability_service.mark_disconnected(
                     selected_entry.database_id
                 )
+
+    def _begin_pending_file_operation(self) -> int:
+        self._file_operation_serial += 1
+        self._file_operation_pending = True
+        return self._file_operation_serial
+
+    def _finish_pending_file_operation(self, operation_token: int) -> bool:
+        if operation_token != self._file_operation_serial:
+            return False
+        self._file_operation_pending = False
+        return True
+
+    def _warn_file_operation_pending(self) -> None:
+        show_warning(
+            self.window,
+            "Database Operation Pending",
+            "Wait for the current SQL database unload to finish before changing "
+            "Open Files again.",
+        )

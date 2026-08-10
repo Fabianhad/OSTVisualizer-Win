@@ -215,7 +215,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
             self.combo_pay_class.currentText().strip()
         )
 
-    def _on_ok(self) -> None:
+    def _validate_current(self) -> bool:
         errors = []
         if not self.edit_first_name.text().strip():
             errors.append("First Name is required.")
@@ -238,21 +238,33 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
                 "Employee Detail",
                 "\n".join(errors),
             )
-            return
+            return False
         pay_class_text = self.combo_pay_class.currentText().strip()
         if pay_class_text and not self._find_pay_class_uid_by_name(pay_class_text):
             if confirm_not_found(self, pay_class_text):
                 self._open_payroll_class_dialog(initial_name=pay_class_text)
+            return False
+        return True
+
+    def _on_ok(self) -> None:
+        if not self._validate_current():
             return
         self._save_current()
         self.accept()
 
     def _on_previous(self) -> None:
+        if self._current_index <= 0 or not self._validate_current():
+            return
         self._save_current()
         self._current_index -= 1
         self._load(self._current_index)
 
     def _on_next(self) -> None:
+        if (
+            self._current_index >= len(self._employees) - 1
+            or not self._validate_current()
+        ):
+            return
         self._save_current()
         self._current_index += 1
         self._load(self._current_index)

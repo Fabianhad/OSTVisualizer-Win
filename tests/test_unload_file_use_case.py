@@ -6,7 +6,11 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyData,
     HierarchyFileEntry,
 )
+from ost_visualizer.domain.entities.file_results import FileLoadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.application.use_cases.project.reload_database_use_case import (
+    ReloadDatabaseUseCase,
+)
 
 
 class FakeModel:
@@ -77,6 +81,59 @@ class UnloadFileUseCaseTests(unittest.TestCase):
         self.assertTrue(use_case.execute("active.mdb"))
         self.assertEqual(model.clear_bid_count, 1)
         self.assertIsNone(model.current_bid_ref)
+
+
+class ReloadDatabaseUseCaseTests(unittest.TestCase):
+    def test_reloading_inactive_database_preserves_active_bid_projection(self):
+        class ReloadModel(FakeModel):
+            def get_selected_pages(self):
+                return ["page-1"]
+
+            def bid_exists(self, _bid_ref):
+                raise AssertionError(
+                    "inactive refresh must not retarget the active bid"
+                )
+
+        class ReloadRepo(FakeRepo):
+            def get_cdn_types(self, file_path=None):
+                self.cdn_type_path = file_path
+                return {"active": object()}
+
+        class ReloadFileManager:
+            def __init__(self):
+                self.current_file_path = "active.mdb"
+                self.project_repository = ReloadRepo()
+
+            def reload_database(self, file_path):
+                self.reloaded = file_path
+                return FileLoadResult(
+                    success=True,
+                    hierarchy=HierarchyData(
+                        loaded_files=[
+                            HierarchyFileEntry(file_path="active.mdb"),
+                            HierarchyFileEntry(file_path="inactive.mdb"),
+                        ]
+                    ),
+                )
+
+        class LoadBid:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, bid_ref):
+                self.calls.append(bid_ref)
+                return True
+
+        model = ReloadModel()
+        file_manager = ReloadFileManager()
+        load_bid = LoadBid()
+        use_case = ReloadDatabaseUseCase(model, file_manager, load_bid)
+        self.assertTrue(use_case.execute("inactive.mdb"))
+        self.assertEqual(model.current_bid_ref, BidRef("active.mdb", "bid-1"))
+        self.assertEqual(model.clear_bid_count, 0)
+        self.assertEqual(load_bid.calls, [])
+        self.assertEqual(file_manager.reloaded, "inactive.mdb")
+        self.assertEqual(file_manager.project_repository.cdn_type_path, "active.mdb")
 
 
 if __name__ == "__main__":

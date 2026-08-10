@@ -77,10 +77,6 @@ from . import ost_pdf_writer
 
 logger = logging.getLogger(__name__)
 _PDF_RENDER_SCALE = 2.0
-_AREA_CONDITION_TYPE = 1
-_LINEAR_CONDITION_TYPE = 0
-_COUNT_CONDITION_TYPE = 2
-_ATTACHMENT_CONDITION_TYPE = 3
 _DEFAULT_FILL_OPACITY = 0.5
 _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
@@ -599,7 +595,7 @@ class PDFExporter:
             if not condition.layer_visible:
                 continue
             condition_type = condition.condition_type if condition.condition_type else 0
-            if condition_type != _AREA_CONDITION_TYPE:
+            if condition_type != Condition.TYPE_AREA:
                 continue
             position = self._coord_system.parse_position(takeoff.position)
             if not position or len(position) < 6:
@@ -675,9 +671,9 @@ class PDFExporter:
             if not condition.layer_visible:
                 continue
             cond_type = condition.condition_type if condition.condition_type else 0
-            if cond_type == _AREA_CONDITION_TYPE:
+            if cond_type == Condition.TYPE_AREA:
                 continue
-            if takeoff.is_hole and cond_type != _ATTACHMENT_CONDITION_TYPE:
+            if takeoff.is_hole and cond_type != Condition.TYPE_ATTACHMENT:
                 continue
             position = self._coord_system.parse_position(takeoff.position)
             if not position or len(position) < 2:
@@ -685,7 +681,7 @@ class PDFExporter:
             verts = None
             area_sf = 0.0
             depth_inches = 0.0
-            if cond_type == _LINEAR_CONDITION_TYPE:
+            if cond_type == Condition.TYPE_LINEAR:
                 if len(position) < 4:
                     continue
                 thickness = condition.thickness if condition.thickness else 1.0
@@ -717,7 +713,7 @@ class PDFExporter:
                 area_sf = (length_inches * thickness) / 144.0
                 height = max(condition.height if condition.height else 0, 0)
                 depth_inches = height
-            elif cond_type in (_COUNT_CONDITION_TYPE, _ATTACHMENT_CONDITION_TYPE):
+            elif cond_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
                 cx, cy = position[0], position[1]
                 shape_id = condition.shape if condition.shape else shapes.SQUARE
                 width_ost = max(condition.width if condition.width else 1, 1)

@@ -1,3 +1,4 @@
+import logging
 import os
 import unittest
 import uuid
@@ -534,12 +535,32 @@ class FakeDetachedLoadPlanView:
     def get_view_state(self):
         return self._view_state
 
-    def load_page(self, **page_options):
+    def load_page(
+        self,
+        page,
+        takeoffs,
+        conditions,
+        color_map,
+        bid_ref=None,
+        annotations=None,
+        page_area_selections=None,
+        hidden_layer_uids=None,
+    ):
+        page_options = {
+            "page": page,
+            "takeoffs": takeoffs,
+            "conditions": conditions,
+            "color_map": color_map,
+            "bid_ref": bid_ref,
+            "annotations": annotations,
+            "page_area_selections": page_area_selections,
+            "hidden_layer_uids": hidden_layer_uids,
+        }
         self.load_calls.append(page_options)
         return True
 
-    def prefetch_nearby_pages(self, *args):
-        self.prefetch_calls.append(args)
+    def prefetch_nearby_pages(self, current_page, ordered_pages, bid_ref=None):
+        self.prefetch_calls.append((current_page, ordered_pages, bid_ref))
 
     def clear(self):
         self.clear_calls += 1
@@ -772,9 +793,12 @@ class TrackableSignal:
 class CleanupSignal:
     def __init__(self):
         self.disconnected = []
+        self.fail_disconnect = False
 
     def disconnect(self, callback):
         self.disconnected.append(callback)
+        if self.fail_disconnect:
+            raise RuntimeError("disconnect failed")
 
 
 class CleanupPlanView:
@@ -799,6 +823,7 @@ class CleanupPlanView:
         self.redo_requested = CleanupSignal()
         self.blocked = None
         self.cleaned = False
+        self.fail_disable_geometry_edit_leasing = False
 
     def blockSignals(self, blocked):
         self.blocked = bool(blocked)
@@ -807,7 +832,8 @@ class CleanupPlanView:
         self.cleaned = True
 
     def disable_geometry_edit_leasing(self):
-        pass
+        if self.fail_disable_geometry_edit_leasing:
+            raise RuntimeError("lease UI cleanup failed")
 
 
 class CleanupCombo:
@@ -1840,11 +1866,18 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         retained = object()
         plan_view = CleanupPlanView()
+        plan_view.page_geometry_ready.fail_disconnect = True
+        plan_view.fail_disable_geometry_edit_leasing = True
         timer_calls = []
+        released_leases = []
+        lease = object()
         window._is_closing = False
+        window.logger = logging.getLogger("test.detached_window_cleanup")
         window._file_path = None
-        window._project_write_svc = None
-        window._geometry_edit_lease_handle = None
+        window._project_write_svc = SimpleNamespace(
+            end_plan_edit_lease=lambda handle: released_leases.append(handle)
+        )
+        window._geometry_edit_lease_handle = lease
         window._geometry_edit_lease_request_id = ""
         window._geometry_edit_lease_selection = set()
         window._show_timer = SimpleNamespace(
@@ -1884,8 +1917,12 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window.view = retained
         window.page_data = retained
         window.icon_provider = retained
-        DetachedPageViewWindow.cleanup(window)
+        with self.assertLogs(window.logger, level="ERROR") as logs:
+            DetachedPageViewWindow.cleanup(window)
         self.assertTrue(plan_view.cleaned)
+        self.assertEqual(released_leases, [lease])
+        self.assertIn("disconnect page geometry", "\n".join(logs.output))
+        self.assertIn("release the geometry edit lease", "\n".join(logs.output))
         self.assertIsNone(window.plan_view)
         self.assertIsNone(window._annotation_write_coordinator)
         self.assertIsNone(window._annotation_style_getter)
@@ -3217,6 +3254,89 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.shutdown()
         self.assertEqual(access.listeners, [])
         self.assertEqual(access.interactions, {})
+
+    def test_shutdown_continues_after_independent_cleanup_failures(self):
+        calls = []
+
+        class FailingAccess:
+            def unsubscribe_access_state_changed(self, _callback):
+                calls.append("access-unsubscribe")
+                raise RuntimeError("access unsubscribe failed")
+
+            def clear_plan_surface_interaction(self, surface_id):
+                calls.append(("access-clear", surface_id))
+
+        class FailingEventBus:
+            def __init__(self):
+                self.calls = []
+
+            def unsubscribe(self, event_name, _callback):
+                self.calls.append(event_name)
+                if len(self.calls) == 1:
+                    raise RuntimeError("event unsubscribe failed")
+
+        class FailingPipeline:
+            def cleanup(self):
+                calls.append("pipeline-cleanup")
+                raise RuntimeError("pipeline cleanup failed")
+
+        class FailingSignaler:
+            def cleanup(self):
+                calls.append("signaler-cleanup")
+                raise RuntimeError("signaler cleanup failed")
+
+            def deleteLater(self):
+                calls.append("signaler-delete")
+
+        class FailingWindow:
+            def close(self):
+                calls.append("window-close")
+                raise RuntimeError("window close failed")
+
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.logger = logging.getLogger("test.detached_manager_shutdown")
+        manager._ui_access_manager = FailingAccess()
+        manager._access_listener_registered = True
+        manager._remote_surface_id = "detached-plan:test"
+        manager.event_bus = FailingEventBus()
+        event_bus = manager.event_bus
+        manager._remote_update_generation = 0
+        manager._remote_plan_pipeline = FailingPipeline()
+        manager._refresh_signaler = FailingSignaler()
+        manager._window = FailingWindow()
+        manager._window_undo_service = object()
+        manager._opening = True
+        manager._visibility_changed_callback = lambda visible: calls.append(
+            ("visible", visible)
+        )
+        for attribute in (
+            "icon_provider",
+            "repository",
+            "project_data",
+            "config_model",
+            "_coord_factory",
+            "parent_window",
+            "_color_service",
+            "_infrastructure_provider",
+            "_window_factory",
+            "_write_service",
+            "_annotation_write_service",
+            "_saved_window_state_provider",
+        ):
+            setattr(manager, attribute, object())
+        with self.assertLogs(manager.logger, level="ERROR"):
+            manager.shutdown()
+        self.assertEqual(len(event_bus.calls), 9)
+        self.assertIn(("access-clear", "detached-plan:test"), calls)
+        self.assertIn("signaler-delete", calls)
+        self.assertIn("window-close", calls)
+        self.assertIn(("visible", False), calls)
+        self.assertIsNone(manager._remote_plan_pipeline)
+        self.assertIsNone(manager._refresh_signaler)
+        self.assertIsNone(manager._window)
+        self.assertIsNone(manager.event_bus)
+        self.assertIsNone(manager.repository)
+        manager.shutdown()
 
     def test_window_destruction_releases_access_listener_and_surface_interaction(self):
         access = FakePlanSurfaceAccessManager()

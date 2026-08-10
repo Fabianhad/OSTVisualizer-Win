@@ -501,6 +501,34 @@ class PersistentHeaderTests(unittest.TestCase):
         reopened.cleanup()
         reopened.deleteLater()
 
+    def test_open_databases_remove_uses_stable_identity_after_sorting(self):
+        zulu_path = Path(self.temp_dir.name) / "Zulu.mdb"
+        alpha_path = Path(self.temp_dir.name) / "Alpha.mdb"
+        zulu_path.touch()
+        alpha_path.touch()
+        dialog = OpenFilesDialog(
+            _IconProvider(),
+            None,
+            [FileEntry(str(zulu_path)), FileEntry(str(alpha_path))],
+            None,
+            workspace_state_model=self.model,
+        )
+        self.assertEqual(dialog.table.topLevelItem(0).text(2), "Alpha")
+        dialog.table.setCurrentItem(dialog.table.topLevelItem(0))
+        self.assertTrue(dialog.remove_button.isEnabled())
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.open_files_dialog.confirm",
+            return_value=True,
+        ):
+            dialog._on_remove()
+        self.assertEqual(
+            [entry.descriptor.display_name for entry in dialog.file_entries],
+            ["Zulu"],
+        )
+        dialog.close()
+        dialog.cleanup()
+        dialog.deleteLater()
+
     def test_open_files_workflow_receives_the_required_workspace_aggregate(self):
         received_models = []
 

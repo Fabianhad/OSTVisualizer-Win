@@ -2155,17 +2155,28 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, self._begin_application_shutdown)
             return
         self._application_shutdown_finalized = True
-        self._workspace_state_coordinator.flush()
-        self._workspace_state_coordinator.cleanup()
-        self.event_coordinator.cleanup()
-        self.handlers.ui_event.cleanup()
-        self.license_coordinator.cleanup()
-        self.ui_access_manager.cleanup()
-        self._mcp_context_bridge.cleanup()
-        lifecycle_orchestrator = self.app_controller.get_service(
-            "lifecycle_orchestrator"
+        cleanup_steps = (
+            ("flush workspace state", self._workspace_state_coordinator.flush),
+            ("clean up workspace state", self._workspace_state_coordinator.cleanup),
+            ("clean up event coordinator", self.event_coordinator.cleanup),
+            ("clean up UI event coordinator", self.handlers.ui_event.cleanup),
+            ("clean up license coordinator", self.license_coordinator.cleanup),
+            ("clean up UI access manager", self.ui_access_manager.cleanup),
+            ("clean up MCP context bridge", self._mcp_context_bridge.cleanup),
+            (
+                "shut down application lifecycle services",
+                lambda: self.app_controller.get_service(
+                    "lifecycle_orchestrator"
+                ).shutdown(),
+            ),
         )
-        lifecycle_orchestrator.shutdown()
+        for description, cleanup in cleanup_steps:
+            try:
+                cleanup()
+            except Exception:
+                logger.exception(
+                    "Failed to %s during application shutdown", description
+                )
         super().closeEvent(event)
         QtCore.QCoreApplication.quit()
 

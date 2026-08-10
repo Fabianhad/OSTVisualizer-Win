@@ -105,7 +105,9 @@ class PageSettingsBar(QtWidgets.QWidget):
         selected_uid: Optional[str] = None,
     ) -> None:
         self._bid_ref = bid_ref
-        self._bid_areas_in_use = areas_with_takeoff
+        self._bid_areas_in_use = (
+            set(areas_with_takeoff) if areas_with_takeoff is not None else None
+        )
         if areas is None:
             areas = []
             if self._load_areas_fn:
@@ -113,13 +115,15 @@ class PageSettingsBar(QtWidgets.QWidget):
                     areas = self._load_areas_fn(bid_ref.file_path, bid_ref.bid_uid)
                 except Exception:
                     logger.exception("Failed to load bid areas for bar")
-        self.area_combo.blockSignals(True)
-        self.area_combo.load_areas(
-            areas,
-            areas_with_takeoff=areas_with_takeoff,
-            selected_uid=selected_uid,
-        )
-        self.area_combo.blockSignals(False)
+        signals_were_blocked = self.area_combo.blockSignals(True)
+        try:
+            self.area_combo.load_areas(
+                areas,
+                areas_with_takeoff=self._bid_areas_in_use,
+                selected_uid=selected_uid,
+            )
+        finally:
+            self.area_combo.blockSignals(signals_were_blocked)
         self.presentation_state_changed.emit()
 
     def update_bold_states(self, areas_with_takeoff: Set) -> None:
@@ -159,12 +163,14 @@ class PageSettingsBar(QtWidgets.QWidget):
             self.scale_combo.setCurrentIndex(scale_idx)
         finally:
             self.scale_combo.blockSignals(signals_were_blocked)
-        self.area_combo.blockSignals(True)
-        self.area_combo.set_current_area_uid(selected_area_uid or "")
-        if areas_with_takeoff is not None:
-            self._page_areas_in_use = areas_with_takeoff
-            self.area_combo.update_bold_states(areas_with_takeoff)
-        self.area_combo.blockSignals(False)
+        signals_were_blocked = self.area_combo.blockSignals(True)
+        try:
+            self.area_combo.set_current_area_uid(selected_area_uid or "")
+            if areas_with_takeoff is not None:
+                self._page_areas_in_use = set(areas_with_takeoff)
+                self.area_combo.update_bold_states(self._page_areas_in_use)
+        finally:
+            self.area_combo.blockSignals(signals_were_blocked)
         if self._interactive:
             self._sync_interactive_controls()
         self.presentation_state_changed.emit()
@@ -202,9 +208,14 @@ class PageSettingsBar(QtWidgets.QWidget):
     def clear_bid(self) -> None:
         self._bid_ref = None
         self._page_uid = None
-        self.area_combo.blockSignals(True)
-        self.area_combo.clear_areas()
-        self.area_combo.blockSignals(False)
+        self._bid_areas_in_use = None
+        self._page_areas_in_use = None
+        self._current_scale_index = -1
+        area_signals_were_blocked = self.area_combo.blockSignals(True)
+        try:
+            self.area_combo.clear_areas()
+        finally:
+            self.area_combo.blockSignals(area_signals_were_blocked)
         signals_were_blocked = self.scale_combo.blockSignals(True)
         try:
             self.scale_combo.setCurrentIndex(-1)
@@ -332,9 +343,11 @@ class PageSettingsBar(QtWidgets.QWidget):
             return
         data = self.scale_combo.itemData(index)
         if data == _CUSTOM_SCALE_DATA:
-            self.scale_combo.blockSignals(True)
-            self.scale_combo.setCurrentIndex(self._current_scale_index)
-            self.scale_combo.blockSignals(False)
+            signals_were_blocked = self.scale_combo.blockSignals(True)
+            try:
+                self.scale_combo.setCurrentIndex(self._current_scale_index)
+            finally:
+                self.scale_combo.blockSignals(signals_were_blocked)
             self.custom_scale_requested.emit(self._bid_ref.file_path, self._page_uid)
         elif data:
             self._current_scale_index = index

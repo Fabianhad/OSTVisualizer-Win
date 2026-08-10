@@ -29,6 +29,41 @@ FileOperationHandler = with_workspace_state(FileOperationHandler)
 OpenFilesDialog = with_workspace_state(OpenFilesDialog)
 
 
+class _OpenFilesDialogStub:
+    def __init__(
+        self,
+        icon_provider,
+        parent,
+        file_entries,
+        working_directory_service,
+        workspace_state_model,
+        sql_catalog=None,
+        credential_store=None,
+        sql_database_creator=None,
+        schema_change_allowed_fn=None,
+    ):
+        del (
+            icon_provider,
+            parent,
+            file_entries,
+            working_directory_service,
+            workspace_state_model,
+            sql_catalog,
+            credential_store,
+            sql_database_creator,
+            schema_change_allowed_fn,
+        )
+
+    def exec(self):
+        return QtWidgets.QDialog.DialogCode.Accepted
+
+    def cleanup(self):
+        pass
+
+    def deleteLater(self):
+        pass
+
+
 class StartupDatabaseRestoreTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -320,24 +355,12 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
 
         state = _State()
 
-        class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def exec(self):
-                return QtWidgets.QDialog.DialogCode.Accepted
-
+        class _Dialog(_OpenFilesDialogStub):
             def get_file_entries(self):
                 return [unchecked]
 
             def commit_credential_changes(self):
                 return set()
-
-            def cleanup(self):
-                pass
-
-            def deleteLater(self):
-                pass
 
         handler = FileOperationHandler(
             window=None,
@@ -398,24 +421,12 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             def update_entries(self, entries):
                 self.file_entries = list(entries)
 
-        class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def exec(self):
-                return QtWidgets.QDialog.DialogCode.Accepted
-
+        class _Dialog(_OpenFilesDialogStub):
             def get_file_entries(self):
                 return [unchecked]
 
             def commit_credential_changes(self):
                 return set()
-
-            def cleanup(self):
-                pass
-
-            def deleteLater(self):
-                pass
 
         handler = FileOperationHandler(
             window=None,
@@ -452,6 +463,54 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         drain_callbacks[0][1](True, "")
         self.assertEqual(unloads, [descriptor.database_id])
         self.assertEqual(cancelled, [descriptor.database_id])
+
+    def test_loaded_sql_unload_rejects_duplicate_action_while_drain_is_pending(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="LOADED_SQL"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        original = FileEntry.for_descriptor(descriptor, is_checked=True)
+        drain_callbacks = []
+        unloads = []
+
+        class _State:
+            file_entries = [original]
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=_State(),
+            cleanup_deleted_files_use_case=SimpleNamespace(),
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: True),
+            working_directory_service=None,
+            unload_file_fn=lambda locator: unloads.append(locator) or True,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _locator: True,
+                cancel_for_file=lambda _locator: None,
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                drain_database_mutations_async=lambda _database_id, callback: (
+                    drain_callbacks.append(callback)
+                )
+            ),
+            ui_state_manager=SimpleNamespace(selected_file_path=descriptor.database_id),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            handler.unload_file()
+            handler.unload_file()
+        self.assertEqual(len(drain_callbacks), 1)
+        self.assertEqual(unloads, [])
+        warning.assert_called_once()
+        drain_callbacks[0](True, "")
+        self.assertEqual(unloads, [descriptor.database_id])
+        self.assertFalse(handler._file_operation_pending)
 
     def test_explicit_unload_of_offline_sql_detaches_local_state(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -622,25 +681,13 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             def update_entries(self, _entries):
                 raise OSError("disk unavailable")
 
-        class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def exec(self):
-                return QtWidgets.QDialog.DialogCode.Accepted
-
+        class _Dialog(_OpenFilesDialogStub):
             def get_file_entries(self):
                 return [unchecked]
 
             def commit_credential_changes(self):
                 credential_commits.append(True)
                 return set()
-
-            def cleanup(self):
-                pass
-
-            def deleteLater(self):
-                pass
 
         handler = FileOperationHandler(
             window=None,
@@ -690,24 +737,12 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             def update_entries(self, entries):
                 self.file_entries = list(entries)
 
-        class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def exec(self):
-                return QtWidgets.QDialog.DialogCode.Accepted
-
+        class _Dialog(_OpenFilesDialogStub):
             def get_file_entries(self):
                 return [unchecked]
 
             def commit_credential_changes(self):
                 raise OSError("credential store unavailable")
-
-            def cleanup(self):
-                pass
-
-            def deleteLater(self):
-                pass
 
         state = _State()
         handler = FileOperationHandler(
@@ -758,24 +793,12 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                     raise OSError("disk unavailable")
                 self.file_entries = list(entries)
 
-        class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def exec(self):
-                return QtWidgets.QDialog.DialogCode.Accepted
-
+        class _Dialog(_OpenFilesDialogStub):
             def get_file_entries(self):
                 return [checked]
 
             def commit_credential_changes(self):
                 return set()
-
-            def cleanup(self):
-                pass
-
-            def deleteLater(self):
-                pass
 
         state = _State()
         handler = FileOperationHandler(
@@ -895,24 +918,12 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             def update_entries(self, entries):
                 self.file_entries = list(entries)
 
-        class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def exec(self):
-                return QtWidgets.QDialog.DialogCode.Accepted
-
+        class _Dialog(_OpenFilesDialogStub):
             def get_file_entries(self):
                 return [checked]
 
             def commit_credential_changes(self):
                 return set()
-
-            def cleanup(self):
-                pass
-
-            def deleteLater(self):
-                pass
 
         state = _State()
         handler = FileOperationHandler(

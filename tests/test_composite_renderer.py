@@ -43,6 +43,22 @@ class _FramePageCache:
         return 100.0, 100.0
 
 
+class _SignaturePageCache(_FramePageCache):
+    def __init__(self):
+        self.signatures = {
+            "base.pdf": (1, 100),
+            "overlay.pdf": (1, 200),
+        }
+        self.tinted_calls = 0
+
+    def file_signature(self, file_path):
+        return self.signatures.get(file_path)
+
+    def get_tinted_page(self, *_args, **_kwargs):
+        self.tinted_calls += 1
+        return _image()
+
+
 class _BlockingContainsDict(OrderedDict):
     def __init__(self, entered, release):
         super().__init__()
@@ -75,6 +91,19 @@ class _ExplodingPainter:
 
 
 class CompositeRendererTests(unittest.TestCase):
+    def test_composite_cache_invalidates_when_a_source_file_changes(self):
+        page_cache = _SignaturePageCache()
+        renderer = CompositeRenderer(page_cache)
+        page = _page()
+        first = renderer.render_composite(page, None, 1.0, 0)
+        cached = renderer.render_composite(page, None, 1.0, 0)
+        self.assertIs(first, cached)
+        self.assertEqual(page_cache.tinted_calls, 2)
+        page_cache.signatures["overlay.pdf"] = (2, 250)
+        refreshed = renderer.render_composite(page, None, 1.0, 0)
+        self.assertIsNot(refreshed, cached)
+        self.assertEqual(page_cache.tinted_calls, 4)
+
     def test_cache_clear_cannot_interleave_with_cache_hit(self):
         renderer = CompositeRenderer(_FramePageCache())
         page = _page()

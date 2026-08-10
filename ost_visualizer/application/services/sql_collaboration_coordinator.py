@@ -953,6 +953,15 @@ class SqlCollaborationCoordinator:
                 or self._database_drains
             ):
                 return
+            self._shutdown_state = CollaborationShutdownState.STOP_REQUESTED
+            should_unsubscribe = not self._shutdown_cleanup_errors
+        unsubscribe_errors = self._unsubscribe() if should_unsubscribe else ()
+        with self._lock:
+            self._shutdown_cleanup_errors.extend(
+                message
+                for message in unsubscribe_errors
+                if message not in self._shutdown_cleanup_errors
+            )
             message = "; ".join(self._shutdown_cleanup_errors)
             success = not self._shutdown_cleanup_errors
             self._shutdown_state = (
@@ -962,8 +971,6 @@ class SqlCollaborationCoordinator:
             )
             callbacks = tuple(self._shutdown_callbacks)
             self._shutdown_callbacks.clear()
-        if success:
-            self._unsubscribe()
         for callback in callbacks:
             self._invoke_completion_callback(callback, success, message)
 
@@ -976,16 +983,28 @@ class SqlCollaborationCoordinator:
         except Exception:
             logger.exception("SQL collaboration completion callback failed")
 
-    def _unsubscribe(self) -> None:
-        self._event_bus.unsubscribe(AppEvents.FILE_OPENED, self._on_file_opened)
-        self._event_bus.unsubscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
-        self._event_bus.unsubscribe(
-            AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
+    def _unsubscribe(self) -> tuple[str, ...]:
+        errors = []
+        subscriptions = (
+            (AppEvents.FILE_OPENED, self._on_file_opened),
+            (AppEvents.FILE_UNLOADED, self._on_file_unloaded),
+            (AppEvents.DATABASE_REFRESHED, self._on_database_refreshed),
+            (
+                AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                self._on_database_capabilities_changed,
+            ),
         )
-        self._event_bus.unsubscribe(
-            AppEvents.DATABASE_CAPABILITIES_CHANGED,
-            self._on_database_capabilities_changed,
-        )
+        for event_type, callback in subscriptions:
+            try:
+                self._event_bus.unsubscribe(event_type, callback)
+            except Exception as exc:
+                message = (
+                    "SQL collaboration event unsubscription failed for "
+                    f"{event_type}: {exc}"
+                )
+                logger.exception(message)
+                errors.append(message)
+        return tuple(errors)
 
     def _worker(self, runtime: _DatabaseRuntime) -> None:
         try:
@@ -2482,7 +2501,13 @@ class SqlCollaborationCoordinator:
         affected_condition_uids = ()
         affected_page_uids = ()
         if isinstance(value, list):
+            if any(item is None for item in value):
+                return None
             created_resource_ids = tuple(str(item) for item in value)
+            if any(not item for item in created_resource_ids) or len(
+                set(created_resource_ids)
+            ) != len(created_resource_ids):
+                return None
         elif isinstance(value, dict):
             if not {
                 "takeoff_uids",
@@ -2509,11 +2534,22 @@ class SqlCollaborationCoordinator:
                 mapping = value[result_name]
                 if not isinstance(mapping, dict):
                     return None
+                if any(
+                    source is None or target is None
+                    for source, target in mapping.items()
+                ):
+                    return None
                 normalized = tuple(
                     sorted(
                         (str(source), str(target)) for source, target in mapping.items()
                     )
                 )
+                sources = tuple(source for source, _target in normalized)
+                targets = tuple(target for _source, target in normalized)
+                if any(not identity for identity in (*sources, *targets)) or len(
+                    set(targets)
+                ) != len(targets):
+                    return None
                 created_uid_maps.append((projection_name, normalized))
             map_values = {
                 name: tuple(target for _source, target in values)
@@ -2532,6 +2568,8 @@ class SqlCollaborationCoordinator:
                 )
             affected_condition_uids = map_values["conditions"]
             affected_page_uids = map_values.get("pages", ())
+        else:
+            return None
         affected_families = tuple(
             dict.fromkeys(
                 resource_definition(resource.resource_type).family.value

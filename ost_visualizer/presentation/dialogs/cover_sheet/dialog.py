@@ -1176,7 +1176,14 @@ class CoverSheetDialog(QtWidgets.QDialog):
             try:
                 bid_areas = self._reload_bid_areas_fn()
             except Exception:
-                logger.warning("Could not reload bid areas", exc_info=True)
+                logger.exception("Could not reload bid areas")
+                show_warning(
+                    self,
+                    "Bid Areas Unavailable",
+                    "The bid areas could not be loaded. Close and reopen the "
+                    "database, then try again.",
+                )
+                return
         used_uids = (
             self._get_used_area_uids_fn() if self._get_used_area_uids_fn else None
         )

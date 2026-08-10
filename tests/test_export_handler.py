@@ -121,7 +121,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         )
 
         class _ProgressDialog:
-            def __init__(self, _filename, run, **_kwargs):
+            def __init__(self, _filename, run, parent=None, reporter=None):
                 self.result = run()
                 self.error = None
 
@@ -262,7 +262,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             fake_get_save_file_name
         )
         export_handler_module.ProgressDialog = FakeProgressDialog
-        export_handler_module.show_info = lambda *_args: None
+        export_handler_module.show_info = lambda _window, _title, _message: None
         try:
             handler = _make_export_handler(
                 config_model=SimpleNamespace(
@@ -316,11 +316,24 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 get_page_takeoffs=lambda _uid: [],
                 get_current_bid=lambda: SimpleNamespace(name="Bid"),
             )
-            pdf_exporter = SimpleNamespace(
-                export=lambda *_args, **_kwargs: self.fail(
-                    "source-overwrite guard must stop the exporter"
-                )
-            )
+
+            def unexpected_pdf_export(
+                pages_data,
+                filename,
+                display_mode,
+                grayscale_enabled,
+                caption_settings,
+                elevation_callouts_enabled,
+                elevation_callout_settings,
+                elevation_callout_color,
+                inactive_object_color,
+                page_area_selections,
+                bid_annotations,
+                on_progress=None,
+            ):
+                self.fail("source-overwrite guard must stop the exporter")
+
+            pdf_exporter = SimpleNamespace(export=unexpected_pdf_export)
             errors = []
             handler = _make_export_handler(
                 project_data_service=project_data,
@@ -354,7 +367,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             return ExportResultDto(success=True, format_name="HTML", page_count=1)
 
         original_show_info = export_handler_module.show_info
-        export_handler_module.show_info = lambda *_args: None
+        export_handler_module.show_info = lambda _window, _title, _message: None
         try:
             handler = _make_export_handler(
                 config_model=SimpleNamespace(snapshot=snapshot),
@@ -411,9 +424,11 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         warnings = []
         original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
         original_show_warning = export_handler_module.show_warning
-        export_handler_module.QtWidgets.QFileDialog.getSaveFileName = lambda *_args: (
-            r"C:\tmp\summary.csv",
-            "",
+        export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
+            lambda _window, _title, _default_filename, _filter: (
+                r"C:\tmp\summary.csv",
+                "",
+            )
         )
         export_handler_module.show_warning = (
             lambda _window, title, message: warnings.append((title, message))

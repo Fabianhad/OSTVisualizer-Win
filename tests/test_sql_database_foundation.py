@@ -165,7 +165,16 @@ class _SqlDatabaseCreator:
     def can_create_database(self, _location, _password=""):
         return False
 
-    def create_database(self, *_args, **_kwargs):
+    def create_database(
+        self,
+        _location,
+        _database_name,
+        _password="",
+        *,
+        application_version,
+        actor="",
+    ):
+        _ = application_version, actor
         raise AssertionError("creation was not requested")
 
 
@@ -935,8 +944,8 @@ class SqlDialogTests(unittest.TestCase):
         class _TypeDialog:
             backend = DatabaseBackend.SQL_SERVER
 
-            def __init__(self, *_args):
-                pass
+            def __init__(self, _icon_provider, _parent=None):
+                return None
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1061,7 +1070,16 @@ class SqlDialogTests(unittest.TestCase):
             def can_create_database(self, _location, _password=""):
                 return True
 
-            def create_database(self, location, database_name, _password="", **_kwargs):
+            def create_database(
+                self,
+                location,
+                database_name,
+                _password="",
+                *,
+                application_version,
+                actor="",
+            ):
+                _ = application_version, actor
                 if self.should_fail:
                     raise DatabaseCatalogError("Database initialization failed.")
                 return SqlDatabaseCreationResult(
@@ -1116,8 +1134,8 @@ class SqlDialogTests(unittest.TestCase):
 
     def test_access_choice_delegates_to_existing_file_picker(self):
         class _AcceptedAccessDialog:
-            def __init__(self, *_args):
-                pass
+            def __init__(self, _icon_provider, _parent=None):
+                return None
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1170,8 +1188,8 @@ class SqlDialogTests(unittest.TestCase):
         )
 
         class _ConnectionDialog:
-            def __init__(self, *_args):
-                pass
+            def __init__(self, _icon_provider, _parent=None):
+                return None
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1186,8 +1204,19 @@ class SqlDialogTests(unittest.TestCase):
                 pass
 
         class _DatabaseDialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                _icon_provider,
+                _mode,
+                _sql_catalog,
+                _sql_database_creator,
+                _parent=None,
+                *,
+                connection=None,
+                databases=(),
+                schema_change_allowed_fn=None,
+            ):
+                _ = connection, databases, schema_change_allowed_fn
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1272,8 +1301,8 @@ class SqlDialogTests(unittest.TestCase):
         )
 
         class _ConnectionDialog:
-            def __init__(self, *_args):
-                pass
+            def __init__(self, _icon_provider, _parent=None):
+                return None
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1288,8 +1317,19 @@ class SqlDialogTests(unittest.TestCase):
                 pass
 
         class _DatabaseDialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                _icon_provider,
+                _mode,
+                _sql_catalog,
+                _sql_database_creator,
+                _parent=None,
+                *,
+                connection=None,
+                databases=(),
+                schema_change_allowed_fn=None,
+            ):
+                _ = connection, databases, schema_change_allowed_fn
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1464,8 +1504,19 @@ class SqlDialogTests(unittest.TestCase):
         class _PropertiesDialog:
             accepted = True
 
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                _icon_provider,
+                _mode,
+                _sql_catalog,
+                _sql_database_creator,
+                _parent=None,
+                *,
+                connection=None,
+                databases=(),
+                schema_change_allowed_fn=None,
+            ):
+                _ = connection, databases, schema_change_allowed_fn
 
             def exec(self):
                 if self.accepted:

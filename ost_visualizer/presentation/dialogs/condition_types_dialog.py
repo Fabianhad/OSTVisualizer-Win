@@ -46,6 +46,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._reload_fn = reload_fn
         self._selected_name: str = ""
         self._has_license: bool = has_license
+        self._interactive_requested: bool = has_license
         self._is_interactive: bool = has_license
         self._operation_pending = False
         self._menu_mode = menu_mode
@@ -317,14 +318,22 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             return
         if self._save_async_fn is not None:
             temp_uid = "new_condition_type"
+            previous_uid = self._pending_new_prev_uid
             self._disconnect_pending_new_editor_signal()
             self._pending_new_item = None
             self._pending_new_prev_uid = None
 
             def created(mapping) -> None:
                 new_uid = (mapping or {}).get(temp_uid)
-                if new_uid:
-                    self._reload_items(select_uid=new_uid, select_name=name)
+                self._reload_items(select_uid=new_uid, select_name=name)
+
+            def failed() -> None:
+                row = self.tree.indexOfTopLevelItem(item)
+                if row >= 0:
+                    self.tree.takeTopLevelItem(row)
+                if previous_uid:
+                    self._select_matching_item(previous_uid, "")
+                self._update_button_states()
 
             self._run_async_save(
                 {
@@ -333,6 +342,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
                     "deleted_uids": [],
                 },
                 created,
+                failed,
             )
             return
         if self.create_condition_type(name):
@@ -473,20 +483,28 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self.btn_delete.setEnabled(bool(selected))
 
     def set_interactive(self, enabled: bool) -> None:
-        self._is_interactive = bool(enabled) and self._has_license
+        self._interactive_requested = bool(enabled)
+        self._apply_interactivity()
+
+    def _apply_interactivity(self) -> None:
+        self._is_interactive = (
+            self._interactive_requested
+            and self._has_license
+            and not self._operation_pending
+        )
         self._set_controls_interactive(self._is_interactive)
 
     def _run_async_save(self, changes: dict, on_success, on_failure=None) -> None:
         if self._operation_pending:
             return
         self._operation_pending = True
-        self.set_interactive(False)
+        self._apply_interactivity()
 
         def completed(success: bool, mapping=None) -> None:
             if not isValid(self):
                 return
             self._operation_pending = False
-            self.set_interactive(True)
+            self._apply_interactivity()
             if success:
                 on_success(mapping if isinstance(mapping, dict) else {})
             elif on_failure is not None:
@@ -496,14 +514,14 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             started = self._save_async_fn(changes, completed)
         except Exception as exc:
             self._operation_pending = False
-            self.set_interactive(True)
+            self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
             show_warning(self, "Condition Types", str(exc))
             return
         if not started:
             self._operation_pending = False
-            self.set_interactive(True)
+            self._apply_interactivity()
             if on_failure is not None:
                 on_failure()
 

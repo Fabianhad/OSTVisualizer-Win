@@ -7,8 +7,9 @@ from collections import namedtuple
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import create_autospec, patch
 import pyodbc
+from ost_visualizer.application.interfaces.i_uom_service import IUOMService
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.mdb import database_creator
 from ost_visualizer.infrastructure.mdb.components.import_operations import (
@@ -536,7 +537,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             "table_uid_maps": {},
             "global_uid_maps": {},
         }
-        writer = SimpleNamespace(import_ost_data=lambda *_args: value)
+        writer = SimpleNamespace(
+            import_ost_data=lambda _target_db_path, _raw_data, _transform_fn, _target_project_uid=None: value
+        )
         importer = OstImporter(writer)
         raw_data = RawBidData(
             bid_row={"UID": "1"},
@@ -549,7 +552,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         )
         records = []
         recorder = SimpleNamespace(
-            record=lambda resource, operation, **_kwargs: records.append(
+            record=lambda resource, operation, *, changed_fields=(), payload="": records.append(
                 (resource, operation)
             )
         )
@@ -963,11 +966,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "takeoff_graph.ost"
-            result = OstExporter(
-                SimpleNamespace(
-                    calculate_condition_quantities=lambda **_kwargs: (0.0, 0.0, 0.0)
-                )
-            ).export(raw_data, str(output_path))
+            uom_service = create_autospec(IUOMService, instance=True)
+            uom_service.calculate_condition_quantities.return_value = (0.0, 0.0, 0.0)
+            result = OstExporter(uom_service).export(raw_data, str(output_path))
             self.assertTrue(result.success, result.error_message)
             takeoffs = (
                 ET.parse(output_path)
@@ -1993,9 +1994,8 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertIn('<BidEmployee UID="5" BidUID="1" EmployeeUID="2"', text)
 
     def test_ost_export_formats_calculated_area_condition_quantities(self):
-        uom_service = SimpleNamespace(
-            calculate_condition_quantities=lambda **_kwargs: (734.012, 0.0, 1.25)
-        )
+        uom_service = create_autospec(IUOMService, instance=True)
+        uom_service.calculate_condition_quantities.return_value = (734.012, 0.0, 1.25)
         raw_data = RawBidData(
             bid_row={"UID": "1", "JobName": "Quantities"},
             bid_tables={
@@ -2105,11 +2105,11 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "area_order.ost"
-            result = OstExporter(
-                SimpleNamespace(
-                    calculate_condition_quantities=calculate_condition_quantities
-                )
-            ).export(raw_data, str(output_path))
+            uom_service = create_autospec(IUOMService, instance=True)
+            uom_service.calculate_condition_quantities.side_effect = (
+                calculate_condition_quantities
+            )
+            result = OstExporter(uom_service).export(raw_data, str(output_path))
             self.assertTrue(result.success, result.error_message)
             rows = (
                 ET.parse(output_path)
@@ -2336,11 +2336,13 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
         database_creator.pyodbc.connect = (
-            lambda *_args, **_call_options: fake_connection
+            lambda _connection_string, *, autocommit: fake_connection
         )
         try:
             creator = database_creator.DatabaseCreator()
-            creator._apply_reference_schema_metadata = lambda *_args, **_kwargs: None
+            creator._apply_reference_schema_metadata = (
+                lambda _db_path, progress_callback=None: None
+            )
             creator._create_schema(Path("test.mdb"))
         finally:
             database_creator.pyodbc.connect = original_connect

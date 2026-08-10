@@ -1,4 +1,7 @@
 import logging
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -172,6 +175,34 @@ class TakeoffTextStylePersistenceTests(unittest.TestCase):
         "Microsoft Access ODBC and ADOX are required for the live MDB contract",
     )
     def test_live_mdb_creation_and_explicit_text_styles_survive_reload(self):
+        # The Access ODBC driver has a process-wide client-task ceiling. Run this
+        # end-to-end contract in a clean process so the complete suite cannot
+        # exhaust it with earlier, deliberately long-lived manager tests.
+        if os.environ.get("OSTV_LIVE_MDB_STYLE_CHILD") != "1":
+            environment = os.environ.copy()
+            environment["OSTV_LIVE_MDB_STYLE_CHILD"] = "1"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "unittest",
+                    (
+                        "tests.test_takeoff_text_style_persistence."
+                        "TakeoffTextStylePersistenceTests."
+                        "test_live_mdb_creation_and_explicit_text_styles_survive_reload"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=environment,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"isolated Access contract failed:\n{result.stdout}\n{result.stderr}",
+            )
+            return
         self._app = QApplication.instance() or QApplication([])
         creation_config = Config(
             default_text_font=FontDefinition(

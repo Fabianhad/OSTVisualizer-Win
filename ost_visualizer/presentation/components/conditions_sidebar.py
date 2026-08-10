@@ -1433,12 +1433,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self.duplicate_requested.emit(self._selected_condition_uids[:])
 
     def _on_delete_clicked(self) -> None:
-        if not self._delete_allowed:
-            return
         if self._selected_folder_uids:
             self._request_folder_delete()
             return
-        if self._selected_condition_uids:
+        if self._delete_allowed and self._selected_condition_uids:
             self.delete_requested.emit(self._selected_condition_uids[:])
 
     def condition_selection_after_delete(

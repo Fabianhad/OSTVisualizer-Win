@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.mesh_geometry_dto import (
     MeshGeometry,
@@ -101,12 +101,26 @@ class _SuspendedLayerTool:
 
 @dataclass(frozen=True)
 class _MeshScenePublication:
-    args: tuple
-    options: dict
+    vertices: List[List[float]]
+    normals: List[List[float]]
+    indices: List[List[int]]
+    colors: List[Dict[str, Union[float, str]]]
+    scene_identity: MeshSceneIdentity
+    page_floor_elevations: Mapping[str, float]
+    condition_uids: List[str]
+    takeoff_uids: List[str]
 
-    @property
-    def scene_identity(self) -> object:
-        return self.options.get("scene_identity")
+    def apply_to(self, surface) -> None:
+        surface.apply_mesh_data(
+            self.vertices,
+            self.normals,
+            self.indices,
+            self.colors,
+            scene_identity=self.scene_identity,
+            page_floor_elevations=self.page_floor_elevations,
+            condition_uids=self.condition_uids,
+            takeoff_uids=self.takeoff_uids,
+        )
 
 
 def _mesh_geometries_to_render_buffers(
@@ -606,7 +620,7 @@ class UIEventCoordinator:
         ):
             return False
         surface.prepare_scene_refresh(active_bid_ref, active_pages)
-        surface.apply_mesh_data(*publication.args, **publication.options)
+        publication.apply_to(surface)
         return True
 
     def _clear_mesh_replay_buffer(self) -> None:
@@ -1541,6 +1555,11 @@ class UIEventCoordinator:
             return False
 
         def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status in (
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            ):
+                return
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 authoritative = result.authoritative_result
                 maps = dict(authoritative.created_uid_maps) if authoritative else {}
@@ -3227,7 +3246,7 @@ class UIEventCoordinator:
         ):
             return
         cached_identity = (
-            self._last_mesh_scene.options.get("scene_identity")
+            self._last_mesh_scene.scene_identity
             if self._last_mesh_scene is not None
             else None
         )
@@ -3257,19 +3276,22 @@ class UIEventCoordinator:
             condition_uids,
             takeoff_uids,
         ) = _mesh_geometries_to_render_buffers(geometries)
-        mesh_args = (vertices, normals, indices, colors)
         page_floor_elevations = MappingProxyType(
             resolve_page_floor_elevations(
                 (geometry.page_uid, geometry.vertices[2::3]) for geometry in geometries
             )
         )
-        mesh_options = {
-            "scene_identity": scene_identity,
-            "page_floor_elevations": page_floor_elevations,
-            "condition_uids": condition_uids,
-            "takeoff_uids": takeoff_uids,
-        }
-        self._last_mesh_scene = _MeshScenePublication(mesh_args, mesh_options)
+        publication = _MeshScenePublication(
+            vertices=vertices,
+            normals=normals,
+            indices=indices,
+            colors=colors,
+            scene_identity=scene_identity,
+            page_floor_elevations=page_floor_elevations,
+            condition_uids=condition_uids,
+            takeoff_uids=takeoff_uids,
+        )
+        self._last_mesh_scene = publication
         if self._pending_dirty_mesh_refresh:
             self._clear_mesh_dirty_state()
         live_embedded = self._is_embedded_3d_active()
@@ -3283,7 +3305,7 @@ class UIEventCoordinator:
             if surface is not None and is_live
         )
         for surface in live_surfaces:
-            surface.apply_mesh_data(*mesh_args, **mesh_options)
+            publication.apply_to(surface)
         if selected_pages and live_surfaces:
             self._plan_view_signaler.request()
 

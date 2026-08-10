@@ -9,6 +9,7 @@ from ost_visualizer.application.dtos.update_condition_dto import UpdateCondition
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     MutationOutcomeStatus,
+    QueuedMutationResult,
     ResourceRef,
     SynchronizationConflict,
     SynchronizationConflictKind,
@@ -95,7 +96,7 @@ class _DatabaseCapability:
 
 
 class _MutationRecorder:
-    def record(self, *_args, **_kwargs):
+    def record(self, resource, operation, *, changed_fields=(), payload=""):
         pass
 
 
@@ -352,9 +353,22 @@ class _ConditionStructureWriteService:
         self.deleted_folders.append((file_path, list(folder_uids)))
         return WriteReloadResult(list(folder_uids), True, True)
 
-    def update_condition(self, file_path, bid_uid, condition_uid, dto, **call_options):
-        self.condition_updates.append((file_path, bid_uid, condition_uid, dto))
-        self.condition_update_options.append(dict(call_options))
+    def update_condition(
+        self,
+        db_path,
+        bid_uid,
+        condition_uid,
+        updates,
+        publish_database_refreshed_after_write=True,
+    ):
+        self.condition_updates.append((db_path, bid_uid, condition_uid, updates))
+        self.condition_update_options.append(
+            {
+                "publish_database_refreshed_after_write": (
+                    publish_database_refreshed_after_write
+                )
+            }
+        )
         return SimpleNamespace(success=True)
 
     def reload_and_notify(self, file_path):
@@ -394,7 +408,14 @@ class _PartialPasteWriteService:
             return self.duplicate_results.pop(0)
         return None
 
-    def move_bids(self, *args, **call_options):
+    def move_bids(
+        self,
+        db_path,
+        bid_uids,
+        target_project_uid,
+        orig_project_uid=None,
+        publish_database_refreshed_after_write=True,
+    ):
         raise AssertionError("same-project paste should not move copied bids")
 
     def reload_database(self, file_path):
@@ -1300,7 +1321,7 @@ class BidLockPermissionTests(unittest.TestCase):
             deferred_persistence_manager=_FakeDeferredPersistence(),
         )
 
-        def run_progress(_label, task_fn, **_call_options):
+        def run_progress(label, task_fn, action_text, reporter):
             return QtWidgets.QDialog.DialogCode.Accepted, task_fn(), None
 
         handler._run_progress_dialog = run_progress
@@ -1339,6 +1360,69 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("Some bids were pasted", warnings[0][2])
         self.assertEqual(criticals, [])
+
+    def test_sql_hierarchy_pending_keys_are_database_scoped_and_recovery_safe(self):
+        callbacks = {}
+        committed = []
+        errors = []
+        refreshes = []
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=SimpleNamespace(),
+            project_write_service=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: refreshes.append(True),
+                present_queued_mutation_error=lambda *args: errors.append(args),
+            )
+        )
+
+        def submit(database_id):
+            return handler._submit_sql_hierarchy_operation(
+                database_id,
+                ("move_bids", "7"),
+                "Move Bids",
+                lambda callback: callbacks.__setitem__(database_id, callback),
+                lambda _result: committed.append(database_id),
+            )
+
+        self.assertTrue(submit("database-a"))
+        self.assertTrue(submit("database-b"))
+        key_a = ("database-a", "move_bids", "7")
+        key_b = ("database-b", "move_bids", "7")
+        self.assertIn(key_a, handler._pending_sql_operations)
+        self.assertIn(key_b, handler._pending_sql_operations)
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            callbacks["database-a"](
+                QueuedMutationResult(
+                    database_id="database-a",
+                    runtime_generation=1,
+                    operation_id="00000000-0000-0000-0000-000000000001",
+                    outcome_status=status,
+                    commit_attempted=True,
+                )
+            )
+            self.assertIn(key_a, handler._pending_sql_operations)
+            self.assertEqual(errors, [])
+            self.assertEqual(refreshes, [])
+        callbacks["database-a"](
+            QueuedMutationResult(
+                database_id="database-a",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000001",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertNotIn(key_a, handler._pending_sql_operations)
+        self.assertIn(key_b, handler._pending_sql_operations)
+        self.assertEqual(committed, ["database-a"])
 
     def test_locked_bid_blocks_condition_edits_at_write_service(self):
         project_data = _ProjectData()
@@ -2275,8 +2359,8 @@ class BidLockPermissionTests(unittest.TestCase):
                     failure_reason="condition_folder_in_use",
                 )
 
-            def delete_condition_folders_result(self, *_args):
-                delete_calls.append(_args)
+            def delete_condition_folders_result(self, db_path, bid_uid, folder_uids):
+                delete_calls.append((db_path, bid_uid, folder_uids))
                 raise AssertionError("blocked folder delete should not run")
 
         coordinator = SimpleNamespace(

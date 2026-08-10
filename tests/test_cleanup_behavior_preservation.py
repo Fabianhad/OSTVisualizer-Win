@@ -109,8 +109,12 @@ class CleanupBehaviorPreservationTests(unittest.TestCase):
         self.assertEqual(len(html.prepare_filename(long_bid, ["Page"])), 255)
         self.assertEqual(len(obj.prepare_filename(long_bid, ["Page"])), 255)
         long_page = "P" * 300
-        self.assertEqual(html.prepare_filename("Bid", [long_page]), long_page + ".html")
-        self.assertEqual(obj.prepare_filename("Bid", [long_page]), long_page + ".obj")
+        html_filename = html.prepare_filename("Bid", [long_page])
+        obj_filename = obj.prepare_filename("Bid", [long_page])
+        self.assertEqual(len(html_filename), 255)
+        self.assertEqual(len(obj_filename), 255)
+        self.assertTrue(html_filename.endswith("....html"))
+        self.assertTrue(obj_filename.endswith("....obj"))
         self.assertEqual(
             html.prepare_filename("Bid", [long_page, long_page]),
             "Export_2_pages.html",

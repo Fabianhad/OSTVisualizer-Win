@@ -1,8 +1,13 @@
 import unittest
+from types import SimpleNamespace
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
+from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.entities.layer import BidLayer
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.domain.services.takeoff_domain_service import (
     common_reassign_geometry_type,
     condition_reassign_geometry_type,
@@ -17,6 +22,69 @@ from ost_visualizer.domain.entities.workspace_state import (
 
 
 class DomainLifecycleTests(unittest.TestCase):
+    def test_sql_projection_snapshots_do_not_expose_authoritative_mutable_state(self):
+        service = ProjectDataService(SimpleNamespace())
+        layer = BidLayer(
+            uid="layer-1", bid_uid="8", name="Original", show=True, sequence=1
+        )
+        job_status = JobStatus(uid="status-1", name="Open")
+        employee = Employee(uid="employee-1", first_name="Ada")
+        pay_class = PayClass(uid="pay-class-1", name="Estimator")
+        cover_sheet = CoverSheetData(
+            bid_uid="8",
+            job_status_uid="status-1",
+            job_name="Original bid",
+            estimator_uid="",
+            notes="",
+            bid_date="",
+            bid_no="",
+            job_id="",
+            job_statuses=[JobStatus(uid="status-1", name="Open")],
+        )
+        defaults = {"nested": {"value": "original"}}
+        service.replace_database_settings(
+            "database",
+            default_layers=[layer],
+            job_statuses=[job_status],
+            employees=[employee],
+            pay_classes=[pay_class],
+        )
+        service.replace_cover_sheet_data("database", "8", cover_sheet)
+        service.replace_settings_defaults("database", defaults)
+        layer.name = "Mutated input"
+        job_status.name = "Mutated input"
+        employee.first_name = "Mutated input"
+        pay_class.name = "Mutated input"
+        cover_sheet.job_name = "Mutated input"
+        defaults["nested"]["value"] = "mutated input"
+        layer_snapshot = service.get_default_layer_snapshot("database")
+        job_status_snapshot = service.get_job_status_snapshot("database")
+        employee_snapshot = service.get_employee_snapshot("database")
+        pay_class_snapshot = service.get_pay_class_snapshot("database")
+        cover_sheet_snapshot = service.get_cover_sheet_snapshot("database", "8")
+        defaults_snapshot = service.get_settings_defaults_snapshot("database")
+        layer_snapshot[0].name = "Mutated output"
+        job_status_snapshot[0].name = "Mutated output"
+        employee_snapshot[0].first_name = "Mutated output"
+        pay_class_snapshot[0].name = "Mutated output"
+        cover_sheet_snapshot.job_statuses[0].name = "Mutated output"
+        defaults_snapshot["nested"]["value"] = "mutated output"
+        self.assertEqual(
+            service.get_default_layer_snapshot("database")[0].name, "Original"
+        )
+        self.assertEqual(service.get_job_status_snapshot("database")[0].name, "Open")
+        self.assertEqual(service.get_employee_snapshot("database")[0].first_name, "Ada")
+        self.assertEqual(
+            service.get_pay_class_snapshot("database")[0].name, "Estimator"
+        )
+        current_cover_sheet = service.get_cover_sheet_snapshot("database", "8")
+        self.assertEqual(current_cover_sheet.job_name, "Original bid")
+        self.assertEqual(current_cover_sheet.job_statuses[0].name, "Open")
+        self.assertEqual(
+            service.get_settings_defaults_snapshot("database"),
+            {"nested": {"value": "original"}},
+        )
+
     def test_config_rejects_truthy_string_for_boolean_field(self):
         with self.assertRaisesRegex(TypeError, "show_toolbar_text"):
             Config.from_dict({"show_toolbar_text": "false"})

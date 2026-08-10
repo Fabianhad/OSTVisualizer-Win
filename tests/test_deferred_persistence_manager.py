@@ -474,7 +474,10 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.service.queue_sql_settings = True
         attempts = []
         self.service.queue_page_setting_if_sql = (
-            lambda *_args, **_kwargs: attempts.append("queue") or False
+            lambda _database_id, _page_uid, _setting_kind, _values, owning_surface="main-plan": attempts.append(
+                ("queue", owning_surface)
+            )
+            or False
         )
         logger = logging.getLogger("tests.deferred_sql_page_view_shutdown")
         manager = DeferredPersistenceManager(
@@ -495,7 +498,10 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.service.queue_sql_settings = True
         attempts = []
         self.service.queue_page_setting_if_sql = (
-            lambda *_args, **_kwargs: attempts.append("queue") or False
+            lambda _database_id, _page_uid, _setting_kind, _values, owning_surface="main-plan": attempts.append(
+                ("queue", owning_surface)
+            )
+            or False
         )
         manager = DeferredPersistenceManager(
             self.service,
@@ -900,7 +906,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_failed = False
         window.hide = lambda: None
         window.show = lambda: None
-        window._flush_deferred_persistence_before_close = lambda **_kwargs: False
+        window._flush_deferred_persistence_before_close = lambda: False
         event = FakeCloseEvent()
         with patch.object(
             QtCore.QTimer,
@@ -1108,6 +1114,66 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             ],
         )
 
+    def test_completed_shutdown_continues_after_independent_cleanup_failures(self):
+        calls = []
+
+        def cleanup(name, *, fail=False):
+            def run():
+                calls.append(name)
+                if fail:
+                    raise RuntimeError(f"{name} failed")
+
+            return run
+
+        lifecycle = SimpleNamespace(shutdown=cleanup("lifecycle", fail=True))
+        window = MainWindow.__new__(MainWindow)
+        window._application_shutdown_finalized = False
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = True
+        window._collaboration_shutdown_failed = False
+        window._workspace_state_coordinator = SimpleNamespace(
+            flush=cleanup("workspace_flush", fail=True),
+            cleanup=cleanup("workspace_cleanup"),
+        )
+        window.event_coordinator = SimpleNamespace(cleanup=cleanup("event_cleanup"))
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(cleanup=cleanup("ui_cleanup", fail=True))
+        )
+        window.license_coordinator = SimpleNamespace(cleanup=cleanup("license_cleanup"))
+        window.ui_access_manager = SimpleNamespace(cleanup=cleanup("access_cleanup"))
+        window._mcp_context_bridge = SimpleNamespace(cleanup=cleanup("mcp_cleanup"))
+        window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
+        event = FakeCloseEvent()
+        with self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured, patch.object(
+            MainWindow.__mro__[1],
+            "closeEvent",
+            side_effect=lambda _event: calls.append("window_close"),
+        ), patch.object(
+            QtCore.QCoreApplication,
+            "quit",
+            side_effect=lambda: calls.append("qt_quit"),
+        ):
+            MainWindow.closeEvent(window, event)
+        self.assertEqual(len(captured.output), 3)
+        self.assertEqual(
+            calls,
+            [
+                "workspace_flush",
+                "workspace_cleanup",
+                "event_cleanup",
+                "ui_cleanup",
+                "license_cleanup",
+                "access_cleanup",
+                "mcp_cleanup",
+                "lifecycle",
+                "window_close",
+                "qt_quit",
+            ],
+        )
+        self.assertTrue(window._application_shutdown_finalized)
+
     def test_access_only_close_flushes_page_state_before_collaboration_shutdown(self):
         requests = []
         calls = []
@@ -1159,7 +1225,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         from ost_visualizer.presentation import main_window
 
         old_critical = main_window.show_critical
-        main_window.show_critical = lambda *_args: warnings.append(True)
+        main_window.show_critical = lambda _parent, _title, _message: warnings.append(
+            True
+        )
         try:
             MainWindow._on_collaboration_shutdown_complete(
                 window, False, "cleanup failed"
@@ -1397,7 +1465,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             uses_sql_collaboration_mutations=lambda _file_path: False
         )
         coordinator._sql_collaboration = SimpleNamespace(
-            update_presence=lambda *_args: None
+            update_presence=lambda _database_id, _bid_uid, _page_uid, mode=None: None
         )
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
@@ -1431,7 +1499,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator, pages = self._make_view_state_coordinator()
         direct_writes = []
         coordinator._project_write_service = SimpleNamespace(
-            save_page_view_state=lambda *_args: direct_writes.append(_args)
+            save_page_view_state=lambda db_path, page_uid, zoom_fac, current_x, current_y: direct_writes.append(
+                (db_path, page_uid, zoom_fac, current_x, current_y)
+            )
         )
         coordinator._on_plan_view_state_changed("p1", 3.0, 30.0, 40.0)
         self.assertEqual(pages["p1"].zoom_fac, 3.0)
@@ -1653,8 +1723,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             bid_layers_sidebar=SimpleNamespace(
                 get_layer=lambda _uid: SimpleNamespace(uid="l1", name=layer_name),
                 get_layers=lambda: [SimpleNamespace(uid="l1", name=layer_name)],
-                set_layer_visible=lambda *_args: None,
-                set_all_layers_visible=lambda *_args: None,
+                set_layer_visible=lambda _layer_uid, _show: None,
+                set_all_layers_visible=lambda _show: None,
             ),
             update_conditions_quantities=lambda: quantity_calls.append("quantity"),
             load_condition_summary=lambda: None,
@@ -1706,7 +1776,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                     ("apply", list(conditions), grayscale, layer_uid)
                 )
             ),
-            load_conditions=lambda *_args: self.fail(
+            load_conditions=lambda _conditions, _folders, _project_name, grayscale=False: self.fail(
                 "visibility-only toggle should not reload condition tree"
             ),
         )
@@ -1799,7 +1869,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             SimpleNamespace(uid="l2", name="Layer 2"),
         ]
         coordinator._project_read_service.get_merged_bid_layers = (
-            lambda *_args: self.fail(
+            lambda _db_path, _bid_uid: self.fail(
                 "SQL layer projection must not query the database on the Qt thread"
             )
         )
@@ -2037,7 +2107,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             flush_for_file=lambda file_path: calls.append(("flush", file_path)) or True
         )
         coordinator._nav = SimpleNamespace(
-            start_refresh=lambda *_args, **_call_options: calls.append("start") or True
+            start_refresh=lambda _ui_state, _placement, selected_area_uid="": calls.append(
+                "start"
+            )
+            or True
         )
         coordinator.ui_state_manager = SimpleNamespace(
             selected_area_uid="",
@@ -2058,7 +2131,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             flush_for_file=lambda file_path: calls.append(("flush", file_path)) or False
         )
         coordinator._nav = SimpleNamespace(
-            start_refresh=lambda *_args, **_call_options: calls.append("start") or True
+            start_refresh=lambda _ui_state, _placement, selected_area_uid="": calls.append(
+                "start"
+            )
+            or True
         )
         coordinator._do_file_refresh = lambda: calls.append("refresh")
         coordinator._finish_refresh = lambda: calls.append("finish")
@@ -2141,7 +2217,14 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         coordinator._project_write_service = SimpleNamespace(
-            save_page_area=lambda *_args, **_call_options: direct_writes.append(_args)
+            save_page_area=lambda db_path, page_uid, area_uid, publish_database_refreshed_after_write=True: direct_writes.append(
+                (
+                    db_path,
+                    page_uid,
+                    area_uid,
+                    publish_database_refreshed_after_write,
+                )
+            )
         )
         plan_updates = []
         self._install_hidden_2d_mesh_state(coordinator)
@@ -2211,18 +2294,18 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
     def test_project_write_service_reports_ost_active_as_expected_deferred_block(self):
         service = ProjectWriteService.__new__(ProjectWriteService)
         service._database_capability_service = SimpleNamespace(
-            is_editable=lambda *_args: True
+            is_editable=lambda _locator, resource=None: True
         )
         service._connection_manager = SimpleNamespace(is_write_blocked=lambda: True)
         service._bid_write_guard = SimpleNamespace(
-            is_active_locked_bid_write_blocked=lambda *_args: False
+            is_active_locked_bid_write_blocked=lambda _file_path, bid_uid=None: False
         )
         self.assertTrue(service.is_expected_deferred_write_blocked("a.mdb"))
 
     def test_project_write_service_reports_locked_bid_as_expected_deferred_block(self):
         service = ProjectWriteService.__new__(ProjectWriteService)
         service._database_capability_service = SimpleNamespace(
-            is_editable=lambda *_args: True
+            is_editable=lambda _locator, resource=None: True
         )
         service._connection_manager = SimpleNamespace(is_write_blocked=lambda: False)
         service._bid_write_guard = SimpleNamespace(
@@ -2238,13 +2321,13 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
         calls = []
         service = ProjectWriteService.__new__(ProjectWriteService)
         service._database_capability_service = SimpleNamespace(
-            is_editable=lambda *_args: True
+            is_editable=lambda _locator, resource=None: True
         )
         service._project_data = SimpleNamespace(
             get_current_bid_ref=lambda: BidRef("a.mdb", "1")
         )
         service._bid_write_guard = SimpleNamespace(
-            blocks_active_locked_bid_write=lambda *_args: False
+            blocks_active_locked_bid_write=lambda _file_path, bid_uid=None: False
         )
         service._save_page_area = SimpleNamespace(
             execute=lambda db_path, page_uid, area_uid: calls.append(
@@ -2259,7 +2342,11 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
             execute=lambda request, operation: DatabaseMutationResult(
                 operation_id=request.operation_id,
                 outcome_status=MutationOutcomeStatus.COMMITTED,
-                value=operation(SimpleNamespace(record=lambda *_args, **_kwargs: None)),
+                value=operation(
+                    SimpleNamespace(
+                        record=lambda _resource, _operation, changed_fields=(), payload="": None
+                    )
+                ),
             )
         )
         service._session_registry = SimpleNamespace(
@@ -2295,7 +2382,10 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
         context = CoverSheetContext(
             project_read_service=SimpleNamespace(),
             project_write_service=SimpleNamespace(
-                save_cover_sheet=lambda *_args: write_calls.append(_args) or True
+                save_cover_sheet=lambda db_path, bid_uid, updates: write_calls.append(
+                    (db_path, bid_uid, updates)
+                )
+                or True
             ),
             bid_ref=BidRef("a.mdb", "bid-1"),
             deferred_persistence_manager=deferred,

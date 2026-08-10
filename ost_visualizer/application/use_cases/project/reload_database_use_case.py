@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 from ....domain.aggregates.ost_aggregate import OstAggregate
+from ....domain.entities.file_state import normalize_path
 from ....domain.entities.identity_refs import BidRef
 from ....domain.entities.project_factory import build_projects
 from ....domain.services.file_manager_service import FileManager
@@ -41,6 +42,8 @@ class ReloadDatabaseUseCase:
         self.model.set_hierarchy(result.hierarchy)
         self.model.projects = build_projects(result.hierarchy)
         if prev_bid_ref:
+            if normalize_path(prev_bid_ref.file_path) != normalize_path(target_path):
+                return True
             bid_ref = BidRef(file_path=target_path, bid_uid=prev_bid_ref.bid_uid)
             if self.model.bid_exists(bid_ref):
                 success = self.load_bid_use_case.execute(bid_ref)

@@ -26,6 +26,9 @@ from ost_visualizer.presentation.components.page_settings_bar import PageSetting
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
+from ost_visualizer.presentation.dialogs.employee_detail_dialog import (
+    EmployeeDetailDialog,
+)
 from ost_visualizer.presentation.dialogs.areas_dialog import (
     BidAreaPickerDialog,
     BidAreasDialog,
@@ -43,6 +46,7 @@ from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialo
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
+from ost_visualizer.presentation.dtos.employee_edit_dtos import EmployeeRecord
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.deferred_dialog_save import (
     DeferredDialogSaveController,
@@ -169,6 +173,45 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.bar.scale_combo.blockSignals(False)
         self.bar.load_page("custom", 0.26, 12.0, "")
         self.assertEqual(self.bar.scale_combo.currentText(), '0.26" = 1\' 0"')
+
+    def test_programmatic_area_updates_preserve_existing_qt_signal_block(self):
+        self.bar.area_combo.blockSignals(True)
+        try:
+            self.bar.load_bid_areas(
+                BidRef("db.mdb", "bid-1"),
+                areas=[BidArea("area-1", "bid-1", "", "Area 1", 0)],
+            )
+            self.assertTrue(self.bar.area_combo.signalsBlocked())
+            self.bar.load_page("page-1", 1.0, 1.0, "area-1")
+            self.assertTrue(self.bar.area_combo.signalsBlocked())
+            self.bar.clear_bid()
+            self.assertTrue(self.bar.area_combo.signalsBlocked())
+        finally:
+            self.bar.area_combo.blockSignals(False)
+
+    def test_area_usage_is_owned_and_cleared_with_bid_state(self):
+        bid_usage = {"area-1"}
+        page_usage = {"area-1"}
+        self.bar.load_bid_areas(
+            BidRef("db.mdb", "bid-1"),
+            areas=[BidArea("area-1", "bid-1", "", "Area 1", 0)],
+            areas_with_takeoff=bid_usage,
+        )
+        self.bar.load_page(
+            "page-1",
+            1.0,
+            1.0,
+            "area-1",
+            areas_with_takeoff=page_usage,
+        )
+        bid_usage.clear()
+        page_usage.clear()
+        self.assertEqual(self.bar._bid_areas_in_use, {"area-1"})
+        self.assertEqual(self.bar._page_areas_in_use, {"area-1"})
+        self.bar.clear_bid()
+        self.assertIsNone(self.bar._bid_areas_in_use)
+        self.assertIsNone(self.bar._page_areas_in_use)
+        self.assertEqual(self.bar._current_scale_index, -1)
 
     def test_non_architectural_custom_and_invalid_scales_use_safe_display(self):
         self.bar.load_page("metric-custom", 2.5, 1000.0, "")
@@ -977,18 +1020,46 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 return []
             return [BidArea("area-2", "bid-1", "", "Area 2", 1)]
 
-        def save_areas(file_path, bid_uid, changes, **kwargs):
-            save_calls.append((file_path, bid_uid, changes, kwargs))
+        def save_areas(
+            file_path,
+            bid_uid,
+            changes,
+            publish_database_refreshed_after_write=True,
+        ):
+            save_calls.append(
+                (
+                    file_path,
+                    bid_uid,
+                    changes,
+                    {
+                        "publish_database_refreshed_after_write": (
+                            publish_database_refreshed_after_write
+                        )
+                    },
+                )
+            )
             return {"new_0": "area-2"}
 
         def refresh_areas(file_path):
             refresh_calls.append(file_path)
 
         class CapturingPicker:
-            def __init__(self, **kwargs):
-                self._save_fn = kwargs["save_fn"]
-                self._on_saved_fn = kwargs["on_saved_fn"]
-                workspace_models.append(kwargs["workspace_state_model"])
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                on_saved_fn=None,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
+                self._save_fn = save_fn
+                self._on_saved_fn = on_saved_fn
+                workspace_models.append(workspace_state_model)
 
             def set_interactive(self, _enabled):
                 pass
@@ -1055,9 +1126,21 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         refresh_calls = []
 
         class CapturingPicker:
-            def __init__(self, **kwargs):
-                self._save_fn = kwargs["save_fn"]
-                self._on_saved_fn = kwargs["on_saved_fn"]
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                on_saved_fn=None,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
+                self._save_fn = save_fn
+                self._on_saved_fn = on_saved_fn
 
             def get_selected_uid(self):
                 return "area-2"
@@ -1113,9 +1196,21 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         refresh_calls = []
 
         class CapturingPicker:
-            def __init__(self, **kwargs):
-                self._save_async_fn = kwargs["save_async_fn"]
-                self._on_saved_fn = kwargs["on_saved_fn"]
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                on_saved_fn=None,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
+                self._save_async_fn = save_async_fn
+                self._on_saved_fn = on_saved_fn
 
             def get_selected_uid(self):
                 return "area-2"
@@ -1266,7 +1361,20 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 return True
 
         class CapturingAreasDialog:
-            def __init__(self, *_args, **_kwargs):
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                on_saved_fn=None,
+                has_license=True,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
                 pass
 
             def cleanup(self):
@@ -1286,22 +1394,33 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator._project_read_service = ReadService()
         coordinator._project_write_service = WriteService()
         coordinator._icon_provider = FakeIconProvider()
-        coordinator._sql_collaboration = SimpleNamespace(
-            request_local_edit=lambda database_id, resources, callback, **_kwargs: (
-                callback(
-                    EditLeaseResult(
-                        True,
-                        handle=EditLeaseHandle(
-                            database_id=database_id,
-                            draft_id="areas-test-draft",
-                            runtime_generation=0,
-                            operation_id="areas-test-edit",
-                            owning_surface="test",
-                            resources=resources,
-                        ),
-                    )
+
+        def request_local_edit(
+            database_id,
+            resources,
+            callback,
+            *,
+            dependency_resources=(),
+            operation_id="",
+            owning_surface="desktop",
+        ):
+            callback(
+                EditLeaseResult(
+                    True,
+                    handle=EditLeaseHandle(
+                        database_id=database_id,
+                        draft_id="areas-test-draft",
+                        runtime_generation=0,
+                        operation_id=operation_id,
+                        owning_surface=owning_surface,
+                        resources=resources,
+                        dependency_resources=dependency_resources,
+                    ),
                 )
-            ),
+            )
+
+        coordinator._sql_collaboration = SimpleNamespace(
+            request_local_edit=request_local_edit,
             end_edit_lease=lambda _handle: None,
         )
         coordinator.main_window = None
@@ -1339,6 +1458,80 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.accept()
             self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
             self.assertFalse(dialog._save_done)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_detail_cannot_navigate_past_invalid_required_fields(self):
+        employees = [
+            EmployeeRecord(
+                uid="emp-1",
+                employee_no="1",
+                first_name="Ava",
+                last_name="Lee",
+            ),
+            EmployeeRecord(
+                uid="emp-2",
+                employee_no="2",
+                first_name="Mia",
+                last_name="Ray",
+            ),
+        ]
+        dialog = EmployeeDetailDialog(
+            FakeIconProvider(), employees, 0, make_workspace_state_model()
+        )
+        try:
+            dialog.edit_first_name.clear()
+            with patch(
+                "ost_visualizer.presentation.dialogs.employee_detail_dialog."
+                "show_warning"
+            ) as warning:
+                dialog._on_next()
+            self.assertEqual(dialog._current_index, 0)
+            self.assertEqual(dialog.get_results()[0].first_name, "Ava")
+            warning.assert_called_once_with(
+                dialog, "Employee Detail", "First Name is required."
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_detail_cannot_navigate_past_unknown_pay_class(self):
+        employees = [
+            EmployeeRecord(
+                uid="emp-1",
+                employee_no="1",
+                first_name="Ava",
+                last_name="Lee",
+                pay_class_uid="pay-1",
+            ),
+            EmployeeRecord(
+                uid="emp-2",
+                employee_no="2",
+                first_name="Mia",
+                last_name="Ray",
+            ),
+        ]
+        dialog = EmployeeDetailDialog(
+            FakeIconProvider(),
+            employees,
+            0,
+            make_workspace_state_model(),
+            pay_classes=[PayClass(uid="pay-1", name="Regular")],
+        )
+        try:
+            dialog.combo_pay_class.setEditText("Unknown")
+            with patch(
+                "ost_visualizer.presentation.dialogs.employee_detail_dialog."
+                "confirm_not_found",
+                return_value=False,
+            ) as confirm:
+                dialog._on_next()
+            self.assertEqual(dialog._current_index, 0)
+            self.assertEqual(dialog.get_results()[0].pay_class_uid, "pay-1")
+            confirm.assert_called_once_with(dialog, "Unknown")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -1464,6 +1657,64 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(dialog._employees[0].first_name, "Ava")
             self.assertEqual(dialog._employees[0].last_name, "Lee")
             self.assertEqual(dialog.tree.topLevelItem(0).text(1), "Ava Lee")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_async_create_requires_authoritative_uid_mapping(self):
+        callbacks = []
+        dialog = EmployeesDialog(
+            FakeIconProvider(),
+            employees=[],
+            save_async_fn=lambda _changes, completed: (
+                callbacks.append(completed) or True
+            ),
+            menu_mode=True,
+        )
+        try:
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog."
+                "EmployeeDetailDialog",
+                self._employee_detail_dialog_stub(),
+            ):
+                dialog._on_new_with_first_name("Mia")
+            dialog.accept()
+            self.assertTrue(dialog._operation_pending)
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog.show_warning"
+            ) as warning:
+                callbacks[0](True, {})
+            self.assertFalse(dialog._operation_pending)
+            self.assertFalse(dialog._save_done)
+            self.assertTrue(dialog._employees[0].is_new)
+            self.assertEqual(dialog._employees[0].uid, "new_0")
+            warning.assert_called_once_with(
+                dialog, "Employees", "Failed to create employee."
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_async_failure_preserves_external_interactivity_block(self):
+        callbacks = []
+        dialog = EmployeesDialog(
+            FakeIconProvider(),
+            employees=[Employee(uid="emp-1", first_name="Ava")],
+            save_async_fn=lambda _changes, completed: (
+                callbacks.append(completed) or True
+            ),
+            menu_mode=True,
+        )
+        try:
+            dialog._employees[0].first_name = "Mia"
+            dialog.accept()
+            dialog.set_interactive(False)
+            callbacks[0](False, None)
+            self.assertFalse(dialog._interactive)
+            self.assertFalse(dialog.btn_new.isEnabled())
+            self.assertFalse(dialog.btn_select.isEnabled())
         finally:
             dialog.close()
             dialog.cleanup()
@@ -1614,6 +1865,106 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_condition_type_async_create_rejection_removes_provisional_row(self):
+        async_calls = []
+        dialog = ConditionTypesDialog(
+            FakeIconProvider(),
+            condition_types=[],
+            save_fn=lambda _changes: self.fail("sync save must not run"),
+            save_async_fn=lambda changes, _completed: (
+                async_calls.append(changes) or False
+            ),
+            reload_fn=lambda: [],
+            menu_mode=True,
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Concrete")
+            dialog.tree.blockSignals(False)
+            dialog._on_item_changed(item, 0)
+            self.assertEqual(len(async_calls), 1)
+            self.assertEqual(dialog.tree.topLevelItemCount(), 0)
+            self.assertIsNone(dialog._pending_new_item)
+            self.assertTrue(dialog._is_interactive)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_layer_async_create_rejection_removes_provisional_row(self):
+        async_calls = []
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[],
+            insert_fn=lambda _name, _sequence: self.fail("sync insert must not run"),
+            insert_async_fn=lambda name, sequence, _completed: (
+                async_calls.append((name, sequence)) or False
+            ),
+            reload_fn=lambda: [],
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(2, "Layer 1")
+            dialog.tree.blockSignals(False)
+            dialog._on_item_changed(item, 2)
+            self.assertEqual(async_calls, [("Layer 1", 0)])
+            self.assertEqual(dialog.tree.topLevelItemCount(), 0)
+            self.assertIsNone(dialog._pending_new_item)
+            self.assertTrue(dialog._is_interactive)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_async_master_data_completion_preserves_external_interactivity_block(self):
+        condition_callbacks = []
+        condition_dialog = ConditionTypesDialog(
+            FakeIconProvider(),
+            condition_types=[CdnType(uid="type-1", name="Concrete")],
+            save_fn=lambda _changes: self.fail("sync save must not run"),
+            save_async_fn=lambda _changes, completed: (
+                condition_callbacks.append(completed) or True
+            ),
+            reload_fn=lambda: [CdnType(uid="type-1", name="Asphalt")],
+            menu_mode=True,
+        )
+        layer_callbacks = []
+        layer_dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1)],
+            update_name_fn=lambda _uid, _name: self.fail("sync save must not run"),
+            update_name_async_fn=lambda _uid, _name, completed: (
+                layer_callbacks.append(completed) or True
+            ),
+            reload_fn=lambda: [self._layer("layer-1", "Renamed", 1)],
+        )
+        try:
+            condition_item = condition_dialog.tree.topLevelItem(0)
+            condition_dialog._set_item_text(condition_item, "Asphalt")
+            condition_dialog._on_item_changed(condition_item, 0)
+            layer_item = layer_dialog.tree.topLevelItem(0)
+            layer_dialog._set_item_text(layer_item, "Renamed")
+            layer_dialog._on_item_changed(layer_item, 2)
+            condition_dialog.set_interactive(False)
+            layer_dialog.set_interactive(False)
+            condition_callbacks[0](True, {})
+            layer_callbacks[0](True, None)
+            self.assertFalse(condition_dialog._is_interactive)
+            self.assertFalse(layer_dialog._is_interactive)
+            self.assertFalse(condition_dialog.btn_new.isEnabled())
+            self.assertFalse(layer_dialog.btn_new.isEnabled())
+        finally:
+            condition_dialog.close()
+            condition_dialog.cleanup()
+            condition_dialog.deleteLater()
+            layer_dialog.close()
+            layer_dialog.cleanup()
+            layer_dialog.deleteLater()
 
     def test_condition_type_delete_keeps_row_when_save_fails(self):
         reload_calls = []

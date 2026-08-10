@@ -86,15 +86,15 @@ class ConditionActionHandler:
             handler = handler_ref()
             if handler is None:
                 return
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
             handler._pending_sql_operations.discard(key)
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 if on_committed is not None:
                     on_committed(result)
-                return
-            if (
-                result.outcome_status
-                == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
-            ):
                 return
             handler._coordinator.present_queued_mutation_error(
                 bid_ref.file_path,

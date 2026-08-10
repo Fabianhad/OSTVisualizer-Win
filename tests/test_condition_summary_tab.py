@@ -1101,10 +1101,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             publish=lambda *_args, **_call_options: None
         )
         coordinator._deferred_persistence = SimpleNamespace(
-            schedule_layer_show=lambda *_args: None
+            schedule_layer_show=lambda _db_path, _layer_uid, _show: None
         )
         coordinator.plan_view = None
-        coordinator._viewer = SimpleNamespace(update_viewers=lambda *_args: None)
         coordinator.opengl_viewer = None
         coordinator._mesh_window = None
         coordinator._mesh_scene_dirty = False
@@ -1112,11 +1111,12 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._pending_dirty_mesh_refresh = False
         coordinator._last_mesh_scene = None
         coordinator.visualization_service = SimpleNamespace(
-            cancel_mesh_view_refresh=lambda: None, refresh_mesh_view=lambda *_args: None
+            cancel_mesh_view_refresh=lambda: None,
+            refresh_mesh_view=lambda _page_uids: None,
         )
         coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
-        coordinator._suspend_active_layer_tool = lambda *_args: None
-        coordinator._restore_suspended_layer_tool = lambda *_args: None
+        coordinator._suspend_active_layer_tool = lambda _layer_uid=None: None
+        coordinator._restore_suspended_layer_tool = lambda _layer_uid=None: None
         coordinator._update_export_menu_state = lambda: None
         coordinator._load_condition_summary = lambda: loads.append("load")
         self.assertTrue(
@@ -1273,7 +1273,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             flush_for_file=lambda _file_path: True
         )
         coordinator._nav = SimpleNamespace(
-            start_refresh=lambda *_args, **_call_options: True
+            start_refresh=lambda ui_state, placement, selected_area_uid="": True
         )
         coordinator.ui_state_manager = SimpleNamespace(
             selected_area_uid="",
@@ -1364,7 +1364,8 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
                     selected_area_uid="",
                 )
 
-            def compute_state_for(self, **_call_options):
+            def compute_state_for(self, has_file, bid_ref, active_page_uid):
+                del has_file, bid_ref, active_page_uid
                 return NavState.BID_ACTIVE_PAGES_SELECTED
 
             def finish_refresh(self, _state):
@@ -1382,7 +1383,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._clear_staged_takeoff_restore = lambda: None
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
         coordinator._is_condition_placeable = lambda _condition_uid: True
-        coordinator._stage_takeoff_restore = lambda **_call_options: None
+        coordinator._stage_takeoff_restore = (
+            lambda page_uids=None, active_page_uid=None, selected_area_uid="", place_condition_uid=None, place_condition_uids=None: None
+        )
         coordinator._activate_takeoff_workspace = lambda: None
         coordinator._set_takeoff_tab_visible = lambda _visible: None
         coordinator._sync_undo_bid = lambda: None

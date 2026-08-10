@@ -103,12 +103,23 @@ from tests.workspace_state_test_support import with_workspace_state
 FileOperationHandler = with_workspace_state(FileOperationHandler)
 
 
-def DatabaseMutationRequest(*args, **kwargs):
+def DatabaseMutationRequest(
+    *,
+    database_id,
+    session_id,
+    resources=(),
+    required_lock_tokens=(),
+):
     """Build an explicitly identified canonical request for writer tests."""
-    kwargs.setdefault("operation_id", str(uuid.uuid4()))
-    kwargs.setdefault("mutation_type", CollaborationMutationType.PROJECT_WRITE.value)
-    kwargs.setdefault("request_hash", "a" * 64)
-    return _DatabaseMutationRequest(*args, **kwargs)
+    return _DatabaseMutationRequest(
+        database_id=database_id,
+        session_id=session_id,
+        operation_id=str(uuid.uuid4()),
+        mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
+        request_hash="a" * 64,
+        resources=resources,
+        required_lock_tokens=required_lock_tokens,
+    )
 
 
 def _canonical_writer_permission_snapshot(
@@ -510,7 +521,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return None
 
         class _PermissionManager:
@@ -770,7 +781,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
             @staticmethod
@@ -784,7 +795,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _AccessConnections:
             @contextlib.contextmanager
-            def connection(self, *_args, **_kwargs):
+            def connection(self, _database_id, *, autocommit=False):
+                self.autocommit = autocommit
                 yield _Connection()
 
         reader = DatabaseProjectReader(
@@ -804,7 +816,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
             @staticmethod
@@ -822,7 +834,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _SqlConnections:
             @contextlib.contextmanager
-            def connection(self, *_args, **_kwargs):
+            def connection(self, _request, *, autocommit=False):
+                self.autocommit = autocommit
                 yield _Connection()
 
         registry = DatabaseDescriptorRegistry()
@@ -1028,7 +1041,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
             @staticmethod
@@ -1058,7 +1071,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
             def execute(self, sql, *_params):
@@ -1123,7 +1136,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
             def execute(self, _sql, *_params):
@@ -1186,7 +1199,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
             def execute(self, sql, *_params):
@@ -1245,7 +1258,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *_args):
+            def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
             @staticmethod
@@ -1399,7 +1412,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_repeated_sql_connection_cycles_close_every_resource_once(self):
         connections = []
 
-        def connect(*_args, **_kwargs):
+        def connect(_connection_string, *, autocommit, timeout):
+            _ = autocommit, timeout
             connection = _RawConnection()
             connections.append(connection)
             return connection
@@ -1918,6 +1932,39 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 DatabaseMutationRequest(database_id="example.mdb", session_id=None),
                 operation,
             )
+        self.assertEqual(connections.connection_value.commits, 0)
+        self.assertEqual(connections.connection_value.rollbacks, 1)
+
+    def test_access_router_rolls_back_runtime_error_caught_by_shared_operation(self):
+        connections = _AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        spec = InsertAnnotationSpec(
+            page_uid="10",
+            annotation_type="rect",
+            position=[1.0, 2.0, 3.0, 4.0],
+            color="#ff0000",
+            width=1.0,
+        )
+        original = RuntimeError("access row failure")
+        with (
+            patch.object(writer, "_next_uid", return_value=1),
+            patch.object(
+                writer,
+                "_execute_annotation_insert",
+                side_effect=original,
+            ),
+            self.assertRaises(RuntimeError) as captured,
+        ):
+            writer.execute(
+                DatabaseMutationRequest(database_id="example.mdb", session_id=None),
+                lambda _recorder: writer.insert_annotations("example.mdb", "1", [spec]),
+            )
+        self.assertIs(captured.exception, original)
         self.assertEqual(connections.connection_value.commits, 0)
         self.assertEqual(connections.connection_value.rollbacks, 1)
 
@@ -2447,7 +2494,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 lambda _recorder: writer.import_ost_data(
                     descriptor.database_id,
                     raw_data,
-                    lambda data, *_maps: data,
+                    lambda data, _bid_offset, _cdn_map, _status_map, _employee_map, _pay_class_map: data,
                 ),
             )
         self.assertEqual(manager.lease.commits, 0)
@@ -2724,9 +2771,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_schema_validation_failure_rolls_back_before_commit(self):
         manager = _CreationManager()
         creator = SqlDatabaseCreator(manager)
-        creator._inspector.inspect_connection = (
-            lambda *_args, **_kwargs: _empty_inventory()
-        )
+        creator._inspector.inspect_connection = lambda _connection: _empty_inventory()
         with self.assertRaisesRegex(Exception, "validation failed"):
             creator.initialize_blank_database(
                 SqlServerDatabaseLocation(
@@ -2746,9 +2791,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_failed_creator_does_not_disable_tracking_owned_by_another_creator(self):
         manager = _CreationManager()
         creator = SqlDatabaseCreator(manager)
-        creator._inspector.inspect_connection = (
-            lambda *_args, **_kwargs: _empty_inventory()
-        )
+        creator._inspector.inspect_connection = lambda _connection: _empty_inventory()
         with self.assertRaisesRegex(Exception, "validation failed"):
             creator.initialize_blank_database(
                 SqlServerDatabaseLocation(
@@ -2978,7 +3021,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_schema_creation_rolls_back_failed_canonical_validation(self):
         manager = _CreationManager()
         creator = SqlDatabaseCreator(manager)
-        creator._inspector.inspect_connection = lambda *_args: _empty_inventory()
+        creator._inspector.inspect_connection = lambda _connection: _empty_inventory()
         creator._validator.validate = lambda _inventory: SqlSchemaValidationReport(
             ("ostv.SchemaMigrations.Checksum",),
         )
@@ -3010,8 +3053,25 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )()
 
         class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                _icon_provider,
+                _parent,
+                _file_entries,
+                _working_directory_service,
+                workspace_state_model,
+                sql_catalog=None,
+                credential_store=None,
+                sql_database_creator=None,
+                schema_change_allowed_fn=None,
+            ):
+                _ = (
+                    workspace_state_model,
+                    sql_catalog,
+                    credential_store,
+                    sql_database_creator,
+                    schema_change_allowed_fn,
+                )
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -3094,8 +3154,25 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self.file_entries = list(entries)
 
         class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                _icon_provider,
+                _parent,
+                _file_entries,
+                _working_directory_service,
+                workspace_state_model,
+                sql_catalog=None,
+                credential_store=None,
+                sql_database_creator=None,
+                schema_change_allowed_fn=None,
+            ):
+                _ = (
+                    workspace_state_model,
+                    sql_catalog,
+                    credential_store,
+                    sql_database_creator,
+                    schema_change_allowed_fn,
+                )
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -3177,8 +3254,25 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self.file_entries = list(entries)
 
         class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                _icon_provider,
+                _parent,
+                _file_entries,
+                _working_directory_service,
+                workspace_state_model,
+                sql_catalog=None,
+                credential_store=None,
+                sql_database_creator=None,
+                schema_change_allowed_fn=None,
+            ):
+                _ = (
+                    workspace_state_model,
+                    sql_catalog,
+                    credential_store,
+                    sql_database_creator,
+                    schema_change_allowed_fn,
+                )
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -3295,8 +3389,25 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self.file_entries = list(entries)
 
         class _Dialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                _icon_provider,
+                _parent,
+                _file_entries,
+                _working_directory_service,
+                workspace_state_model,
+                sql_catalog=None,
+                credential_store=None,
+                sql_database_creator=None,
+                schema_change_allowed_fn=None,
+            ):
+                _ = (
+                    workspace_state_model,
+                    sql_catalog,
+                    credential_store,
+                    sql_database_creator,
+                    schema_change_allowed_fn,
+                )
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted

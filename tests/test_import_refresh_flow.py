@@ -154,6 +154,14 @@ class FakeDeferredPersistence:
         return self.result
 
 
+class FakeAccess:
+    def __init__(self, allowed=True):
+        self.allowed = allowed
+
+    def is_allowed(self, _feature):
+        return self.allowed
+
+
 class FakeProgressDialog:
     error = None
     result_code = QtWidgets.QDialog.DialogCode.Accepted
@@ -594,6 +602,51 @@ class ImportRefreshFlowTests(unittest.TestCase):
             self.assertIn(str(dest_dir / "page.pdf"), rewritten)
             self.assertIn(str(dest_dir / "overlay.tif"), rewritten)
 
+    def test_osp_import_does_not_overwrite_different_existing_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            member_name = "TempImages!.tmp\\sheet.pdf"
+            _write_packaged_image(tmp_path, member_name, b"new drawing")
+            ost_path = tmp_path / "Project.ost"
+            _write_osp_page_xml(ost_path, r"C:\plans\sheet.pdf")
+            dest_dir = tmp_path / "dest"
+            dest_dir.mkdir()
+            original_path = dest_dir / "sheet.pdf"
+            original_path.write_bytes(b"existing drawing")
+            OspImporter(FakeImporter())._extract_images(
+                tmp_path,
+                ost_path,
+                dest_dir,
+                {member_name.casefold(): member_name},
+            )
+            self.assertEqual(original_path.read_bytes(), b"existing drawing")
+            imported_paths = [
+                path for path in dest_dir.glob("sheet-*.pdf") if path.is_file()
+            ]
+            self.assertEqual(len(imported_paths), 1)
+            self.assertEqual(imported_paths[0].read_bytes(), b"new drawing")
+            self.assertIn(str(imported_paths[0]), ost_path.read_text(encoding="utf-8"))
+
+    def test_osp_import_reuses_identical_existing_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            member_name = "TempImages!.tmp\\sheet.pdf"
+            _write_packaged_image(tmp_path, member_name, b"same drawing")
+            ost_path = tmp_path / "Project.ost"
+            _write_osp_page_xml(ost_path, r"C:\plans\sheet.pdf")
+            dest_dir = tmp_path / "dest"
+            dest_dir.mkdir()
+            existing_path = dest_dir / "sheet.pdf"
+            existing_path.write_bytes(b"same drawing")
+            OspImporter(FakeImporter())._extract_images(
+                tmp_path,
+                ost_path,
+                dest_dir,
+                {member_name.casefold(): member_name},
+            )
+            self.assertEqual(list(dest_dir.iterdir()), [existing_path])
+            self.assertIn(str(existing_path), ost_path.read_text(encoding="utf-8"))
+
     def test_osp_import_resolves_most_specific_nested_member_without_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -759,11 +812,15 @@ class ImportRefreshFlowTests(unittest.TestCase):
         original_dialog = import_handler_module.ProgressDialog
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
         original_show_info = import_handler_module.show_info
+
+        def select_source_file(_parent, _caption, _directory, _filter):
+            return "source.ost", ""
+
         try:
             FakeProgressDialog.instances = []
             import_handler_module.ProgressDialog = FakeProgressDialog
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_call_options: ("source.ost", "")
+                select_source_file
             )
             import_handler_module.show_info = (
                 lambda parent, title, message: messages.append((parent, title, message))
@@ -809,12 +866,17 @@ class ImportRefreshFlowTests(unittest.TestCase):
         original_dialog = import_handler_module.ProgressDialog
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
         original_show_info = import_handler_module.show_info
+
+        def reject_progress_dialog(_filename, _task_fn, parent=None):
+            self.fail("SQL import must not open the synchronous progress path")
+
+        def select_source_file(_parent, _caption, _directory, _filter):
+            return "source.ost", ""
+
         try:
-            import_handler_module.ProgressDialog = lambda *_args, **_kwargs: self.fail(
-                "SQL import must not open the synchronous progress path"
-            )
+            import_handler_module.ProgressDialog = reject_progress_dialog
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_kwargs: ("source.ost", "")
+                select_source_file
             )
             import_handler_module.show_info = (
                 lambda parent, title, message: messages.append((parent, title, message))
@@ -862,11 +924,13 @@ class ImportRefreshFlowTests(unittest.TestCase):
             ui_access_manager=FakeAccess(False),
         )
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
+
+        def reject_file_picker(_parent, _caption, _directory, _filter):
+            self.fail("denied import must not open the file picker")
+
         try:
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_call_options: self.fail(
-                    "denied import must not open the file picker"
-                )
+                reject_file_picker
             )
             handler.import_ost()
         finally:
@@ -887,9 +951,13 @@ class ImportRefreshFlowTests(unittest.TestCase):
             ui_access_manager=FakeAccess(),
         )
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
+
+        def select_source_file(_parent, _caption, _directory, _filter):
+            return "source.ost", ""
+
         try:
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_call_options: ("source.ost", "")
+                select_source_file
             )
             handler.import_ost()
         finally:
@@ -913,13 +981,20 @@ class ImportRefreshFlowTests(unittest.TestCase):
         original_dialog = import_handler_module.ProgressDialog
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
         original_show_critical = import_handler_module.show_critical
+
+        def select_source_file(_parent, _caption, _directory, _filter):
+            return "source.ost", ""
+
+        def ignore_message(_parent, _title, _message):
+            return None
+
         try:
             FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Rejected
             import_handler_module.ProgressDialog = FakeProgressDialog
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_call_options: ("source.ost", "")
+                select_source_file
             )
-            import_handler_module.show_critical = lambda *_args, **_call_options: None
+            import_handler_module.show_critical = ignore_message
             handler.import_ost()
         finally:
             FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Accepted
@@ -950,14 +1025,19 @@ class ImportRefreshFlowTests(unittest.TestCase):
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
         original_show_info = import_handler_module.show_info
         original_show_warning = import_handler_module.show_warning
+
+        def select_source_file(_parent, _caption, _directory, _filter):
+            return "source.ost", ""
+
+        def reject_success_message(_parent, _title, _message):
+            self.fail("a failed refresh must not report an unqualified success")
+
         try:
             import_handler_module.ProgressDialog = FakeProgressDialog
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_call_options: ("source.ost", "")
+                select_source_file
             )
-            import_handler_module.show_info = lambda *_args, **_call_options: self.fail(
-                "a failed refresh must not report an unqualified success"
-            )
+            import_handler_module.show_info = reject_success_message
             import_handler_module.show_warning = (
                 lambda _parent, title, message: messages.append((title, message))
             )
@@ -977,11 +1057,3 @@ class ImportRefreshFlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class FakeAccess:
-    def __init__(self, allowed=True):
-        self.allowed = allowed
-
-    def is_allowed(self, _feature):
-        return self.allowed

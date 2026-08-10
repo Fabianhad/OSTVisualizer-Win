@@ -951,6 +951,19 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(queued["condition_uids"], ["c3"])
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
+        operation_key = ("delete", "c3")
+        self.assertIn(operation_key, handler._pending_sql_operations)
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000001",
+                outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                commit_attempted=True,
+            )
+        )
+        self.assertIn(operation_key, handler._pending_sql_operations)
+        self.assertEqual(errors, [])
         queued["callback"](
             QueuedMutationResult(
                 database_id="database",
@@ -960,6 +973,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 commit_attempted=True,
             )
         )
+        self.assertIn(operation_key, handler._pending_sql_operations)
         self.assertEqual(errors, [])
         conditions.pop("c3")
         sidebar.load_conditions(conditions, {}, "Project")
@@ -972,6 +986,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 commit_attempted=True,
             )
         )
+        self.assertNotIn(operation_key, handler._pending_sql_operations)
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
 
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
@@ -1120,7 +1135,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         folder.setSelected(True)
         sidebar._sync_button_states()
         self.assertTrue(sidebar._delete_btn.isEnabled())
-        sidebar._request_folder_delete()
+        sidebar._delete_btn.click()
         self.assertEqual(deleted, [["f1"]])
         sidebar.set_create_folder_enabled(False)
         sidebar.set_delete_enabled(True)
@@ -1412,6 +1427,41 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         dialog._dirty = False
         dialog.close()
 
+    def test_edit_condition_async_completion_preserves_external_interactivity_block(
+        self,
+    ):
+        callbacks = []
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        dialog = EditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: self.fail("sync save must not run"),
+            save_async_fn=lambda _uid, _dto, completed: (
+                callbacks.append(completed) or True
+            ),
+            read_service=FakeReadService(),
+        )
+        dialog._name_edit.setText("Updated Condition")
+        self.assertFalse(dialog._apply_changes())
+        dialog.set_interactive(False)
+        callbacks[0](SimpleNamespace(success=True, error_presented=False))
+        self.assertFalse(dialog._interactive_enabled)
+        self.assertFalse(dialog._name_edit.isEnabled())
+        self.assertFalse(dialog._ok_btn.isEnabled())
+        dialog._dirty = False
+        dialog.close()
+
     def test_delete_key_invokes_condition_delete_for_tree_selection(self):
         sidebar, deleted = self._make_sidebar_with_selected_condition()
         sidebar.show()
@@ -1521,11 +1571,65 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         class Dialog:
             condition_navigated = SimpleNamespace(connect=lambda _callback: None)
 
-            def __init__(self, *args, **_dialog_options):
+            def __init__(
+                self,
+                icon_provider,
+                parent,
+                condition,
+                condition_uids,
+                conditions_map,
+                cdn_types,
+                layers,
+                has_takeoffs_fn,
+                save_fn,
+                workspace_state_model,
+                save_async_fn=None,
+                has_license=True,
+                condition_type_save_fn=None,
+                condition_type_save_async_fn=None,
+                condition_type_reload_fn=None,
+                condition_type_blocked_delete_uids_fn=None,
+                condition_type_delete_fn=None,
+                layer_reload_fn=None,
+                layer_used_uids_fn=None,
+                layer_insert_fn=None,
+                layer_delete_many_fn=None,
+                layer_update_show_fn=None,
+                layer_update_all_show_fn=None,
+                layer_update_name_fn=None,
+                layer_move_fn=None,
+                read_service=None,
+                read_only=False,
+                metric=False,
+            ):
                 pass
 
             def deleteLater(self):
                 pass
+
+        def request_collaboration_edit(
+            database_id,
+            resources,
+            callback,
+            *,
+            dependency_resources=(),
+            operation_id="",
+            owning_surface="desktop",
+        ):
+            callback(
+                EditLeaseResult(
+                    True,
+                    handle=EditLeaseHandle(
+                        database_id=database_id,
+                        draft_id="test-draft",
+                        runtime_generation=0,
+                        operation_id=operation_id,
+                        owning_surface=owning_surface,
+                        resources=resources,
+                        dependency_resources=dependency_resources,
+                    ),
+                )
+            )
 
         coordinator = SimpleNamespace(
             ui_access_manager=Access(),
@@ -1537,21 +1641,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             placement=SimpleNamespace(is_active=False),
             _is_takeoff_2d_view_active=lambda: True,
             flush_deferred_for_file=lambda _file_path: True,
-            request_collaboration_edit=(
-                lambda database_id, resources, callback, **_kwargs: callback(
-                    EditLeaseResult(
-                        True,
-                        handle=EditLeaseHandle(
-                            database_id=database_id,
-                            draft_id="test-draft",
-                            runtime_generation=0,
-                            operation_id="test-edit",
-                            owning_surface="test",
-                            resources=resources,
-                        ),
-                    )
-                )
-            ),
+            request_collaboration_edit=request_collaboration_edit,
             end_collaboration_edit=lambda _handle: None,
         )
         handler = ConditionActionHandler(

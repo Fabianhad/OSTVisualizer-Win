@@ -174,9 +174,26 @@ class FakeViewer:
     def update_viewers(self, page_uids):
         self.viewer_pages.append(list(page_uids))
 
-    def request_remote_plan_update(self, **request):
+    def request_remote_plan_update(
+        self,
+        *,
+        database_id,
+        runtime_generation,
+        bid_uid,
+        resource_uids_by_family,
+        barrier,
+        completion,
+    ):
+        request = {
+            "database_id": database_id,
+            "runtime_generation": runtime_generation,
+            "bid_uid": bid_uid,
+            "resource_uids_by_family": resource_uids_by_family,
+            "barrier": barrier,
+            "completion": completion,
+        }
         self.remote_requests.append(request)
-        request["completion"](True)
+        completion(True)
         return True
 
 
@@ -191,8 +208,29 @@ class FakeMeshReceiver:
         self.discarded_camera_states = []
         self.plan_texture_updates = 0
 
-    def apply_mesh_data(self, *args, **mesh_options):
-        self.mesh_calls.append((args, mesh_options))
+    def apply_mesh_data(
+        self,
+        vertices,
+        normals,
+        indices,
+        colors,
+        *,
+        scene_identity,
+        page_floor_elevations,
+        condition_uids,
+        takeoff_uids,
+    ):
+        self.mesh_calls.append(
+            (
+                (vertices, normals, indices, colors),
+                {
+                    "scene_identity": scene_identity,
+                    "page_floor_elevations": page_floor_elevations,
+                    "condition_uids": condition_uids,
+                    "takeoff_uids": takeoff_uids,
+                },
+            )
+        )
 
     def clear_scene(self):
         self.clear_calls += 1
@@ -278,8 +316,29 @@ class FakeConstructedMeshWindow:
     def close(self):
         self.visible = False
 
-    def apply_mesh_data(self, *args, **mesh_options):
-        self.mesh_calls.append((args, mesh_options))
+    def apply_mesh_data(
+        self,
+        vertices,
+        normals,
+        indices,
+        colors,
+        *,
+        scene_identity,
+        page_floor_elevations,
+        condition_uids,
+        takeoff_uids,
+    ):
+        self.mesh_calls.append(
+            (
+                (vertices, normals, indices, colors),
+                {
+                    "scene_identity": scene_identity,
+                    "page_floor_elevations": page_floor_elevations,
+                    "condition_uids": condition_uids,
+                    "takeoff_uids": takeoff_uids,
+                },
+            )
+        )
 
     def prepare_scene_refresh(self, bid_ref, page_uids):
         self.scene_refreshes.append((bid_ref, tuple(page_uids)))
@@ -589,6 +648,20 @@ def configure_mesh_state(
 
 def scene_identity(bid_ref, generation, page_uids=("page-1",)):
     return MeshSceneIdentity(bid_ref, tuple(page_uids), generation)
+
+
+def mesh_publication(mesh_args, identity, page_floor_elevations):
+    vertices, normals, indices, colors = mesh_args
+    return _MeshScenePublication(
+        vertices=vertices,
+        normals=normals,
+        indices=indices,
+        colors=colors,
+        scene_identity=identity,
+        page_floor_elevations=page_floor_elevations,
+        condition_uids=[],
+        takeoff_uids=[],
+    )
 
 
 def mesh_geometry(page_uid, floor_elevation, takeoff_uid="takeoff-1"):
@@ -2336,7 +2409,24 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 return BidRef(database_id, bid_uid)
 
         class RaisingViewer:
-            def request_remote_plan_update(self, **_request):
+            def request_remote_plan_update(
+                self,
+                *,
+                database_id,
+                runtime_generation,
+                bid_uid,
+                resource_uids_by_family,
+                barrier,
+                completion,
+            ):
+                del (
+                    database_id,
+                    runtime_generation,
+                    bid_uid,
+                    resource_uids_by_family,
+                    barrier,
+                    completion,
+                )
                 raise RuntimeError("snapshot failed")
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -2522,12 +2612,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._sidebar = FakeSidebar()
         coordinator._toolbar = FakeToolbar()
         coordinator.main_window = FakeMainWindow()
-        cached_scene = _MeshScenePublication(
+        cached_scene = mesh_publication(
             ("vertices", "normals", "indices", "colors"),
-            {
-                "scene_identity": scene_identity(BidRef("test.mdb", "bid-1"), 7),
-                "page_floor_elevations": {"page-1": 7.0},
-            },
+            scene_identity(BidRef("test.mdb", "bid-1"), 7),
+            {"page-1": 7.0},
         )
         embedded = FakeMeshReceiver()
         configure_mesh_state(
@@ -2556,12 +2644,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._plan_view_handler = None
         coordinator._mesh_window = None
         coordinator._mesh_window_action = None
-        last_mesh_scene = _MeshScenePublication(
-            ("stale",),
-            {
-                "scene_identity": scene_identity(BidRef("test.mdb", "bid-1"), 1),
-                "page_floor_elevations": {"page-1": 1.0},
-            },
+        last_mesh_scene = mesh_publication(
+            ("stale-vertices", "stale-normals", "stale-indices", "stale-colors"),
+            scene_identity(BidRef("test.mdb", "bid-1"), 1),
+            {"page-1": 1.0},
         )
         coordinator.main_window = FakeMainWindow()
         configure_mesh_state(coordinator, last_mesh_scene=last_mesh_scene)
@@ -2590,12 +2676,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         mesh_args = ("vertices", "normals", "indices", "colors")
         active_ref = BidRef("test.mdb", "bid-1")
         coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
-        last_mesh_scene = _MeshScenePublication(
+        last_mesh_scene = mesh_publication(
             mesh_args,
-            {
-                "scene_identity": scene_identity(active_ref, 1),
-                "page_floor_elevations": {"page-1": 1.0},
-            },
+            scene_identity(active_ref, 1),
+            {"page-1": 1.0},
         )
         coordinator.main_window = FakeMainWindow()
         configure_mesh_state(coordinator, last_mesh_scene=last_mesh_scene)
@@ -2622,12 +2706,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._mesh_window = None
         coordinator._mesh_window_action = None
         coordinator.main_window = FakeMainWindow()
-        cached_scene = _MeshScenePublication(
+        cached_scene = mesh_publication(
             ("old-vertices", "old-normals", "old-indices", "old-colors"),
-            {
-                "scene_identity": scene_identity(active_ref, 7),
-                "page_floor_elevations": {"page-1": 7.0},
-            },
+            scene_identity(active_ref, 7),
+            {"page-1": 7.0},
         )
         configure_mesh_state(
             coordinator,
@@ -2666,12 +2748,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.main_window = FakeMainWindow()
         configure_mesh_state(
             coordinator,
-            last_mesh_scene=_MeshScenePublication(
+            last_mesh_scene=mesh_publication(
                 ("vertices", "normals", "indices", "colors"),
-                {
-                    "scene_identity": scene_identity(active_ref, 7, ("other-page",)),
-                    "page_floor_elevations": {"other-page": 7.0},
-                },
+                scene_identity(active_ref, 7, ("other-page",)),
+                {"other-page": 7.0},
             ),
         )
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
@@ -2852,12 +2932,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._sidebar = FakeSidebar()
         coordinator.plan_view = None
         coordinator._sync_page_info_status = lambda: None
-        publication = _MeshScenePublication(
+        publication = mesh_publication(
             ("vertices", "normals", "indices", "colors"),
-            {
-                "scene_identity": scene_identity(active_ref, 7),
-                "page_floor_elevations": {"page-1": 7.0},
-            },
+            scene_identity(active_ref, 7),
+            {"page-1": 7.0},
         )
         coordinator._last_mesh_scene = publication
         coordinator._on_view_stack_changed(0)
@@ -2865,15 +2943,16 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             embedded.scene_refreshes,
             [(active_ref, ("page-1",))],
         )
-        self.assertEqual(embedded.mesh_calls, [(publication.args, publication.options)])
+        self.assertEqual(len(embedded.mesh_calls), 1)
+        self.assertEqual(
+            embedded.mesh_calls[0][1]["scene_identity"], publication.scene_identity
+        )
         embedded.scene_refreshes.clear()
         embedded.mesh_calls.clear()
-        coordinator._last_mesh_scene = _MeshScenePublication(
-            publication.args,
-            {
-                "scene_identity": scene_identity(BidRef("test.mdb", "stale-bid"), 8),
-                "page_floor_elevations": {"page-1": 8.0},
-            },
+        coordinator._last_mesh_scene = mesh_publication(
+            ("vertices", "normals", "indices", "colors"),
+            scene_identity(BidRef("test.mdb", "stale-bid"), 8),
+            {"page-1": 8.0},
         )
         coordinator._on_view_stack_changed(0)
         self.assertEqual(embedded.scene_refreshes, [])
@@ -2918,8 +2997,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(["condition-1"], mesh_options["condition_uids"])
         self.assertEqual(["takeoff-1"], mesh_options["takeoff_uids"])
         self.assertEqual({"page-1": 0.0}, mesh_options["page_floor_elevations"])
-        self.assertEqual(coordinator._last_mesh_scene.args, args)
-        self.assertEqual(coordinator._last_mesh_scene.options, mesh_options)
+        self.assertEqual(
+            coordinator._last_mesh_scene.scene_identity,
+            mesh_options["scene_identity"],
+        )
         self.assertEqual(mesh_window.mesh_calls, opengl_viewer.mesh_calls)
         self.assertEqual(1, coordinator._plan_view_signaler.requests)
 
@@ -2933,12 +3014,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         detached = FakeMeshReceiver()
         coordinator._plan_view_signaler = FakeMeshPlanSignaler()
         active_ref = BidRef("test.mdb", "bid-1")
-        current_scene = _MeshScenePublication(
+        current_scene = mesh_publication(
             ("new-vertices", "new-normals", "new-indices", "new-colors"),
-            {
-                "scene_identity": scene_identity(active_ref, 12),
-                "page_floor_elevations": {"page-1": 12.0},
-            },
+            scene_identity(active_ref, 12),
+            {"page-1": 12.0},
         )
         configure_mesh_state(
             coordinator,
@@ -2998,13 +3077,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             expected,
         )
         self.assertEqual(
-            coordinator._last_mesh_scene.options["page_floor_elevations"],
+            coordinator._last_mesh_scene.page_floor_elevations,
             expected,
         )
         with self.assertRaises(TypeError):
-            coordinator._last_mesh_scene.options["page_floor_elevations"][
-                "page-a"
-            ] = -100.0
+            coordinator._last_mesh_scene.page_floor_elevations["page-a"] = -100.0
 
     def test_native_scene_update_rejects_stale_bid_before_touching_views(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -3044,12 +3121,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             mesh_window=detached,
             visualization=visualization,
         )
-        coordinator._last_mesh_scene = _MeshScenePublication(
-            ("old",),
-            {
-                "scene_identity": scene_identity(BidRef("a.mdb", "old"), 1),
-                "page_floor_elevations": {"page-1": 1.0},
-            },
+        coordinator._last_mesh_scene = mesh_publication(
+            ("old-vertices", "old-normals", "old-indices", "old-colors"),
+            scene_identity(BidRef("a.mdb", "old"), 1),
+            {"page-1": 1.0},
         )
         target = BidRef("a.mdb", "new")
         coordinator._begin_mesh_views_for_bid_load(target)
@@ -3856,6 +3931,50 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 "Layer Update",
                 result,
             )
+
+    def test_bid_area_save_waits_for_recovery_before_completing_dialog(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        callbacks = []
+        completed = []
+        errors = []
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            queue_bid_areas_save=(
+                lambda _database_id, _bid_uid, _changes, callback: callbacks.append(
+                    callback
+                )
+            )
+        )
+        coordinator.present_queued_mutation_error = lambda *_args: errors.append(_args)
+        bid_ref = BidRef("sql-database", "8")
+        self.assertTrue(
+            coordinator._save_bid_areas_async(
+                bid_ref,
+                object(),
+                lambda success, uid_map: completed.append((success, uid_map)),
+            )
+        )
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            callbacks[0](
+                SimpleNamespace(outcome_status=status, authoritative_result=None)
+            )
+        self.assertEqual(completed, [])
+        self.assertEqual(errors, [])
+        callbacks[0](
+            SimpleNamespace(
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=SimpleNamespace(
+                    created_uid_maps=(("areas", (("new_0", "area-2"),)),)
+                ),
+            )
+        )
+        self.assertEqual(completed, [(True, {"new_0": "area-2"})])
+        self.assertEqual(errors, [])
 
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

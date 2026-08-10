@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
@@ -6,6 +7,7 @@ from ..services.bid_clipboard_service import BidClipboardService
 
 _BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
 _BACKOUT_DISABLED_TOOLTIP = "Select a visible area takeoff to create a backout."
+logger = logging.getLogger(__name__)
 
 
 class ToolbarStateCoordinator:
@@ -468,7 +470,10 @@ class ToolbarStateCoordinator:
 
     def cleanup(self) -> None:
         if self._access_listener_registered and self._access is not None:
-            self._access.unsubscribe_access_state_changed(self.refresh)
+            try:
+                self._access.unsubscribe_access_state_changed(self.refresh)
+            except Exception:
+                logger.exception("Failed to unsubscribe toolbar access-state listener")
         self._access_listener_registered = False
         self._copy_action = None
         self._cut_action = None

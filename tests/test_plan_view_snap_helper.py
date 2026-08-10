@@ -1,7 +1,4 @@
-import importlib
 import math
-import sys
-import types
 import unittest
 from types import SimpleNamespace
 from PySide6.QtCore import Qt
@@ -10,30 +7,7 @@ from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsPathItem
 from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.config import Config
 
-SNAP_MODULE_NAME = (
-    "ost_visualizer.presentation.components.plan_view.components.snap_index"
-)
 SCREEN_PX_PER_OST = 8.0
-GEOMETRY_MODULE_NAME = (
-    "ost_visualizer.presentation.components.plan_view.components.geometry_utils"
-)
-HANDLE_STYLE_MODULE_NAME = (
-    "ost_visualizer.presentation.components.plan_view.components.handle_style"
-)
-OST_PDF_MODULE_NAME = "ost_visualizer.presentation.visualization.pdf.ost_pdf"
-PLACEMENT_MODULE_NAME = (
-    "ost_visualizer.presentation.components.plan_view.components.placement_mode"
-)
-_ORIGINAL_MODULES = {
-    name: sys.modules.get(name)
-    for name in (
-        SNAP_MODULE_NAME,
-        GEOMETRY_MODULE_NAME,
-        HANDLE_STYLE_MODULE_NAME,
-        OST_PDF_MODULE_NAME,
-        PLACEMENT_MODULE_NAME,
-    )
-}
 
 
 class FakeSnapIndex:
@@ -96,57 +70,18 @@ class FakePDFRenderer:
         pass
 
 
-def _install_fake_native_modules():
-    snap_module = types.ModuleType(SNAP_MODULE_NAME)
-    snap_module.NONE = 0
-    snap_module.GRID = 1
-    snap_module.ENDPOINT = 2
-    snap_module.MIDPOINT = 3
-    snap_module.PERPENDICULAR = 4
-    snap_module.SnapIndex = FakeSnapIndex
-    sys.modules[SNAP_MODULE_NAME] = snap_module
-    geometry_module = types.ModuleType(GEOMETRY_MODULE_NAME)
-    geometry_module.HandleInfo = type("HandleInfo", (), {})
-    geometry_module.segments_intersect = lambda *_args: False
-    geometry_module.polygon_is_valid = lambda _points: True
-    geometry_module.polyline_self_intersects = lambda _points: False
-    geometry_module.point_to_segment_distance = lambda *_args: 0.0
-    geometry_module.signed_area = lambda _points: 1.0
-    geometry_module.resize_cursor_for_edge = lambda *_args: None
-    geometry_module.cursor_for_direction = lambda *_args: None
-    geometry_module.polygon_centroid = lambda _pos, _n: (0.0, 0.0)
-    geometry_module.rotate_position_coords = lambda pos, *_args, **_call_options: list(
-        pos
-    )
-    geometry_module.rotate_points_around = lambda pos, *_args: list(pos)
-    sys.modules[GEOMETRY_MODULE_NAME] = geometry_module
-    handle_style_module = types.ModuleType(HANDLE_STYLE_MODULE_NAME)
-    handle_style_module.STANDARD_HANDLE_FILL_HEX = "#ffffff"
-    handle_style_module.STANDARD_HANDLE_FILL_RGB = (255, 255, 255)
-    handle_style_module.STANDARD_HANDLE_OUTLINE_RGB = (0, 0, 0)
-
-    def handle_colors_for_background(_background):
-        return QColor(255, 255, 255, 224), QColor(0, 0, 0)
-
-    handle_style_module.handle_colors_for_background = handle_colors_for_background
-    handle_style_module.apply_takeoff_handle_style = (
-        lambda *_args, **_call_options: None
-    )
-    sys.modules[HANDLE_STYLE_MODULE_NAME] = handle_style_module
-    pdf_module = types.ModuleType(OST_PDF_MODULE_NAME)
-    pdf_module.PDFRenderer = FakePDFRenderer
-    sys.modules[OST_PDF_MODULE_NAME] = pdf_module
-    pdf_package = sys.modules.get("ost_visualizer.presentation.visualization.pdf")
-    if pdf_package is not None:
-        pdf_package.ost_pdf = pdf_module
-
-
-_install_fake_native_modules()
-sys.modules.pop(PLACEMENT_MODULE_NAME, None)
-placement_mode = importlib.import_module(PLACEMENT_MODULE_NAME)
+from ost_visualizer.presentation.components.plan_view.components import placement_mode
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
+
+_ORIGINAL_SNAP_INDEX = placement_mode.SnapIndex
+_ORIGINAL_PDF_RENDERER = placement_mode.ost_pdf.PDFRenderer
+
+
+def setUpModule():
+    placement_mode.SnapIndex = FakeSnapIndex
+    placement_mode.ost_pdf.PDFRenderer = FakePDFRenderer
 
 
 class FakeCoordinateSystem:
@@ -1130,11 +1065,8 @@ class SnapSegmentCacheTests(unittest.TestCase):
 
 
 def tearDownModule():
-    for name, module in _ORIGINAL_MODULES.items():
-        if module is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = module
+    placement_mode.SnapIndex = _ORIGINAL_SNAP_INDEX
+    placement_mode.ost_pdf.PDFRenderer = _ORIGINAL_PDF_RENDERER
 
 
 if __name__ == "__main__":

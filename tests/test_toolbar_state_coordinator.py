@@ -301,6 +301,27 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.cleanup()
         self.assertEqual(access.listeners, [])
 
+    def test_cleanup_clears_references_when_listener_unsubscribe_fails(self):
+        _app()
+
+        class FailingAccess(_Access):
+            def unsubscribe_access_state_changed(self, callback):
+                raise RuntimeError("listener registry unavailable")
+
+        access = FailingAccess()
+        coordinator = ToolbarStateCoordinator(_UiState(), access, _ProjectData())
+        action = QtGui.QAction()
+        coordinator.set_copy_action(action)
+        with self.assertLogs(
+            "ost_visualizer.presentation.coordinators.toolbar_state_coordinator",
+            level="ERROR",
+        ):
+            coordinator.cleanup()
+        self.assertFalse(coordinator._access_listener_registered)
+        self.assertIsNone(coordinator._access)
+        self.assertIsNone(coordinator._copy_action)
+        coordinator.cleanup()
+
     def test_select_projection_replaces_checked_takeoff_action_exclusively(self):
         _app()
         coordinator = ToolbarStateCoordinator(_UiState(), _Access(), _ProjectData())

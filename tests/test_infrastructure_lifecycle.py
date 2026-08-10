@@ -370,9 +370,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
-        database_creator.pyodbc.connect = (
-            lambda *_args, **_call_options: fake_connection
-        )
+
+        def connect(_connection_string, autocommit=False):
+            self.assertFalse(autocommit)
+            return fake_connection
+
+        database_creator.pyodbc.connect = connect
         try:
             creator = database_creator.DatabaseCreator()
             with self.assertRaises(RuntimeError):
@@ -406,9 +409,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
-        database_creator.pyodbc.connect = (
-            lambda *_args, **_call_options: fake_connection
-        )
+
+        def connect(_connection_string, autocommit=False):
+            self.assertFalse(autocommit)
+            return fake_connection
+
+        database_creator.pyodbc.connect = connect
         try:
             creator = database_creator.DatabaseCreator(
                 logging.getLogger("test.database_creator.cleanup")
@@ -446,9 +452,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
-        database_creator.pyodbc.connect = (
-            lambda *_args, **_call_options: fake_connection
-        )
+
+        def connect(_connection_string, autocommit=False):
+            self.assertFalse(autocommit)
+            return fake_connection
+
+        database_creator.pyodbc.connect = connect
         try:
             creator = database_creator.DatabaseCreator(
                 logging.getLogger("test.database_creator.success_cleanup")
@@ -573,9 +582,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
-        database_creator.pyodbc.connect = (
-            lambda *_args, **_call_options: fake_connection
-        )
+
+        def connect(_connection_string, autocommit=False):
+            self.assertFalse(autocommit)
+            return fake_connection
+
+        database_creator.pyodbc.connect = connect
         try:
             creator = database_creator.DatabaseCreator()
             creator._insert_seed_data("test.mdb", "Created")

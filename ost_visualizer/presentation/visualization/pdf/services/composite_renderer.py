@@ -80,8 +80,8 @@ class CompositeRenderer:
         self._store_composite(cache_key, composited)
         return composited
 
-    @staticmethod
     def _build_cache_key(
+        self,
         page: Page,
         bid_ref: Optional[BidRef],
         render_scale: float,
@@ -89,6 +89,15 @@ class CompositeRenderer:
     ) -> str:
         bid_file_path = bid_ref.file_path if bid_ref else ""
         bid_uid = bid_ref.bid_uid if bid_ref else ""
+        signature_fn = getattr(
+            getattr(self, "_page_cache", None), "file_signature", None
+        )
+        base_signature = signature_fn(page.image_path) if signature_fn else None
+        overlay_signature = (
+            signature_fn(page.overlay_image_path)
+            if signature_fn and page.overlay_image_path
+            else None
+        )
         return "|".join(
             [
                 bid_file_path,
@@ -96,7 +105,9 @@ class CompositeRenderer:
                 page.uid,
                 str(page.page_index),
                 page.image_path or "",
+                repr(base_signature),
                 page.overlay_image_path or "",
+                repr(overlay_signature),
                 str(_quantize_render_scale(render_scale)),
                 str(raster_rotation),
                 str(page.image_show_mode),

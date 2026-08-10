@@ -1590,6 +1590,9 @@ class DeferredChaosWriteService:
 
 
 class SilentChaosLogger:
+    def debug(self, *_args, **_kwargs):
+        pass
+
     def warning(self, *_args, **_kwargs):
         pass
 

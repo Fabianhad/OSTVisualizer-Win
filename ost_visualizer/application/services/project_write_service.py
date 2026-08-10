@@ -1228,6 +1228,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         consistency_resources: tuple[ResourceRef, ...] = (),
     ) -> List[str]:
+        if not takeoff_specs:
+            return []
         mutation = self._insert_takeoffs_mutation(
             db_path,
             bid_uid,
@@ -1268,6 +1270,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def insert(recorder):
             new_uids = self._insert_takeoffs.execute(db_path, bid_uid, takeoff_specs)
+            normalized_uids = [str(uid) for uid in (new_uids or ()) if uid is not None]
+            if (
+                len(normalized_uids) != len(takeoff_specs)
+                or any(not uid for uid in normalized_uids)
+                or len(set(normalized_uids)) != len(normalized_uids)
+            ):
+                raise RuntimeError(
+                    "The takeoff insertion returned an incomplete authoritative "
+                    "identity set."
+                )
             for new_uid in new_uids:
                 recorder.record(
                     ResourceRef("takeoff", str(new_uid), int(bid_uid)),
@@ -1326,6 +1338,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         operation_id: str,
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        if not takeoff_specs:
+            raise ValueError("A queued takeoff placement requires at least one takeoff")
         bid_value = int(bid_uid)
         collection = ResourceRef("takeoffs_collection", bid_uid, bid_value)
         dependencies = tuple(

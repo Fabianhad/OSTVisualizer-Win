@@ -153,6 +153,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         self.update()
 
     def _ensure_renderer(self) -> bool:
+        if self._destroyed:
+            return False
         if self._renderer is not None:
             return True
         if not self.winId():

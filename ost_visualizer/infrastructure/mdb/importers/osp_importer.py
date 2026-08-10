@@ -301,6 +301,7 @@ class OspImporter:
                 dest_path = dest_dir / _image_destination_relative_path(
                     image_ref.member_name
                 )
+                dest_path = _non_conflicting_image_destination(source_path, dest_path)
                 destination_key = str(dest_path).casefold()
                 conflicting_member = members_by_destination.get(destination_key)
                 if conflicting_member is not None and conflicting_member != member_key:
@@ -374,6 +375,42 @@ def _image_destination_relative_path(member_name: str) -> Path:
         return Path(filename)
     digest = hashlib.sha1(member_name.casefold().encode("utf-8")).hexdigest()[:16]
     return Path("Images") / digest / filename
+
+
+def _non_conflicting_image_destination(source_path: Path, dest_path: Path) -> Path:
+    if not dest_path.exists() or _files_have_same_content(source_path, dest_path):
+        return dest_path
+    digest = _file_content_digest(source_path)
+    for digest_length in (16, 32, len(digest)):
+        candidate = dest_path.with_name(
+            f"{dest_path.stem}-{digest[:digest_length]}{dest_path.suffix}"
+        )
+        if not candidate.exists() or _files_have_same_content(source_path, candidate):
+            return candidate
+    raise _OspFormatError(
+        f"image staging content-address collision for {dest_path.name!r}"
+    )
+
+
+def _files_have_same_content(first: Path, second: Path) -> bool:
+    if first.stat().st_size != second.stat().st_size:
+        return False
+    with first.open("rb") as first_stream, second.open("rb") as second_stream:
+        while True:
+            first_chunk = first_stream.read(1024 * 1024)
+            second_chunk = second_stream.read(1024 * 1024)
+            if first_chunk != second_chunk:
+                return False
+            if not first_chunk:
+                return True
+
+
+def _file_content_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _cab_member_path(root: Path, member_name: str) -> Path:

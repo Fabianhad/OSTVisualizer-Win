@@ -41,6 +41,13 @@ class CoverSheetHandler:
     def set_ui_event_coordinator(self, coordinator) -> None:
         self._ui_event_coordinator = coordinator
 
+    @staticmethod
+    def _mutation_result_remains_pending(result: QueuedMutationResult) -> bool:
+        return result.outcome_status in {
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        }
+
     def open_cover_sheet(self) -> None:
         if not self._ui_access_manager.is_allowed(Feature.COVER_SHEET):
             return
@@ -233,6 +240,8 @@ class CoverSheetHandler:
         self, file_path, title, queue_fn, changes, completed, result_family
     ) -> bool:
         def finish(result: QueuedMutationResult) -> None:
+            if self._mutation_result_remains_pending(result):
+                return
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 authoritative = result.authoritative_result
                 maps = dict(authoritative.created_uid_maps) if authoritative else {}
@@ -262,6 +271,8 @@ class CoverSheetHandler:
 
     def create_bid_async(self, file_path, project_uid, updates, completed) -> bool:
         def finish(result: QueuedMutationResult) -> None:
+            if self._mutation_result_remains_pending(result):
+                return
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 completed(True)
                 return
@@ -279,6 +290,8 @@ class CoverSheetHandler:
 
     def _save_bid_areas_async(self, bid_ref, changes, completed) -> bool:
         def finish(result: QueuedMutationResult) -> None:
+            if self._mutation_result_remains_pending(result):
+                return
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 authoritative = result.authoritative_result
                 maps = dict(authoritative.created_uid_maps) if authoritative else {}
@@ -298,6 +311,8 @@ class CoverSheetHandler:
 
     def _save_cover_sheet_async(self, bid_ref, updates, completed) -> bool:
         def finish(result: QueuedMutationResult) -> None:
+            if self._mutation_result_remains_pending(result):
+                return
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 completed(True)
                 return
@@ -322,6 +337,8 @@ class CoverSheetHandler:
             return True
 
         def finish(result: QueuedMutationResult) -> None:
+            if self._mutation_result_remains_pending(result):
+                return
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 completed(True)
                 return

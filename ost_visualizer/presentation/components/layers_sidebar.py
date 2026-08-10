@@ -23,7 +23,6 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._on_toggle: Optional[Callable[[str, bool], None]] = None
         self._interactive: bool = True
         self._selected_uid: Optional[str] = None
-        self._pending_edit_uid: Optional[str] = None
         self._pending_select_uid: Optional[str] = None
         self._pending_new_item: Optional[QtWidgets.QTreeWidgetItem] = None
         self._pending_new_prev_uid: Optional[str] = None
@@ -171,8 +170,6 @@ class BidLayersSidebar(QtWidgets.QWidget):
             self._pending_select_uid or pending_new_prev_uid or self._selected_uid
         )
         self._pending_select_uid = None
-        pending_edit = self._pending_edit_uid
-        self._pending_edit_uid = None
         v_scroll = self._table.verticalScrollBar()
         v_pos = v_scroll.value() if v_scroll else 0
         self._layers = layers
@@ -183,7 +180,6 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._table.clear()
         self._table.setHeaderLabels(["Show", "Layer"])
         restore_row = -1
-        edit_row = -1
         for row, layer in enumerate(layers):
             item = QtWidgets.QTreeWidgetItem(["", layer.name])
             flags = (
@@ -207,9 +203,6 @@ class BidLayersSidebar(QtWidgets.QWidget):
             self._checkboxes.append(checkbox)
             if layer.uid == prev_selected:
                 restore_row = row
-            if pending_edit and layer.uid == pending_edit:
-                edit_row = row
-                restore_row = row
         self._table.blockSignals(False)
         self._table.setUpdatesEnabled(True)
         self._block_item_changed = False
@@ -222,8 +215,6 @@ class BidLayersSidebar(QtWidgets.QWidget):
             v_scroll.setValue(v_pos)
         self._sync_top_buttons()
         self._refresh_selection_buttons()
-        if edit_row >= 0:
-            QtCore.QTimer.singleShot(0, lambda r=edit_row: self._start_edit(r))
 
     def _restore_row_selection(self, row: int) -> None:
         item = self._table.topLevelItem(row)
@@ -439,7 +430,6 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._selected_uid = None
         self._used_uids = set()
         self._disconnect_pending_new_editor_signal()
-        self._pending_edit_uid = None
         self._pending_select_uid = None
         self._pending_new_item = None
         self._pending_new_prev_uid = None

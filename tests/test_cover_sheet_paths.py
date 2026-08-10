@@ -19,6 +19,7 @@ from ost_visualizer.application.services.project_write_service import (
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     MutationOutcomeStatus,
+    QueuedMutationResult,
 )
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from ost_visualizer.domain.entities.cover_sheet import (
@@ -108,9 +109,9 @@ class _FakeConnection:
         self.enter_count += 1
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, exc_type, exc_value, traceback):
         self.exit_count += 1
-        self.exit_args.append(args)
+        self.exit_args.append((exc_type, exc_value, traceback))
         return False
 
     def cursor(self):
@@ -409,6 +410,54 @@ class _OverlayScaleOps(PageOperationsMixin):
 class _FakeIconProvider:
     def set_window_icon(self, _window):
         return None
+
+
+class _FakeCoverSheetDialog:
+    instance = None
+
+    def __init__(
+        self,
+        icon_provider,
+        parent,
+        cover_sheet_data,
+        workspace_state_model,
+        used_employee_uids=None,
+        has_license=True,
+        context=None,
+        save_job_statuses_fn=None,
+        save_job_statuses_async_fn=None,
+        reload_job_statuses_fn=None,
+        save_employees_fn=None,
+        save_employees_async_fn=None,
+        save_pay_classes_fn=None,
+        save_pay_classes_async_fn=None,
+        reload_employees_fn=None,
+        save_bid_areas_fn=None,
+        save_bid_areas_async_fn=None,
+        reload_bid_areas_fn=None,
+        refresh_fn=None,
+        save_cover_sheet_async_fn=None,
+        get_used_area_uids_fn=None,
+        pdf_page_sizes_fn=None,
+        bid_ref=None,
+        create_mode=False,
+        pages_with_takeoffs=None,
+        pages_requiring_delete_confirmation=None,
+        pdf_metadata_pool=None,
+    ):
+        self.deleted = False
+        self.save_async = save_cover_sheet_async_fn
+        self.async_save_functions = {
+            "save_job_statuses_async_fn": save_job_statuses_async_fn,
+            "save_employees_async_fn": save_employees_async_fn,
+            "save_pay_classes_async_fn": save_pay_classes_async_fn,
+            "save_bid_areas_async_fn": save_bid_areas_async_fn,
+            "save_cover_sheet_async_fn": save_cover_sheet_async_fn,
+        }
+        type(self).instance = self
+
+    def deleteLater(self):
+        self.deleted = True
 
 
 class _FakeMouseEvent:
@@ -2707,8 +2756,33 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         refresh_calls = []
 
         class CapturingAreasDialog:
-            def __init__(self, *_args, **kwargs):
-                captured.update(kwargs)
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                on_saved_fn=None,
+                has_license=True,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
+                captured.update(
+                    icon_provider=icon_provider,
+                    workspace_state_model=workspace_state_model,
+                    parent=parent,
+                    bid_areas=bid_areas,
+                    save_fn=save_fn,
+                    used_uids=used_uids,
+                    has_license=has_license,
+                    bid_ref=bid_ref,
+                    save_async_fn=save_async_fn,
+                )
+                if on_saved_fn is not None:
+                    captured["on_saved_fn"] = on_saved_fn
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Rejected
@@ -2750,8 +2824,32 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         refresh_calls = []
 
         class SavedAreasDialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                on_saved_fn=None,
+                has_license=True,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
+                del (
+                    icon_provider,
+                    workspace_state_model,
+                    parent,
+                    bid_areas,
+                    save_fn,
+                    used_uids,
+                    on_saved_fn,
+                    has_license,
+                    bid_ref,
+                    save_async_fn,
+                )
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Rejected
@@ -2784,6 +2882,41 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             finally:
                 module.BidAreasDialog = old_dialog
             self.assertEqual(refresh_calls, [])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_bid_area_reload_failure_does_not_open_empty_editor(self):
+        warnings = []
+
+        def fail_reload():
+            raise RuntimeError("database unavailable")
+
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            reload_bid_areas_fn=fail_reload,
+            save_bid_areas_fn=lambda _changes: {},
+        )
+        try:
+            from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+            with mock.patch.object(
+                module, "BidAreasDialog"
+            ) as areas_dialog, mock.patch.object(
+                module,
+                "show_warning",
+                side_effect=lambda _parent, title, message: warnings.append(
+                    (title, message)
+                ),
+            ), self.assertLogs(
+                module.logger, level="ERROR"
+            ) as logs:
+                dialog._open_bid_areas_dialog()
+            areas_dialog.assert_not_called()
+            self.assertEqual(warnings[0][0], "Bid Areas Unavailable")
+            self.assertIn("Could not reload bid areas", logs.output[0])
         finally:
             dialog.close()
             dialog.deleteLater()
@@ -2907,6 +3040,64 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             finally:
                 dialog.reject()
                 dialog.deleteLater()
+
+    def test_cover_sheet_async_save_waits_for_recovered_terminal_result(self):
+        queued = {}
+        completions = []
+        errors = []
+
+        class WriteService:
+            @staticmethod
+            def queue_cover_sheet_save(database_id, bid_uid, updates, callback):
+                queued.update(
+                    database_id=database_id,
+                    bid_uid=bid_uid,
+                    updates=updates,
+                    callback=callback,
+                )
+                return 1
+
+        handler = CoverSheetHandler.__new__(CoverSheetHandler)
+        handler.window = None
+        handler._write_service = WriteService()
+        handler._ui_event_coordinator = SimpleNamespace(
+            present_queued_mutation_error=lambda database_id, title, result: (
+                errors.append((database_id, title, result))
+            )
+        )
+        self.assertTrue(
+            handler._save_cover_sheet_async(
+                BidRef("database", "7"),
+                {"notes": "updated"},
+                completions.append,
+            )
+        )
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            queued["callback"](
+                QueuedMutationResult(
+                    database_id="database",
+                    runtime_generation=1,
+                    operation_id="00000000-0000-0000-0000-000000000001",
+                    outcome_status=status,
+                    commit_attempted=True,
+                )
+            )
+        self.assertEqual(completions, [])
+        self.assertEqual(errors, [])
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000001",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(completions, [True])
+        self.assertEqual(errors, [])
 
     def test_cover_sheet_bulk_delete_closes_without_modal_or_input_residue(self):
         data = _cover_sheet_data()
@@ -3043,19 +3234,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             def get_pdf_page_sizes(self, _path):
                 return []
 
-        class FakeDialog:
-            instance = None
-
-            def __init__(self, *_args, **kwargs):
-                self.deleted = False
-                self.kwargs = kwargs
-                FakeDialog.instance = self
-
+        class FakeDialog(_FakeCoverSheetDialog):
             def get_updates(self):
                 return {"deleted_page_uids": [str(index) for index in range(1, 226)]}
-
-            def deleteLater(self):
-                self.deleted = True
 
         event_bus = EventBus()
         write_service = ProjectWriteService.__new__(ProjectWriteService)
@@ -3071,7 +3252,11 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             execute=lambda request, operation: DatabaseMutationResult(
                 operation_id=request.operation_id,
                 outcome_status=MutationOutcomeStatus.COMMITTED,
-                value=operation(SimpleNamespace(record=lambda *_args, **_kwargs: None)),
+                value=operation(
+                    SimpleNamespace(
+                        record=lambda resource, change_operation, *, changed_fields=(), payload="": None
+                    )
+                ),
             )
         )
         write_service._session_registry = SimpleNamespace(
@@ -3085,7 +3270,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             apply_result=lambda _database_id, _versions: None,
         )
         write_service._database_capability_service = SimpleNamespace(
-            is_editable=lambda *_args: True
+            is_editable=lambda _locator, resource=None: True
         )
         handler = CoverSheetHandler(
             window=object(),
@@ -3117,11 +3302,12 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertEqual(len(publish_calls), 1)
         self.assertIs(publish_calls[0][1], AppEvents.DATABASE_REFRESHED)
         self.assertEqual(publish_calls[0][2], {"file_path": "bid.mdb"})
-        self.assertIsNone(FakeDialog.instance.kwargs["save_job_statuses_async_fn"])
-        self.assertIsNone(FakeDialog.instance.kwargs["save_employees_async_fn"])
-        self.assertIsNone(FakeDialog.instance.kwargs["save_pay_classes_async_fn"])
-        self.assertIsNone(FakeDialog.instance.kwargs["save_bid_areas_async_fn"])
-        self.assertIsNone(FakeDialog.instance.kwargs["save_cover_sheet_async_fn"])
+        self.assertTrue(
+            all(
+                value is None
+                for value in FakeDialog.instance.async_save_functions.values()
+            )
+        )
         self.assertTrue(FakeDialog.instance.deleted)
 
     def test_cover_sheet_path_cell_double_click_edits_full_path(self):
@@ -3306,12 +3492,8 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 queued.append((database_id, bid_uid, updates, callback))
                 return 1
 
-        class FakeDialog:
-            def __init__(self, *_args, **kwargs):
-                self.save_async = kwargs["save_cover_sheet_async_fn"]
-
-            def deleteLater(self):
-                pass
+        class FakeDialog(_FakeCoverSheetDialog):
+            pass
 
         handler = CoverSheetHandler(
             window=object(),

@@ -47,13 +47,79 @@ class FakeRenderingService:
         self.callbacks[request_id] = render_options["callback"]
         return request_id
 
-    def render_page_async(self, **render_options):
+    def render_page_async(
+        self,
+        file_path,
+        page_index,
+        scale,
+        rotation,
+        callback,
+        priority=0,
+        invert=False,
+        bitonal=False,
+        tint_rgb=None,
+        apply_invert_effect=True,
+        apply_bitonal_effect=True,
+    ):
+        render_options = {
+            "file_path": file_path,
+            "page_index": page_index,
+            "scale": scale,
+            "rotation": rotation,
+            "callback": callback,
+            "priority": priority,
+            "invert": invert,
+            "bitonal": bitonal,
+            "tint_rgb": tint_rgb,
+            "apply_invert_effect": apply_invert_effect,
+            "apply_bitonal_effect": apply_bitonal_effect,
+        }
         return self._record("page", render_options)
 
-    def render_overlay_async(self, **render_options):
+    def render_overlay_async(
+        self,
+        page,
+        bid_ref,
+        view_scale,
+        show_mode,
+        rotation,
+        callback,
+        priority=0,
+        render_scale=None,
+        apply_invert_effect=True,
+        apply_bitonal_effect=True,
+    ):
+        render_options = {
+            "page": page,
+            "bid_ref": bid_ref,
+            "view_scale": view_scale,
+            "show_mode": show_mode,
+            "rotation": rotation,
+            "callback": callback,
+            "priority": priority,
+            "render_scale": render_scale,
+            "apply_invert_effect": apply_invert_effect,
+            "apply_bitonal_effect": apply_bitonal_effect,
+        }
         return self._record("overlay", render_options)
 
-    def render_composite_async(self, **render_options):
+    def render_composite_async(
+        self,
+        page,
+        bid_ref,
+        render_scale,
+        rotation,
+        callback,
+        priority=0,
+    ):
+        render_options = {
+            "page": page,
+            "bid_ref": bid_ref,
+            "render_scale": render_scale,
+            "rotation": rotation,
+            "callback": callback,
+            "priority": priority,
+        }
         return self._record("composite", render_options)
 
     def cancel_request(self, request_id):
@@ -242,12 +308,35 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
 
     def test_synchronous_prefetch_completion_does_not_leave_orphaned_request(self):
         class SynchronousRenderingService(FakeRenderingService):
-            def render_page_async(self, **render_options):
+            def render_page_async(
+                self,
+                file_path,
+                page_index,
+                scale,
+                rotation,
+                callback,
+                priority=0,
+                invert=False,
+                bitonal=False,
+                tint_rgb=None,
+                apply_invert_effect=True,
+                apply_bitonal_effect=True,
+            ):
+                del (
+                    file_path,
+                    page_index,
+                    scale,
+                    rotation,
+                    priority,
+                    invert,
+                    bitonal,
+                    tint_rgb,
+                    apply_invert_effect,
+                    apply_bitonal_effect,
+                )
                 self._counter += 1
                 request_id = f"page-{self._counter}"
-                render_options["callback"](
-                    RenderResult(request_id, True, object(), None)
-                )
+                callback(RenderResult(request_id, True, object(), None))
                 return request_id
 
         rendering = SynchronousRenderingService()
@@ -332,14 +421,39 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         cache._get_renderer = lambda: renderer
 
         class CacheWarmingRenderingService(FakeRenderingService):
-            def render_page_async(self, **render_options):
+            def render_page_async(
+                self,
+                file_path,
+                page_index,
+                scale,
+                rotation,
+                callback,
+                priority=0,
+                invert=False,
+                bitonal=False,
+                tint_rgb=None,
+                apply_invert_effect=True,
+                apply_bitonal_effect=True,
+            ):
                 cache.get_page(
-                    render_options["file_path"],
-                    render_options["page_index"],
-                    render_options["scale"],
-                    render_options["rotation"],
+                    file_path,
+                    page_index,
+                    scale,
+                    rotation,
                 )
-                return super().render_page_async(**render_options)
+                return super().render_page_async(
+                    file_path,
+                    page_index,
+                    scale,
+                    rotation,
+                    callback,
+                    priority,
+                    invert,
+                    bitonal,
+                    tint_rgb,
+                    apply_invert_effect,
+                    apply_bitonal_effect,
+                )
 
         rendering = CacheWarmingRenderingService()
         coordinator = PageRenderPrefetchCoordinator(
@@ -524,17 +638,65 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
         class FakePlanView:
             current_page_uid = "p1"
 
-            def refresh_current_page_overlays(self, **_call_options):
+            def refresh_current_page_overlays(
+                self,
+                page,
+                takeoffs,
+                conditions,
+                color_map,
+                bid_ref=None,
+                annotations=None,
+                page_area_selections=None,
+                hidden_layer_uids=None,
+                changed_takeoff_uids=None,
+                changed_annotation_uids=None,
+                changed_annotation_types=None,
+            ):
+                del (
+                    page,
+                    takeoffs,
+                    conditions,
+                    color_map,
+                    bid_ref,
+                    annotations,
+                    page_area_selections,
+                    hidden_layer_uids,
+                    changed_takeoff_uids,
+                    changed_annotation_uids,
+                    changed_annotation_types,
+                )
                 calls.append("refresh")
                 return False
 
-            def load_page(self, **_call_options):
+            def load_page(
+                self,
+                page,
+                takeoffs,
+                conditions,
+                color_map,
+                bid_ref=None,
+                annotations=None,
+                page_area_selections=None,
+                hidden_layer_uids=None,
+            ):
+                del (
+                    page,
+                    takeoffs,
+                    conditions,
+                    color_map,
+                    bid_ref,
+                    annotations,
+                    page_area_selections,
+                    hidden_layer_uids,
+                )
                 calls.append("load")
 
-            def prefetch_nearby_pages(self, *_args):
+            def prefetch_nearby_pages(self, current_page, ordered_pages, bid_ref=None):
+                del current_page, ordered_pages, bid_ref
                 calls.append("prefetch")
 
-            def set_snap_settings(self, *_args):
+            def set_snap_settings(self, takeoff_increments, measure_base):
+                del takeoff_increments, measure_base
                 calls.append("snap")
 
         class FakeProjectData:
@@ -580,7 +742,21 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
                 return BidRef("bid.mdb", "bid")
 
         class FakeColorService:
-            def get_color_mapping(self, *_args):
+            def get_color_mapping(
+                self,
+                bid_conditions,
+                bid_takeoffs,
+                display_mode="solid",
+                grayscale_enabled=True,
+                extra_condition_uids=None,
+            ):
+                del (
+                    bid_conditions,
+                    bid_takeoffs,
+                    display_mode,
+                    grayscale_enabled,
+                    extra_condition_uids,
+                )
                 return {}, {}
 
         coordinator = ViewerSyncCoordinator(

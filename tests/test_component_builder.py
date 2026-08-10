@@ -263,7 +263,7 @@ class ComponentBuilderTests(unittest.TestCase):
         source = PageSettingsBar(
             icon_provider=None,
             event_bus=None,
-            refresh_areas_fn=lambda *_args: None,
+            refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=_AllowPageSettingsAccess(),
         )
         bid_ref = BidRef("example.mdb", "bid-1")
@@ -279,9 +279,15 @@ class ComponentBuilderTests(unittest.TestCase):
         scale_requests = []
         area_requests = []
         source.scale_change_requested.connect(
-            lambda *_args: scale_requests.append(_args)
+            lambda file_path, page_uid, sf1, sf2: scale_requests.append(
+                (file_path, page_uid, sf1, sf2)
+            )
         )
-        source.area_change_requested.connect(lambda *_args: area_requests.append(_args))
+        source.area_change_requested.connect(
+            lambda file_path, page_uid, area_uid: area_requests.append(
+                (file_path, page_uid, area_uid)
+            )
+        )
         overflow = PageSettingsOverflowWidget(source)
         scale_index = next(
             index
@@ -323,7 +329,7 @@ class ComponentBuilderTests(unittest.TestCase):
         source = PageSettingsBar(
             icon_provider=None,
             event_bus=None,
-            refresh_areas_fn=lambda *_args: None,
+            refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=_AllowPageSettingsAccess(),
         )
         action = add_overflow_widget(

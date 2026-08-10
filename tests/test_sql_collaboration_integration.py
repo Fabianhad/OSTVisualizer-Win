@@ -1539,16 +1539,24 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     "EXEC sys.sp_executesql @statement",
                     password,
                 )
-        with database.connections.connection(
-            SqlConnectionRequest(
-                database.location,
-                password=configuration.password,
-            ),
-            autocommit=True,
-        ) as lease:
-            with lease.cursor() as cursor:
-                cursor.execute(f"CREATE USER [{login}] FOR LOGIN [{login}]")
-                apply_sql_client_permissions(cursor, login)
+        try:
+            with database.connections.connection(
+                SqlConnectionRequest(
+                    database.location,
+                    password=configuration.password,
+                ),
+                autocommit=True,
+            ) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(f"CREATE USER [{login}] FOR LOGIN [{login}]")
+                    apply_sql_client_permissions(cursor, login)
+        except BaseException:
+            try:
+                SqlCollaborationIntegrationTests._drop_test_login(
+                    admin, windows_master, login
+                )
+            finally:
+                raise
         client_location = replace(
             database.location,
             authentication_mode=SqlAuthenticationMode.SQL_SERVER,

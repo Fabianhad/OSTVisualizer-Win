@@ -54,6 +54,7 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._new_counter: int = 0
         self._selected_uid: Optional[str] = selected_uid or None
         self._used_uids: Set[str] = used_uids or set()
+        self._interactive_requested: bool = True
         self._interactive: bool = True
         self._active_detail_dialog = None
         self._operation_pending = False
@@ -184,6 +185,11 @@ class EmployeesDialog(QtWidgets.QDialog):
         return item
 
     def set_interactive(self, enabled: bool) -> None:
+        self._interactive_requested = bool(enabled)
+        self._apply_interactivity()
+
+    def _apply_interactivity(self) -> None:
+        enabled = self._interactive_requested and not self._operation_pending
         self._interactive = enabled
         if enabled:
             self.btn_new.setEnabled(True)
@@ -398,17 +404,21 @@ class EmployeesDialog(QtWidgets.QDialog):
                 "deleted_uids": sorted(self._deleted_uids),
             }
             if any(changes.values()):
+                new_uids = {employee.uid for employee in new_employees}
                 self._operation_pending = True
-                self.set_interactive(False)
+                self._apply_interactivity()
 
                 def completed(success: bool, mapping=None) -> None:
                     if not isValid(self):
                         return
                     self._operation_pending = False
-                    self.set_interactive(True)
+                    self._apply_interactivity()
                     if not success:
                         return
                     uid_map = mapping if isinstance(mapping, dict) else {}
+                    if not new_uids.issubset(uid_map):
+                        show_warning(self, "Employees", "Failed to create employee.")
+                        return
                     for employee in self._employees:
                         if employee.uid in uid_map:
                             employee.uid = str(uid_map[employee.uid])
@@ -423,11 +433,11 @@ class EmployeesDialog(QtWidgets.QDialog):
                     started = self._save_async_fn(changes, completed)
                 except Exception:
                     self._operation_pending = False
-                    self.set_interactive(True)
+                    self._apply_interactivity()
                     raise
                 if not started:
                     self._operation_pending = False
-                    self.set_interactive(True)
+                    self._apply_interactivity()
                 return
             self._save_done = True
         if result == QtWidgets.QDialog.DialogCode.Accepted:

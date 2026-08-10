@@ -1,7 +1,10 @@
 import logging
+import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import patch
+from ost_visualizer.config.license_config import _load_trusted_public_key
 from ost_visualizer.application.dtos.license_dto import (
     LicenseOperationResultDto,
     LicenseOperationStatus,
@@ -129,6 +132,16 @@ class FakeApiClient:
 
 
 class LicenseActivationContractTests(unittest.TestCase):
+    def test_environment_cannot_replace_the_trusted_license_public_key(self):
+        with patch.dict(
+            os.environ,
+            {"OST_LICENSE_PUBLIC_KEY_PEM": "attacker-controlled-key"},
+        ), patch(
+            "ost_visualizer.config.license_config.Path.exists",
+            return_value=False,
+        ):
+            self.assertEqual(_load_trusted_public_key(), "")
+
     def test_offline_grace_rejects_future_validation_timestamp(self):
         now = datetime.now(timezone.utc)
         cached = License(

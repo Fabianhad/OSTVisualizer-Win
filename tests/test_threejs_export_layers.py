@@ -5,8 +5,9 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import create_autospec, patch
 from ost_visualizer.application.dtos.export_dto import ExportRequestDto
+from ost_visualizer.application.interfaces.i_html_renderer import IHtmlRenderer
 from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.application.services.page_visualization_metadata_service import (
     PageVisualizationMetadataService,
@@ -453,20 +454,16 @@ class ThreejsExportLayerTests(unittest.TestCase):
         page_name = "P" * 300
         html_strategy = _HtmlExportStrategyAdapter(SimpleNamespace())
         mesh_strategy = _ExportStrategyAdapter("OBJ", "obj", object, None, None, None)
-        self.assertEqual(
-            html_strategy.prepare_filename("Bid", [page_name]),
-            f"{page_name}.html",
-        )
-        self.assertEqual(
-            mesh_strategy.prepare_filename("Bid", [page_name]),
-            f"{page_name}.obj",
-        )
+        html_filename = html_strategy.prepare_filename("Bid", [page_name])
+        mesh_filename = mesh_strategy.prepare_filename("Bid", [page_name])
+        self.assertEqual(len(html_filename), 255)
+        self.assertEqual(len(mesh_filename), 255)
+        self.assertTrue(html_filename.endswith("....html"))
+        self.assertTrue(mesh_filename.endswith("....obj"))
 
     def test_html_strategy_passes_saved_callout_options_to_renderer(self):
-        calls = []
-        renderer = SimpleNamespace(
-            render=lambda *_args, **kwargs: calls.append(kwargs) or True
-        )
+        renderer = create_autospec(IHtmlRenderer, instance=True)
+        renderer.render.return_value = True
         strategy = _HtmlExportStrategyAdapter(renderer)
         config = Config(
             html_elevation_callouts_enabled=False,
@@ -482,11 +479,12 @@ class ThreejsExportLayerTests(unittest.TestCase):
             **options,
         )
         self.assertTrue(result)
-        self.assertEqual(len(calls), 1)
-        self.assertFalse(calls[0]["include_elevation_callouts"])
-        self.assertFalse(calls[0]["elevation_callout_settings"].include_bottom)
-        self.assertEqual(calls[0]["elevation_callout_color"], "#123456")
-        self.assertEqual(calls[0]["inactive_object_color"], "#345678")
+        renderer.render.assert_called_once()
+        options = renderer.render.call_args.kwargs
+        self.assertFalse(options["include_elevation_callouts"])
+        self.assertFalse(options["elevation_callout_settings"].include_bottom)
+        self.assertEqual(options["elevation_callout_color"], "#123456")
+        self.assertEqual(options["inactive_object_color"], "#345678")
 
     def test_collect_takeoffs_for_pages_can_include_hidden_layer_takeoffs(self):
         service = ProjectDataService(_ProjectModel())

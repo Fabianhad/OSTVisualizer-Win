@@ -263,7 +263,15 @@ class FileProjectRepository(IProjectRepository):
             )
             return BidLoadResult()
         result = self.prepare_bid_load(bid_uid, file_path)
-        self.apply_bid_load(file_path)
+        try:
+            self.apply_bid_load(file_path)
+        except RuntimeError:
+            self.logger.warning(
+                "Discarding bid load for an unloaded file: %s (bid_uid=%s)",
+                file_path,
+                bid_uid,
+            )
+            return BidLoadResult()
         return result
 
     def prepare_bid_load(self, bid_uid: str, file_path: str) -> BidLoadResult:

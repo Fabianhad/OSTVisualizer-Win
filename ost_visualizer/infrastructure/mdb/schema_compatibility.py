@@ -97,6 +97,12 @@ class MdbSchemaInspector:
         if key in self._logged_optional_write_skips:
             return
         self._logged_optional_write_skips.add(key)
+        self.logger.warning(
+            "Skipping optional MDB write during %s because %s.%s is unavailable.",
+            operation,
+            table_name,
+            column_name,
+        )
 
     def order_by_existing(
         self,

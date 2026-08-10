@@ -1226,10 +1226,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._geometry_edit_lease_handle = None
         self._geometry_edit_lease_request_id = ""
         self._geometry_edit_lease_selection = set()
-        if self.plan_view is not None:
-            self.plan_view.disable_geometry_edit_leasing()
-        if handle is not None and self._project_write_svc is not None:
-            self._project_write_svc.end_plan_edit_lease(handle)
+        try:
+            if self.plan_view is not None:
+                self.plan_view.disable_geometry_edit_leasing()
+        finally:
+            if handle is not None and self._project_write_svc is not None:
+                self._project_write_svc.end_plan_edit_lease(handle)
 
     def _on_plan_item_selection_changed(self, selected_uids: list) -> None:
         selection = {str(uid) for uid in selected_uids if uid}
@@ -2424,65 +2426,163 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._is_closing:
             return
         self._is_closing = True
-        show_timer = cast(QtCore.QTimer, self._show_timer)
-        show_timer.stop()
-        show_timer.deleteLater()
+
+        def cleanup_step(description: str, action: Callable[[], None]) -> None:
+            try:
+                action()
+            except Exception:
+                self.logger.exception(
+                    "Failed to %s during detached-window cleanup", description
+                )
+
+        show_timer = self._show_timer
+        if show_timer is not None:
+            cleanup_step("stop the show timer", show_timer.stop)
+            cleanup_step("delete the show timer", show_timer.deleteLater)
         self._show_timer = None
-        resize_focus_timer = cast(QtCore.QTimer, self._named_view_resize_focus_timer)
-        resize_focus_timer.stop()
-        resize_focus_timer.deleteLater()
+        resize_focus_timer = self._named_view_resize_focus_timer
+        if resize_focus_timer is not None:
+            cleanup_step("stop the named-view focus timer", resize_focus_timer.stop)
+            cleanup_step(
+                "delete the named-view focus timer", resize_focus_timer.deleteLater
+            )
         self._named_view_resize_focus_timer = None
         self._pending_named_view_resize_focus = False
-        self._reveal_named_view_blank_canvas()
+        cleanup_step(
+            "reveal the named-view canvas", self._reveal_named_view_blank_canvas
+        )
         if self._hotlink_adapter is not None:
-            self._hotlink_adapter.shutdown()
+            cleanup_step(
+                "shut down the hotlink adapter", self._hotlink_adapter.shutdown
+            )
             self._hotlink_adapter = None
-        plan_view = cast(TakeoffPlanView, self.plan_view)
-        plan_view.page_geometry_ready.disconnect(self._on_page_geometry_ready)
-        plan_view.page_fully_loaded.disconnect(self._on_page_loaded)
-        plan_view.page_view_state_changed.disconnect(self._on_page_view_state_changed)
-        plan_view.positions_flushed.disconnect(self._on_positions_flushed)
-        plan_view.annotation_text_properties_flushed.disconnect(
-            self._on_annotation_text_properties_flushed
-        )
-        plan_view.annotation_styles_flushed.disconnect(
-            self._on_annotation_styles_flushed
-        )
-        plan_view.elements_deleted.disconnect(self._on_elements_deleted)
-        plan_view.annotation_created.disconnect(self._on_annotation_created)
-        plan_view.text_annotation_created.disconnect(self._on_text_annotation_created)
-        plan_view.named_view_created.disconnect(self._on_named_view_created)
-        plan_view.hotlink_placement_requested.disconnect(
-            self._on_hotlink_placement_requested
-        )
-        plan_view.geometry_edit_lease_requested.disconnect(
-            self._on_geometry_edit_lease_requested
-        )
-        plan_view.plan_item_selection_changed.disconnect(
-            self._on_plan_item_selection_changed
-        )
-        if self._annotation_clipboard_svc is not None:
-            plan_view.copy_requested.disconnect(self._on_copy_requested)
-            plan_view.paste_requested.disconnect(self._on_paste_requested)
-            plan_view.set_context_menu_command_handlers(None, None)
-        plan_view.cursor_mode_change_requested.disconnect(
-            self._on_cursor_mode_change_requested
-        )
-        plan_view.area_placement_in_progress.disconnect(
-            self._on_area_placement_in_progress
-        )
-        plan_view.text_annotation_edit_mode_changed.disconnect(
-            self._on_inline_text_edit_changed
-        )
-        if self._undo_svc is not None:
-            plan_view.undo_requested.disconnect(self._undo_svc.undo)
-            plan_view.redo_requested.disconnect(self._undo_svc.redo)
-        self._release_geometry_edit_lease()
-        plan_view.blockSignals(True)
-        plan_view.cleanup()
+        plan_view = self.plan_view
+        if plan_view is not None:
+            disconnect_steps = (
+                (
+                    "disconnect page geometry",
+                    plan_view.page_geometry_ready,
+                    self._on_page_geometry_ready,
+                ),
+                (
+                    "disconnect page loading",
+                    plan_view.page_fully_loaded,
+                    self._on_page_loaded,
+                ),
+                (
+                    "disconnect page view state",
+                    plan_view.page_view_state_changed,
+                    self._on_page_view_state_changed,
+                ),
+                (
+                    "disconnect positions",
+                    plan_view.positions_flushed,
+                    self._on_positions_flushed,
+                ),
+                (
+                    "disconnect annotation text properties",
+                    plan_view.annotation_text_properties_flushed,
+                    self._on_annotation_text_properties_flushed,
+                ),
+                (
+                    "disconnect annotation styles",
+                    plan_view.annotation_styles_flushed,
+                    self._on_annotation_styles_flushed,
+                ),
+                (
+                    "disconnect deletion",
+                    plan_view.elements_deleted,
+                    self._on_elements_deleted,
+                ),
+                (
+                    "disconnect annotation creation",
+                    plan_view.annotation_created,
+                    self._on_annotation_created,
+                ),
+                (
+                    "disconnect text annotation creation",
+                    plan_view.text_annotation_created,
+                    self._on_text_annotation_created,
+                ),
+                (
+                    "disconnect named-view creation",
+                    plan_view.named_view_created,
+                    self._on_named_view_created,
+                ),
+                (
+                    "disconnect hotlink placement",
+                    plan_view.hotlink_placement_requested,
+                    self._on_hotlink_placement_requested,
+                ),
+                (
+                    "disconnect geometry lease requests",
+                    plan_view.geometry_edit_lease_requested,
+                    self._on_geometry_edit_lease_requested,
+                ),
+                (
+                    "disconnect plan selection",
+                    plan_view.plan_item_selection_changed,
+                    self._on_plan_item_selection_changed,
+                ),
+                (
+                    "disconnect cursor mode changes",
+                    plan_view.cursor_mode_change_requested,
+                    self._on_cursor_mode_change_requested,
+                ),
+                (
+                    "disconnect area placement state",
+                    plan_view.area_placement_in_progress,
+                    self._on_area_placement_in_progress,
+                ),
+                (
+                    "disconnect inline text edit state",
+                    plan_view.text_annotation_edit_mode_changed,
+                    self._on_inline_text_edit_changed,
+                ),
+            )
+            for description, signal, callback in disconnect_steps:
+                cleanup_step(
+                    description,
+                    lambda signal=signal, callback=callback: signal.disconnect(
+                        callback
+                    ),
+                )
+            if self._annotation_clipboard_svc is not None:
+                cleanup_step(
+                    "disconnect copy requests",
+                    lambda: plan_view.copy_requested.disconnect(
+                        self._on_copy_requested
+                    ),
+                )
+                cleanup_step(
+                    "disconnect paste requests",
+                    lambda: plan_view.paste_requested.disconnect(
+                        self._on_paste_requested
+                    ),
+                )
+                cleanup_step(
+                    "clear context-menu handlers",
+                    lambda: plan_view.set_context_menu_command_handlers(None, None),
+                )
+            if self._undo_svc is not None:
+                cleanup_step(
+                    "disconnect undo requests",
+                    lambda: plan_view.undo_requested.disconnect(self._undo_svc.undo),
+                )
+                cleanup_step(
+                    "disconnect redo requests",
+                    lambda: plan_view.redo_requested.disconnect(self._undo_svc.redo),
+                )
+            cleanup_step(
+                "release the geometry edit lease", self._release_geometry_edit_lease
+            )
+            cleanup_step(
+                "block plan-view signals", lambda: plan_view.blockSignals(True)
+            )
+            cleanup_step("clean up the plan view", plan_view.cleanup)
         self.plan_view = None
         if self._undo_svc is not None:
-            self._undo_svc.clear()
+            cleanup_step("clear detached undo history", self._undo_svc.clear)
         self._undo_svc = None
         self._annotation_clipboard_svc = None
         self._ann_write_svc = None
@@ -2499,13 +2599,25 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._on_page_selected = None
         self._on_named_view_selected = None
         self._on_scale_changed = None
-        self._page_combo.page_activated.disconnect(self._on_page_activated)
-        self._page_combo.cleanup()
+        page_combo = self._page_combo
+        if page_combo is not None:
+            cleanup_step(
+                "disconnect page activation",
+                lambda: page_combo.page_activated.disconnect(self._on_page_activated),
+            )
+            cleanup_step("clean up the page combo", page_combo.cleanup)
         self._page_combo = None
-        self._named_view_combo.currentIndexChanged.disconnect(
-            self._on_named_view_combo_changed
-        )
-        self._named_view_combo.cleanup_popup()
+        named_view_combo = self._named_view_combo
+        if named_view_combo is not None:
+            cleanup_step(
+                "disconnect named-view selection",
+                lambda: named_view_combo.currentIndexChanged.disconnect(
+                    self._on_named_view_combo_changed
+                ),
+            )
+            cleanup_step(
+                "clean up the named-view combo", named_view_combo.cleanup_popup
+            )
         self._named_view_combo = None
         self._scale_combo = None
         self._btn_select = None

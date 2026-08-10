@@ -35,6 +35,14 @@ from ..presentation.visualization.utils.mesh import meshes_to_geometries
 from .utils.filename import sanitize_filename
 
 _MAX_EXPORT_FILENAME_LENGTH = 255
+_EXPORTABLE_CONDITION_TYPES = frozenset(
+    {
+        Condition.TYPE_LINEAR,
+        Condition.TYPE_AREA,
+        Condition.TYPE_COUNT,
+        Condition.TYPE_ATTACHMENT,
+    }
+)
 
 
 def _export_dialog_title(format_name: str, page_count: int) -> str:
@@ -71,7 +79,12 @@ def _prepare_export_filename(
         truncated_project = clean_bid_name[:max_project_length] + "..."
         return filename.replace(clean_bid_name, truncated_project, 1)
     if len(clean_names) == 1:
-        return f"{clean_names[0]}.{format_extension}"
+        suffix = f".{format_extension}"
+        max_page_length = _MAX_EXPORT_FILENAME_LENGTH - len(suffix)
+        page_name = clean_names[0]
+        if len(page_name) > max_page_length:
+            page_name = page_name[: max_page_length - 3] + "..."
+        return f"{page_name}{suffix}"
     return f"Export_{len(clean_names)}_pages.{format_extension}"
 
 
@@ -293,7 +306,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             t
             for t in takeoffs
             if (c_uid := t.condition_uid) in bid_conditions
-            and bid_conditions[c_uid].condition_type in [0, 1, 2, 3]
+            and bid_conditions[c_uid].condition_type in _EXPORTABLE_CONDITION_TYPES
         ]
         if not exportable_takeoffs:
             return False

@@ -183,6 +183,9 @@ class PageCache:
             return None
         return int(stat.st_mtime_ns), int(stat.st_size)
 
+    def file_signature(self, file_path: str) -> _FileSignature:
+        return self._file_signature(file_path)
+
     def get_page(
         self,
         file_path: str,

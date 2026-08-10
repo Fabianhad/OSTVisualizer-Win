@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 from ...domain.aggregates.ost_aggregate import OstAggregate
@@ -92,13 +93,15 @@ class ProjectDataService:
         used_employee_uids=None,
     ) -> None:
         if default_layers is not None:
-            self._default_layers_by_database[database_id] = tuple(default_layers)
+            self._default_layers_by_database[database_id] = deepcopy(
+                tuple(default_layers)
+            )
         if job_statuses is not None:
-            self._job_statuses_by_database[database_id] = tuple(job_statuses)
+            self._job_statuses_by_database[database_id] = deepcopy(tuple(job_statuses))
         if employees is not None:
-            self._employees_by_database[database_id] = tuple(employees)
+            self._employees_by_database[database_id] = deepcopy(tuple(employees))
         if pay_classes is not None:
-            self._pay_classes_by_database[database_id] = tuple(pay_classes)
+            self._pay_classes_by_database[database_id] = deepcopy(tuple(pay_classes))
         if used_job_status_uids is not None:
             self._used_job_status_uids_by_database[database_id] = frozenset(
                 used_job_status_uids
@@ -109,16 +112,16 @@ class ProjectDataService:
             )
 
     def get_default_layer_snapshot(self, database_id: str) -> List[BidLayer]:
-        return list(self._default_layers_by_database.get(database_id, ()))
+        return deepcopy(list(self._default_layers_by_database.get(database_id, ())))
 
     def get_job_status_snapshot(self, database_id: str) -> list:
-        return list(self._job_statuses_by_database.get(database_id, ()))
+        return deepcopy(list(self._job_statuses_by_database.get(database_id, ())))
 
     def get_employee_snapshot(self, database_id: str) -> list:
-        return list(self._employees_by_database.get(database_id, ()))
+        return deepcopy(list(self._employees_by_database.get(database_id, ())))
 
     def get_pay_class_snapshot(self, database_id: str) -> list:
-        return list(self._pay_classes_by_database.get(database_id, ()))
+        return deepcopy(list(self._pay_classes_by_database.get(database_id, ())))
 
     def get_used_job_status_uids(self, database_id: str) -> set[str]:
         return set(self._used_job_status_uids_by_database.get(database_id, ()))
@@ -129,10 +132,14 @@ class ProjectDataService:
     def replace_cover_sheet_data(
         self, database_id: str, bid_uid: str, cover_sheet
     ) -> None:
-        self._cover_sheet_by_database_bid[(database_id, str(bid_uid))] = cover_sheet
+        self._cover_sheet_by_database_bid[(database_id, str(bid_uid))] = deepcopy(
+            cover_sheet
+        )
 
     def get_cover_sheet_snapshot(self, database_id: str, bid_uid: str):
-        return self._cover_sheet_by_database_bid.get((database_id, str(bid_uid)))
+        return deepcopy(
+            self._cover_sheet_by_database_bid.get((database_id, str(bid_uid)))
+        )
 
     def replace_page_delete_content_uids(
         self, database_id: str, bid_uid: str, page_uids
@@ -151,10 +158,10 @@ class ProjectDataService:
         )
 
     def replace_settings_defaults(self, database_id: str, defaults: dict) -> None:
-        self._settings_defaults_by_database[database_id] = dict(defaults)
+        self._settings_defaults_by_database[database_id] = deepcopy(defaults)
 
     def get_settings_defaults_snapshot(self, database_id: str) -> dict:
-        return dict(self._settings_defaults_by_database.get(database_id, {}))
+        return deepcopy(self._settings_defaults_by_database.get(database_id, {}))
 
     def has_loaded_files(self) -> bool:
         return bool(self.model.get_hierarchy_data().loaded_files)

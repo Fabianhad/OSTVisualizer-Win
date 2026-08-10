@@ -10,6 +10,7 @@ from tests.sql_integration_support import (
     DisposableSqlDatabase,
     _require_test_database_name,
 )
+from tests import test_sql_collaboration_integration as collaboration_integration
 
 
 class DisposableSqlConfigurationSafetyTests(unittest.TestCase):
@@ -120,6 +121,41 @@ class DisposableSqlConfigurationSafetyTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 database.drop()
         database.connections.connection.assert_not_called()
+
+    def test_client_factory_drops_login_when_database_user_setup_fails(self):
+        disposable = self._database()
+        database = MagicMock()
+        database.location = disposable.location
+        configuration = DisposableSqlConfiguration(
+            disposable.location,
+            "admin-password",
+            "server-marker",
+        )
+        admin = MagicMock()
+        admin_cursor = (
+            admin.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        )
+        with (
+            patch(
+                "tests.test_sql_collaboration_integration.SqlConnectionManager",
+                return_value=admin,
+            ),
+            patch(
+                "tests.test_sql_collaboration_integration."
+                "apply_sql_client_permissions",
+                side_effect=RuntimeError("permission setup failed"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "permission setup failed"),
+        ):
+            collaboration_integration.SqlCollaborationIntegrationTests._create_test_client(
+                database,
+                configuration,
+                "SETUP_FAILURE",
+            )
+        executed_sql = [call.args[0] for call in admin_cursor.execute.call_args_list]
+        self.assertTrue(
+            any(statement.startswith("DROP LOGIN") for statement in executed_sql)
+        )
 
     @staticmethod
     def _database() -> DisposableSqlDatabase:

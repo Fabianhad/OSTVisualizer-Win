@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added first-class Microsoft SQL Server databases with encrypted Windows or SQL authentication, Windows Credential Manager secrets, saved descriptors, descriptor-stable project-tree identities, On-Screen Takeoff-compatible reader/writer role membership, rollback-safe direct canonical schema-v1 creation, mandatory snapshot-isolated commit-ordered transaction feeds, multi-user desktop sessions with session-local page presence and connection-safe heartbeats, expiring resource and geometry-gesture locks with immediate cursor feedback during lease acquisition, WAN-efficient set-based validation/feed writes and parameter-bounded snapshot hydration, atomic resource-aware capability snapshots, optimistic concurrency, race-safe bid-state/token bootstrap, local-draft and pending-resource protection, reconnect-safe delta polling, durable operation-ID recovery for uncertain commits, idempotent authoritative recovery after committed projection failures across runtime replacement, finite-value-validated remote project graphs, self-change-safe targeted UI synchronization with context-scoped projection coalescing, continuous-placement hover previews that do not reject authoritative projection, persistent connection-status projection with terminal Saving/Recovering states, generation-guarded non-blocking bid/page navigation reads with tab-consistent terminal loading feedback, bid-scoped cover-sheet and page-content snapshots, and same-bid navigation preservation that still projects authoritative plan geometry, non-blocking queued OST/OSP import plus plan, annotation, page-setting, condition, layer, project/bid hierarchy, area, cover-sheet, and master-data mutations, non-selectable provisional placement previews with stale-completion-safe targeted authoritative identity replacement, cancel-before-start and dependency-safe slow-connection placement deletion, atomic paste/duplicate, commit-confirmed undo/redo, authenticated per-user SQL selected-page and precise viewport persistence that follows users across computers without entering the collaboration feed or overwriting another user, offline local unload/removal, asynchronous deterministic shutdown, and a safe mixed-application writer gate. Microsoft Access keeps its synchronous storage strategy without starting collaboration services while sharing validation, completion, and presentation behavior, including backend-isolated takeoff deletion and undo/redo.
+- Added first-class Microsoft SQL Server databases with encrypted Windows or SQL authentication, Windows Credential Manager secrets, saved descriptors, descriptor-stable project-tree identities, On-Screen Takeoff-compatible reader/writer role membership, rollback-safe direct canonical schema-v1 creation, mandatory snapshot-isolated commit-ordered transaction feeds, multi-user desktop sessions with session-local page presence and connection-safe heartbeats, expiring resource and geometry-gesture locks with immediate cursor feedback during lease acquisition, WAN-efficient set-based validation/feed writes and parameter-bounded snapshot hydration, atomic resource-aware capability snapshots, optimistic concurrency, race-safe bid-state/token bootstrap, local-draft and pending-resource protection, reconnect-safe delta polling, durable operation-ID recovery for uncertain commits, idempotent authoritative recovery after committed projection failures across runtime replacement, finite-value-validated remote project graphs, self-change-safe targeted UI synchronization with context-scoped projection coalescing, continuous-placement hover previews that do not reject authoritative projection, persistent connection-status projection with terminal Saving/Recovering states, generation-guarded non-blocking bid/page navigation reads with tab-consistent terminal loading feedback, bid-scoped cover-sheet and page-content snapshots, and same-bid navigation preservation that still projects authoritative plan geometry, non-blocking queued OST/OSP import plus plan, annotation, page-setting, condition, layer, project/bid hierarchy, area, cover-sheet, and master-data mutations with failure-safe provisional condition-type and layer rows, authoritative employee identity mapping, and external-blocker-safe dialog completion, non-selectable provisional placement previews with stale-completion-safe targeted authoritative identity replacement, cancel-before-start and dependency-safe slow-connection placement deletion, serialized local database detach while critical writes drain, atomic paste/duplicate, commit-confirmed undo/redo, authenticated per-user SQL selected-page and precise viewport persistence that follows users across computers without entering the collaboration feed or overwriting another user, offline local unload/removal, asynchronous deterministic shutdown, and a safe mixed-application writer gate. Microsoft Access keeps its synchronous storage strategy without starting collaboration services while sharing validation, completion, and presentation behavior, including backend-isolated takeoff deletion and undo/redo.
 - Added ownership-guarded Ubuntu SQL Server container provisioning, multi-address source-IP allowlisting, WireGuard admission, TLS, validation, least-privilege repair, credential rotation, backup/restore verification, recovery, and uninstall tooling; new SQL connections now validate the server certificate and hostname by default.
 - Added persistent PDF annotation caption options with disabled-by-default global and per-caption controls plus Bluebeam-compatible selection, ordering, units, and formatting for all captions supported by exported polygon measurements.
 - Added persistent elevation callout options for HTML and PDF exports, including independent export enablement, red default text colors, and shared condition, top elevation, bottom elevation, and cubic-yard line selection.
@@ -19,7 +19,8 @@
 - Changed application table and tree headers to use consistent sorting,
   resizing, and column movement capabilities, with semantic per-user layouts
   restored from the existing workspace state for every supported view and
-  reconciled safely when columns are added or removed.
+  reconciled safely when columns are added or removed; sorted row actions remain
+  bound to their stable item identities.
 - Changed source builds to require Python 3.10 or newer, matching the client syntax and native extension configuration; HTML scene DTOs no longer require Python 3.11-only typing imports.
 - Changed Cover Sheet commits to perform a single post-save database refresh, reducing UI stalls after large page deletion batches.
 - Changed detached plan windows to keep a successfully loaded page visible when nearby-page prefetch fails and to reveal the normal canvas when named-view navigation cannot load its target page.
@@ -29,9 +30,17 @@
 
 ### Fixed
 
+- Fixed bid or page names containing tabs, line breaks, or other Windows control characters producing invalid suggested export filenames.
+- Fixed process environment variables being able to replace the trusted license-signature public key; licensed builds now use only the bundled trust anchor, with the source-tree key retained for local development.
+- Fixed refreshing an inactive database changing or clearing the bid open from another database when their bid identities overlapped.
+- Fixed Show Both page rendering retaining a stale cached composite after the
+  base or overlay source file was replaced at the same path.
+- Fixed the Conditions sidebar Delete button and keyboard shortcut doing nothing
+  for an editable folder when condition deletion was independently unavailable.
 - Fixed OSP imports and exports with non-ASCII Windows paths or CAB member
   names, including original On-Screen Takeoff packages that store member names
-  in the Windows ANSI encoding.
+  in the Windows ANSI encoding; imports also preserve an earlier bid's staged
+  drawing when a later package uses the same bid and image filenames.
 - Fixed startup and recovery bid restoration traversing the navigation
   state machine without first projecting its loaded-file stage, which could
   leave page navigation state stale and log invalid-transition warnings.
@@ -98,6 +107,9 @@
 - Fixed native PDF rendering accepting invalid scales or frame coordinates that
   could overflow bitmap sizing, and explicit PDFium shutdown can now be followed
   by a clean reinitialization.
+- Fixed malformed native polygon-ring offsets and nonpositive curve segment
+  counts being able to trigger out-of-bounds geometry reads or invalid native
+  allocations; these public geometry boundaries now reject invalid input.
 - Fixed realtime transaction monitoring leaking its opened commit-event handle
   when status-event initialization failed.
 - Fixed progress dialogs intermittently destroying a worker thread before its
@@ -112,6 +124,9 @@
   which could retain stale IDs or misclassify a failed parent replay as a cycle.
 - Fixed cancelling employee detail edits after navigating records retaining
   unsaved field changes in the parent Employees dialog.
+- Fixed employee detail navigation allowing an invalid earlier record to bypass
+  required-field, duplicate-number, or payroll-class validation when a later
+  record was accepted.
 - Fixed replacement or cleanup of a plan view leaving one placement signal
   connected when the other signal had already been disconnected.
 - Fixed the page-area picker saving or restoring stale bid state when its
@@ -141,7 +156,7 @@
 - Fixed bid-layer sidebar reloads leaving a stale new-layer editor that blocked later additions, and inline renames now reject blank names and trim surrounding whitespace.
 - Fixed moving ordinary bid layers up or down reporting success without changing their stored sequence.
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.
-- Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
+- Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters or a long page name would exceed the Windows filename limit.
 - Fixed takeoff selection synchronization so 2D and 3D share one canonical
   takeoff-to-condition projection while preserving explicit sidebar ownership,
   including stable mixed-condition multi-selection from Ctrl or Shift gestures
@@ -150,10 +165,13 @@
   group ownership.
 - Fixed adding a blank Cover Sheet page from the Takeoff tab failing when an
   Access bid has blank optional numeric or date fields; failed Access mutations
-  now also roll back without replacing the original database error with a
-  closed-connection commit error.
+  now also preserve any nested write failure through shared helper result
+  handling, roll back the full mutation, and avoid replacing the original
+  database error with a closed-connection commit error.
 - Fixed hidden-layer line, arrow, and dimension annotations remaining selectable through geometric fallback hit-testing.
-- Fixed native 3D viewer cleanup so a renderer shutdown failure cannot retain a stale native renderer or prevent the remaining Qt-owned resources from being released.
+- Fixed native 3D viewer cleanup so a renderer shutdown failure cannot retain a
+  stale native renderer, the remaining Qt-owned resources are still released,
+  and late paint or show callbacks cannot recreate a renderer after cleanup.
 - Fixed native 3D renderer shutdown releasing all picking and selection GPU
   resources, and malformed vertex, normal, or index buffers are rejected before
   OpenGL upload.

@@ -8,6 +8,9 @@ from ost_visualizer.application.dtos.export_dto import (
 from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.services.project_data_service import CollectedTakeoffsResult
+from ost_visualizer.infrastructure.visualization_provider import (
+    _prepare_export_filename,
+)
 from ost_visualizer.presentation.visualization.exporters.base_exporter import (
     BaseExporter,
 )
@@ -53,6 +56,12 @@ class _ResultExporter(BaseExporter):
 
 
 class ExportServiceFailureBoundaryTests(unittest.TestCase):
+    def test_suggested_export_filename_replaces_windows_control_characters(self):
+        self.assertEqual(
+            _prepare_export_filename("pdf", "Bid\nOne", ["A1\tPlan"]),
+            "Bid_One - A1_Plan.pdf",
+        )
+
     def setUp(self):
         self.strategy = SimpleNamespace(
             name="OBJ",

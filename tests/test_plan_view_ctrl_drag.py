@@ -338,6 +338,7 @@ class InputHandlerHarness(
         self._editing_enabled = True
         self._inactive_object_color = Config.DEFAULT_INACTIVE_OBJECT_COLOR
         self._pending_mutation_uids = set()
+        self._annotation_only_selection = False
         self.selected_text_annotation_uids = []
         self.editing_text_annotation_uids = []
         self.editing_named_view_uids = []

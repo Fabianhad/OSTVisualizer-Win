@@ -67,7 +67,7 @@ class ProjectWriteHandler:
     ) -> bool:
         if self._ui_event_coordinator is None:
             raise RuntimeError("ProjectWriteHandler is not fully initialized")
-        key = tuple(str(value) for value in operation_key)
+        key = (str(database_id), *(str(value) for value in operation_key))
         if key in self._pending_sql_operations:
             return False
         self._pending_sql_operations.add(key)
@@ -77,15 +77,15 @@ class ProjectWriteHandler:
             handler = handler_ref()
             if handler is None:
                 return
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
             handler._pending_sql_operations.discard(key)
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 if on_committed is not None:
                     on_committed(result)
-                return
-            if (
-                result.outcome_status
-                == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
-            ):
                 return
             handler._ui_event_coordinator.refresh_hierarchy_projection()
             handler._ui_event_coordinator.present_queued_mutation_error(
