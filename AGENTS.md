@@ -70,6 +70,12 @@ Threading and events:
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
+- Render-quality contracts live in `application/render_quality.py`. The
+  interactive PDF baseline, raster native-pixel scale, and constrained-render
+  safety floor are distinct concepts; Plan View, overlay previews, prefetch,
+  composites, export rasterization, caches, and 3D page textures reuse those
+  values without treating the safety floor as ordinary low quality. Zoom-based
+  high-resolution rendering remains a separate dynamic policy.
 
 Persistence:
 

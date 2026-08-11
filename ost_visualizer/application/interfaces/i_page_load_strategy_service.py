@@ -10,11 +10,10 @@ class ILoadStrategy(Protocol):
     pdf_height_pts: float
     placeholder_width: float
     placeholder_height: float
+    main_scale: float
     load_composite: bool
     load_main: bool
     load_overlay: bool
-    main_scale: float
-    overlay_scale: float
 
 
 class IPageLoadStrategyService(Protocol):

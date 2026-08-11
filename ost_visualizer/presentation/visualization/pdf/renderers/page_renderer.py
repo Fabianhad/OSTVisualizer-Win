@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
+from .....application.render_quality import RASTER_NATIVE_RENDER_SCALE
 from .....domain.entities.file_extensions import TIFF_EXTENSIONS, is_pdf_suffix
 from .. import ost_pdf
 from ..pdfium_lock import pdfium_lock
@@ -70,9 +71,9 @@ class PageRenderer:
     def render(
         self,
         file_path: str,
-        page_index: int = 0,
-        scale: float = 1.0,
-        rotation: int = 0,
+        page_index: int,
+        scale: float,
+        rotation: int,
         native_cancel_token=None,
     ) -> Optional[QImage]:
         if not file_path:
@@ -148,7 +149,7 @@ class PageRenderer:
                 "Failed to load image: %s - %s", file_path, reader.errorString()
             )
             return None
-        if scale != 1.0:
+        if scale != RASTER_NATIVE_RENDER_SCALE:
             new_width = int(image.width() * scale)
             new_height = int(image.height() * scale)
             image = image.scaled(
@@ -168,7 +169,7 @@ class PageRenderer:
         frame_y_pts: float,
         frame_w_pts: float,
         frame_h_pts: float,
-        rotation: int = 0,
+        rotation: int,
         native_cancel_token=None,
     ) -> Optional[QImage]:
         if not file_path:

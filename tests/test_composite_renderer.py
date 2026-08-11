@@ -6,6 +6,10 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor, QImage, QPainter
+from ost_visualizer.application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+    RASTER_NATIVE_RENDER_SCALE,
+)
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
@@ -18,8 +22,8 @@ def _image(width=20, height=20):
     return image
 
 
-def _page():
-    return Page(
+def _page(**overrides):
+    values = dict(
         uid="page-1",
         name="Page 1",
         image_path="base.pdf",
@@ -30,9 +34,14 @@ def _page():
         scale_factor2=12.0,
         overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 64.0, 100.0 / 72.0 * 64.0),
     )
+    values.update(overrides)
+    return Page(**values)
 
 
 class _FramePageCache:
+    def file_signature(self, _file_path):
+        return None
+
     def get_tinted_page(self, *_args, **_kwargs):
         return _image()
 
@@ -91,6 +100,43 @@ class _ExplodingPainter:
 
 
 class CompositeRendererTests(unittest.TestCase):
+    def test_raster_base_composite_keeps_native_canvas_and_pdf_overlay_baseline(self):
+        class SourceAwareCache(_FramePageCache):
+            def __init__(self):
+                self.calls = []
+
+            def get_tinted_page(
+                self,
+                file_path,
+                _page_index,
+                scale,
+                _rotation,
+                *,
+                tint_rgb,
+                wait_for_in_flight,
+            ):
+                self.calls.append((file_path, scale, tint_rgb, wait_for_in_flight))
+                if file_path == "base.tif":
+                    return _image(13, 11)
+                return _image(200, 200)
+
+        cache = SourceAwareCache()
+        result = CompositeRenderer(cache).render_composite(
+            _page(image_path="base.tif"),
+            bid_ref=None,
+            render_scale=RASTER_NATIVE_RENDER_SCALE,
+            raster_rotation=0,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual((result.width(), result.height()), (13, 11))
+        self.assertEqual(
+            [(path, scale) for path, scale, _tint, _wait in cache.calls],
+            [
+                ("base.tif", RASTER_NATIVE_RENDER_SCALE),
+                ("overlay.pdf", INTERACTIVE_PDF_RENDER_SCALE),
+            ],
+        )
+
     def test_composite_cache_invalidates_when_a_source_file_changes(self):
         page_cache = _SignaturePageCache()
         renderer = CompositeRenderer(page_cache)

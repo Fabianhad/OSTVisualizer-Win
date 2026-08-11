@@ -14,6 +14,11 @@
 
 ### Changed
 
+- Changed interactive PDF rendering to use one 144-DPI baseline across normal
+  pages, disabled high-resolution mode, composite overlays, temporary overlay
+  movement, prefetch, and rasterized PDF export, while raster sources retain
+  native-pixel rendering and cache or 3D texture limits may reduce scale only
+  through a separate safety floor.
 - Changed source setup to preserve the required PySide6 6.10.2 version, pin and
   SHA-256-verify native PDFium/QPDF archives, and fail explicitly when Python
   dependency installation or native extraction fails.

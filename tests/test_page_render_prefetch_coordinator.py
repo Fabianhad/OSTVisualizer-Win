@@ -7,6 +7,10 @@ from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.services.page_load_strategy_service import (
     PageLoadStrategyService,
 )
+from ost_visualizer.application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+    RASTER_NATIVE_RENDER_SCALE,
+)
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
@@ -79,20 +83,16 @@ class FakeRenderingService:
     def render_overlay_async(
         self,
         page,
-        bid_ref,
-        view_scale,
         show_mode,
         rotation,
+        render_scale,
         callback,
         priority=0,
-        render_scale=None,
         apply_invert_effect=True,
         apply_bitonal_effect=True,
     ):
         render_options = {
             "page": page,
-            "bid_ref": bid_ref,
-            "view_scale": view_scale,
             "show_mode": show_mode,
             "rotation": rotation,
             "callback": callback,
@@ -194,6 +194,40 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         self.assertEqual(strategy.pdf_height_pts, 1728.0)
         self.assertEqual(strategy.placeholder_width, 5184.0)
         self.assertEqual(strategy.placeholder_height, 3456.0)
+
+    def test_load_strategy_uses_canonical_pdf_and_raster_baselines(self):
+        size_provider = FakePageSizeProvider({"page.tif": (612.0, 792.0)})
+        pdf_strategy = PageLoadStrategyService(size_provider).determine_load_strategy(
+            self._page("pdf", image_path="page.pdf")
+        )
+        raster_strategy = PageLoadStrategyService(
+            size_provider
+        ).determine_load_strategy(self._page("raster", image_path="page.tif"))
+        overlay_pdf_strategy = PageLoadStrategyService(
+            size_provider
+        ).determine_load_strategy(
+            self._page(
+                "overlay",
+                overlay_image_path="overlay.pdf",
+                image_show_mode=1,
+            )
+        )
+        self.assertEqual(
+            pdf_strategy.main_scale,
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertEqual(
+            pdf_strategy.view_scale,
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertEqual(
+            raster_strategy.main_scale,
+            RASTER_NATIVE_RENDER_SCALE,
+        )
+        self.assertEqual(
+            overlay_pdf_strategy.view_scale,
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
 
     def test_pdf_load_strategy_reads_page_size_when_stored_dimensions_missing(self):
         size_provider = FakePageSizeProvider({"slow.pdf": (3024.0, 2160.0)})
@@ -396,6 +430,26 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         scale = rendering.calls[0][2]["scale"]
         self.assertLess(scale, 2.0)
         self.assertEqual(cache.render_checks, [(3024.0, 2160.0, scale)])
+
+    def test_raster_overlay_prefetch_uses_native_pixel_scale(self):
+        rendering = FakeRenderingService()
+        size_provider = FakePageSizeProvider({"overlay.tif": (1224.0, 1584.0)})
+        coordinator = self._coordinator(rendering, size_provider=size_provider)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page(
+                "p2",
+                overlay_image_path="overlay.tif",
+                image_show_mode=1,
+            ),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(len(rendering.calls), 1)
+        self.assertEqual(rendering.calls[0][0], "overlay")
+        self.assertEqual(
+            rendering.calls[0][2]["render_scale"],
+            RASTER_NATIVE_RENDER_SCALE,
+        )
 
     def test_uncacheable_prefetch_estimate_skips_render(self):
         rendering = FakeRenderingService()

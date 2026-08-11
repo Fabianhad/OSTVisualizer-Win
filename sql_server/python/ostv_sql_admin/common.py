@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import hmac
 import ipaddress
@@ -12,14 +11,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Literal
-
 import pyodbc
 
 # Administration commands are short-lived. Disabling pooling guarantees that a
 # closed context also closes its SQL session before guarded cleanup continues.
 pyodbc.pooling = False
-
-
 PRIVATE_STATE_ROOT = Path("/home/SQLServer")
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEPLOYMENT_PROPERTY = "OSTVisualizerUbuntuDeployment"
@@ -120,7 +116,9 @@ def load_config() -> DeploymentConfig:
 
 def config_value(key: str) -> str:
     if key not in NON_SECRET_ENVIRONMENT_KEYS:
-        raise RuntimeError("The requested configuration key is not available to shell callers.")
+        raise RuntimeError(
+            "The requested configuration key is not available to shell callers."
+        )
     return load_environment()[key]
 
 
@@ -203,7 +201,9 @@ def verify_secret_matches(
         or secret.trust_server_certificate is not False
         or not secret.ownership_marker
     ):
-        raise RuntimeError(f"The {role} credential does not match the deployment configuration.")
+        raise RuntimeError(
+            f"The {role} credential does not match the deployment configuration."
+        )
 
 
 @contextmanager
@@ -219,20 +219,23 @@ def connect(
     target = database if database is not None else secret.database
     if not SAFE_SQL_IDENTIFIER.fullmatch(target):
         raise RuntimeError("Refusing an unsafe SQL database identifier.")
-    connection_string = ";".join(
-        (
-            f"DRIVER={_brace(EXPECTED_DRIVER)}",
-            f"SERVER={_brace(f'tcp:{secret.server},{secret.port}')}",
-            f"DATABASE={_brace(target)}",
-            f"UID={_brace(secret.username)}",
-            f"PWD={_brace(secret.password)}",
-            "Encrypt=yes",
-            "TrustServerCertificate=no",
-            "Connection Timeout=10",
-            "MARS_Connection=no",
-            f"APP={_brace(app)}",
+    connection_string = (
+        ";".join(
+            (
+                f"DRIVER={_brace(EXPECTED_DRIVER)}",
+                f"SERVER={_brace(f'tcp:{secret.server},{secret.port}')}",
+                f"DATABASE={_brace(target)}",
+                f"UID={_brace(secret.username)}",
+                f"PWD={_brace(secret.password)}",
+                "Encrypt=yes",
+                "TrustServerCertificate=no",
+                "Connection Timeout=10",
+                "MARS_Connection=no",
+                f"APP={_brace(app)}",
+            )
         )
-    ) + ";"
+        + ";"
+    )
     connection = pyodbc.connect(connection_string, autocommit=autocommit, timeout=10)
     try:
         yield connection
@@ -270,7 +273,9 @@ def database_marker(connection: pyodbc.Connection) -> str:
 
 def require_marker(actual: str, expected: str, label: str) -> None:
     if not actual or not expected or not hmac.compare_digest(actual, expected):
-        raise RuntimeError(f"Refusing operation because the {label} ownership marker does not match.")
+        raise RuntimeError(
+            f"Refusing operation because the {label} ownership marker does not match."
+        )
 
 
 def set_extended_property(cursor: pyodbc.Cursor, name: str, value: str) -> None:
@@ -292,7 +297,9 @@ def quote_identifier(value: str) -> str:
     return f"[{value}]"
 
 
-def active_application_sessions(connection: pyodbc.Connection, database_name: str) -> int:
+def active_application_sessions(
+    connection: pyodbc.Connection, database_name: str
+) -> int:
     return int(
         scalar(
             connection,
@@ -345,18 +352,22 @@ def load_environment() -> dict[str, str]:
     require_private_file(path, label="deployment configuration")
     values = _read_env_file(path)
     if set(values) != ENVIRONMENT_KEYS:
-        raise RuntimeError("The private deployment configuration has an invalid key set.")
+        raise RuntimeError(
+            "The private deployment configuration has an invalid key set."
+        )
     if values["OSTV_STATE_ROOT"] != str(PRIVATE_STATE_ROOT):
         raise RuntimeError(f"OSTV_STATE_ROOT must be exactly {PRIVATE_STATE_ROOT}.")
-    unresolved = {
-        key for key, value in values.items() if "<" in value or ">" in value
-    }
+    unresolved = {key for key, value in values.items() if "<" in value or ">" in value}
     if unresolved - {"OSTV_SA_PASSWORD"} or (
         unresolved and values["OSTV_SA_PASSWORD"] != "<GENERATED_BY_SETUP>"
     ):
-        raise RuntimeError("The private deployment configuration contains unresolved placeholders.")
+        raise RuntimeError(
+            "The private deployment configuration contains unresolved placeholders."
+        )
     if not PINNED_SQL_IMAGE.fullmatch(values["OSTV_SQL_IMAGE"]):
-        raise RuntimeError("OSTV_SQL_IMAGE must be an official digest-pinned SQL Server 2025 image.")
+        raise RuntimeError(
+            "OSTV_SQL_IMAGE must be an official digest-pinned SQL Server 2025 image."
+        )
     for key in ("OSTV_SQL_DATABASE", "OSTV_SQL_ADMIN_LOGIN", "OSTV_SQL_CLIENT_LOGIN"):
         if not SAFE_SQL_IDENTIFIER.fullmatch(values[key]):
             raise RuntimeError(f"The configured SQL identifier {key} is invalid.")
@@ -403,16 +414,16 @@ def load_environment() -> dict[str, str]:
             for source in values["OSTV_SQL_ALLOWED_SOURCE_CIDR"].split(",")
         )
     except ValueError as exc:
-        raise RuntimeError("The private deployment contains an invalid UUID, address, or subnet.") from exc
+        raise RuntimeError(
+            "The private deployment contains an invalid UUID, address, or subnet."
+        ) from exc
     if (
         public_bind_address.version != 4
         or not public_bind_address.is_global
         or not allowed_sources
         or len(set(allowed_sources)) != len(allowed_sources)
         or any(
-            source.version != 4
-            or source.prefixlen != 32
-            or not source.is_global
+            source.version != 4 or source.prefixlen != 32 or not source.is_global
             for source in allowed_sources
         )
     ):
@@ -420,14 +431,21 @@ def load_environment() -> dict[str, str]:
             "Public SQL access requires one global IPv4 bind address and one or more unique global IPv4 /32 sources."
         )
     if wireguard.version != docker_network.version:
-        raise RuntimeError("The WireGuard and Docker subnets must use the same address family.")
-    if wireguard.ip in {wireguard.network.network_address, wireguard.network.broadcast_address}:
+        raise RuntimeError(
+            "The WireGuard and Docker subnets must use the same address family."
+        )
+    if wireguard.ip in {
+        wireguard.network.network_address,
+        wireguard.network.broadcast_address,
+    }:
         raise RuntimeError("The WireGuard server address is not usable.")
     if container_address not in docker_network or container_address in {
         docker_network.network_address,
         docker_network.broadcast_address,
     }:
-        raise RuntimeError("The SQL container address is not usable in the Docker subnet.")
+        raise RuntimeError(
+            "The SQL container address is not usable in the Docker subnet."
+        )
     if wireguard.network.overlaps(docker_network):
         raise RuntimeError("The WireGuard and Docker subnets must not overlap.")
     return values
@@ -437,7 +455,9 @@ def _read_env_file(path: Path) -> dict[str, str]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as exc:
-        raise RuntimeError("The private deployment configuration is unreadable.") from exc
+        raise RuntimeError(
+            "The private deployment configuration is unreadable."
+        ) from exc
     result: dict[str, str] = {}
     for raw in lines:
         line = raw.strip()
@@ -446,7 +466,12 @@ def _read_env_file(path: Path) -> dict[str, str]:
         if "=" not in line:
             raise RuntimeError("The private deployment configuration is malformed.")
         key, value = line.split("=", 1)
-        if not key or key in result or not value or any(character.isspace() for character in key):
+        if (
+            not key
+            or key in result
+            or not value
+            or any(character.isspace() for character in key)
+        ):
             raise RuntimeError("The private deployment configuration is malformed.")
         result[key] = value
     return result
@@ -455,13 +480,17 @@ def _read_env_file(path: Path) -> dict[str, str]:
 def _require_private_root() -> None:
     root = PRIVATE_STATE_ROOT
     if root.is_symlink():
-        raise RuntimeError(f"The private state root must not be a symbolic link: {root}")
+        raise RuntimeError(
+            f"The private state root must not be a symbolic link: {root}"
+        )
     try:
         metadata = root.stat()
     except OSError as exc:
         raise RuntimeError(f"Required private state root is missing: {root}") from exc
     if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700:
-        raise RuntimeError(f"The private state root must be a mode-0700 directory: {root}")
+        raise RuntimeError(
+            f"The private state root must be a mode-0700 directory: {root}"
+        )
     if metadata.st_uid != 0:
         raise RuntimeError(f"The private state root must be owned by root: {root}")
 
@@ -471,9 +500,13 @@ def _require_under_private_root(path: Path) -> None:
         root = PRIVATE_STATE_ROOT.resolve(strict=True)
         parent = path.parent.resolve(strict=True)
     except OSError as exc:
-        raise RuntimeError("The private deployment path has a missing parent directory.") from exc
+        raise RuntimeError(
+            "The private deployment path has a missing parent directory."
+        ) from exc
     if root not in parent.parents and parent != root:
-        raise RuntimeError(f"Private deployment files must be under {PRIVATE_STATE_ROOT}.")
+        raise RuntimeError(
+            f"Private deployment files must be under {PRIVATE_STATE_ROOT}."
+        )
 
 
 def _port(values: dict[str, str], key: str) -> int:
@@ -493,7 +526,9 @@ def _brace(value: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Read validated public deployment configuration.")
+    parser = argparse.ArgumentParser(
+        description="Read validated public deployment configuration."
+    )
     parser.add_argument("command", choices=("get", "validate"))
     parser.add_argument("key", nargs="?")
     args = parser.parse_args(argv)

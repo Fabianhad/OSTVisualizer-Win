@@ -28,6 +28,11 @@ from ....application.interfaces.i_annotation_caption_resolver import (
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from ....application.interfaces.i_uom_service import IUOMService
+from ....application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+    RASTER_NATIVE_RENDER_SCALE,
+    baseline_render_scale,
+)
 from ....domain.dtos.page_render_info_dto import PageRenderInfo
 from ....domain.entities import shape as shapes
 from ....domain.entities.annotation import (
@@ -76,7 +81,6 @@ from ..pdf.services.composite_renderer import CompositeRenderer
 from . import ost_pdf_writer
 
 logger = logging.getLogger(__name__)
-_PDF_RENDER_SCALE = 2.0
 _DEFAULT_FILL_OPACITY = 0.5
 _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
@@ -344,7 +348,7 @@ class PDFExporter:
         overlay = self._export_page_cache.get_page(
             page.overlay_image_path,
             0,
-            _PDF_RENDER_SCALE,
+            baseline_render_scale(is_pdf=is_pdf_suffix(page.overlay_image_path)),
             0,
         )
         if overlay is None or overlay.isNull():
@@ -353,10 +357,12 @@ class PDFExporter:
             return None
         export_page = self._page_with_export_geometry(page, page_info)
         canvas_w = max(
-            1, int(round(export_page.effective_width_pts * _PDF_RENDER_SCALE))
+            1,
+            int(round(export_page.effective_width_pts * INTERACTIVE_PDF_RENDER_SCALE)),
         )
         canvas_h = max(
-            1, int(round(export_page.effective_height_pts * _PDF_RENDER_SCALE))
+            1,
+            int(round(export_page.effective_height_pts * INTERACTIVE_PDF_RENDER_SCALE)),
         )
         result = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32)
         result.fill(0xFFFFFFFF)
@@ -394,7 +400,7 @@ class PDFExporter:
     ) -> bool:
         if not source_path:
             return False
-        if self._is_pdf_path(source_path):
+        if is_pdf_suffix(source_path):
             self._use_source_pdf(export_data, source_path, page_index)
             return True
         source_pdf = self._create_image_source_background_pdf(
@@ -412,7 +418,7 @@ class PDFExporter:
         image = self._export_composite_renderer.render_composite(
             export_page,
             bid_ref=None,
-            render_scale=_PDF_RENDER_SCALE,
+            render_scale=baseline_render_scale(is_pdf=is_pdf_suffix(page.image_path)),
             raster_rotation=0,
         )
         return self._write_raster_background_pdf(
@@ -438,7 +444,7 @@ class PDFExporter:
         image = self._export_page_cache.get_page(
             source_path,
             page_index,
-            _PDF_RENDER_SCALE,
+            RASTER_NATIVE_RENDER_SCALE,
             0,
         )
         return self._write_raster_background_pdf(image, page_info, temp_dir, prefix)
@@ -476,10 +482,6 @@ class PDFExporter:
         finally:
             painter.end()
         return output_path
-
-    @staticmethod
-    def _is_pdf_path(path: str) -> bool:
-        return is_pdf_suffix(path)
 
     @staticmethod
     def _use_source_pdf(export_data: Any, source_pdf: str, page_index: int) -> None:
@@ -557,7 +559,7 @@ class PDFExporter:
             "flip_y": 1 if page.flip_y else 0,
             "width": page_width_pts,
             "height": page_height_pts,
-            "view_scale": _PDF_RENDER_SCALE,
+            "view_scale": INTERACTIVE_PDF_RENDER_SCALE,
             "coord_offset_x": offset_x,
             "coord_offset_y": offset_y,
         }

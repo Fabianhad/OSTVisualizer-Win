@@ -14,6 +14,10 @@ from ost_visualizer.application.dtos.annotation_caption_dto import (
 from ost_visualizer.application.dtos.page_export_data_dto import (
     PageExportData as PageExportDto,
 )
+from ost_visualizer.application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+    RASTER_NATIVE_RENDER_SCALE,
+)
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.presentation.utils.image_show_mode import (
@@ -107,6 +111,16 @@ class _ImageCache(_Clearable):
 
     def get_page(self, *_args):
         return self.image
+
+
+class _RecordingImageCache(_ImageCache):
+    def __init__(self, image):
+        super().__init__(image)
+        self.requests = []
+
+    def get_page(self, *args):
+        self.requests.append(args)
+        return super().get_page(*args)
 
 
 class _ExplodingPainter:
@@ -349,6 +363,87 @@ class PDFOverlayExportTests(unittest.TestCase):
         )
         self.assertIsNotNone(image)
         self.assertEqual((image.width(), image.height()), (144, 144))
+
+    def test_positioned_raster_overlay_loads_native_pixels(self):
+        exporter = _make_exporter(_FakeWriter())
+        cache = _RecordingImageCache(QImage(10, 10, QImage.Format.Format_ARGB32))
+        exporter._export_page_cache = cache
+        image = exporter._render_positioned_overlay_background(
+            _page(
+                overlay_image_path="overlay.tif",
+                image_show_mode=SHOW_OVERLAY,
+                width_pts=72.0,
+                height_pts=72.0,
+                overlay_rect=(0.0, 0.0, 64.0, 64.0),
+            ),
+            {"width": 72.0, "height": 72.0},
+        )
+        self.assertIsNotNone(image)
+        self.assertEqual(cache.requests[0][2], RASTER_NATIVE_RENDER_SCALE)
+        self.assertEqual((image.width(), image.height()), (144, 144))
+
+    def test_raster_source_background_loads_native_pixels(self):
+        exporter = _make_exporter(_FakeWriter())
+        source = QImage(10, 7, QImage.Format.Format_ARGB32)
+        cache = _RecordingImageCache(source)
+        exporter._export_page_cache = cache
+        written_images = []
+        exporter._write_raster_background_pdf = (
+            lambda image, *_args: written_images.append(image) or "image.pdf"
+        )
+        result = exporter._create_image_source_background_pdf(
+            "main.tif",
+            0,
+            {"width": 72.0, "height": 72.0},
+            "unused",
+            "image",
+        )
+        self.assertEqual(result, "image.pdf")
+        self.assertEqual(cache.requests[0][2], RASTER_NATIVE_RENDER_SCALE)
+        self.assertEqual(written_images, [source])
+        self.assertEqual(
+            (written_images[0].width(), written_images[0].height()), (10, 7)
+        )
+
+    def test_raster_background_pixel_density_does_not_change_pdf_page_geometry(self):
+        exporter = _make_exporter(_FakeWriter())
+        page_info = {"width": 72.0, "height": 36.0}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = []
+            for width, height, prefix in ((16, 8, "native"), (32, 16, "upsampled")):
+                image = QImage(width, height, QImage.Format.Format_ARGB32)
+                image.fill(QColor(255, 0, 0))
+                paths.append(
+                    exporter._write_raster_background_pdf(
+                        image, page_info, temp_dir, prefix
+                    )
+                )
+            pdf_texts = [_read_pdf_text(path) for path in paths]
+        for pdf_text in pdf_texts:
+            self.assertIn("/MediaBox [0 0 72.000000 36.000000]", pdf_text)
+
+    def test_composite_export_selects_scale_from_base_source_type(self):
+        exporter = _make_exporter(_FakeWriter())
+        calls = []
+        image = QImage(10, 10, QImage.Format.Format_ARGB32)
+        exporter._export_composite_renderer = SimpleNamespace(
+            render_composite=lambda _page, **kwargs: calls.append(kwargs) or image
+        )
+        exporter._write_raster_background_pdf = lambda *_args: "composite.pdf"
+        for path, expected in (
+            ("main.pdf", INTERACTIVE_PDF_RENDER_SCALE),
+            ("main.tif", RASTER_NATIVE_RENDER_SCALE),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    exporter._create_composite_background_pdf(
+                        _page(image_path=path),
+                        {"width": 72.0, "height": 72.0},
+                        "unused",
+                    ),
+                    "composite.pdf",
+                )
+                self.assertEqual(calls[-1]["render_scale"], expected)
 
     def test_composite_export_uses_native_page_geometry_not_stored_dimensions(self):
         exporter = _make_exporter(_FakeWriter())

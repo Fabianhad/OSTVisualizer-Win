@@ -3,6 +3,10 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from PySide6 import QtGui
+from ost_visualizer.application.render_quality import (
+    CONSTRAINED_RENDER_SCALE_FLOOR,
+    RASTER_NATIVE_RENDER_SCALE,
+)
 from ost_visualizer.application.services.page_visualization_metadata_service import (
     PageVisualizationMetadataService,
 )
@@ -94,8 +98,14 @@ class NativePageImagePlaneTests(unittest.TestCase):
 
     def test_render_scale_is_bounded_for_large_pages(self):
         scale = native_plan_texture_render_scale(9000.0, 6000.0)
-        self.assertLess(scale, 1.0)
+        self.assertLess(scale, RASTER_NATIVE_RENDER_SCALE)
         self.assertLessEqual(9000.0 * scale, NATIVE_PLAN_TEXTURE_MAX_DIMENSION)
+
+    def test_render_scale_uses_shared_floor_for_extreme_pages(self):
+        self.assertEqual(
+            native_plan_texture_render_scale(1_000_000_000.0, 1_000_000_000.0),
+            CONSTRAINED_RENDER_SCALE_FLOOR,
+        )
 
     def test_qimage_to_rgba_bytes_returns_packed_rgba(self):
         image = QtGui.QImage(2, 1, QtGui.QImage.Format.Format_RGBA8888)

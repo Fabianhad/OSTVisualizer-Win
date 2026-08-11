@@ -2,7 +2,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -15,7 +14,6 @@ class SetupReproducibilityTests(unittest.TestCase):
             .splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         }
-
         self.assertEqual(
             requirements,
             {
@@ -28,7 +26,6 @@ class SetupReproducibilityTests(unittest.TestCase):
 
     def test_python_setup_propagates_installer_failure(self) -> None:
         script = (PROJECT_ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8")
-
         self.assertIn("$VenvPython -m pip install", script)
         install_at = script.index("$VenvPython -m pip install")
         exit_check_at = script.index("$LASTEXITCODE -ne 0", install_at)
@@ -40,7 +37,6 @@ class SetupReproducibilityTests(unittest.TestCase):
         script = (PROJECT_ROOT / "scripts" / "setup-cpp.ps1").read_text(
             encoding="utf-8"
         )
-
         self.assertNotIn("/releases/latest/", script)
         self.assertIn("releases/download/$PdfiumReleaseTag/pdfium-win-x64.tgz", script)
         self.assertIn("releases/download/v$QpdfVersion/$QpdfDirName.zip", script)
@@ -61,7 +57,6 @@ class SetupReproducibilityTests(unittest.TestCase):
         script = (PROJECT_ROOT / "scripts" / "setup-cpp.ps1").read_text(
             encoding="utf-8"
         )
-
         extract_at = script.index("tar -xzf")
         exit_check_at = script.index("$LASTEXITCODE -ne 0", extract_at)
         success_at = script.index("PDFium downloaded to", exit_check_at)

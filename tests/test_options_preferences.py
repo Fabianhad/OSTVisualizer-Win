@@ -9,13 +9,16 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
-from single_action import SingleCallRecorder
+from tests.single_action import SingleCallRecorder
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.dtos.annotation_caption_dto import (
     ANNOTATION_CAPTION_SPECS,
 )
 from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+)
 from ost_visualizer.application.services.config_service import ConfigService
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
@@ -302,6 +305,9 @@ def _plan_view_with_tracking_viewport(cursor_mode="select"):
 
 
 class FakeFrameCacheAdapter:
+    def file_signature(self, _file_path):
+        return None
+
     def get_frame(
         self,
         file_path,
@@ -312,7 +318,9 @@ class FakeFrameCacheAdapter:
         frame_w_pts,
         frame_h_pts,
         rotation,
+        wait_for_in_flight=True,
     ):
+        del wait_for_in_flight
         return self.render_frame_direct(
             file_path,
             page_index,
@@ -380,7 +388,15 @@ class FakeOverlayMovementPageCache(FakeFrameCacheAdapter):
         painter.end()
         return image
 
-    def get_page(self, _file_path, _page_index, scale, _rotation):
+    def get_page(
+        self,
+        _file_path,
+        _page_index,
+        scale,
+        _rotation,
+        wait_for_in_flight=True,
+    ):
+        del wait_for_in_flight
         return self._source_image(scale, QtGui.QColor(0, 0, 0))
 
     def get_tinted_page(
@@ -390,7 +406,9 @@ class FakeOverlayMovementPageCache(FakeFrameCacheAdapter):
         scale,
         _rotation,
         tint_rgb=None,
+        wait_for_in_flight=True,
     ):
+        del wait_for_in_flight
         color = QtGui.QColor(*(tint_rgb or (0, 0, 0)))
         return self._source_image(scale, color)
 
@@ -434,7 +452,9 @@ class FakeShiftedSourceMarkerTifPageCache(FakeFrameCacheAdapter):
         _page_index,
         scale,
         _rotation,
+        wait_for_in_flight=True,
     ):
+        del wait_for_in_flight
         self.page_scales.append(scale)
         width = max(1, math.ceil(100.0 * scale))
         height = max(1, math.ceil(100.0 * scale))
@@ -482,8 +502,14 @@ class FakeShiftedSourceMarkerTifPageCache(FakeFrameCacheAdapter):
 
 
 class FakeDenseMarkerOverlayMovementPageCache(FakeOverlayMovementPageCache):
-    def get_page(self, file_path, page_index, scale, rotation):
-        image = super().get_page(file_path, page_index, scale, rotation)
+    def get_page(self, file_path, page_index, scale, rotation, wait_for_in_flight=True):
+        image = super().get_page(
+            file_path,
+            page_index,
+            scale,
+            rotation,
+            wait_for_in_flight=wait_for_in_flight,
+        )
         if file_path == "overlay.tif":
             painter = QtGui.QPainter(image)
             painter.fillRect(
@@ -500,6 +526,7 @@ class FakeDenseMarkerOverlayMovementPageCache(FakeOverlayMovementPageCache):
         scale,
         rotation,
         tint_rgb=None,
+        wait_for_in_flight=True,
     ):
         image = super().get_tinted_page(
             file_path,
@@ -507,6 +534,7 @@ class FakeDenseMarkerOverlayMovementPageCache(FakeOverlayMovementPageCache):
             scale,
             rotation,
             tint_rgb=tint_rgb,
+            wait_for_in_flight=wait_for_in_flight,
         )
         if file_path == "overlay.tif":
             painter = QtGui.QPainter(image)
@@ -3263,7 +3291,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         MainWindow.go_next_takeoff_page(window)
         self.assertEqual(navigations, ["p3"])
 
-    def test_high_resolution_preference_caps_pdf_rerendering(self):
+    def test_high_resolution_preference_uses_pdf_baseline(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._can_zoom_rerender = True
         view._disable_high_resolution_images = True
@@ -3271,19 +3299,28 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._loaded_visual_kind = None
         view._pdf_width_pts = 0.0
         view._pdf_height_pts = 0.0
-        self.assertEqual(view._target_base_raster_scale(1.0, view_m11=4.0), 1.0)
+        self.assertEqual(
+            view._target_base_raster_scale(1.0, view_m11=4.0),
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
         view._disable_high_resolution_images = False
-        view._scene_scale = 2.0
+        view._scene_scale = INTERACTIVE_PDF_RENDER_SCALE
         view._pdf_width_pts = 100.0
         view._pdf_height_pts = 100.0
         view._device_pixel_ratio = lambda: 1.0
-        self.assertGreater(view._target_base_raster_scale(1.0, view_m11=4.0), 1.0)
+        self.assertGreater(
+            view._target_base_raster_scale(
+                INTERACTIVE_PDF_RENDER_SCALE,
+                view_m11=4.0,
+            ),
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
 
     def test_high_resolution_frame_scale_includes_view_scale_and_device_pixel_ratio(
         self,
     ):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view._scene_scale = 2.0
+        view._scene_scale = INTERACTIVE_PDF_RENDER_SCALE
         view.MAX_ZOOM = 8.0
         view._device_pixel_ratio = lambda: 1.5
         self.assertEqual(view._compute_frame_scale(0.5), 1.5)
@@ -3377,7 +3414,12 @@ class OptionsPreferencesTests(unittest.TestCase):
         view.set_disable_high_resolution_images(True)
         self.assertEqual(
             calls,
-            ["clear", "cancel", ("base", 2.0, 7), "viewport"],
+            [
+                "clear",
+                "cancel",
+                ("base", INTERACTIVE_PDF_RENDER_SCALE, 7),
+                "viewport",
+            ],
         )
 
     def test_composite_base_pdf_overlay_uses_stable_overlay_scale(self):
@@ -3385,7 +3427,19 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def get_tinted_page(self, file_path, page_index, scale, rotation, tint_rgb):
+            def file_signature(self, _file_path):
+                return None
+
+            def get_tinted_page(
+                self,
+                file_path,
+                page_index,
+                scale,
+                rotation,
+                tint_rgb,
+                wait_for_in_flight=True,
+            ):
+                del wait_for_in_flight
                 self.calls.append((file_path, page_index, scale, rotation, tint_rgb))
                 return QtGui.QImage(300, 300, QtGui.QImage.Format.Format_ARGB32)
 
@@ -3407,14 +3461,29 @@ class OptionsPreferencesTests(unittest.TestCase):
             raster_rotation=0,
         )
         self.assertEqual(page_cache.calls[0][2], 3.0)
-        self.assertEqual(page_cache.calls[1][2], 2.0)
+        self.assertEqual(
+            page_cache.calls[1][2],
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
 
     def test_composite_cache_key_uses_quantized_render_scale(self):
         class FakePageCache:
             def __init__(self):
                 self.calls = []
 
-            def get_tinted_page(self, file_path, page_index, scale, rotation, tint_rgb):
+            def file_signature(self, _file_path):
+                return None
+
+            def get_tinted_page(
+                self,
+                file_path,
+                page_index,
+                scale,
+                rotation,
+                tint_rgb,
+                wait_for_in_flight=True,
+            ):
+                del wait_for_in_flight
                 self.calls.append((file_path, page_index, scale, rotation, tint_rgb))
                 return QtGui.QImage(20, 20, QtGui.QImage.Format.Format_ARGB32)
 
@@ -4021,7 +4090,7 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_visible_frame_placement_uses_returned_bitmap_size_without_stretch(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._scene = QtWidgets.QGraphicsScene()
-        view._scene_scale = 2.0
+        view._scene_scale = INTERACTIVE_PDF_RENDER_SCALE
         view._visible_frame_request_id = "frame-1"
         view._visible_frame_item = None
         view._background_item = None
@@ -4680,7 +4749,14 @@ class OptionsPreferencesTests(unittest.TestCase):
             lambda scale, generation: calls.append(("overlay_base", scale, generation))
         )
         view._update_tile_coverage(4.0)
-        self.assertEqual(calls, ["clear", "cancel", ("overlay_base", 2.0, 5)])
+        self.assertEqual(
+            calls,
+            [
+                "clear",
+                "cancel",
+                ("overlay_base", INTERACTIVE_PDF_RENDER_SCALE, 5),
+            ],
+        )
 
     def test_high_resolution_reenabled_requests_current_tile_coverage(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)

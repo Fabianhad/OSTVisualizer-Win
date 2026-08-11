@@ -7,6 +7,16 @@ from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
 from shiboken6 import isValid
 from .....application.dtos.render_result_dto import RenderResult
+from .....application.render_quality import (
+    CONSTRAINED_RENDER_SCALE_FLOOR,
+    INTERACTIVE_PDF_RENDER_SCALE,
+    RENDER_SCALE_DECIMAL_PLACES,
+    ZOOM_PDF_RENDER_SCALE_MIN,
+    align_rendered_frame_origin,
+    baseline_render_scale,
+    quantize_constrained_render_scale,
+    quantize_render_frame_coordinate,
+)
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.page import Page
 from ....visualization.pdf.page_cache import PageCache
@@ -20,7 +30,6 @@ _OVERLAY_FRAME_CURRENT_Z = 0.45
 _FRAME_SCALE_LOG_STEP = 0.125
 _VISIBLE_FRAME_OVERSCAN_RATIO = 0.25
 _BASE_RASTER_SCALE_STEP = 0.25
-_BASE_RASTER_MIN_SCALE = 1.0
 _BASE_RASTER_MAX_SCALE = 3.0
 _PLAN_VIEW_RASTER_ROTATION = 0
 VISUAL_KIND_BASE = "base"
@@ -118,18 +127,14 @@ class PageLoaderMixin:
     def load_overlay_async(
         self,
         page: Page,
-        bid_ref,
-        view_scale: float,
         show_mode: int,
         rotation: int,
-        render_scale: Optional[float] = None,
+        render_scale: float,
     ):
         if not page.overlay_image_path:
             return
         request_id = self._rendering_service.render_overlay_async(
             page=page,
-            bid_ref=bid_ref,
-            view_scale=view_scale,
             show_mode=show_mode,
             rotation=rotation,
             callback=self._on_overlay_loaded,
@@ -238,18 +243,20 @@ class PageLoaderMixin:
 
     def _quantize_base_raster_scale(self, scale: float) -> float:
         max_scale = self._max_base_raster_scale()
-        min_scale = min(_BASE_RASTER_MIN_SCALE, max_scale)
+        min_scale = min(ZOOM_PDF_RENDER_SCALE_MIN, max_scale)
         clamped = max(min_scale, min(max_scale, scale))
         quantized = (
             math.ceil((clamped - 1e-9) / _BASE_RASTER_SCALE_STEP)
             * _BASE_RASTER_SCALE_STEP
         )
-        return round(min(max_scale, quantized), 3)
+        return round(min(max_scale, quantized), RENDER_SCALE_DECIMAL_PLACES)
 
     def _target_base_raster_scale(
         self, default_scale: float, view_m11: Optional[float] = None
     ) -> float:
-        if not self._can_zoom_rerender or self._disable_high_resolution_images:
+        if self._disable_high_resolution_images:
+            return self._cache_aware_base_raster_scale(INTERACTIVE_PDF_RENDER_SCALE)
+        if not self._can_zoom_rerender:
             return self._cache_aware_base_raster_scale(default_scale)
         view_transform_scale = (
             view_m11 if view_m11 and view_m11 > 0 else self.transform().m11()
@@ -262,7 +269,7 @@ class PageLoaderMixin:
         return self._quantize_base_raster_scale(target_scale)
 
     def _uses_pdf_base_raster(self, data: dict) -> bool:
-        page = data.get("page", self._current_page)
+        page = data["page"]
         return bool(page and page.image_path and is_pdf_suffix(page.image_path))
 
     def _rendered_pdf_page_dimensions(
@@ -343,9 +350,9 @@ class PageLoaderMixin:
         return transform
 
     def _logical_page_scene_dimensions(
-        self, data: dict, result: Optional[RenderResult] = None
+        self, data: dict, result: RenderResult
     ) -> tuple[float, float]:
-        if not self._uses_pdf_base_raster(data) and result is not None:
+        if not self._uses_pdf_base_raster(data):
             return float(result.image.width()), float(result.image.height())
         width, height = self._rendered_pdf_page_dimensions(
             pdf_width_pts=data["pdf_width_pts"],
@@ -412,7 +419,7 @@ class PageLoaderMixin:
 
     def _apply_page_result(self, data: dict, result: RenderResult) -> None:
         self._clear_missing_page_file_status()
-        view_scale = data.get("view_scale", 1.0)
+        view_scale = data["view_scale"]
         self._clear_overlay_items()
         scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
         self._ensure_page_canvas(scene_width, scene_height)
@@ -434,8 +441,17 @@ class PageLoaderMixin:
         show_overlay = data["show_overlay"]
         rotation = data["rotation"]
         if show_overlay and show_mode != _SHOW_MODE_OVERLAY_ONLY and page.has_overlay:
+            overlay_render_scale = baseline_render_scale(
+                is_pdf=bool(
+                    page.overlay_image_path and is_pdf_suffix(page.overlay_image_path)
+                )
+            )
+            data["overlay_render_scale"] = overlay_render_scale
             self.load_overlay_async(
-                page, data.get("bid_ref"), view_scale, show_mode, rotation
+                page,
+                show_mode,
+                rotation,
+                overlay_render_scale,
             )
         else:
             self._complete_page_visual_load()
@@ -454,7 +470,7 @@ class PageLoaderMixin:
         page = data["page"]
         view_scale = data["view_scale"]
         show_mode = data["show_mode"]
-        render_scale = data.get("overlay_render_scale", view_scale)
+        render_scale = data["overlay_render_scale"]
         if (
             page.overlay_image_path
             and is_pdf_suffix(page.overlay_image_path)
@@ -531,17 +547,20 @@ class PageLoaderMixin:
     def _compute_frame_scale(self, view_m11: float) -> float:
         display_scale = self._scene_scale * view_m11 * self._device_pixel_ratio()
         max_scale = self._scene_scale * self.MAX_ZOOM * self._device_pixel_ratio()
-        return max(0.1, min(max_scale, display_scale))
+        return max(CONSTRAINED_RENDER_SCALE_FLOOR, min(max_scale, display_scale))
 
     def _quantize_frame_scale(self, scale: float) -> float:
-        if scale <= 1.0:
-            return 1.0
+        if scale <= ZOOM_PDF_RENDER_SCALE_MIN:
+            return ZOOM_PDF_RENDER_SCALE_MIN
         log_scale = math.log2(scale)
         quantized_log = (
             math.ceil((log_scale - 1e-9) / _FRAME_SCALE_LOG_STEP)
             * _FRAME_SCALE_LOG_STEP
         )
-        return round(max(1.0, 2**quantized_log), 3)
+        return round(
+            max(ZOOM_PDF_RENDER_SCALE_MIN, 2**quantized_log),
+            RENDER_SCALE_DECIMAL_PLACES,
+        )
 
     def _clear_tiles(self) -> None:
         self._clear_visible_frame()
@@ -695,20 +714,14 @@ class PageLoaderMixin:
             context["source_h_pts"] * self._scene_scale,
         )
 
-    @staticmethod
-    def _rendered_frame_origin(value: float, scale: float) -> float:
-        if scale <= 0.0:
-            return value
-        return math.floor(value * scale + 0.5) / scale
-
     def _visible_frame_local_rect(self, context: dict, image) -> QRectF:
         scale = context["scale"]
         frame_scene_x = (
-            self._rendered_frame_origin(context["frame_x_pts"], scale)
+            align_rendered_frame_origin(context["frame_x_pts"], scale)
             * self._scene_scale
         )
         frame_scene_y = (
-            self._rendered_frame_origin(context["frame_y_pts"], scale)
+            align_rendered_frame_origin(context["frame_y_pts"], scale)
             * self._scene_scale
         )
         frame_scene_w = float(image.width()) * self._scene_scale / scale
@@ -805,29 +818,30 @@ class PageLoaderMixin:
             return None
         overlay_state_key = self._visible_frame_overlay_state_key(page, kind)
         render_identity = self._visible_frame_render_identity_key()
+        quantized_frame_scale = quantize_constrained_render_scale(frame_scale)
         identity = (
             kind,
             page.uid,
             file_path,
             page_index,
-            round(frame_scale, 3),
+            quantized_frame_scale,
             rotation,
             render_identity,
             overlay_state_key,
-            round(source_w_pts, 3),
-            round(source_h_pts, 3),
+            quantize_render_frame_coordinate(source_w_pts),
+            quantize_render_frame_coordinate(source_h_pts),
         )
         key = (
             kind,
             file_path,
             page_index,
-            round(frame_scale, 3),
+            quantized_frame_scale,
             rotation,
             page.uid,
-            round(frame_x_pts, 3),
-            round(frame_y_pts, 3),
-            round(frame_w_pts, 3),
-            round(frame_h_pts, 3),
+            quantize_render_frame_coordinate(frame_x_pts),
+            quantize_render_frame_coordinate(frame_y_pts),
+            quantize_render_frame_coordinate(frame_w_pts),
+            quantize_render_frame_coordinate(frame_h_pts),
             overlay_state_key,
         )
         return {
@@ -835,7 +849,7 @@ class PageLoaderMixin:
             "page_uid": page.uid,
             "file_path": file_path,
             "page_index": page_index,
-            "scale": frame_scale,
+            "scale": quantized_frame_scale,
             "rotation": rotation,
             "render_identity": render_identity,
             "overlay_state_key": overlay_state_key,
@@ -1065,8 +1079,6 @@ class PageLoaderMixin:
 
         request_id = self._rendering_service.render_overlay_async(
             page=page,
-            bid_ref=self._current_bid_ref,
-            view_scale=self._scene_scale,
             show_mode=page.image_show_mode,
             rotation=self._active_page_raster_rotation(),
             callback=on_base_loaded,
@@ -1108,11 +1120,12 @@ class PageLoaderMixin:
         if self._is_stale_generation(generation_id):
             return
         data = {
+            "page": self._current_page,
             "pdf_width_pts": self._pdf_width_pts,
             "pdf_height_pts": self._pdf_height_pts,
             "rotation": self._current_rotation,
         }
-        scene_width, scene_height = self._logical_page_scene_dimensions(data)
+        scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
         background_item = ImageBackgroundItem(result.image, scene_width, scene_height)
         self._replace_background_item(background_item)
         self._base_raster_scale = base_raster_scale
@@ -1187,7 +1200,7 @@ class PageLoaderMixin:
         ):
             return
         if self._disable_high_resolution_images:
-            target_scale = self._scene_scale
+            target_scale = INTERACTIVE_PDF_RENDER_SCALE
         else:
             view_transform_scale = view_m11 if view_m11 and view_m11 > 0 else 1.0
             target_scale = self._quantize_base_raster_scale(
@@ -1221,20 +1234,22 @@ class PageLoaderMixin:
             self._cancel_optional_base_correction()
             if (
                 self._primary_tiles_use_overlay_pdf()
-                and abs((self._base_raster_scale or 0.0) - self._scene_scale) > 1e-6
+                and abs((self._base_raster_scale or 0.0) - INTERACTIVE_PDF_RENDER_SCALE)
+                > 1e-6
             ):
                 self._request_optional_overlay_base_correction(
-                    self._scene_scale,
+                    INTERACTIVE_PDF_RENDER_SCALE,
                     self._advance_render_generation(),
                 )
             elif (
                 self._can_zoom_rerender
                 and self._background_item is not None
                 and not self._is_composite_mode
-                and abs((self._base_raster_scale or 0.0) - self._scene_scale) > 1e-6
+                and abs((self._base_raster_scale or 0.0) - INTERACTIVE_PDF_RENDER_SCALE)
+                > 1e-6
             ):
                 self._request_optional_base_correction(
-                    self._scene_scale,
+                    INTERACTIVE_PDF_RENDER_SCALE,
                     self._advance_render_generation(),
                 )
             return

@@ -34,6 +34,10 @@ from PySide6.QtWidgets import (
 )
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+    RASTER_NATIVE_RENDER_SCALE,
+)
 from ost_visualizer.application.services.page_load_strategy_service import (
     LoadStrategy,
     PageLoadStrategyService,
@@ -393,21 +397,17 @@ class FakeRenderingService:
     def render_overlay_async(
         self,
         page,
-        bid_ref,
-        view_scale,
         show_mode,
         rotation,
+        render_scale,
         callback,
         priority=0,
-        render_scale=None,
         apply_invert_effect=True,
         apply_bitonal_effect=True,
     ):
         request_id = self._next_request_id("overlay")
         render_options = {
             "page": page,
-            "bid_ref": bid_ref,
-            "view_scale": view_scale,
             "show_mode": show_mode,
             "rotation": rotation,
             "callback": callback,
@@ -537,11 +537,8 @@ class FakeLoadCoordinator:
     def create_pending_page_data(self, page, strategy, pdf_width_pts, pdf_height_pts):
         return {
             "page": page,
-            "page_uid": page.uid,
             "rotation": page.rotation,
-            "render_scale": strategy.main_scale,
             "show_mode": page.image_show_mode,
-            "show_original": page.image_show_mode in (0, 2),
             "show_overlay": page.image_show_mode in (1, 2) and page.has_overlay,
             "pdf_width_pts": pdf_width_pts,
             "pdf_height_pts": pdf_height_pts,
@@ -1229,6 +1226,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         overlay_request_id, overlay_request = view._rendering_service.overlay_requests[
             -1
         ]
+        self.assertEqual(overlay_request["render_scale"], INTERACTIVE_PDF_RENDER_SCALE)
         overlay_request["callback"](
             RenderResult(
                 overlay_request_id,
@@ -1567,6 +1565,32 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(rendering_service.composite_requests[0][1]["page"], page)
         self.assertEqual(
             rendering_service.composite_requests[0][1]["render_scale"], 2.0
+        )
+        view.cleanup()
+
+    def test_overlay_only_raster_loads_native_pixels_independent_of_scene_scale(self):
+        class DoubleSizeProvider:
+            def get_page_size(self, _file_path, _page_index):
+                return 1224.0, 1584.0
+
+        view = self._make_plan_view()
+        rendering_service = FakeRenderingService()
+        view._rendering_service = rendering_service
+        view._load_coordinator = PageLoadStrategyService(DoubleSizeProvider())
+        page = Page(
+            uid="p1",
+            name="P1",
+            overlay_image_path="overlay.tif",
+            image_show_mode=1,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertEqual(view._scene_scale, 2.0)
+        self.assertEqual(len(rendering_service.overlay_requests), 1)
+        self.assertEqual(
+            rendering_service.overlay_requests[0][1]["render_scale"],
+            RASTER_NATIVE_RENDER_SCALE,
         )
         view.cleanup()
 
@@ -2199,6 +2223,56 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertLess(
             view._white_canvas_item.zValue(),
             view._overlay_move_preview_base_item.zValue(),
+        )
+        view.cleanup()
+
+    def test_move_overlay_pdf_preview_uses_canonical_interactive_baseline(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 544.0, 704.0),
+        )
+        self._install_page_canvas(view, page)
+        view._scene_scale = 7.0
+        view._base_raster_scale = 3.0
+        self.assertTrue(view.show_overlay_move_handle())
+        _base_request_id, base_options = view._rendering_service.page_requests[-1]
+        _overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
+            -1
+        ]
+        self.assertEqual(
+            base_options["scale"],
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertEqual(
+            overlay_options["render_scale"],
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        view.cleanup()
+
+    def test_move_overlay_raster_preview_keeps_native_pixel_scale(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            overlay_image_path="overlay.png",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 544.0, 704.0),
+        )
+        self._install_page_canvas(view, page)
+        view._scene_scale = 7.0
+        self.assertTrue(view.show_overlay_move_handle())
+        _request_id, overlay_options = view._rendering_service.overlay_requests[-1]
+        self.assertEqual(
+            overlay_options["render_scale"],
+            RASTER_NATIVE_RENDER_SCALE,
         )
         view.cleanup()
 

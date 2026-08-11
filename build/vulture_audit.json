@@ -1,6 +1,6 @@
 {
-  "audit_date": "2026-08-10",
-  "repository_head": "bb773041a97949ec5890a87286c0b3bdeac7a9c5",
+  "audit_date": "2026-08-11",
+  "repository_head": "2dd4b111fe2cf5794bac9bbdaad84cc463e8d069",
   "vulture_version": "2.14",
   "scope": "ost_visualizer",
   "runs": [
@@ -19,7 +19,7 @@
     {
       "minimum_confidence": 60,
       "exit_code": 3,
-      "finding_count": 182,
+      "finding_count": 180,
       "raw_output": null,
       "exit_code_note": "Vulture returns 3 when findings are present."
     }
@@ -158,6 +158,68 @@
       "removed_findings": [],
       "changed_classifications": [],
       "evidence": "The exact 100/80/60 counts remain unchanged. The setup and dependency manifest changes introduce no production Python symbols for Vulture to classify."
+    },
+    {
+      "audit_date": "2026-08-11",
+      "reason": "Render-quality canonicalization and cleanup of the current uncommitted worktree",
+      "cache_policy": "Compared all current 100/80/60 findings with the cached 0/0/182 baseline and reviewed every finding in a changed production file.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 182
+        }
+      ],
+      "new_findings": [],
+      "removed_findings": [],
+      "changed_classifications": [],
+      "evidence": "Counts exactly match the cache. Findings in changed PDF exporter and page-cache files remain the previously classified nanobind fields and externally consumed cache configuration fields; the new render-quality module and cleaned request contracts produce no findings."
+    },
+    {
+      "audit_date": "2026-08-11",
+      "reason": "Incremental remaining-risk review after render-quality canonicalization",
+      "cache_policy": "Reused all unchanged 60-percent classifications and reinvestigated only findings in invalidated files, removed API names, and count deltas.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 180
+        }
+      ],
+      "new_findings": [],
+      "removed_findings": [
+        "PageCache.FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES",
+        "PageCache.PREFETCH_SHARED_CACHE_MAX_BYTES"
+      ],
+      "changed_classifications": [
+        {
+          "symbols": "PageCache.FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES and PageCache.PREFETCH_SHARED_CACHE_MAX_BYTES",
+          "from": "externally consumed cache configuration fields",
+          "to": "test-only production aliases; removed",
+          "evidence": "Repository and history searches found no production/native/script/packaging consumer. Only two cache tests read the aliases; those tests now verify observable budget behavior directly."
+        }
+      ],
+      "evidence": "The remaining changed-file findings are TintedCacheKey dataclass key fields and nanobind assignments with direct native consumers. Removed render API names and the canonical quality module produce no findings."
     }
   ],
   "changed_worktree_relevant_findings": [
@@ -175,13 +237,13 @@
     },
     {
       "symbol": "PageExportData.is_blank assignments",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:492,496",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:490,494",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads the assigned field. Observable assertions exist in tests/test_pdf_overlay_export.py and native validation tests."
     },
     {
       "symbol": "OvalAnnotationData axis assignments",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1076-1079",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1074-1077",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads x_axis_dx, x_axis_dy, y_axis_dx, and y_axis_dy. tests/test_pdf_oval_export.py verifies the values and rendered geometry."
     },
@@ -193,9 +255,15 @@
     },
     {
       "symbol": "InkAnnotationData.strokes assignment",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1139",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1137",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads strokes for ordinary /Ink annotations; Highlight export now uses its separate typed paths field. Native annotation tests verify /Ink remains unchanged."
+    },
+    {
+      "symbol": "TintedCacheKey.tint_r/tint_g/tint_b",
+      "location": "ost_visualizer/presentation/visualization/pdf/page_cache.py:87-89",
+      "classification": "dataclass cache-key fields",
+      "evidence": "The fields participate in generated dataclass equality and hashing so differently tinted page renders cannot share a cache entry. Vulture cannot observe generated dataclass consumers."
     }
   ],
   "remaining_60_percent_categories": [
@@ -250,8 +318,11 @@
     }
   ],
   "cleanup_result": {
-    "removed_from_vulture_findings": [],
-    "note": "No symbol was deleted merely because Vulture reported it. The evidence-backed cleanup in this audit came from call-site, contract, test-fixture, rendering, and Git-history analysis."
+    "removed_from_vulture_findings": [
+      "PageCache.FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES",
+      "PageCache.PREFETCH_SHARED_CACHE_MAX_BYTES"
+    ],
+    "note": "The two aliases were removed only after repository and Git-history analysis proved they were test-only production accommodations. No dynamic/native/dataclass finding was removed merely because Vulture reported it."
   },
   "dynamic_access_audit": {
     "removed": [

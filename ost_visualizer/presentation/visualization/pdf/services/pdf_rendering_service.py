@@ -6,7 +6,6 @@ from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6.QtCore import QObject, Signal
 from .....application.dtos.render_result_dto import RenderResult
-from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
 from ...utils.image_effects import apply_page_image_effects, tint_image
@@ -53,6 +52,22 @@ class RenderRequest:
     wait_for_in_flight: bool = True
 
 
+@dataclass
+class PdfTextRequest:
+    request_id: str
+    file_path: str
+    page_index: int
+    priority: int
+    callback: Callable[[RenderResult], None]
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    native_cancel_token: ost_pdf.RenderCancelToken = field(
+        default_factory=ost_pdf.RenderCancelToken
+    )
+
+
+_QueuedRequest = RenderRequest | PdfTextRequest
+
+
 class RenderBridge(QObject):
     result_ready = Signal(object, object)
 
@@ -62,13 +77,13 @@ class RenderBridge(QObject):
         self._closed = threading.Event()
         self.result_ready.connect(self._dispatch_result)
 
-    def request_callback(self, request: RenderRequest, result: RenderResult):
+    def request_callback(self, request: _QueuedRequest, result: RenderResult):
         if self._closed.is_set():
             self._finish_request(request.request_id)
             return
         self.result_ready.emit(request, result)
 
-    def _dispatch_result(self, request: RenderRequest, result: RenderResult):
+    def _dispatch_result(self, request: _QueuedRequest, result: RenderResult):
         try:
             if self._closed.is_set() or request.cancelled.is_set():
                 return
@@ -98,7 +113,7 @@ class PDFRenderingService:
         self._page_cache = page_cache
         self._composite_renderer = CompositeRenderer(page_cache)
         self._request_queue: queue.PriorityQueue = queue.PriorityQueue()
-        self._active_requests: Dict[str, RenderRequest] = {}
+        self._active_requests: Dict[str, _QueuedRequest] = {}
         self._worker_threads: List[threading.Thread] = []
         self._shutdown_event = threading.Event()
         self._lock = threading.Lock()
@@ -106,7 +121,7 @@ class PDFRenderingService:
         self._render_bridge = RenderBridge(self._cleanup_request)
         self._start_workers(num_workers)
 
-    def _enqueue_request(self, request: RenderRequest) -> str:
+    def _enqueue_request(self, request: _QueuedRequest) -> str:
         with self._lock:
             if self._shutdown_event.is_set():
                 raise RuntimeError("PDF rendering service is shut down")
@@ -216,33 +231,27 @@ class PDFRenderingService:
     def render_overlay_async(
         self,
         page: Page,
-        bid_ref: Optional[BidRef],
-        view_scale: float,
         show_mode: int,
         rotation: int,
+        render_scale: float,
         callback: Callable[[RenderResult], None],
         priority: int = 0,
-        render_scale: Optional[float] = None,
         apply_invert_effect: bool = True,
         apply_bitonal_effect: bool = True,
     ) -> str:
-        del view_scale
-        scale = render_scale
-        if scale is None:
-            scale = 2.0 if is_pdf_suffix(page.overlay_image_path) else 1.0
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
             request_type="overlay",
             file_path=page.overlay_image_path,
             page_index=0,
-            scale=scale,
+            scale=render_scale,
             rotation=rotation,
             tint_rgb=(80, 80, 255) if show_mode == 2 else None,
             invert=page.invert,
             bitonal=page.bitonal,
             priority=priority,
             page_entity=page,
-            bid_ref=bid_ref,
+            bid_ref=None,
             callback=callback,
             apply_invert_effect=apply_invert_effect,
             apply_bitonal_effect=apply_bitonal_effect,
@@ -291,19 +300,11 @@ class PDFRenderingService:
         callback: Callable[[RenderResult], None],
         priority: int = 2,
     ) -> str:
-        request = RenderRequest(
+        request = PdfTextRequest(
             request_id=str(uuid.uuid4()),
-            request_type="pdf_text",
             file_path=file_path,
             page_index=page_index,
-            scale=1.0,
-            rotation=0,
-            tint_rgb=None,
-            invert=False,
-            bitonal=False,
             priority=priority,
-            page_entity=None,
-            bid_ref=None,
             callback=callback,
         )
         return self._enqueue_request(request)
@@ -345,8 +346,10 @@ class PDFRenderingService:
             if not result_posted:
                 self._cleanup_request(request.request_id)
 
-    def _execute_render(self, request: RenderRequest) -> RenderResult:
+    def _execute_render(self, request: _QueuedRequest) -> RenderResult:
         try:
+            if isinstance(request, PdfTextRequest):
+                return self._execute_pdf_text(request)
             if request.request_type == "page":
                 return self._execute_page_render(request)
             elif request.request_type == "tinted_page":
@@ -359,8 +362,6 @@ class PDFRenderingService:
                 return self._execute_frame_render(request)
             elif request.request_type == "composite_frame":
                 return self._execute_composite_frame(request)
-            elif request.request_type == "pdf_text":
-                return self._execute_pdf_text(request)
             else:
                 return RenderResult(
                     request.request_id,
@@ -426,7 +427,7 @@ class PDFRenderingService:
             None,
         )
 
-    def _execute_pdf_text(self, request: RenderRequest) -> RenderResult:
+    def _execute_pdf_text(self, request: PdfTextRequest) -> RenderResult:
         text_runs = self._page_cache.get_text_runs(
             request.file_path, request.page_index
         )

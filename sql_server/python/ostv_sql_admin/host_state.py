@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import ipaddress
 import json
@@ -10,7 +9,6 @@ import stat
 import subprocess
 from dataclasses import replace
 from pathlib import Path
-
 from .common import (
     PRIVATE_STATE_ROOT,
     atomic_write_private,
@@ -77,9 +75,7 @@ def sync_credential_endpoint() -> dict[str, object]:
         )
         for role, secret in secrets.items()
     }
-    changed_roles = [
-        role for role in paths if replacements[role] != secrets[role]
-    ]
+    changed_roles = [role for role in paths if replacements[role] != secrets[role]]
     written: list[str] = []
     try:
         for role in changed_roles:
@@ -131,7 +127,9 @@ def sync_bootstrap_password() -> dict[str, object]:
             line = "OSTV_SA_PASSWORD=" + bootstrap.password
         result.append(line)
     if not found:
-        raise RuntimeError("OSTV_SA_PASSWORD is missing from the private configuration.")
+        raise RuntimeError(
+            "OSTV_SA_PASSWORD is missing from the private configuration."
+        )
     atomic_write_private(env_path, "\n".join(result) + "\n")
     return {"status": "bootstrap-synchronized", "secret_printed": False}
 
@@ -182,12 +180,17 @@ def require_container_identity(
     try:
         labels = json.loads(output)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("Docker returned an invalid ownership label inventory.") from exc
+        raise RuntimeError(
+            "Docker returned an invalid ownership label inventory."
+        ) from exc
     if not isinstance(labels, dict) or (
-        labels.get("com.ostvisualizer.deployment-id") != deployment["OSTV_DEPLOYMENT_ID"]
+        labels.get("com.ostvisualizer.deployment-id")
+        != deployment["OSTV_DEPLOYMENT_ID"]
         or labels.get("com.ostvisualizer.component") != "sqlserver"
     ):
-        raise RuntimeError("Container ownership labels do not match private deployment state.")
+        raise RuntimeError(
+            "Container ownership labels do not match private deployment state."
+        )
     return {"status": "container-identity-valid"}
 
 
@@ -219,14 +222,20 @@ def render_wireguard_config() -> dict[str, object]:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Invalid WireGuard peer record: {path.name}") from exc
-        if not isinstance(payload, dict) or set(payload) != {"name", "public_key", "allowed_ip"}:
+        if not isinstance(payload, dict) or set(payload) != {
+            "name",
+            "public_key",
+            "allowed_ip",
+        }:
             raise RuntimeError(f"Invalid WireGuard peer record: {path.name}")
         name = payload["name"]
         public_key = payload["public_key"]
         if not isinstance(name, str) or not SAFE_PEER_NAME.fullmatch(name):
             raise RuntimeError(f"Invalid WireGuard peer name: {path.name}")
         if path.name != f"{name}.json":
-            raise RuntimeError(f"WireGuard peer filename does not match its name: {path.name}")
+            raise RuntimeError(
+                f"WireGuard peer filename does not match its name: {path.name}"
+            )
         if not isinstance(public_key, str) or not WIREGUARD_KEY.fullmatch(public_key):
             raise RuntimeError(f"Invalid WireGuard public key: {path.name}")
         try:
@@ -237,9 +246,12 @@ def render_wireguard_config() -> dict[str, object]:
             allowed not in network.network
             or allowed == network.ip
             or allowed in used_addresses
-            or allowed in {network.network.network_address, network.network.broadcast_address}
+            or allowed
+            in {network.network.network_address, network.network.broadcast_address}
         ):
-            raise RuntimeError(f"Invalid or duplicate WireGuard peer address: {path.name}")
+            raise RuntimeError(
+                f"Invalid or duplicate WireGuard peer address: {path.name}"
+            )
         used_addresses.add(allowed)
         blocks.extend(
             (
@@ -275,7 +287,9 @@ def create_wireguard_peer(
         network.network.network_address,
         network.network.broadcast_address,
     }:
-        raise RuntimeError("The WireGuard peer address is not usable in the private subnet.")
+        raise RuntimeError(
+            "The WireGuard peer address is not usable in the private subnet."
+        )
     require_private_file(private_key_path, label="temporary WireGuard private key")
     require_private_file(public_key_path, label="temporary WireGuard public key")
     private_key = _read_wireguard_key(private_key_path)
@@ -290,7 +304,9 @@ def create_wireguard_peer(
     record_path = peers_directory / f"{name}.json"
     config_path = PRIVATE_STATE_ROOT / "temporary" / f"wireguard-{name}.conf"
     if record_path.exists() or config_path.exists():
-        raise RuntimeError("The peer or an undelivered client configuration already exists.")
+        raise RuntimeError(
+            "The peer or an undelivered client configuration already exists."
+        )
     for path in sorted(peers_directory.glob("*.json")):
         require_private_file(path, label="WireGuard peer record")
         try:
@@ -322,7 +338,9 @@ def create_wireguard_peer(
     )
     record_created = False
     try:
-        atomic_write_private(record_path, json.dumps(record, indent=2, sort_keys=True) + "\n")
+        atomic_write_private(
+            record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
+        )
         record_created = True
         atomic_write_private(config_path, client_config)
     except Exception:
@@ -348,9 +366,14 @@ def _read_wireguard_key(path: Path) -> str:
 
 def _read_public_wireguard_key(path: Path) -> str:
     if path.is_symlink():
-        raise RuntimeError("The WireGuard server public key must not be a symbolic link.")
+        raise RuntimeError(
+            "The WireGuard server public key must not be a symbolic link."
+        )
     metadata = path.stat()
-    if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) not in {0o600, 0o644}:
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) not in {
+        0o600,
+        0o644,
+    }:
         raise RuntimeError("The WireGuard server public key permissions are invalid.")
     if metadata.st_uid != 0:
         raise RuntimeError("The WireGuard server public key must be owned by root.")
@@ -373,7 +396,9 @@ def _run_command(
     )
     if result.returncode != 0:
         detail = redact_text(result.stderr.strip(), secrets)
-        raise RuntimeError(f"Host command failed without changing the requested target: {detail}")
+        raise RuntimeError(
+            f"Host command failed without changing the requested target: {detail}"
+        )
     return result.stdout.strip()
 
 

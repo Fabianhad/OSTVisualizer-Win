@@ -5,6 +5,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional
 from PySide6.QtGui import QImage
+from ....application.render_quality import (
+    quantize_constrained_render_scale,
+    quantize_render_frame_coordinate,
+    truncate_constrained_render_scale,
+)
 from ....domain.entities.file_extensions import is_pdf_suffix
 from ..utils.image_effects import tint_image
 from .renderers.page_renderer import PageRenderer
@@ -90,8 +95,6 @@ class PageCache:
     REPRESENTATIVE_PLAN_SHEET_BYTES = _REPRESENTATIVE_PLAN_SHEET_BYTES
     BASE_RASTER_MAX_PIXELS = _BASE_RASTER_MAX_PIXELS
     PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
-    FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES = _FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES
-    PREFETCH_SHARED_CACHE_MAX_BYTES = _PREFETCH_SHARED_CACHE_MAX_BYTES
 
     def __init__(self):
         self._cache: OrderedDict[CacheKey, QImage] = OrderedDict()
@@ -119,9 +122,6 @@ class PageCache:
             self._renderers.append(renderer)
         return renderer
 
-    def _quantize_scale(self, scale: float) -> float:
-        return max(0.1, round(scale, 3))
-
     @staticmethod
     def _clean_page_index(page_index: int) -> int:
         return max(0, int(page_index or 0))
@@ -144,10 +144,6 @@ class PageCache:
             return 0
         return min(requested_index, page_count - 1)
 
-    @staticmethod
-    def _quantize_frame_coord(value: float) -> float:
-        return round(float(value), 3)
-
     def _build_frame_cache_key(
         self,
         file_path: str,
@@ -167,12 +163,12 @@ class PageCache:
             file_path=file_path,
             file_signature=file_signature,
             page_index=normalized_page_index,
-            scale=self._quantize_scale(scale),
+            scale=quantize_constrained_render_scale(scale),
             rotation=rotation,
-            frame_x_pts=self._quantize_frame_coord(frame_x_pts),
-            frame_y_pts=self._quantize_frame_coord(frame_y_pts),
-            frame_w_pts=self._quantize_frame_coord(frame_w_pts),
-            frame_h_pts=self._quantize_frame_coord(frame_h_pts),
+            frame_x_pts=quantize_render_frame_coordinate(frame_x_pts),
+            frame_y_pts=quantize_render_frame_coordinate(frame_y_pts),
+            frame_w_pts=quantize_render_frame_coordinate(frame_w_pts),
+            frame_h_pts=quantize_render_frame_coordinate(frame_h_pts),
         )
 
     @staticmethod
@@ -189,14 +185,14 @@ class PageCache:
     def get_page(
         self,
         file_path: str,
-        page_index: int = 0,
-        scale: float = 1.0,
-        rotation: int = 0,
+        page_index: int,
+        scale: float,
+        rotation: int,
         wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         if not file_path:
             return None
-        quantized_scale = self._quantize_scale(scale)
+        quantized_scale = quantize_constrained_render_scale(scale)
         file_signature = self._file_signature(file_path)
         normalized_page_index = self._normalize_page_index(
             file_path, page_index, file_signature
@@ -320,8 +316,7 @@ class PageCache:
         if max_pixels is not None and max_pixels > 0:
             max_scale_by_pixels = (max_pixels / (width_pts * height_pts)) ** 0.5
             max_scale = min(max_scale, max_scale_by_pixels)
-        clamped = max(0.1, min(desired_scale, max_scale))
-        return int(clamped * 1000) / 1000
+        return truncate_constrained_render_scale(min(desired_scale, max_scale))
 
     @staticmethod
     def estimated_render_bytes(
@@ -338,15 +333,15 @@ class PageCache:
     def get_tinted_page(
         self,
         file_path: str,
-        page_index: int = 0,
-        scale: float = 1.0,
-        rotation: int = 0,
+        page_index: int,
+        scale: float,
+        rotation: int,
         tint_rgb: tuple = (255, 80, 80),
         wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         if not file_path:
             return None
-        quantized_scale = self._quantize_scale(scale)
+        quantized_scale = quantize_constrained_render_scale(scale)
         r, g, b = tint_rgb
         file_signature = self._file_signature(file_path)
         normalized_page_index = self._normalize_page_index(
@@ -395,7 +390,7 @@ class PageCache:
         frame_y_pts: float,
         frame_w_pts: float,
         frame_h_pts: float,
-        rotation: int = 0,
+        rotation: int,
         wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         if not file_path or frame_w_pts <= 0.0 or frame_h_pts <= 0.0:

@@ -19,6 +19,7 @@ from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
     PageRenderer,
 )
+from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
 )
@@ -493,7 +494,7 @@ class OverlayCoordinateContractTests(unittest.TestCase):
         self.assertEqual(delta, (96.0, 48.0))
 
     def test_cached_and_uncached_paths_share_one_transform_identity(self):
-        renderer = CompositeRenderer.__new__(CompositeRenderer)
+        renderer = CompositeRenderer(PageCache())
         page_at_64_units = _page(CALIBRATED_64_RECT)
         page_at_96_units = _page(
             CALIBRATED_64_RECT,

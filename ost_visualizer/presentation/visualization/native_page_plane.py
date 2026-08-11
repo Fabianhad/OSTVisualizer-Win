@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence
 from PySide6 import QtGui
 from ...application.dtos.mesh_geometry_dto import normalize_scene_page_uids
+from ...application.render_quality import (
+    CONSTRAINED_RENDER_SCALE_FLOOR,
+    RASTER_NATIVE_RENDER_SCALE,
+)
 from ...domain.services.page_image_plane_transform import native_page_plane_transform
 from .pdf.page_cache import PageCache
 
@@ -115,14 +119,17 @@ def native_plan_texture_render_scale(
     page_width_pts = max(0.0, float(page_width_pts or 0.0))
     page_height_pts = max(0.0, float(page_height_pts or 0.0))
     if page_width_pts <= 0.0 or page_height_pts <= 0.0:
-        return 1.0
+        return RASTER_NATIVE_RENDER_SCALE
     max_dimension_scale = NATIVE_PLAN_TEXTURE_MAX_DIMENSION / max(
         page_width_pts, page_height_pts
     )
     max_pixels_scale = math.sqrt(
         NATIVE_PLAN_TEXTURE_MAX_PIXELS / (page_width_pts * page_height_pts)
     )
-    return max(0.1, min(1.0, max_dimension_scale, max_pixels_scale))
+    return max(
+        CONSTRAINED_RENDER_SCALE_FLOOR,
+        min(RASTER_NATIVE_RENDER_SCALE, max_dimension_scale, max_pixels_scale),
+    )
 
 
 def qimage_to_rgba_bytes(

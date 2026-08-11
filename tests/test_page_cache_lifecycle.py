@@ -2,6 +2,10 @@ import tempfile
 import threading
 import unittest
 from PySide6.QtGui import QImage
+from ost_visualizer.application.render_quality import (
+    CONSTRAINED_RENDER_SCALE_FLOOR,
+    INTERACTIVE_PDF_RENDER_SCALE,
+)
 from ost_visualizer.presentation.visualization.pdf.page_cache import (
     PageCache,
     scoped_pdf_render_cancellation_token,
@@ -137,8 +141,12 @@ class _ClosableRenderer:
 
 class PageCacheLifecycleTests(unittest.TestCase):
     def test_cacheable_base_scale_keeps_heavy_pdf_under_cache_budget(self):
-        scale = PageCache.cacheable_base_render_scale(3024.0, 2160.0, 2.0)
-        self.assertLess(scale, 2.0)
+        scale = PageCache.cacheable_base_render_scale(
+            3024.0,
+            2160.0,
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertLess(scale, INTERACTIVE_PDF_RENDER_SCALE)
         self.assertLessEqual(
             PageCache.estimated_render_bytes(3024.0, 2160.0, scale),
             PageCache.PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES,
@@ -150,9 +158,22 @@ class PageCacheLifecycleTests(unittest.TestCase):
 
     def test_cacheable_base_scale_preserves_small_pdf_scale(self):
         self.assertEqual(
-            PageCache.cacheable_base_render_scale(612.0, 792.0, 2.0),
-            2.0,
+            PageCache.cacheable_base_render_scale(
+                612.0,
+                792.0,
+                INTERACTIVE_PDF_RENDER_SCALE,
+            ),
+            INTERACTIVE_PDF_RENDER_SCALE,
         )
+
+    def test_cache_constraints_can_reach_floor_without_changing_baseline(self):
+        scale = PageCache.cacheable_base_render_scale(
+            1_000_000.0,
+            1_000_000.0,
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertEqual(scale, CONSTRAINED_RENDER_SCALE_FLOOR)
+        self.assertEqual(INTERACTIVE_PDF_RENDER_SCALE, 2.0)
 
     def test_pdf_metadata_caches_are_bounded_lru(self):
         renderer = _FakeRenderer()
@@ -215,10 +236,8 @@ class PageCacheLifecycleTests(unittest.TestCase):
     def test_prefetch_pressure_accounts_for_frame_and_tinted_caches(self):
         cache = PageCache()
         cache._image_size_bytes = lambda value: int(value)
-        cache._frame_cache["frame"] = PageCache.PREFETCH_SHARED_CACHE_MAX_BYTES // 2
-        cache._tinted_cache["tinted"] = (
-            PageCache.PREFETCH_SHARED_CACHE_MAX_BYTES - cache._frame_cache["frame"]
-        )
+        cache._frame_cache["frame"] = 10**12
+        cache._tinted_cache["tinted"] = 10**12
         self.assertFalse(cache.can_accept_prefetch_render(612.0, 792.0, 1.0))
 
     def test_invalid_pdf_page_index_is_normalized_before_cache_key(self):
@@ -268,9 +287,7 @@ class PageCacheLifecycleTests(unittest.TestCase):
         renderer = _FakeRenderer()
         cache = PageCache()
         cache._get_renderer = lambda: renderer
-        cache._image_size_bytes = (
-            lambda _image: PageCache.FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES + 1
-        )
+        cache._image_size_bytes = lambda _image: 10**12
         cache.get_frame("page.pdf", 0, 2.0, 10.0, 20.0, 30.0, 40.0, 0)
         cache.get_frame("page.pdf", 0, 2.0, 10.0, 20.0, 30.0, 40.0, 0)
         self.assertEqual(len(renderer.frame_calls), 2)

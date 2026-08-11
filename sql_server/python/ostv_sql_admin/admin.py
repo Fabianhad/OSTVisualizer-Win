@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -12,9 +11,7 @@ import uuid
 from dataclasses import replace
 from datetime import date, datetime, time, timezone
 from pathlib import Path
-
 import pyodbc
-
 from .common import (
     BACKUP_PROPERTY,
     DATABASE_PROPERTY,
@@ -44,7 +41,6 @@ from .common import (
 
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
-
 from ost_visualizer.domain.entities.database_descriptor import (  # noqa: E402
     DatabaseDescriptor,
     SqlAuthenticationMode,
@@ -55,15 +51,34 @@ from ost_visualizer.infrastructure.sql.client_permissions import (  # noqa: E402
     apply_sql_client_permissions,
     require_sql_client_editability,
 )
-from ost_visualizer.infrastructure.sql.connection_manager import SqlConnectionManager  # noqa: E402
-from ost_visualizer.infrastructure.sql.database_creator import SqlDatabaseCreator  # noqa: E402
-from ost_visualizer.infrastructure.database.descriptor_registry import DatabaseDescriptorRegistry  # noqa: E402
-from ost_visualizer.infrastructure.sql.collaboration_store import SqlCollaborationStore  # noqa: E402
-from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader  # noqa: E402
-from ost_visualizer.application.dtos.collaboration_dtos import PresenceMode, ResourceRef  # noqa: E402
-from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1  # noqa: E402
-from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector  # noqa: E402
-from ost_visualizer.infrastructure.sql.schema_validator import SqlSchemaValidator  # noqa: E402
+from ost_visualizer.infrastructure.sql.connection_manager import (
+    SqlConnectionManager,
+)  # noqa: E402
+from ost_visualizer.infrastructure.sql.database_creator import (
+    SqlDatabaseCreator,
+)  # noqa: E402
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
+)  # noqa: E402
+from ost_visualizer.infrastructure.sql.collaboration_store import (
+    SqlCollaborationStore,
+)  # noqa: E402
+from ost_visualizer.infrastructure.sql.remote_change_reader import (
+    SqlRemoteChangeReader,
+)  # noqa: E402
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    PresenceMode,
+    ResourceRef,
+)  # noqa: E402
+from ost_visualizer.infrastructure.sql.schema_definition import (
+    SQL_SCHEMA_V1,
+)  # noqa: E402
+from ost_visualizer.infrastructure.sql.schema_inspector import (
+    SqlSchemaInspector,
+)  # noqa: E402
+from ost_visualizer.infrastructure.sql.schema_validator import (
+    SqlSchemaValidator,
+)  # noqa: E402
 
 APPLICATION_VERSION = "container-server"
 CONTAINER_DEPLOYMENT_KIND = "container"
@@ -106,7 +121,9 @@ def create_secrets(config: DeploymentConfig) -> dict[str, object]:
         if path.exists():
             existing = read_secret(path)
             if existing.ownership_marker != marker:
-                raise RuntimeError(f"The existing {role} secret has a different ownership marker.")
+                raise RuntimeError(
+                    f"The existing {role} secret has a different ownership marker."
+                )
             continue
         write_secret(
             path,
@@ -193,10 +210,16 @@ def bootstrap_admin(config: DeploymentConfig) -> dict[str, object]:
                 DEPLOYMENT_KIND_PROPERTY,
                 f"{CONTAINER_DEPLOYMENT_KIND}:{config.container_name}",
             )
-            set_extended_property(cursor, BACKUP_PROPERTY, str(config.backup_sql_directory))
+            set_extended_property(
+                cursor, BACKUP_PROPERTY, str(config.backup_sql_directory)
+            )
         finally:
             cursor.close()
-    with connect(replace(admin, database="master"), database="master", app="OSTV SQL Admin Verification") as connection:
+    with connect(
+        replace(admin, database="master"),
+        database="master",
+        app="OSTV SQL Admin Verification",
+    ) as connection:
         _require_owned_server(connection, admin, config)
         if int(scalar(connection, "SELECT IS_SRVROLEMEMBER(N'sysadmin')") or 0) != 1:
             raise RuntimeError("The dedicated administrator did not receive sysadmin.")
@@ -206,7 +229,11 @@ def bootstrap_admin(config: DeploymentConfig) -> dict[str, object]:
         finally:
             cursor.close()
     bootstrap_path.unlink()
-    return {"status": "administrator-configured", "sa_disabled": True, "administrator_verified": True}
+    return {
+        "status": "administrator-configured",
+        "sa_disabled": True,
+        "administrator_verified": True,
+    }
 
 
 def provision_database(config: DeploymentConfig) -> dict[str, object]:
@@ -238,7 +265,9 @@ def provision_database(config: DeploymentConfig) -> dict[str, object]:
             with connect(admin, database=config.database) as database_connection:
                 existing_marker = database_marker(database_connection)
                 if not existing_marker:
-                    quarantine = _backup(config, connection, config.database, prefix="unowned-mismatch")
+                    quarantine = _backup(
+                        config, connection, config.database, prefix="unowned-mismatch"
+                    )
                     raise RuntimeError(
                         "The configured database already exists without the OST Visualizer ownership marker. "
                         f"A copy-only backup was created at {quarantine}; the database was not modified."
@@ -263,12 +292,17 @@ def provision_database(config: DeploymentConfig) -> dict[str, object]:
             finally:
                 with connect(admin_master, database="master") as connection:
                     _require_owned_server(connection, admin, config)
-                    created = scalar(connection, "SELECT DB_ID(?)", config.database) is not None
+                    created = (
+                        scalar(connection, "SELECT DB_ID(?)", config.database)
+                        is not None
+                    )
         with connect(admin, database=config.database) as connection:
             cursor = connection.cursor()
             try:
                 if created:
-                    set_extended_property(cursor, DISPOSABLE_PROPERTY, disposable_marker)
+                    set_extended_property(
+                        cursor, DISPOSABLE_PROPERTY, disposable_marker
+                    )
                     marked = True
                 set_extended_property(cursor, DATABASE_PROPERTY, admin.ownership_marker)
             finally:
@@ -307,7 +341,9 @@ def provision_database(config: DeploymentConfig) -> dict[str, object]:
             _drop_created_client_login(config, admin)
         except Exception as exc:
             cleanup_errors.append(exc)
-    _raise_after_cleanup("Database provisioning", operation_error, tuple(cleanup_errors))
+    _raise_after_cleanup(
+        "Database provisioning", operation_error, tuple(cleanup_errors)
+    )
     if verification is None:
         raise RuntimeError("Database provisioning ended without canonical validation.")
     return {
@@ -338,10 +374,16 @@ def _configure_client(
         )
         if login_exists and not rotate:
             try:
-                with connect(client, database=config.database, app="OSTV Client Credential Verification"):
+                with connect(
+                    client,
+                    database=config.database,
+                    app="OSTV Client Credential Verification",
+                ):
                     pass
             except pyodbc.Error as exc:
-                raise RuntimeError("The stored client credential no longer authenticates; run rotate_client_password.sh.") from exc
+                raise RuntimeError(
+                    "The stored client credential no longer authenticates; run rotate_client_password.sh."
+                ) from exc
         if rotate or not login_exists:
             cursor = connection.cursor()
             try:
@@ -379,7 +421,9 @@ def _configure_client(
             apply_sql_client_permissions(cursor, config.client_login)
         finally:
             cursor.close()
-    with connect(client, database=config.database, app="OST Visualizer Permission Verification") as connection:
+    with connect(
+        client, database=config.database, app="OST Visualizer Permission Verification"
+    ) as connection:
         cursor = connection.cursor()
         try:
             require_sql_client_editability(cursor)
@@ -395,7 +439,9 @@ def validate_environment(
     verify_secret_matches(admin, config, role="admin")
     verify_secret_matches(client, config, role="client")
     require_marker(admin.ownership_marker, client.ownership_marker, "credential")
-    with connect(replace(admin, database="master"), database="master", app="OSTV SQL Validator") as connection:
+    with connect(
+        replace(admin, database="master"), database="master", app="OSTV SQL Validator"
+    ) as connection:
         _require_owned_server(connection, admin, config)
         cursor = connection.cursor()
         try:
@@ -411,18 +457,28 @@ def validate_environment(
         finally:
             cursor.close()
     if int(server_row[2]) != 17:
-        raise RuntimeError("This deployment requires supported SQL Server 2025 (major version 17).")
+        raise RuntimeError(
+            "This deployment requires supported SQL Server 2025 (major version 17)."
+        )
     if int(server_row[3]) != 1:
         raise RuntimeError("Dedicated administrator access is not available.")
     if not str(server_row[1]).casefold().startswith(config.edition.casefold()):
-        raise RuntimeError("The installed SQL Server edition does not match the private configuration.")
-    with connect(admin, database=config.database, app="OSTV SQL Schema Validator") as connection:
+        raise RuntimeError(
+            "The installed SQL Server edition does not match the private configuration."
+        )
+    with connect(
+        admin, database=config.database, app="OSTV SQL Schema Validator"
+    ) as connection:
         require_marker(database_marker(connection), admin.ownership_marker, "database")
-    inventory = SqlSchemaInspector().inspect(_location(admin, config.database), admin.password)
+    inventory = SqlSchemaInspector().inspect(
+        _location(admin, config.database), admin.password
+    )
     report = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema).validate(inventory)
     if not report.is_valid:
         raise RuntimeError("Canonical schema validation failed: " + report.user_message)
-    with connect(client, database=config.database, app="OST Visualizer Client Validator") as connection:
+    with connect(
+        client, database=config.database, app="OST Visualizer Client Validator"
+    ) as connection:
         cursor = connection.cursor()
         try:
             require_sql_client_editability(cursor)
@@ -438,7 +494,9 @@ def validate_environment(
         raise RuntimeError("The validated client connection is not encrypted.")
     _validate_permission_inventory(permissions)
     if feed_row[0] is None or feed_row[1] is None:
-        raise RuntimeError("Change Tracking collaboration feed versions are unavailable.")
+        raise RuntimeError(
+            "Change Tracking collaboration feed versions are unavailable."
+        )
     backup_result: dict[str, object] = {"performed": False}
     if run_backup:
         backup_path = backup_database(config)
@@ -456,7 +514,9 @@ def validate_environment(
         "change_tracking": inventory.change_tracking_enabled,
         "change_tracking_retention_days": inventory.change_tracking_retention_days,
         "change_tracking_auto_cleanup": inventory.change_tracking_auto_cleanup,
-        "tracked_tables": [f"{s}.{t}" for s, t in sorted(inventory.change_tracking_tables)],
+        "tracked_tables": [
+            f"{s}.{t}" for s, t in sorted(inventory.change_tracking_tables)
+        ],
         "client_editability": True,
         "client_server_roles": permissions["server_roles"],
         "client_database_roles": permissions["database_roles"],
@@ -488,7 +548,11 @@ def _permission_inventory(cursor) -> dict[str, object]:
         "COALESCE(HAS_PERMS_BY_NAME(NULL,NULL,N'ALTER ANY LOGIN'),0)"
     )
     elevated = tuple(int(value) for value in cursor.fetchone())
-    return {"server_roles": server_roles, "database_roles": database_roles, "elevated": elevated}
+    return {
+        "server_roles": server_roles,
+        "database_roles": database_roles,
+        "elevated": elevated,
+    }
 
 
 def _validate_permission_inventory(value: dict[str, object]) -> None:
@@ -521,7 +585,9 @@ def _require_owned_server(
     )
     expected_kind = f"{CONTAINER_DEPLOYMENT_KIND}:{config.container_name}"
     if actual_kind != expected_kind:
-        raise RuntimeError("Refusing operation because the SQL container ownership identity does not match.")
+        raise RuntimeError(
+            "Refusing operation because the SQL container ownership identity does not match."
+        )
 
 
 def repair_permissions(config: DeploymentConfig) -> dict[str, object]:
@@ -531,7 +597,9 @@ def repair_permissions(config: DeploymentConfig) -> dict[str, object]:
         _require_owned_server(connection, admin, config)
     with connect(admin, database=config.database) as connection:
         require_marker(database_marker(connection), admin.ownership_marker, "database")
-    _configure_client(config, replace(admin, database="master"), admin, client, rotate=False)
+    _configure_client(
+        config, replace(admin, database="master"), admin, client, rotate=False
+    )
     validate_environment(config, run_backup=False)
     return {"status": "permissions-repaired", "client_verified": True}
 
@@ -569,15 +637,25 @@ def rotate_client_password(config: DeploymentConfig) -> dict[str, object]:
                 (rotation_error, rollback_error),
             )
         raise
-    return {"status": "client-password-rotated", "client_verified": True, "secret_printed": False}
+    return {
+        "status": "client-password-rotated",
+        "client_verified": True,
+        "secret_printed": False,
+    }
 
 
 def backup_database(config: DeploymentConfig) -> Path:
     admin = read_secret(_secret_path(config, "admin"))
-    with connect(replace(admin, database="master"), database="master", app="OSTV SQL Backup") as connection:
+    with connect(
+        replace(admin, database="master"), database="master", app="OSTV SQL Backup"
+    ) as connection:
         _require_owned_server(connection, admin, config)
-        with connect(admin, database=config.database, app="OSTV SQL Backup Ownership") as database_connection:
-            require_marker(database_marker(database_connection), admin.ownership_marker, "database")
+        with connect(
+            admin, database=config.database, app="OSTV SQL Backup Ownership"
+        ) as database_connection:
+            require_marker(
+                database_marker(database_connection), admin.ownership_marker, "database"
+            )
         return _backup(config, connection, config.database, prefix="full")
 
 
@@ -615,7 +693,11 @@ def restore_verify(config: DeploymentConfig, path: Path) -> dict[str, object]:
     _, sql_path = _resolve_backup_path(config, path)
     admin = read_secret(_secret_path(config, "admin"))
     marker = f"restore-{uuid.uuid4()}"
-    target = "OSTV_RESTORE_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_") + secrets.token_hex(4)
+    target = (
+        "OSTV_RESTORE_"
+        + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_")
+        + secrets.token_hex(4)
+    )
     quote_identifier(target)
     data_path = config.data_sql_directory / f"{target}.mdf"
     log_path = config.data_sql_directory / f"{target}_log.ldf"
@@ -626,26 +708,41 @@ def restore_verify(config: DeploymentConfig, path: Path) -> dict[str, object]:
     result: dict[str, object] | None = None
     operation_error: Exception | None = None
     try:
-        with connect(admin_master, database="master", app="OSTV SQL Restore Verification") as connection:
+        with connect(
+            admin_master, database="master", app="OSTV SQL Restore Verification"
+        ) as connection:
             _require_owned_server(connection, admin, config)
             if scalar(connection, "SELECT DB_ID(?)", target) is not None:
-                raise RuntimeError("The unique restore-validation database already exists.")
+                raise RuntimeError(
+                    "The unique restore-validation database already exists."
+                )
             try:
-                _restore_database_files(connection, sql_path, target, data_path, log_path)
+                _restore_database_files(
+                    connection, sql_path, target, data_path, log_path
+                )
             finally:
                 created = scalar(connection, "SELECT DB_ID(?)", target) is not None
-        with connect(target_secret, database=target, app="OSTV SQL Restore Ownership") as connection:
+        with connect(
+            target_secret, database=target, app="OSTV SQL Restore Ownership"
+        ) as connection:
             cursor = connection.cursor()
             try:
                 set_extended_property(cursor, DISPOSABLE_PROPERTY, marker)
                 marked = True
             finally:
                 cursor.close()
-            require_marker(database_marker(connection), admin.ownership_marker, "restored database")
-        inventory = SqlSchemaInspector().inspect(_location(admin, target), admin.password)
+            require_marker(
+                database_marker(connection), admin.ownership_marker, "restored database"
+            )
+        inventory = SqlSchemaInspector().inspect(
+            _location(admin, target), admin.password
+        )
         report = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema).validate(inventory)
         if not report.is_valid:
-            raise RuntimeError("The restored validation database is not canonical: " + report.user_message)
+            raise RuntimeError(
+                "The restored validation database is not canonical: "
+                + report.user_message
+            )
         result = {
             "restore_verified": True,
             "restore_schema_valid": True,
@@ -677,7 +774,11 @@ def restore_verify(config: DeploymentConfig, path: Path) -> dict[str, object]:
 def _resolve_backup_path(config: DeploymentConfig, path: Path) -> tuple[Path, Path]:
     path = path.resolve()
     backup_root = config.backup_host_directory.resolve()
-    if backup_root not in path.parents or not path.is_file() or path.suffix.casefold() != ".bak":
+    if (
+        backup_root not in path.parents
+        or not path.is_file()
+        or path.suffix.casefold() != ".bak"
+    ):
         raise RuntimeError("The restore source is outside the owned backup directory.")
     return path, config.backup_sql_directory / path.relative_to(backup_root)
 
@@ -696,7 +797,10 @@ def _restore_database_files(
             "DECLARE @path nvarchar(4000)=?; RESTORE VERIFYONLY FROM DISK=@path WITH CHECKSUM",
             str(sql_path),
         )
-        cursor.execute("DECLARE @path nvarchar(4000)=?; RESTORE FILELISTONLY FROM DISK=@path", str(sql_path))
+        cursor.execute(
+            "DECLARE @path nvarchar(4000)=?; RESTORE FILELISTONLY FROM DISK=@path",
+            str(sql_path),
+        )
         rows = cursor.fetchall()
         data_rows = [row for row in rows if str(row[2]).upper() == "D"]
         log_rows = [row for row in rows if str(row[2]).upper() == "L"]
@@ -709,7 +813,11 @@ def _restore_database_files(
             "QUOTENAME(@path,NCHAR(39)) + N' WITH CHECKSUM, RECOVERY, MOVE ' + "
             "QUOTENAME(@data,NCHAR(39)) + N' TO ' + QUOTENAME(@dataPath,NCHAR(39)) + "
             "N', MOVE ' + QUOTENAME(@log,NCHAR(39)) + N' TO ' + QUOTENAME(@logPath,NCHAR(39)); EXEC(@sql);",
-            str(sql_path), str(data_rows[0][0]), str(log_rows[0][0]), str(data_path), str(log_path),
+            str(sql_path),
+            str(data_rows[0][0]),
+            str(log_rows[0][0]),
+            str(data_path),
+            str(log_path),
         )
         _drain_results(cursor)
     finally:
@@ -728,14 +836,20 @@ def _drop_created_database(
         allow_configured_name and target == config.database
     )
     if disposable_marker is None and not unmarked_name_is_safe:
-        raise RuntimeError("Refusing unmarked cleanup for a non-temporary database name.")
+        raise RuntimeError(
+            "Refusing unmarked cleanup for a non-temporary database name."
+        )
     admin_master = replace(admin, database="master")
-    with connect(admin_master, database="master", app="OSTV SQL Deterministic Cleanup") as connection:
+    with connect(
+        admin_master, database="master", app="OSTV SQL Deterministic Cleanup"
+    ) as connection:
         _require_owned_server(connection, admin, config)
         if scalar(connection, "SELECT DB_ID(?)", target) is None:
             return
         if active_application_sessions(connection, target):
-            raise RuntimeError("Refusing cleanup while OST Visualizer sessions are active.")
+            raise RuntimeError(
+                "Refusing cleanup while OST Visualizer sessions are active."
+            )
         if disposable_marker is not None:
             target_secret = replace(admin, database=target)
             with connect(target_secret, database=target) as target_connection:
@@ -745,7 +859,9 @@ def _drop_created_database(
                     "WHERE class=0 AND name=?",
                     DISPOSABLE_PROPERTY,
                 )
-                require_marker(str(value or ""), disposable_marker, "temporary database")
+                require_marker(
+                    str(value or ""), disposable_marker, "temporary database"
+                )
         cursor = connection.cursor()
         try:
             cursor.execute(
@@ -760,7 +876,9 @@ def _drop_created_client_login(
     config: DeploymentConfig, admin: ConnectionSecret
 ) -> None:
     admin_master = replace(admin, database="master")
-    with connect(admin_master, database="master", app="OSTV SQL Provisioning Cleanup") as connection:
+    with connect(
+        admin_master, database="master", app="OSTV SQL Provisioning Cleanup"
+    ) as connection:
         _require_owned_server(connection, admin, config)
         if scalar(connection, "SELECT SUSER_ID(?)", config.client_login) is None:
             return
@@ -792,7 +910,9 @@ def _raise_after_cleanup(
 
 def database_fingerprint(config: DeploymentConfig) -> dict[str, object]:
     admin = read_secret(_secret_path(config, "admin"))
-    with connect(admin, database=config.database, app="OSTV Data Fingerprint") as connection:
+    with connect(
+        admin, database=config.database, app="OSTV Data Fingerprint"
+    ) as connection:
         require_marker(database_marker(connection), admin.ownership_marker, "database")
         return _fingerprint_connection(config.database, connection)
 
@@ -811,7 +931,12 @@ def _fingerprint_connection(
             )
         )
     definitions.extend(
-        (table.schema, table.name, tuple(column.name for column in table.columns), table.primary_key)
+        (
+            table.schema,
+            table.name,
+            tuple(column.name for column in table.columns),
+            table.primary_key,
+        )
         for table in SQL_SCHEMA_V1.tables
     )
     tables: dict[str, dict[str, object]] = {}
@@ -840,7 +965,9 @@ def _fingerprint_connection(
         finally:
             cursor.close()
         tables[f"{schema}.{table}"] = {"rows": count, "sha256": digest.hexdigest()}
-    canonical = json.dumps(tables, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    canonical = json.dumps(tables, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return {
         "database": database_name,
         "schema_checksum": SQL_SCHEMA_V1.checksum,
@@ -871,19 +998,27 @@ def restore_migration(
 ) -> dict[str, object]:
     expected_opt_in = f"restore-migration-{config.database}"
     if os.environ.get("OSTV_CONFIRM_DESTRUCTIVE") != expected_opt_in:
-        raise RuntimeError(f"Set OSTV_CONFIRM_DESTRUCTIVE={expected_opt_in} for migration restore.")
+        raise RuntimeError(
+            f"Set OSTV_CONFIRM_DESTRUCTIVE={expected_opt_in} for migration restore."
+        )
     _, sql_path = _resolve_backup_path(config, path)
     for private_file in (source_marker_path, expected_fingerprint_path):
         require_private_file(private_file, label="migration validation file")
     source_marker = source_marker_path.read_text(encoding="utf-8").strip()
     uuid.UUID(source_marker)
     try:
-        expected_fingerprint = json.loads(expected_fingerprint_path.read_text(encoding="utf-8"))
+        expected_fingerprint = json.loads(
+            expected_fingerprint_path.read_text(encoding="utf-8")
+        )
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("The expected migration fingerprint is unreadable.") from exc
     admin = read_secret(_secret_path(config, "admin"))
     admin_master = replace(admin, database="master")
-    staging = "OSTV_MIGRATE_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_") + secrets.token_hex(4)
+    staging = (
+        "OSTV_MIGRATE_"
+        + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_")
+        + secrets.token_hex(4)
+    )
     quote_identifier(staging)
     disposable_marker = f"migration-{uuid.uuid4()}"
     current_name = staging
@@ -894,17 +1029,26 @@ def restore_migration(
     validation: dict[str, object] | None = None
     client_login_existed = False
     try:
-        with connect(admin_master, database="master", app="OSTV Container Migration") as connection:
+        with connect(
+            admin_master, database="master", app="OSTV Container Migration"
+        ) as connection:
             _require_owned_server(connection, admin, config)
             if scalar(connection, "SELECT DB_ID(?)", config.database) is not None:
-                raise RuntimeError("The migration target database already exists; refusing overwrite.")
+                raise RuntimeError(
+                    "The migration target database already exists; refusing overwrite."
+                )
             if scalar(connection, "SELECT DB_ID(?)", staging) is not None:
-                raise RuntimeError("The unique migration staging database already exists.")
-            client_login_existed = scalar(
-                connection,
-                "SELECT SUSER_ID(?)",
-                config.client_login,
-            ) is not None
+                raise RuntimeError(
+                    "The unique migration staging database already exists."
+                )
+            client_login_existed = (
+                scalar(
+                    connection,
+                    "SELECT SUSER_ID(?)",
+                    config.client_login,
+                )
+                is not None
+            )
             try:
                 _restore_database_files(
                     connection,
@@ -916,30 +1060,44 @@ def restore_migration(
             finally:
                 created = scalar(connection, "SELECT DB_ID(?)", staging) is not None
         staged = replace(admin, database=staging)
-        with connect(staged, database=staging, app="OSTV Migration Validation") as connection:
+        with connect(
+            staged, database=staging, app="OSTV Migration Validation"
+        ) as connection:
             cursor = connection.cursor()
             try:
                 set_extended_property(cursor, DISPOSABLE_PROPERTY, disposable_marker)
                 marked = True
             finally:
                 cursor.close()
-            require_marker(database_marker(connection), source_marker, "source database")
-            inventory = SqlSchemaInspector().inspect(_location(admin, staging), admin.password)
+            require_marker(
+                database_marker(connection), source_marker, "source database"
+            )
+            inventory = SqlSchemaInspector().inspect(
+                _location(admin, staging), admin.password
+            )
             report = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema).validate(inventory)
             if not report.is_valid:
-                raise RuntimeError("The migration backup is not canonical: " + report.user_message)
+                raise RuntimeError(
+                    "The migration backup is not canonical: " + report.user_message
+                )
             actual_fingerprint = _fingerprint_connection(config.database, connection)
             if actual_fingerprint != expected_fingerprint:
-                raise RuntimeError("The restored database fingerprint does not match the native source.")
+                raise RuntimeError(
+                    "The restored database fingerprint does not match the native source."
+                )
             cursor = connection.cursor()
             try:
                 set_extended_property(cursor, DATABASE_PROPERTY, admin.ownership_marker)
             finally:
                 cursor.close()
-        with connect(admin_master, database="master", app="OSTV Migration Adoption") as connection:
+        with connect(
+            admin_master, database="master", app="OSTV Migration Adoption"
+        ) as connection:
             _require_owned_server(connection, admin, config)
             if scalar(connection, "SELECT DB_ID(?)", config.database) is not None:
-                raise RuntimeError("The migration target appeared during validation; refusing overwrite.")
+                raise RuntimeError(
+                    "The migration target appeared during validation; refusing overwrite."
+                )
             cursor = connection.cursor()
             try:
                 cursor.execute(
@@ -966,7 +1124,9 @@ def restore_migration(
             rotate=True,
         )
         validation = validate_environment(config, run_backup=False)
-        with connect(restored, database=config.database, app="OSTV Migration Finalization") as connection:
+        with connect(
+            restored, database=config.database, app="OSTV Migration Finalization"
+        ) as connection:
             cursor = connection.cursor()
             try:
                 cursor.execute(
@@ -1016,15 +1176,23 @@ def restore_migration(
 def uninstall_database(config: DeploymentConfig) -> dict[str, object]:
     expected = f"uninstall-{config.database}"
     if os.environ.get("OSTV_CONFIRM_DESTRUCTIVE") != expected:
-        raise RuntimeError(f"Set OSTV_CONFIRM_DESTRUCTIVE={expected} for owned SQL resource removal.")
+        raise RuntimeError(
+            f"Set OSTV_CONFIRM_DESTRUCTIVE={expected} for owned SQL resource removal."
+        )
     admin = read_secret(_secret_path(config, "admin"))
     admin_master = replace(admin, database="master")
-    with connect(admin_master, database="master", app="OSTV SQL Uninstall") as connection:
+    with connect(
+        admin_master, database="master", app="OSTV SQL Uninstall"
+    ) as connection:
         _require_owned_server(connection, admin, config)
         if active_application_sessions(connection, config.database):
-            raise RuntimeError("Refusing uninstall while OST Visualizer sessions are active.")
+            raise RuntimeError(
+                "Refusing uninstall while OST Visualizer sessions are active."
+            )
         with connect(admin, database=config.database) as database_connection:
-            require_marker(database_marker(database_connection), admin.ownership_marker, "database")
+            require_marker(
+                database_marker(database_connection), admin.ownership_marker, "database"
+            )
         backup = _backup(config, connection, config.database, prefix="pre-uninstall")
         cursor = connection.cursor()
         try:
@@ -1040,7 +1208,11 @@ def uninstall_database(config: DeploymentConfig) -> dict[str, object]:
             )
         finally:
             cursor.close()
-    return {"status": "owned-database-removed", "recovery_backup": str(backup), "sql_package_removed": False}
+    return {
+        "status": "owned-database-removed",
+        "recovery_backup": str(backup),
+        "sql_package_removed": False,
+    }
 
 
 def cleanup_restore_databases(config: DeploymentConfig) -> dict[str, object]:
@@ -1051,22 +1223,38 @@ def cleanup_restore_databases(config: DeploymentConfig) -> dict[str, object]:
     admin = read_secret(_secret_path(config, "admin"))
     admin_master = replace(admin, database="master")
     removed: list[str] = []
-    with connect(admin_master, database="master", app="OSTV SQL Restore Recovery") as connection:
+    with connect(
+        admin_master, database="master", app="OSTV SQL Restore Recovery"
+    ) as connection:
         _require_owned_server(connection, admin, config)
         cursor = connection.cursor()
         try:
-            cursor.execute("SELECT name FROM sys.databases WHERE name LIKE N'OSTV[_]RESTORE[_]%'")
+            cursor.execute(
+                "SELECT name FROM sys.databases WHERE name LIKE N'OSTV[_]RESTORE[_]%'"
+            )
             names = [str(row[0]) for row in cursor.fetchall()]
         finally:
             cursor.close()
         for name in names:
-            if not name.startswith("OSTV_RESTORE_") or not RESTORE_DATABASE_NAME.fullmatch(name):
-                raise RuntimeError("A restore-prefixed database has an unsafe name; cleanup was refused.")
+            if not name.startswith(
+                "OSTV_RESTORE_"
+            ) or not RESTORE_DATABASE_NAME.fullmatch(name):
+                raise RuntimeError(
+                    "A restore-prefixed database has an unsafe name; cleanup was refused."
+                )
             if active_application_sessions(connection, name):
-                raise RuntimeError(f"Refusing cleanup while application sessions use {name}.")
+                raise RuntimeError(
+                    f"Refusing cleanup while application sessions use {name}."
+                )
             target = replace(admin, database=name)
-            with connect(target, database=name, app="OSTV SQL Restore Recovery Marker") as target_connection:
-                require_marker(database_marker(target_connection), admin.ownership_marker, "restored database")
+            with connect(
+                target, database=name, app="OSTV SQL Restore Recovery Marker"
+            ) as target_connection:
+                require_marker(
+                    database_marker(target_connection),
+                    admin.ownership_marker,
+                    "restored database",
+                )
                 disposable = str(
                     scalar(
                         target_connection,
@@ -1076,7 +1264,9 @@ def cleanup_restore_databases(config: DeploymentConfig) -> dict[str, object]:
                     or ""
                 )
                 if not disposable.startswith("restore-"):
-                    raise RuntimeError("A restore database lacks the expected disposable marker.")
+                    raise RuntimeError(
+                        "A restore database lacks the expected disposable marker."
+                    )
                 uuid.UUID(disposable.removeprefix("restore-"))
             cursor = connection.cursor()
             try:
@@ -1093,8 +1283,12 @@ def cleanup_restore_databases(config: DeploymentConfig) -> dict[str, object]:
 def lifecycle_test(config: DeploymentConfig) -> dict[str, object]:
     client = read_secret(_secret_path(config, "client"))
     verify_secret_matches(client, config, role="client")
-    inventory = SqlSchemaInspector().inspect(_location(client, config.database), client.password)
-    location = replace(_location(client, config.database), database_guid=inventory.database_guid)
+    inventory = SqlSchemaInspector().inspect(
+        _location(client, config.database), client.password
+    )
+    location = replace(
+        _location(client, config.database), database_guid=inventory.database_guid
+    )
     descriptor = DatabaseDescriptor.for_sql_server(
         location,
         schema_version=SQL_SCHEMA_V1.version,
@@ -1153,7 +1347,9 @@ def lifecycle_test(config: DeploymentConfig) -> dict[str, object]:
             and observed.delivered_through_version <= observed.high_water_version
         )
         if not feed_valid:
-            raise RuntimeError("Initial collaboration feed reconciliation was not valid.")
+            raise RuntimeError(
+                "Initial collaboration feed reconciliation was not valid."
+            )
     finally:
         if lock is not None:
             store.release_lock(
@@ -1166,7 +1362,9 @@ def lifecycle_test(config: DeploymentConfig) -> dict[str, object]:
             session.session_id,
             "sql-deployment-validation-complete",
         )
-    with connect(client, database=config.database, app="OSTV SQL Lifecycle Cleanup Verification") as connection:
+    with connect(
+        client, database=config.database, app="OSTV SQL Lifecycle Cleanup Verification"
+    ) as connection:
         cursor = connection.cursor()
         try:
             cursor.execute(
@@ -1182,7 +1380,9 @@ def lifecycle_test(config: DeploymentConfig) -> dict[str, object]:
         finally:
             cursor.close()
     if cleanup != (0, 0, 0):
-        raise RuntimeError("Application lifecycle validation left an active session, presence row, or lock.")
+        raise RuntimeError(
+            "Application lifecycle validation left an active session, presence row, or lock."
+        )
     return {
         "status": "lifecycle-valid",
         "session_started": True,
@@ -1228,7 +1428,9 @@ def _redacted_error(error: Exception) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Manage the owned OST Visualizer SQL Server deployment.")
+    parser = argparse.ArgumentParser(
+        description="Manage the owned OST Visualizer SQL Server deployment."
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("create-secrets")
     sub.add_parser("create-recovery-bootstrap")

@@ -6,6 +6,8 @@ from .....application.interfaces.i_page_load_strategy_service import (
     IPageLoadStrategyService,
 )
 from .....application.interfaces.i_page_rendering_service import IPageRenderingService
+from .....application.render_quality import baseline_render_scale
+from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
 from ..page_cache import PageCache
@@ -127,14 +129,12 @@ class PageRenderPrefetchCoordinator:
             render_scale = self._cacheable_prefetch_scale(
                 strategy.pdf_width_pts,
                 strategy.pdf_height_pts,
-                strategy.view_scale,
+                baseline_render_scale(is_pdf=is_pdf_suffix(page.overlay_image_path)),
             )
             if render_scale is None:
                 return
             request_id = self._rendering_service.render_overlay_async(
                 page=page,
-                bid_ref=bid_ref,
-                view_scale=strategy.view_scale,
                 show_mode=page.image_show_mode,
                 rotation=page.rotation,
                 callback=callback,

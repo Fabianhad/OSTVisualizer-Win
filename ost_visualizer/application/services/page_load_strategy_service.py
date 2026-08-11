@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 from ...application.interfaces.i_page_size_provider import IPageSizeProvider
 from ...application.interfaces.i_page_load_strategy_service import ILoadStrategy
+from ...application.render_quality import baseline_render_scale
 from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.entities.page import Page
 
@@ -15,17 +16,13 @@ class LoadStrategy:
     pdf_height_pts: float
     placeholder_width: float
     placeholder_height: float
+    main_scale: float
     load_composite: bool = False
     load_main: bool = False
     load_overlay: bool = False
-    main_scale: float = 1.0
-    overlay_scale: float = 1.0
 
 
 class PageLoadStrategyService:
-    PDF_RENDER_SCALE = 2.0
-    TIF_RENDER_SCALE = 1.0
-
     def __init__(self, page_size_provider: IPageSizeProvider):
         self._page_size_provider = page_size_provider
 
@@ -41,7 +38,7 @@ class PageLoadStrategyService:
         view_scale = self._calculate_view_scale(
             page, show_mode, has_image_file, is_pdf, pdf_width_pts
         )
-        main_scale = self.PDF_RENDER_SCALE if is_pdf else self.TIF_RENDER_SCALE
+        main_scale = baseline_render_scale(is_pdf=is_pdf)
         placeholder_width, placeholder_height = self._calculate_placeholder_size(
             page,
             pdf_width_pts,
@@ -92,14 +89,15 @@ class PageLoadStrategyService:
                 )
                 if pdf_width_pts > 0 and native_width > 0:
                     return native_width / pdf_width_pts
-            return self.PDF_RENDER_SCALE
+            return baseline_render_scale(is_pdf=is_overlay_pdf_file)
         if has_image_file and not is_pdf:
             native_width, _ = self._page_size_provider.get_page_size(
                 page.image_path, page.page_index
             )
             if pdf_width_pts > 0 and native_width > 0:
                 return native_width / pdf_width_pts
-        return self.PDF_RENDER_SCALE
+            return baseline_render_scale(is_pdf=False)
+        return baseline_render_scale(is_pdf=True)
 
     def _resolve_pdf_page_size(self, page: Page, is_pdf: bool) -> tuple[float, float]:
         fallback_width = page.width_pts if page.width_pts else 612.0
@@ -153,11 +151,8 @@ class PageLoadStrategyService:
     ) -> Dict[str, Any]:
         return {
             "page": page,
-            "page_uid": page.uid,
             "rotation": page.rotation,
-            "render_scale": self.PDF_RENDER_SCALE,
             "show_mode": page.image_show_mode,
-            "show_original": page.image_show_mode in (0, 2),
             "show_overlay": page.image_show_mode in (1, 2) and page.has_overlay,
             "pdf_width_pts": pdf_width_pts,
             "pdf_height_pts": pdf_height_pts,

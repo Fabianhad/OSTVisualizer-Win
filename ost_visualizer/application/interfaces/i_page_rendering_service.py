@@ -31,13 +31,11 @@ class IPageRenderingService(Protocol):
     def render_overlay_async(
         self,
         page: Page,
-        bid_ref: BidRef | None,
-        view_scale: float,
         show_mode: int,
         rotation: int,
+        render_scale: float,
         callback: Callable[[RenderResult], None],
         priority: int = 0,
-        render_scale: float | None = None,
         apply_invert_effect: bool = True,
         apply_bitonal_effect: bool = True,
     ) -> str: ...

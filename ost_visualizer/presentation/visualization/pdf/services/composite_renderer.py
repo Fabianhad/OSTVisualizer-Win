@@ -4,6 +4,12 @@ from collections import OrderedDict
 from typing import Optional
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QImage, QPainter, QTransform
+from .....application.render_quality import (
+    RASTER_NATIVE_RENDER_SCALE,
+    align_rendered_frame_origin,
+    baseline_render_scale,
+    quantize_constrained_render_scale,
+)
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
@@ -12,16 +18,6 @@ from ..page_cache import PageCache
 
 _COMPOSITE_CACHE_MAX_BYTES = 8 * PageCache.REPRESENTATIVE_PLAN_SHEET_BYTES
 _COMPOSITE_CACHE_MAX_SINGLE_IMAGE_BYTES = PageCache.PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
-
-
-def _quantize_render_scale(scale: float) -> float:
-    return max(0.1, round(scale, 3))
-
-
-def _rendered_frame_origin(value: float, scale: float) -> float:
-    if scale <= 0.0:
-        return value
-    return math.floor(value * scale + 0.5) / scale
 
 
 class CompositeRenderer:
@@ -61,7 +57,7 @@ class CompositeRenderer:
         if cancelled_check and cancelled_check():
             return None
         is_overlay_pdf = is_pdf_suffix(page.overlay_image_path)
-        overlay_scale = 2.0 if is_overlay_pdf else 1.0
+        overlay_scale = baseline_render_scale(is_pdf=is_overlay_pdf)
         blue_tinted = self._get_tinted_page(
             page.overlay_image_path,
             0,
@@ -89,13 +85,10 @@ class CompositeRenderer:
     ) -> str:
         bid_file_path = bid_ref.file_path if bid_ref else ""
         bid_uid = bid_ref.bid_uid if bid_ref else ""
-        signature_fn = getattr(
-            getattr(self, "_page_cache", None), "file_signature", None
-        )
-        base_signature = signature_fn(page.image_path) if signature_fn else None
+        base_signature = self._page_cache.file_signature(page.image_path)
         overlay_signature = (
-            signature_fn(page.overlay_image_path)
-            if signature_fn and page.overlay_image_path
+            self._page_cache.file_signature(page.overlay_image_path)
+            if page.overlay_image_path
             else None
         )
         return "|".join(
@@ -108,7 +101,7 @@ class CompositeRenderer:
                 repr(base_signature),
                 page.overlay_image_path or "",
                 repr(overlay_signature),
-                str(_quantize_render_scale(render_scale)),
+                str(quantize_constrained_render_scale(render_scale)),
                 str(raster_rotation),
                 str(page.image_show_mode),
                 str(page.layer_visible),
@@ -127,14 +120,12 @@ class CompositeRenderer:
         rotation: int,
         wait_for_in_flight: bool,
     ) -> Optional[QImage]:
-        if wait_for_in_flight:
-            return self._page_cache.get_page(file_path, page_index, scale, rotation)
         return self._page_cache.get_page(
             file_path,
             page_index,
             scale,
             rotation,
-            wait_for_in_flight=False,
+            wait_for_in_flight=wait_for_in_flight,
         )
 
     def _get_tinted_page(
@@ -146,21 +137,13 @@ class CompositeRenderer:
         tint_rgb: tuple[int, int, int],
         wait_for_in_flight: bool,
     ) -> Optional[QImage]:
-        if wait_for_in_flight:
-            return self._page_cache.get_tinted_page(
-                file_path,
-                page_index,
-                scale,
-                rotation,
-                tint_rgb=tint_rgb,
-            )
         return self._page_cache.get_tinted_page(
             file_path,
             page_index,
             scale,
             rotation,
             tint_rgb=tint_rgb,
-            wait_for_in_flight=False,
+            wait_for_in_flight=wait_for_in_flight,
         )
 
     def _get_frame(
@@ -175,17 +158,6 @@ class CompositeRenderer:
         rotation: int,
         wait_for_in_flight: bool,
     ) -> Optional[QImage]:
-        if wait_for_in_flight:
-            return self._page_cache.get_frame(
-                file_path,
-                page_index,
-                scale,
-                frame_x,
-                frame_y,
-                frame_w,
-                frame_h,
-                rotation,
-            )
         return self._page_cache.get_frame(
             file_path,
             page_index,
@@ -195,7 +167,7 @@ class CompositeRenderer:
             frame_w,
             frame_h,
             rotation,
-            wait_for_in_flight=False,
+            wait_for_in_flight=wait_for_in_flight,
         )
 
     def _composite_images(self, red: QImage, blue: QImage, page: Page) -> QImage:
@@ -309,7 +281,7 @@ class CompositeRenderer:
         if frame is None:
             return None
         frame_x, frame_y, frame_w, frame_h = frame
-        render_scale = _quantize_render_scale(scale)
+        render_scale = quantize_constrained_render_scale(scale)
         red_frame = self._get_frame(
             page.image_path,
             page.page_index,
@@ -439,7 +411,7 @@ class CompositeRenderer:
             frame_y,
             frame_w,
             frame_h,
-            image_scale=1.0,
+            image_scale=RASTER_NATIVE_RENDER_SCALE,
         )
         if context is None:
             self._draw_overlay_raster_fallback(
@@ -527,7 +499,7 @@ class CompositeRenderer:
         blue = self._get_tinted_page(
             page.overlay_image_path,
             0,
-            1.0,
+            RASTER_NATIVE_RENDER_SCALE,
             rotation,
             (80, 80, 255),
             wait_for_in_flight,
@@ -588,11 +560,11 @@ class CompositeRenderer:
             rect_h / source_h,
         )
         if image_scale is not None:
-            overlay_scale = _quantize_render_scale(max(0.1, image_scale))
-        rendered_source_x = _rendered_frame_origin(source_x, overlay_scale)
-        rendered_source_y = _rendered_frame_origin(source_y, overlay_scale)
-        rendered_frame_x = _rendered_frame_origin(frame_x, render_scale)
-        rendered_frame_y = _rendered_frame_origin(frame_y, render_scale)
+            overlay_scale = quantize_constrained_render_scale(image_scale)
+        rendered_source_x = align_rendered_frame_origin(source_x, overlay_scale)
+        rendered_source_y = align_rendered_frame_origin(source_y, overlay_scale)
+        rendered_frame_x = align_rendered_frame_origin(frame_x, render_scale)
+        rendered_frame_y = align_rendered_frame_origin(frame_y, render_scale)
         image_to_source = QTransform()
         image_to_source.scale(1.0 / overlay_scale, 1.0 / overlay_scale)
         source_offset = QTransform()
@@ -624,7 +596,7 @@ class CompositeRenderer:
         self, render_scale: float, scale_x: float, scale_y: float
     ) -> float:
         overlay_scale = render_scale * max(abs(scale_x), abs(scale_y))
-        return _quantize_render_scale(max(0.1, overlay_scale))
+        return quantize_constrained_render_scale(overlay_scale)
 
     def _clip_frame_to_page(
         self,

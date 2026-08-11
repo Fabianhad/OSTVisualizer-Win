@@ -46,6 +46,10 @@ from ....application.interfaces.i_page_load_strategy_service import (
     IPageLoadStrategyService,
 )
 from ....application.interfaces.i_page_rendering_service import IPageRenderingService
+from ....application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+    baseline_render_scale,
+)
 from ....domain.entities.annotation import (
     BidAnnotation,
     hex_color_to_int,
@@ -278,7 +282,7 @@ class TakeoffPlanView(
         self._overlay_items: List[QGraphicsPixmapItem] = []
         self._zoom_debouncer = ZoomDebouncer(parent=self)
         self._zoom_debouncer.zoom_settled.connect(self._update_tile_coverage)
-        self._scene_scale: float = 2.0
+        self._scene_scale: float = INTERACTIVE_PDF_RENDER_SCALE
         self._can_zoom_rerender: bool = False
         self._is_composite_mode: bool = False
         self._loaded_visual_kind: Optional[str] = None
@@ -3312,10 +3316,10 @@ class TakeoffPlanView(
             if (
                 self._background_item is not None
                 and not self._is_composite_mode
-                and abs(self._base_raster_scale - self._scene_scale) > 1e-6
+                and abs(self._base_raster_scale - INTERACTIVE_PDF_RENDER_SCALE) > 1e-6
             ):
                 self._request_optional_base_correction(
-                    self._scene_scale,
+                    INTERACTIVE_PDF_RENDER_SCALE,
                     self._advance_render_generation(),
                 )
             self.viewport().update()
@@ -4056,7 +4060,11 @@ class TakeoffPlanView(
         page = self._current_page
         if page is None or not page.image_path:
             return
-        scale = self._base_raster_scale or self._scene_scale
+        scale = (
+            INTERACTIVE_PDF_RENDER_SCALE
+            if is_pdf_suffix(page.image_path)
+            else self._base_raster_scale or self._scene_scale
+        )
         weak_self = weakref.ref(self)
 
         def on_loaded(result, _generation_id: int = generation_id) -> None:
@@ -4118,10 +4126,8 @@ class TakeoffPlanView(
     def _overlay_move_overlay_render_scale(self) -> float:
         page = self._current_page
         if page is None or not page.overlay_image_path:
-            return self._scene_scale
-        if not is_pdf_suffix(page.overlay_image_path):
-            return 1.0
-        return self._scene_scale
+            return INTERACTIVE_PDF_RENDER_SCALE
+        return baseline_render_scale(is_pdf=is_pdf_suffix(page.overlay_image_path))
 
     def _request_overlay_move_overlay_preview(
         self,
@@ -4146,8 +4152,6 @@ class TakeoffPlanView(
         self._overlay_move_preview_overlay_request_id = (
             self._rendering_service.render_overlay_async(
                 page=page,
-                bid_ref=self._current_bid_ref,
-                view_scale=self._scene_scale,
                 show_mode=page.image_show_mode,
                 rotation=self._active_page_raster_rotation(),
                 callback=on_loaded,
@@ -4861,7 +4865,6 @@ class TakeoffPlanView(
                 pdf_width_pts,
                 pdf_height_pts,
             )
-            self._pending_page_data["bid_ref"] = resolved_bid_ref
             self._pending_page_data["load_token"] = self._current_load_token
             self._pending_page_data["render_identity"] = dict(next_render_identity)
             self._start_current_page_render_loading()
@@ -4876,7 +4879,6 @@ class TakeoffPlanView(
                     base_raster_scale = self._target_base_raster_scale(
                         strategy.main_scale
                     )
-                self._pending_page_data["render_scale"] = base_raster_scale
                 self._pending_page_data["base_raster_scale"] = base_raster_scale
                 if strategy.load_composite:
                     self.load_composite_async(
@@ -4898,19 +4900,18 @@ class TakeoffPlanView(
                         ),
                     )
             elif strategy.load_overlay:
-                overlay_render_scale = strategy.view_scale
-                if page.overlay_image_path and page.overlay_image_path.lower().endswith(
-                    ".pdf"
-                ):
+                overlay_is_pdf = bool(
+                    page.overlay_image_path and is_pdf_suffix(page.overlay_image_path)
+                )
+                overlay_render_scale = baseline_render_scale(is_pdf=overlay_is_pdf)
+                if overlay_is_pdf:
                     overlay_render_scale = self._target_base_raster_scale(
-                        strategy.view_scale
+                        INTERACTIVE_PDF_RENDER_SCALE
                     )
                 self._pending_page_data["overlay_render_scale"] = overlay_render_scale
                 self._pending_page_data["base_raster_scale"] = overlay_render_scale
                 self.load_overlay_async(
                     page,
-                    resolved_bid_ref,
-                    strategy.view_scale,
                     page.image_show_mode,
                     rotation,
                     overlay_render_scale,
