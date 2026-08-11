@@ -192,8 +192,14 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(strategy.pdf_width_pts, 2592.0)
         self.assertEqual(strategy.pdf_height_pts, 1728.0)
-        self.assertEqual(strategy.placeholder_width, 5184.0)
-        self.assertEqual(strategy.placeholder_height, 3456.0)
+        self.assertEqual(
+            strategy.placeholder_width,
+            2592.0 * INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertEqual(
+            strategy.placeholder_height,
+            1728.0 * INTERACTIVE_PDF_RENDER_SCALE,
+        )
 
     def test_load_strategy_uses_canonical_pdf_and_raster_baselines(self):
         size_provider = FakePageSizeProvider({"page.tif": (612.0, 792.0)})
@@ -520,8 +526,11 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
             self._page("p2", image_path="p2.pdf"),
         ]
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
-        cache.get_page("p2.pdf", 0, 2.0, 0)
-        self.assertEqual(renderer.calls, [("p2.pdf", 0, 2.0, 0, None)])
+        cache.get_page("p2.pdf", 0, INTERACTIVE_PDF_RENDER_SCALE, 0)
+        self.assertEqual(
+            renderer.calls,
+            [("p2.pdf", 0, INTERACTIVE_PDF_RENDER_SCALE, 0, None)],
+        )
 
     def test_scale_and_rotation_use_distinct_cache_entries(self):
         cache = PageCache()

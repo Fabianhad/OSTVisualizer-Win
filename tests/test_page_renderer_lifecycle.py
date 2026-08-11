@@ -76,7 +76,13 @@ class PageRendererLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(native)
         self.assertIsNotNone(upsampled)
         self.assertEqual((native.width(), native.height()), (3, 2))
-        self.assertEqual((upsampled.width(), upsampled.height()), (6, 4))
+        self.assertEqual(
+            (upsampled.width(), upsampled.height()),
+            (
+                int(3 * INTERACTIVE_PDF_RENDER_SCALE),
+                int(2 * INTERACTIVE_PDF_RENDER_SCALE),
+            ),
+        )
         for index, color in enumerate(colors):
             self.assertEqual(native.pixelColor(index % 3, index // 3), color)
 

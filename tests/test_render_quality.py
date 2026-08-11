@@ -15,7 +15,7 @@ from ost_visualizer.application.render_quality import (
 
 class RenderQualityContractTests(unittest.TestCase):
     def test_pdf_and_raster_baselines_keep_distinct_semantics(self):
-        self.assertEqual(baseline_render_scale(is_pdf=True), 2.0)
+        self.assertEqual(baseline_render_scale(is_pdf=True), 3.0)
         self.assertEqual(
             baseline_render_scale(is_pdf=True), INTERACTIVE_PDF_RENDER_SCALE
         )
@@ -23,7 +23,7 @@ class RenderQualityContractTests(unittest.TestCase):
         self.assertEqual(
             baseline_render_scale(is_pdf=False), RASTER_NATIVE_RENDER_SCALE
         )
-        self.assertEqual(INTERACTIVE_PDF_RENDER_SCALE * 72.0, 144.0)
+        self.assertEqual(INTERACTIVE_PDF_RENDER_SCALE * 72.0, 216.0)
 
     def test_constrained_floor_is_not_the_interactive_pdf_baseline(self):
         self.assertEqual(CONSTRAINED_RENDER_SCALE_FLOOR, 0.1)

@@ -173,7 +173,7 @@ class PageCacheLifecycleTests(unittest.TestCase):
             INTERACTIVE_PDF_RENDER_SCALE,
         )
         self.assertEqual(scale, CONSTRAINED_RENDER_SCALE_FLOOR)
-        self.assertEqual(INTERACTIVE_PDF_RENDER_SCALE, 2.0)
+        self.assertEqual(INTERACTIVE_PDF_RENDER_SCALE, 3.0)
 
     def test_pdf_metadata_caches_are_bounded_lru(self):
         renderer = _FakeRenderer()

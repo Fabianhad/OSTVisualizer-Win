@@ -1564,7 +1564,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(len(rendering_service.composite_requests), 1)
         self.assertEqual(rendering_service.composite_requests[0][1]["page"], page)
         self.assertEqual(
-            rendering_service.composite_requests[0][1]["render_scale"], 2.0
+            rendering_service.composite_requests[0][1]["render_scale"],
+            INTERACTIVE_PDF_RENDER_SCALE,
         )
         view.cleanup()
 
@@ -2364,6 +2365,104 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(preview_base.isVisible())
         self.assertTrue(preview_overlay.isVisible())
         view.cleanup()
+
+    def test_cold_composite_first_move_keeps_one_overlay_through_stale_frame(self):
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
+            overlay_rect=(0.0, 0.0, 544.0, 704.0),
+        )
+        view = self._load_completed_page_visual(page)
+        original_composite = view._background_item
+
+        def complete_move_previews():
+            base_request_id, base_options = view._rendering_service.page_requests[-1]
+            overlay_request_id, overlay_options = (
+                view._rendering_service.overlay_requests[-1]
+            )
+            base_image = QImage(1224, 1584, QImage.Format.Format_ARGB32)
+            base_image.fill(QColor(255, 80, 80).rgba())
+            overlay_image = QImage(1088, 1408, QImage.Format.Format_ARGB32)
+            overlay_image.fill(QColor(80, 80, 255).rgba())
+            base_options["callback"](
+                RenderResult(base_request_id, True, base_image, None)
+            )
+            overlay_options["callback"](
+                RenderResult(overlay_request_id, True, overlay_image, None)
+            )
+
+        def finish_move(scene_delta):
+            handle_pos = view.mapFromScene(view._overlay_move_handle_item.pos())
+            self.assertTrue(view._begin_overlay_move(handle_pos))
+            view._finish_overlay_move_drag(
+                view._overlay_move_anchor_scene + scene_delta
+            )
+
+        def assert_preview_is_exclusive():
+            self.assertFalse(view._background_item.isVisible())
+            self.assertTrue(view._overlay_move_preview_base_item.isVisible())
+            self.assertTrue(view._overlay_move_preview_overlay_item.isVisible())
+
+        try:
+            # Model a genuinely cold cache: the first zoom frame is still in flight
+            # when move mode separates the composite into base and overlay previews.
+            view._update_tile_coverage(4.0)
+            self.assertEqual(
+                len(view._rendering_service.composite_frame_requests),
+                1,
+            )
+            frame_request_id, frame_options = (
+                view._rendering_service.composite_frame_requests[-1]
+            )
+            self.assertTrue(view.show_overlay_move_handle())
+            complete_move_previews()
+            finish_move(QtCore.QPointF(144.0, 72.0))
+            self.assertEqual(
+                view._overlay_move_preview_rect,
+                (64.0, 32.0, 544.0, 704.0),
+            )
+            assert_preview_is_exclusive()
+            stale_frame = QImage(300, 300, QImage.Format.Format_ARGB32)
+            stale_frame.fill(QColor(80, 80, 255).rgba())
+            frame_options["callback"](
+                RenderResult(frame_request_id, True, stale_frame, None)
+            )
+            self.assertIsNone(view._visible_frame_item)
+            assert_preview_is_exclusive()
+            view.cancel_overlay_move_mode(restore_preview=True)
+            self.assertTrue(original_composite.isVisible())
+            self.assertIsNone(view._overlay_move_preview_base_item)
+            self.assertIsNone(view._overlay_move_preview_overlay_item)
+            self.assertEqual(page.overlay_rect, (0.0, 0.0, 544.0, 704.0))
+            # The warm-session path must have the same exclusive ownership.
+            self.assertTrue(view.show_overlay_move_handle())
+            complete_move_previews()
+            finish_move(QtCore.QPointF(72.0, 36.0))
+            view._update_tile_coverage(4.0)
+            assert_preview_is_exclusive()
+            view.set_overlay_rect_save_handler(lambda _rect: True)
+            view._commit_overlay_move()
+            composite_request_id, composite_options = (
+                view._rendering_service.composite_requests[-1]
+            )
+            committed_image = QImage(1224, 1584, QImage.Format.Format_ARGB32)
+            committed_image.fill(QColor(255, 255, 255).rgba())
+            composite_options["callback"](
+                RenderResult(composite_request_id, True, committed_image, None)
+            )
+            self.assertTrue(view._background_item.isVisible())
+            self.assertIsNone(view._overlay_move_preview_base_item)
+            self.assertIsNone(view._overlay_move_preview_overlay_item)
+            self.assertEqual(page.overlay_rect, (32.0, 16.0, 544.0, 704.0))
+        finally:
+            view.cleanup()
 
     def test_move_overlay_drag_before_base_ready_keeps_composite_visible(self):
         view = self._make_plan_view()
@@ -7287,6 +7386,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._visible_frame_item = None
         view._overlay_items = []
         view._white_canvas_item = None
+        view._overlay_move_normal_visuals_hidden = False
         view._load_coordinator = FakeLoadCoordinator()
         calls = []
         view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")

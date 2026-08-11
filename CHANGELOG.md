@@ -38,6 +38,9 @@
 
 ### Fixed
 
+- Fixed the first Move Overlay Image operation in a session briefly showing the
+  original blue composite beneath the moved preview when a cold high-resolution
+  PDF frame completed after move mode had taken visual ownership.
 - Fixed bid or page names containing tabs, line breaks, or other Windows control characters producing invalid suggested export filenames.
 - Fixed process environment variables being able to replace the trusted license-signature public key; licensed builds now use only the bundled trust anchor, with the source-tree key retained for local development.
 - Fixed refreshing an inactive database changing or clearing the bid open from another database when their bid identities overlapped.

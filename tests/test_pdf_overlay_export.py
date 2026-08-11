@@ -362,7 +362,10 @@ class PDFOverlayExportTests(unittest.TestCase):
             {"width": 72.0, "height": 72.0},
         )
         self.assertIsNotNone(image)
-        self.assertEqual((image.width(), image.height()), (144, 144))
+        expected_size = round(72 * INTERACTIVE_PDF_RENDER_SCALE)
+        self.assertEqual(
+            (image.width(), image.height()), (expected_size, expected_size)
+        )
 
     def test_positioned_raster_overlay_loads_native_pixels(self):
         exporter = _make_exporter(_FakeWriter())
@@ -380,7 +383,10 @@ class PDFOverlayExportTests(unittest.TestCase):
         )
         self.assertIsNotNone(image)
         self.assertEqual(cache.requests[0][2], RASTER_NATIVE_RENDER_SCALE)
-        self.assertEqual((image.width(), image.height()), (144, 144))
+        expected_size = round(72 * INTERACTIVE_PDF_RENDER_SCALE)
+        self.assertEqual(
+            (image.width(), image.height()), (expected_size, expected_size)
+        )
 
     def test_raster_source_background_loads_native_pixels(self):
         exporter = _make_exporter(_FakeWriter())

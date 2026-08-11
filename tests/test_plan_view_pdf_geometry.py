@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from ost_visualizer.application.render_quality import INTERACTIVE_PDF_RENDER_SCALE
 from ost_visualizer.application.services.page_load_strategy_service import (
     PageLoadStrategyService,
 )
@@ -85,8 +86,14 @@ class PlanViewPdfGeometryTests(unittest.TestCase):
         self.assertEqual(info["intrinsic_rotation"], 0)
         self.assertEqual(strategy.pdf_width_pts, 240.0)
         self.assertEqual(strategy.pdf_height_pts, 160.0)
-        self.assertEqual(strategy.placeholder_width, 480.0)
-        self.assertEqual(strategy.placeholder_height, 320.0)
+        self.assertEqual(
+            strategy.placeholder_width,
+            240.0 * INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertEqual(
+            strategy.placeholder_height,
+            160.0 * INTERACTIVE_PDF_RENDER_SCALE,
+        )
         self.assertIsNotNone(low_resolution)
         self.assertIsNotNone(high_resolution)
         self.assertEqual((low_resolution.width(), low_resolution.height()), (300, 200))
@@ -124,8 +131,14 @@ class PlanViewPdfGeometryTests(unittest.TestCase):
                 renderer.close()
         self.assertEqual(strategy.pdf_width_pts, 280.0)
         self.assertEqual(strategy.pdf_height_pts, 200.0)
-        self.assertEqual(strategy.placeholder_width, 560.0)
-        self.assertEqual(strategy.placeholder_height, 400.0)
+        self.assertEqual(
+            strategy.placeholder_width,
+            280.0 * INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        self.assertEqual(
+            strategy.placeholder_height,
+            200.0 * INTERACTIVE_PDF_RENDER_SCALE,
+        )
 
 
 if __name__ == "__main__":

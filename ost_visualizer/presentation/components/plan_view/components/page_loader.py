@@ -407,7 +407,6 @@ class PageLoaderMixin:
         self._apply_page_transform_to_items()
         self._sync_page_image_layer_visibility()
         self._complete_page_visual_load()
-        self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_page_loaded(self, result: RenderResult):
         data = self._resolve_pending_render(result, VISUAL_KIND_PAGE)
@@ -455,7 +454,6 @@ class PageLoaderMixin:
             )
         else:
             self._complete_page_visual_load()
-        self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_overlay_loaded(self, result: RenderResult):
         data = self._resolve_pending_render(result, VISUAL_KIND_OVERLAY)
@@ -492,7 +490,6 @@ class PageLoaderMixin:
             logger.warning("Overlay render has no valid calibrated placement geometry.")
         self._sync_page_image_layer_visibility()
         self._complete_page_visual_load()
-        self._sync_overlay_move_hidden_normal_visuals()
 
     def _sync_overlay_move_hidden_normal_visuals(self) -> None:
         if self._overlay_move_normal_visuals_hidden:
@@ -588,6 +585,7 @@ class PageLoaderMixin:
             self._visible_frame_item.setVisible(image_visible)
         if self._white_canvas_item is not None and isValid(self._white_canvas_item):
             self._white_canvas_item.setVisible(self._current_page is not None)
+        self._sync_overlay_move_hidden_normal_visuals()
 
     def _set_low_res_overlay_items_visible(self, visible: bool) -> None:
         for item in self._overlay_items:

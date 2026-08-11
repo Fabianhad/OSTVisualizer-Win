@@ -691,6 +691,7 @@ def _visible_frame_lifecycle_view(
     view._current_load_token = "load-1"
     view._current_render_identity = {"page": "page-1", "kind": kind}
     view._current_bid_ref = None
+    view._overlay_move_normal_visuals_hidden = False
     view._rendering_service = FakeVisibleFrameRenderingService()
     view.transform = lambda: QtGui.QTransform().scale(4.0, 4.0)
     view.viewportTransform = lambda: QtGui.QTransform(4.0, 0.0, 0.0, 4.0, 0.0, 0.0)
@@ -3308,7 +3309,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._pdf_width_pts = 100.0
         view._pdf_height_pts = 100.0
         view._device_pixel_ratio = lambda: 1.0
-        self.assertGreater(
+        self.assertEqual(
             view._target_base_raster_scale(
                 INTERACTIVE_PDF_RENDER_SCALE,
                 view_m11=4.0,
@@ -3323,8 +3324,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._scene_scale = INTERACTIVE_PDF_RENDER_SCALE
         view.MAX_ZOOM = 8.0
         view._device_pixel_ratio = lambda: 1.5
-        self.assertEqual(view._compute_frame_scale(0.5), 1.5)
-        self.assertEqual(view._compute_frame_scale(10.0), 24.0)
+        self.assertEqual(view._compute_frame_scale(0.5), 2.25)
+        self.assertEqual(view._compute_frame_scale(10.0), 36.0)
 
     def test_frame_scale_quantization_uses_stable_log_steps(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -3402,7 +3403,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._can_zoom_rerender = True
         view._is_composite_mode = False
         view._background_item = object()
-        view._base_raster_scale = 3.0
+        view._base_raster_scale = INTERACTIVE_PDF_RENDER_SCALE - 1.0
         view._scene_scale = 2.0
         view._clear_tiles = lambda: calls.append("clear")
         view._cancel_optional_base_correction = lambda: calls.append("cancel")
@@ -4103,6 +4104,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._current_load_token = "load-1"
         view._current_render_identity = {"page": "page-1"}
         view._page_render_generation_id = 7
+        view._overlay_move_normal_visuals_hidden = False
         view._overlay_move_suppresses_normal_tiles = lambda: False
         view._remove_tile_item = lambda _item: None
         view._get_page_transform = lambda _w, _h: QtGui.QTransform()
@@ -4120,14 +4122,14 @@ class OptionsPreferencesTests(unittest.TestCase):
         rect = view._visible_frame_item.boundingRect()
         self.assertAlmostEqual(
             rect.x(),
-            math.floor(10.4 * 3.25 + 0.5) / 3.25 * 2.0,
+            math.floor(10.4 * 3.25 + 0.5) / 3.25 * view._scene_scale,
         )
         self.assertAlmostEqual(
             rect.y(),
-            math.floor(20.6 * 3.25 + 0.5) / 3.25 * 2.0,
+            math.floor(20.6 * 3.25 + 0.5) / 3.25 * view._scene_scale,
         )
-        self.assertAlmostEqual(rect.width(), 101 * 2.0 / 3.25)
-        self.assertAlmostEqual(rect.height(), 83 * 2.0 / 3.25)
+        self.assertAlmostEqual(rect.width(), 101 * view._scene_scale / 3.25)
+        self.assertAlmostEqual(rect.height(), 83 * view._scene_scale / 3.25)
 
     def test_visible_frame_quality_threshold_keeps_canonical_page_geometry(self):
         view = _visible_frame_lifecycle_view()
@@ -4569,6 +4571,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._current_load_token = "load-1"
         view._current_render_identity = {"page": "page-1"}
         view._current_bid_ref = None
+        view._overlay_move_normal_visuals_hidden = False
         view._rendering_service = rendering_service
         view._device_pixel_ratio = lambda: 1.0
         view._overlay_move_suppresses_normal_tiles = lambda: False
@@ -4664,6 +4667,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._current_load_token = "load-1"
         view._current_render_identity = {"page": "page-1"}
         view._current_bid_ref = None
+        view._overlay_move_normal_visuals_hidden = False
         view._rendering_service = rendering_service
         view._device_pixel_ratio = lambda: 1.0
         view._overlay_move_suppresses_normal_tiles = lambda: False
@@ -4739,7 +4743,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._loaded_visual_kind = VISUAL_KIND_OVERLAY
         view._can_zoom_rerender = False
         view._disable_high_resolution_images = True
-        view._base_raster_scale = 3.0
+        view._base_raster_scale = INTERACTIVE_PDF_RENDER_SCALE - 1.0
         view._scene_scale = 2.0
         view._overlay_move_original_rect = None
         view._clear_tiles = lambda: calls.append("clear")
