@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
@@ -18,6 +19,11 @@ from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.handlers import export_handler as export_handler_module
 from ost_visualizer.presentation.handlers.export_handler import ExportHandler
+from ost_visualizer.presentation.utils.image_show_mode import (
+    SHOW_BOTH,
+    SHOW_ORIGINAL,
+    SHOW_OVERLAY,
+)
 from ost_visualizer.presentation.visualization.exporters import osp_exporter
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
 
@@ -299,6 +305,97 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertEqual(calls[0][6], "#abcdef")
         self.assertEqual(calls[0][7], "#345678")
 
+    def test_pdf_export_snapshots_latest_modes_without_rechecking_pages(self):
+        project_data = _FakeProjectData(["A1", "A2"])
+        selected_page_uids = ["page-1", "page-2"]
+        for page in project_data._pages.values():
+            page.image_show_mode = SHOW_BOTH
+        transitions = (
+            (SHOW_OVERLAY, SHOW_ORIGINAL),
+            (SHOW_ORIGINAL, SHOW_BOTH),
+            (SHOW_BOTH, SHOW_OVERLAY),
+        )
+        captured_modes = []
+        dialog_count = 0
+
+        class _ProgressDialog:
+            def __init__(self, _filename, run, parent=None, reporter=None):
+                self.result = run()
+                self.error = None
+
+            def exec(self):
+                return export_handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        def choose_output(_window, _title, _default_filename, _filter):
+            nonlocal dialog_count
+            modes = transitions[dialog_count]
+            dialog_count += 1
+            for page_uid, mode in zip(selected_page_uids, modes):
+                project_data._pages[page_uid] = replace(
+                    project_data._pages[page_uid], image_show_mode=mode
+                )
+            return rf"C:\tmp\latest-modes-{dialog_count}.pdf", ""
+
+        def export(
+            pages_data,
+            _filename,
+            _display_mode,
+            _grayscale_enabled,
+            *,
+            caption_settings,
+            elevation_callouts_enabled,
+            elevation_callout_settings,
+            elevation_callout_color,
+            inactive_object_color,
+            page_area_selections,
+            bid_annotations,
+            on_progress=None,
+        ):
+            _ = (
+                caption_settings,
+                elevation_callouts_enabled,
+                elevation_callout_settings,
+                elevation_callout_color,
+                inactive_object_color,
+                page_area_selections,
+                bid_annotations,
+                on_progress,
+            )
+            captured_modes.append(
+                tuple(page_data.page.image_show_mode for page_data in pages_data)
+            )
+            for page_data in pages_data:
+                self.assertIsNot(
+                    page_data.page,
+                    project_data._pages[page_data.page.uid],
+                )
+            return ExportResultDto(success=True, format_name="PDF", page_count=2)
+
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            project_data_service=project_data,
+            pdf_exporter=SimpleNamespace(export=export),
+        )
+        with patch.object(
+            export_handler_module.QtWidgets.QFileDialog,
+            "getSaveFileName",
+            side_effect=choose_output,
+        ), patch.object(
+            export_handler_module, "ProgressDialog", _ProgressDialog
+        ), patch.object(
+            export_handler_module, "show_info"
+        ):
+            for _transition in transitions:
+                handler.export_as_pdf(selected_page_uids)
+        self.assertEqual(captured_modes, list(transitions))
+        self.assertEqual(selected_page_uids, ["page-1", "page-2"])
+
     def test_pdf_export_rejects_case_variant_of_source_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "Source.PDF"
@@ -343,6 +440,73 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 export_handler_module.QtWidgets.QFileDialog,
                 "getSaveFileName",
                 return_value=(str(Path(temp_dir) / "source.pdf"), ""),
+            ), patch.object(
+                export_handler_module,
+                "show_critical",
+                side_effect=lambda _window, title, message: errors.append(
+                    (title, message)
+                ),
+            ):
+                handler.export_as_pdf(["page-1"])
+        self.assertEqual(errors[0][0], "Invalid Save Location")
+
+    def test_pdf_export_path_identity_normalizes_extended_local_and_unc_aliases(self):
+        local_path = r"C:\Projects\Bid; A\Sheet 01.pdf"
+        unc_path = r"\\server\share\Bid; A\Sheet 01.pdf"
+        self.assertEqual(
+            export_handler_module._path_identity(local_path),
+            export_handler_module._path_identity("\\\\?\\" + local_path),
+        )
+        self.assertEqual(
+            export_handler_module._path_identity(unc_path),
+            export_handler_module._path_identity(
+                "\\\\?\\UNC\\" + unc_path.removeprefix("\\")
+            ),
+        )
+
+    def test_pdf_export_rejects_overlay_source_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            overlay_path = Path(temp_dir) / "Overlay Source.pdf"
+            overlay_path.write_bytes(b"overlay")
+            page = Page(
+                uid="page-1",
+                name="Overlay",
+                overlay_image_path=str(overlay_path),
+                width_pts=612.0,
+                height_pts=792.0,
+            )
+            project_data = SimpleNamespace(
+                get_bid_conditions=lambda: {},
+                get_page=lambda _uid: page,
+                get_page_takeoffs=lambda _uid: [],
+                get_current_bid=lambda: SimpleNamespace(name="Bid"),
+            )
+
+            def unexpected_pdf_export(
+                pages_data,
+                filename,
+                display_mode,
+                grayscale_enabled,
+                caption_settings,
+                elevation_callouts_enabled,
+                elevation_callout_settings,
+                elevation_callout_color,
+                inactive_object_color,
+                page_area_selections,
+                bid_annotations,
+                on_progress=None,
+            ):
+                self.fail("source-overwrite guard must stop the exporter")
+
+            errors = []
+            handler = _make_export_handler(
+                project_data_service=project_data,
+                pdf_exporter=SimpleNamespace(export=unexpected_pdf_export),
+            )
+            with patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(overlay_path), ""),
             ), patch.object(
                 export_handler_module,
                 "show_critical",

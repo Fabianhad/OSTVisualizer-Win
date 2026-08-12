@@ -42,8 +42,6 @@ def _page_info(**overrides):
         "width": 500.0,
         "height": 400.0,
         "view_scale": 1.0,
-        "coord_offset_x": 0.0,
-        "coord_offset_y": 0.0,
     }
     result.update(overrides)
     return result
@@ -206,21 +204,6 @@ class PdfOvalCollectionTests(unittest.TestCase):
             center=(40.0, 370.0),
             x_axis=(30.0, 0.0),
             y_axis=(0.0, -10.0),
-        )
-
-    def test_crop_offset_translates_geometry_without_rescaling_it(self):
-        oval = self._collect(
-            _rotated_oval_position(100.0, 120.0, 80.0, 20.0, 30.0),
-            _page_info(
-                coord_offset_x=17.0,
-                coord_offset_y=23.0,
-            ),
-        )
-        self.assertOvalGeometry(
-            oval,
-            center=(117.0, 303.0),
-            x_axis=(40.0 * math.cos(math.radians(30.0)), -20.0),
-            y_axis=(-5.0, -10.0 * math.cos(math.radians(30.0))),
         )
 
     def test_page_rotations_preserve_transformed_center_and_radius_vectors(self):

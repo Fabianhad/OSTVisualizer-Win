@@ -1,5 +1,6 @@
 import logging
 import os
+from copy import deepcopy
 from typing import Any, Callable, List, Optional
 from PySide6 import QtWidgets
 from ...application.dtos.export_dto import (
@@ -24,7 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 def _path_identity(path: str) -> str:
-    return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+    resolved = os.path.realpath(os.path.abspath(path))
+    folded = resolved.casefold()
+    if folded.startswith("\\\\?\\unc\\"):
+        resolved = "\\\\" + resolved[8:]
+    elif folded.startswith("\\\\?\\"):
+        resolved = resolved[4:]
+    return os.path.normcase(resolved)
 
 
 def _progress_callback(
@@ -93,38 +100,30 @@ class ExportHandler:
             return
         if not page_uids:
             return
-        pages_data: List[PageExportData] = []
+        valid_pages = []
         first_page_name = ""
-        bid_conditions = self.project_data.get_bid_conditions()
         for page_uid in page_uids:
             page = self.project_data.get_page(page_uid)
             if not page or page.width_pts <= 0 or page.height_pts <= 0:
                 continue
             if not first_page_name:
                 first_page_name = page.name or "Page"
-            page_takeoffs = self.project_data.get_page_takeoffs(page_uid)
-            pages_data.append(
-                PageExportData(
-                    page=page,
-                    bid_takeoffs=page_takeoffs,
-                    bid_conditions=bid_conditions,
-                )
-            )
-        if not pages_data:
+            valid_pages.append(page)
+        if not valid_pages:
             show_warning(
                 self.window, "No Valid Pages", "No valid pages selected for export."
             )
             return
         bid = self.project_data.get_current_bid()
         bid_name = bid.name if bid else "Bid"
-        if len(pages_data) == 1:
+        if len(valid_pages) == 1:
             default_filename = f"{bid_name} - {first_page_name}"
             if not is_pdf_suffix(default_filename):
                 default_filename = f"{default_filename}{PDF_EXTENSION}"
             dialog_title = "Export Page as PDF"
         else:
-            default_filename = f"{bid_name} - {len(pages_data)} Pages.pdf"
-            dialog_title = f"Export {len(pages_data)} Pages as PDF"
+            default_filename = f"{bid_name} - {len(valid_pages)} Pages.pdf"
+            dialog_title = f"Export {len(valid_pages)} Pages as PDF"
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
             dialog_title,
@@ -133,19 +132,34 @@ class ExportHandler:
         )
         if not filename:
             return
-        source_paths = [p.page.image_path for p in pages_data if p.page.image_path]
-        if source_paths and _path_identity(filename) in {
-            _path_identity(path) for path in source_paths
-        }:
+        pages_data = self._build_pdf_export_snapshot(page_uids)
+        if not pages_data:
+            show_warning(
+                self.window, "No Valid Pages", "No valid pages selected for export."
+            )
+            return
+        source_path_identities = {
+            _path_identity(path)
+            for page_data in pages_data
+            for path in (
+                page_data.page.image_path,
+                page_data.page.overlay_image_path,
+            )
+            if path
+        }
+        if _path_identity(filename) in source_path_identities:
             show_critical(
                 self.window,
                 "Invalid Save Location",
-                "Cannot save to the same location as one of the source PDFs.\nPlease choose a different filename or location.",
+                "Cannot save over a selected base or overlay source file.\nPlease choose a different filename or location.",
             )
             return
         try:
-            bid_annotations = self.project_data.get_all_annotations()
+            bid_annotations = deepcopy(self.project_data.get_all_annotations())
             config = self.config_model.snapshot()
+            page_area_selections = deepcopy(
+                self.project_data.get_page_area_selections()
+            )
             caption_settings = AnnotationCaptionSettingsDto(
                 enabled=config.pdf_annotation_captions_enabled,
                 selected_ids=tuple(
@@ -166,7 +180,7 @@ class ExportHandler:
                     elevation_callout_settings=config.elevation_callout_settings(),
                     elevation_callout_color=config.pdf_elevation_callout_color,
                     inactive_object_color=config.inactive_object_color,
-                    page_area_selections=(self.project_data.get_page_area_selections()),
+                    page_area_selections=page_area_selections,
                     bid_annotations=bid_annotations,
                     on_progress=_progress_callback(reporter),
                 ),
@@ -199,6 +213,24 @@ class ExportHandler:
                 "Export Error",
                 "An unexpected error occurred while exporting the PDF. Please try again or choose a different destination.",
             )
+
+    def _build_pdf_export_snapshot(self, page_uids: List[str]) -> List[PageExportData]:
+        bid_conditions = deepcopy(self.project_data.get_bid_conditions())
+        pages_data: List[PageExportData] = []
+        for page_uid in page_uids:
+            page = self.project_data.get_page(page_uid)
+            if not page or page.width_pts <= 0 or page.height_pts <= 0:
+                continue
+            pages_data.append(
+                PageExportData(
+                    page=deepcopy(page),
+                    bid_takeoffs=deepcopy(
+                        self.project_data.get_page_takeoffs(page_uid)
+                    ),
+                    bid_conditions=bid_conditions,
+                )
+            )
+        return pages_data
 
     def export_summary_csv(self) -> None:
         if not self._flush_deferred_persistence():

@@ -79,12 +79,23 @@ from ...modes.cursor import (
     PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
 )
 from ...scene.scene_builder import SceneBuilder
+from ...scene.plan_view_z_order import (
+    ANNOTATION_BODY_Z,
+    NAMED_VIEW_LABEL_BACKGROUND_Z,
+    NAMED_VIEW_LABEL_Z,
+    OVERLAY_MOVE_BASE_Z,
+    OVERLAY_MOVE_FOREGROUND_Z,
+    PAGE_VISIBLE_FRAME_Z,
+    PDF_TEXT_SELECTION_Z,
+    overlay_visual_z,
+)
 from ...utils.annotation_defaults import (
     annotation_default_style,
     text_annotation_properties,
 )
 from ...utils.annotation_style_controls import TEXT_FONT_SIZES
 from ...utils.color_swatch import rounded_color_swatch
+from ...utils.image_show_mode import SHOW_BOTH
 from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
 from ...utils.themed_icon import recolor_svg
@@ -1311,7 +1322,7 @@ class TakeoffPlanView(
         else:
             option.setAlignment(Qt.AlignmentFlag.AlignLeft)
         item.document().setDefaultTextOption(option)
-        item.setZValue(2)
+        item.setZValue(ANNOTATION_BODY_Z)
         self._apply_text_annotation_box_to_item(ann, item)
         return item
 
@@ -1451,19 +1462,19 @@ class TakeoffPlanView(
         pen.setWidthF(2.0)
         pen.setCosmetic(True)
         rect_item.setPen(pen)
-        rect_item.setZValue(2)
+        rect_item.setZValue(ANNOTATION_BODY_Z)
         rect_item.setData(0, ann.uid)
         background = QGraphicsRectItem(QtCore.QRectF(min_x, min_y, 1.0, 1.0))
         background.setBrush(green)
         background.setPen(Qt.PenStyle.NoPen)
-        background.setZValue(3)
+        background.setZValue(NAMED_VIEW_LABEL_BACKGROUND_Z)
         background.setData(0, ann.uid)
         background.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
         label = QGraphicsTextItem("")
         label.setFont(create_named_view_label_font(cs))
         label.setDefaultTextColor(QColor("white"))
         label.setPos(min_x - 1.0, min_y - 1.0)
-        label.setZValue(4)
+        label.setZValue(NAMED_VIEW_LABEL_Z)
         label.setData(0, ann.uid)
         label.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
         return [rect_item, background, label]
@@ -3014,7 +3025,7 @@ class TakeoffPlanView(
             )
             item.setPen(QPen(Qt.PenStyle.NoPen))
             item.setBrush(QBrush(QColor(80, 140, 255, 80)))
-            item.setZValue(0.75)
+            item.setZValue(PDF_TEXT_SELECTION_Z)
             if page_transform is not None:
                 item.setTransform(page_transform)
             self._scene.addItem(item)
@@ -4072,7 +4083,7 @@ class TakeoffPlanView(
             if view is not None:
                 view._on_overlay_move_base_preview_loaded(result, _generation_id)
 
-        tint_rgb = (255, 80, 80) if page.image_show_mode == 2 else None
+        tint_rgb = (255, 80, 80) if page.image_show_mode == SHOW_BOTH else None
         self._overlay_move_preview_base_request_id = (
             self._rendering_service.render_page_async(
                 file_path=page.image_path,
@@ -4116,7 +4127,7 @@ class TakeoffPlanView(
             old_item.clear_image()
             self._scene.removeItem(old_item)
         item = ImageBackgroundItem(result.image, scene_width, scene_height)
-        item.setZValue(0.05)
+        item.setZValue(OVERLAY_MOVE_BASE_Z)
         item.setVisible(self._overlay_move_normal_visuals_hidden)
         self._scene.addItem(item)
         self._overlay_move_preview_base_item = item
@@ -4148,7 +4159,7 @@ class TakeoffPlanView(
             if view is not None:
                 view._on_overlay_move_overlay_preview_loaded(result, _generation_id)
 
-        tint_rgb = (80, 80, 255) if page.image_show_mode == 2 else None
+        tint_rgb = (80, 80, 255) if page.image_show_mode == SHOW_BOTH else None
         self._overlay_move_preview_overlay_request_id = (
             self._rendering_service.render_overlay_async(
                 page=page,
@@ -4199,7 +4210,13 @@ class TakeoffPlanView(
         )
         if item is None:
             return
-        item.setZValue(0.55)
+        item.setZValue(
+            overlay_visual_z(
+                page.image_show_mode,
+                primary_z=PAGE_VISIBLE_FRAME_Z,
+                foreground_z=OVERLAY_MOVE_FOREGROUND_Z,
+            )
+        )
         item.setVisible(self._overlay_move_normal_visuals_hidden)
         old_item = self._overlay_move_preview_overlay_item
         if (
@@ -4895,7 +4912,7 @@ class TakeoffPlanView(
                         page.bitonal,
                         tint_rgb=(
                             (255, 80, 80)
-                            if page.image_show_mode == 2 and page.has_overlay
+                            if page.image_show_mode == SHOW_BOTH and page.has_overlay
                             else None
                         ),
                     )

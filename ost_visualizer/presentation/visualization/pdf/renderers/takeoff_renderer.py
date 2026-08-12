@@ -232,7 +232,6 @@ class TakeoffRenderer:
         item.setData(1, condition_uid)
         item.setData(2, "condition_label")
         item.setData(3, label_kind)
-        item.setZValue(20)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         return item
 
@@ -401,7 +400,6 @@ class TakeoffRenderer:
         border_pen.setWidthF(1.0)
         rect_item.setPen(border_pen)
         rect_item.setBrush(QBrush(Qt.GlobalColor.red))
-        rect_item.setZValue(10)
         rect_item.setPos(cx, cy)
         rect_item.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations)
         minus_path = QPainterPath()
@@ -409,7 +407,6 @@ class TakeoffRenderer:
         minus_item = QGraphicsPathItem(minus_path)
         minus_item.setPen(QPen(Qt.GlobalColor.white))
         minus_item.setBrush(QBrush(Qt.GlobalColor.white))
-        minus_item.setZValue(11)
         minus_item.setPos(cx, cy)
         minus_item.setFlag(
             QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations
@@ -701,7 +698,6 @@ class TakeoffRenderer:
                 hole_item.setPath(hole_path)
                 hole_item.setPen(QPen(Qt.PenStyle.NoPen))
                 hole_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-                hole_item.setZValue(0)
                 hole_item.setData(0, hole_uid)
                 items.append((hole_uid, hole_item))
         return items

@@ -218,7 +218,9 @@ namespace ost_pdf_writer
               opacity(1.0),
               author("OST Visualizer") {}
     };
-    std::string generate_bluebeam_highlight_dict(const BluebeamHighlight &highlight);
+    std::string generate_bluebeam_highlight_dict(
+        const BluebeamHighlight &highlight,
+        const std::array<double, 4> &rect);
     std::string generate_highlight_appearance_stream(const BluebeamHighlight &highlight);
     std::array<double, 4> compute_highlight_rect(const BluebeamHighlight &highlight);
 }

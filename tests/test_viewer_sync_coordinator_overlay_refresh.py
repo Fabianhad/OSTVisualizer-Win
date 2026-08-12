@@ -55,6 +55,11 @@ from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    PAGE_VISIBLE_FRAME_Z,
+    PAPER_HIGHLIGHT_Z,
+    TAKEOFF_BODY_Z,
+)
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     DIMENSION_LABEL_ITEM_KIND,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
@@ -87,6 +92,15 @@ from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_SELECT,
 )
 from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
+from ost_visualizer.presentation.utils.image_show_mode import (
+    SHOW_BOTH,
+    SHOW_ORIGINAL,
+    SHOW_OVERLAY,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+    HighlightGraphicsItem,
+    AnnotationItemRenderer,
+)
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
@@ -190,6 +204,9 @@ class FakeCoordinateSystem:
 
     def transform_vertices_to_2d(self, values):
         return list(values)
+
+    def update_page_info(self, _page_info):
+        pass
 
 
 class FakeTakeoffRenderer:
@@ -1457,7 +1474,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 name="P1",
                 image_path="base.pdf",
                 overlay_image_path="overlay.pdf",
-                image_show_mode=2,
+                image_show_mode=SHOW_BOTH,
                 width_pts=612.0,
                 height_pts=792.0,
             )
@@ -1466,7 +1483,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertFalse(strategy.load_main)
         self.assertFalse(strategy.load_overlay)
 
-    def test_show_both_overlay_item_stays_above_high_resolution_base_tiles(self):
+    def test_show_both_overlay_item_stays_between_base_tiles_and_highlights(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -1475,20 +1492,21 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             height_pts=792.0,
             overlay_image_path="overlay.pdf",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
-            image_show_mode=2,
+            image_show_mode=SHOW_BOTH,
         )
         pixmap = QPixmap(100, 100)
         item = view._create_overlay_graphics_item(
             pixmap,
             page,
             view_scale=2.0,
-            show_mode=2,
+            show_mode=SHOW_BOTH,
         )
-        self.assertGreater(item.zValue(), 0.35)
-        self.assertLess(item.zValue(), 0.5)
+        self.assertGreater(item.zValue(), PAGE_VISIBLE_FRAME_Z)
+        self.assertLess(item.zValue(), PAPER_HIGHLIGHT_Z)
+        self.assertLess(item.zValue(), TAKEOFF_BODY_Z)
         view.cleanup()
 
-    def test_overlay_only_item_stays_below_takeoff_body_band(self):
+    def test_overlay_only_item_stays_below_paper_highlight_band(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -1497,17 +1515,148 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             height_pts=792.0,
             overlay_image_path="overlay.pdf",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
-            image_show_mode=1,
+            image_show_mode=SHOW_OVERLAY,
         )
         pixmap = QPixmap(100, 100)
         item = view._create_overlay_graphics_item(
             pixmap,
             page,
             view_scale=2.0,
-            show_mode=1,
+            show_mode=SHOW_OVERLAY,
         )
-        self.assertLess(item.zValue(), 0.5)
+        self.assertLess(item.zValue(), PAPER_HIGHLIGHT_Z)
         view.cleanup()
+
+    def test_highlight_remains_observable_across_page_image_modes_and_layer_state(
+        self,
+    ):
+        load_coordinator = PageLoadStrategyService(
+            SimpleNamespace(get_page_size=lambda _path, _index: (72.0, 72.0))
+        )
+        view = self._make_plan_view(
+            load_coordinator=load_coordinator,
+            annotation_renderer=AnnotationItemRenderer(FakeCoordinateSystem()),
+        )
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 1.0, 1.0),
+            width_pts=72.0,
+            height_pts=72.0,
+        )
+        highlight = BidAnnotation(
+            uid="highlight-1",
+            annotation_type="highlight",
+            page_uid=page.uid,
+            layer_uid="annotation-layer",
+            position=[20.0, 20.0, 100.0, 20.0, 100.0, 100.0, 20.0, 100.0],
+            color="#ffff00",
+        )
+
+        def complete_page_visual(mode):
+            if mode == SHOW_ORIGINAL:
+                request_id, request = view._rendering_service.page_requests[-1]
+            elif mode == SHOW_OVERLAY:
+                request_id, request = view._rendering_service.overlay_requests[-1]
+            else:
+                request_id, request = view._rendering_service.composite_requests[-1]
+            image = QImage(216, 216, QImage.Format.Format_ARGB32)
+            image.fill(QColor("white"))
+            request["callback"](RenderResult(request_id, True, image, None))
+            QApplication.processEvents()
+
+        try:
+            for mode in (
+                SHOW_ORIGINAL,
+                SHOW_OVERLAY,
+                SHOW_BOTH,
+                SHOW_OVERLAY,
+                SHOW_ORIGINAL,
+                SHOW_BOTH,
+                SHOW_OVERLAY,
+            ):
+                current_page = replace(page, image_show_mode=mode)
+                self.assertTrue(
+                    view.load_page(
+                        current_page,
+                        [],
+                        {},
+                        {},
+                        annotations=[highlight],
+                        hidden_layer_uids=set(),
+                    )
+                )
+                complete_page_visual(mode)
+                highlight_item = view._uid_to_items[highlight.uid][0]
+                self.assertIsInstance(highlight_item, HighlightGraphicsItem)
+                self.assertTrue(highlight_item.isVisible())
+                self.assertEqual(
+                    self._render_scene_pixel(view, 60, 60), QColor("#ffff00")
+                )
+                if mode == SHOW_OVERLAY:
+                    self.assertLess(
+                        view._overlay_items[0].zValue(), highlight_item.zValue()
+                    )
+            view.set_selected_uids({highlight.uid})
+            self.assertEqual(view._selected_uids, {highlight.uid})
+            self.assertTrue(highlight_item.isVisible())
+            self.assertEqual(self._render_scene_pixel(view, 60, 60), QColor("#ffff00"))
+            self.assertTrue(view.apply_layer_visibility("annotation-layer", False, {}))
+            self.assertFalse(highlight_item.isVisible())
+            self.assertEqual(self._render_scene_pixel(view, 60, 60), QColor("white"))
+            self.assertTrue(view.apply_layer_visibility("annotation-layer", True, {}))
+            self.assertTrue(highlight_item.isVisible())
+            self.assertEqual(self._render_scene_pixel(view, 60, 60), QColor("#ffff00"))
+            blank_page = Page(
+                uid="blank", name="Blank", width_pts=72.0, height_pts=72.0
+            )
+            self.assertTrue(view.load_page(blank_page, [], {}, {}))
+            for move_mode in (SHOW_OVERLAY, SHOW_BOTH):
+                move_page = replace(page, image_show_mode=move_mode)
+                self.assertTrue(
+                    view.load_page(
+                        move_page,
+                        [],
+                        {},
+                        {},
+                        annotations=[highlight],
+                        hidden_layer_uids=set(),
+                    )
+                )
+                complete_page_visual(move_mode)
+                highlight_item = view._uid_to_items[highlight.uid][0]
+                self.assertEqual(
+                    self._render_scene_pixel(view, 60, 60), QColor("#ffff00")
+                )
+                self.assertTrue(view.show_overlay_move_handle())
+                base_request_id, base_request = view._rendering_service.page_requests[
+                    -1
+                ]
+                overlay_request_id, overlay_request = (
+                    view._rendering_service.overlay_requests[-1]
+                )
+                preview_image = QImage(216, 216, QImage.Format.Format_ARGB32)
+                preview_image.fill(QColor("white"))
+                base_request["callback"](
+                    RenderResult(base_request_id, True, preview_image, None)
+                )
+                overlay_request["callback"](
+                    RenderResult(overlay_request_id, True, preview_image, None)
+                )
+                QApplication.processEvents()
+                self.assertLess(
+                    view._overlay_move_preview_overlay_item.zValue(),
+                    PAPER_HIGHLIGHT_Z,
+                )
+                self.assertTrue(highlight_item.isVisible())
+                self.assertEqual(
+                    self._render_scene_pixel(view, 60, 60), QColor("#ffff00")
+                )
+                view.cancel_overlay_move_mode(restore_preview=True)
+        finally:
+            view.cleanup()
 
     def test_show_both_loads_composite_instead_of_separate_layers(self):
         view = self._make_plan_view()
@@ -7071,13 +7220,13 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             QtCore.Qt.KeyboardModifier.NoModifier,
         )
 
-    def _make_plan_view(self):
+    def _make_plan_view(self, *, load_coordinator=None, annotation_renderer=None):
         view = TakeoffPlanView(
             color_service=FakeColorService(),
             rendering_service=FakeRenderingService(),
-            load_coordinator=FakeLoadCoordinator(),
+            load_coordinator=load_coordinator or FakeLoadCoordinator(),
             takeoff_renderer=FakeTakeoffRenderer(),
-            annotation_renderer=FakeAnnotationRenderer(),
+            annotation_renderer=annotation_renderer or FakeAnnotationRenderer(),
             linear_geometry=FakeLinearGeometry(),
         )
         # Production window composition projects access immediately after
@@ -7085,6 +7234,16 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         # that contract explicitly.
         view.set_editing_enabled(True)
         return view
+
+    @staticmethod
+    def _render_scene_pixel(view, x, y, size=216):
+        image = QImage(size, size, QImage.Format.Format_ARGB32)
+        image.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        rect = QtCore.QRectF(0.0, 0.0, float(size), float(size))
+        view._scene.render(painter, rect, rect)
+        painter.end()
+        return image.pixelColor(x, y)
 
     def _make_page_scale_view(
         self,

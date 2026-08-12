@@ -2157,7 +2157,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         negative_box = next(
             item
             for item in items
-            if isinstance(item, QGraphicsPathItem) and item.zValue() == 10
+            if isinstance(item, QGraphicsPathItem)
+            and item.brush().color() == Qt.GlobalColor.red
         )
         dimension_center = dimension_label.mapToScene(
             dimension_label.boundingRect().center()

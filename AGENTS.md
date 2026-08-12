@@ -80,6 +80,18 @@ Threading and events:
   values without treating the safety floor as ordinary low quality. Zoom-based
   high-resolution rendering remains a separate dynamic policy. Raster prefetch
   admission uses native source pixel dimensions, not plan point geometry.
+- PDF export requests snapshot their authoritative page, takeoff, condition,
+  annotation, page-area, and display-mode state on the Qt thread after the
+  destination is chosen. Export workers must not read live project entities.
+- Non-rasterized PDF export uses a canonical unrotated output page. The native
+  writer resolves inherited MediaBox, CropBox, UserUnit, and Rotate geometry,
+  places the source page as vector content, and applies user rotation and flips
+  exactly once to that content, source-PDF annotation appearances and subtype
+  geometry, and exported OST annotations. Do not add annotation-specific
+  offsets or separate page-transform paths. Native source placement and
+  annotation conversion share `common/page_transform.hpp`;
+  `PageExportData` requires explicit canonical dimensions, and non-blank pages
+  also require a source path and explicit pre-rotation source dimensions.
 
 Persistence:
 
@@ -263,6 +275,12 @@ State and identity:
   snapshots must retain hidden annotations so every open plan surface can
   reveal the existing scene items when the layer is enabled; do not filter
   hidden annotations out during viewer hydration.
+- Plan View scene bands live in `presentation/scene/plan_view_z_order.py`.
+  Overlay-only imagery owns the primary page-image band, while Show Both may
+  project its overlay into the foreground-image band. Base, overlay, composite,
+  high-resolution, and overlay-move preview imagery must all remain below paper
+  Highlights, while takeoff bodies remain above them; source type alone must
+  not determine stacking.
 
 C++ extensions:
 

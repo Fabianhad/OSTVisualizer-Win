@@ -37,6 +37,7 @@ from ....utils.annotation_defaults import (
     annotation_default_style,
     dimension_annotation_properties,
 )
+from ....utils.image_show_mode import mode_to_flags
 from ....visualization.core.geometry.takeoff_geometry import (
     compute_count_vertices,
     compute_line_angle,
@@ -228,8 +229,9 @@ class PlacementModeMixin:
         page = self._current_page
         if not page or not page.layer_visible:
             return None
+        _, show_overlay = mode_to_flags(page.image_show_mode)
         overlay_enabled = (
-            page.image_show_mode in (1, 2)
+            show_overlay
             and bool(page.overlay_image_path)
             and is_pdf_suffix(page.overlay_image_path)
         )

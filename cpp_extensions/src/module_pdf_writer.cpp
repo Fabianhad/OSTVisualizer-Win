@@ -184,6 +184,7 @@ NB_MODULE(ost_pdf_writer, m)
             .def_ro("media_box", &PDFWriter::PDFPageGeometryData::media_box)
             .def_ro("crop_box", &PDFWriter::PDFPageGeometryData::crop_box)
             .def_ro("visible_box", &PDFWriter::PDFPageGeometryData::visible_box)
+            .def_ro("user_unit", &PDFWriter::PDFPageGeometryData::user_unit)
             .def_ro("rotation", &PDFWriter::PDFPageGeometryData::rotation);
         nb::class_<PDFWriter::PageExportData>(m, "PageExportData",
                                               "Data for exporting a single page with takeoffs")
@@ -213,11 +214,19 @@ NB_MODULE(ost_pdf_writer, m)
             .def_rw("highlights", &PDFWriter::PageExportData::highlights,
                     "List of highlight annotations (HighlightAnnotationData) for this page")
             .def_rw("page_width", &PDFWriter::PageExportData::page_width,
-                    "Page width in points (for blank pages, default 612)")
+                    "Required canonical exported page width in points")
             .def_rw("page_height", &PDFWriter::PageExportData::page_height,
-                    "Page height in points (for blank pages, default 792)")
+                    "Required canonical exported page height in points")
+            .def_rw("source_width", &PDFWriter::PageExportData::source_width,
+                    "Required non-blank source display width before user rotation")
+            .def_rw("source_height", &PDFWriter::PageExportData::source_height,
+                    "Required non-blank source display height before user rotation")
             .def_rw("rotation", &PDFWriter::PageExportData::rotation,
-                    "Page rotation in degrees (0, 90, 180, 270) for blank pages")
+                    "Clockwise user rotation applied while placing source content")
+            .def_rw("flip_x", &PDFWriter::PageExportData::flip_x,
+                    "Flip source content horizontally before user rotation")
+            .def_rw("flip_y", &PDFWriter::PageExportData::flip_y,
+                    "Flip source content vertically before user rotation")
             .def_rw("is_blank", &PDFWriter::PageExportData::is_blank,
                     "True if this is a blank page (no source PDF)");
         nb::class_<PDFWriter>(m, "PDFWriter",
@@ -243,133 +252,17 @@ Example:
     else:
         print(f"Error: {writer.get_last_error()}")
 )doc")
-            .def("add_polygon_annotation", &PDFWriter::add_polygon_annotation,
-                 nb::arg("pdf_path"),
-                 nb::arg("vertices"),
-                 nb::arg("label"),
-                 nb::arg("color"),
-                 nb::arg("fill_opacity"),
-                 R"doc(
-Add a Bluebeam-compatible polygon annotation to a PDF.
-Args:
-    pdf_path: Path to PDF file to modify
-    vertices: List of (x, y) tuples in PDF points (1/72 inch)
-    label: Text label for the annotation
-    color: RGB color as [r, g, b] where each component is 0-255
-    fill_opacity: Fill opacity from 0.0 (transparent) to 1.0 (opaque)
-Returns:
-    True if successful, False otherwise
-Example:
-    writer = PDFWriter()
-    vertices = [(100, 100), (200, 100), (200, 200), (100, 200)]
-    if writer.add_polygon_annotation(
-        "output.pdf",
-        vertices,
-        "Area 1",
-        [255, 0, 0],  # Red
-        0.5
-    ):
-        print("Annotation added successfully")
-)doc")
-            .def("add_polygon_annotations_batch", &PDFWriter::add_polygon_annotations_batch,
-                 nb::arg("pdf_path"),
-                 nb::arg("annotations"),
-                 R"doc(
-Add multiple polygon annotations to a PDF in a single operation.
-This is more efficient than calling add_polygon_annotation multiple times,
-as it opens the PDF once, adds all annotations, and writes once.
-Args:
-    pdf_path: Path to PDF file to modify
-    annotations: List of PolygonAnnotationData objects
-Returns:
-    True if successful, False otherwise
-Example:
-    writer = PDFWriter()
-    annotations = []
-    # First annotation
-    annot1 = PolygonAnnotationData()
-    annot1.vertices = [(100, 100), (200, 100), (200, 200), (100, 200)]
-    annot1.label = "Area 1"
-    annot1.color = [255, 0, 0]  # Red
-    annot1.fill_opacity = 0.5
-    annotations.append(annot1)
-    # Second annotation
-    annot2 = PolygonAnnotationData()
-    annot2.vertices = [(300, 300), (400, 300), (400, 400), (300, 400)]
-    annot2.label = "Area 2"
-    annot2.color = [0, 0, 255]  # Blue
-    annot2.fill_opacity = 0.5
-    annotations.append(annot2)
-    if writer.add_polygon_annotations_batch("output.pdf", annotations):
-        print("All annotations added successfully")
-)doc")
-            .def("export_page_with_annotations", &PDFWriter::export_page_with_annotations,
-                 nb::arg("source_pdf"),
-                 nb::arg("page_index"),
-                 nb::arg("output_pdf"),
-                 nb::arg("annotations"),
-                 R"doc(
-Export a page from source PDF with annotations in a single operation.
-This combines copy_page and add_polygon_annotations_batch, avoiding file
-locking issues by keeping the PDF open throughout the operation.
-Args:
-    source_pdf: Path to source PDF file
-    page_index: Zero-based page index to copy
-    output_pdf: Path to output PDF file
-    annotations: List of PolygonAnnotationData objects to add
-Returns:
-    True if successful, False otherwise
-Example:
-    writer = PDFWriter()
-    annotations = []
-    annot = PolygonAnnotationData()
-    annot.vertices = [(100, 100), (200, 100), (200, 200), (100, 200)]
-    annot.label = "Area 1"
-    annot.color = [255, 0, 0]  # Red
-    annot.fill_opacity = 0.5
-    annotations.append(annot)
-    if writer.export_page_with_annotations("input.pdf", 0, "output.pdf", annotations):
-        print("Page exported with annotations successfully")
-)doc")
             .def("merge_pages_with_annotations", &PDFWriter::merge_pages_with_annotations,
                  nb::arg("pages"),
                  nb::arg("output_pdf"),
                  R"doc(
-Merge multiple pages from different PDFs into a single output PDF.
-Each page can have its own set of area takeoff polygons and arrow annotations.
-This is useful for exporting multiple pages with takeoff measurements in a single operation.
+Merge fully configured canonical pages into a single output PDF.
 Args:
-    pages: List of PageExportData objects, each containing:
-        - source_pdf: Path to source PDF file
-        - page_index: Zero-based page index to copy
-        - takeoffs: List of PolygonAnnotationData objects (area takeoffs) for this page
-        - arrows: List of ArrowAnnotationData objects for this page
+    pages: PageExportData objects with explicit positive output dimensions. Non-blank
+        pages also require a source path and positive pre-rotation source dimensions.
     output_pdf: Path to output PDF file
 Returns:
     True if successful, False otherwise
-Example:
-    writer = PDFWriter()
-    # First page with area takeoff
-    takeoff1 = PolygonAnnotationData()
-    takeoff1.vertices = [(100, 100), (200, 100), (200, 200), (100, 200)]
-    takeoff1.label = "Area 1"
-    takeoff1.color = [255, 0, 0]
-    takeoff1.fill_opacity = 0.5
-    # First page with arrow
-    arrow1 = ArrowAnnotationData()
-    arrow1.x1 = 100
-    arrow1.y1 = 100
-    arrow1.x2 = 200
-    arrow1.y2 = 200
-    arrow1.color = [255, 0, 0]
-    arrow1.width = 1.0
-    page1 = PageExportData()
-    page1.source_pdf = "plan1.pdf"
-    page1.page_index = 0
-    page1.takeoffs = [takeoff1]
-    page1.arrows = [arrow1]
-    if writer.merge_pages_with_annotations([page1], "merged.pdf"):
-        print("Pages merged successfully")
 )doc")
             .def("get_page_geometries", &PDFWriter::get_page_geometries,
                  nb::arg("pdf_path"),

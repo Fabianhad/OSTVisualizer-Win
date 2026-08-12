@@ -1,4 +1,5 @@
 #include "coord_transform.hpp"
+#include "../common/page_transform.hpp"
 namespace ost_coord
 {
     constexpr double PDF_POINTS_PER_INCH = 72.0;
@@ -45,79 +46,37 @@ namespace ost_coord
         }
         return result;
     }
-    Vec2 reverse_rotation(
-        double x_units, double y_units,
-        int rotation_delta,
-        double pdf_width_pts, double pdf_height_pts,
-        double points_per_unit)
-    {
-        rotation_delta = ((rotation_delta % 360) + 360) % 360;
-        double pdf_x, pdf_y;
-        switch (rotation_delta)
-        {
-        case 90:
-            pdf_y = x_units * points_per_unit;
-            pdf_x = pdf_width_pts - (y_units * points_per_unit);
-            break;
-        case 180:
-            pdf_x = pdf_width_pts - (x_units * points_per_unit);
-            pdf_y = pdf_height_pts - (y_units * points_per_unit);
-            break;
-        case 270:
-            pdf_y = pdf_height_pts - (x_units * points_per_unit);
-            pdf_x = y_units * points_per_unit;
-            break;
-        default:
-            pdf_x = x_units * points_per_unit;
-            pdf_y = pdf_height_pts - (y_units * points_per_unit);
-            break;
-        }
-        return {pdf_x, pdf_y};
-    }
     std::vector<Vec2> ost_to_pdf_coordinates(
         const std::vector<double> &ost_position,
         double pdf_width_pts, double pdf_height_pts,
         double scale_factor1, double scale_factor2,
         int rotation,
-        bool flip_x, bool flip_y,
-        double coord_offset_x, double coord_offset_y)
+        bool flip_x, bool flip_y)
     {
         size_t len = ost_position.size();
         if (len < 2)
             return {};
-        double units_per_inch = scale_factor2 / scale_factor1;
-        double units_per_point = units_per_inch / PDF_POINTS_PER_INCH;
-        double points_per_unit = 1.0 / units_per_point;
-        int ost_rotation = ((rotation % 360) + 360) % 360;
-        double final_width_units, final_height_units;
-        if (ost_rotation == 90 || ost_rotation == 270)
-        {
-            final_width_units = pdf_height_pts * units_per_point;
-            final_height_units = pdf_width_pts * units_per_point;
-        }
-        else
-        {
-            final_width_units = pdf_width_pts * units_per_point;
-            final_height_units = pdf_height_pts * units_per_point;
-        }
+        if (!std::isfinite(scale_factor1) || !std::isfinite(scale_factor2) ||
+            scale_factor1 <= 0.0 || scale_factor2 <= 0.0)
+            throw std::invalid_argument(
+                "Page scale factors must be finite and positive");
+        double points_per_unit =
+            PDF_POINTS_PER_INCH * scale_factor1 / scale_factor2;
+        auto output_size = ost_page_transform::output_dimensions(
+            pdf_width_pts, pdf_height_pts, rotation);
         std::vector<Vec2> vertices;
         vertices.reserve(len / 2);
         for (size_t i = 0; i + 1 < len; i += 2)
         {
-            double x_units = ost_position[i];
-            double y_units = ost_position[i + 1];
-            if (flip_x)
-                x_units = final_width_units - x_units;
-            if (flip_y)
-                y_units = final_height_units - y_units;
-            auto [pdf_x, pdf_y] = reverse_rotation(
-                x_units, y_units,
-                ost_rotation,
-                pdf_width_pts, pdf_height_pts,
-                points_per_unit);
-            pdf_x += coord_offset_x;
-            pdf_y += coord_offset_y;
-            vertices.push_back({pdf_x, pdf_y});
+            auto point = ost_page_transform::transform_top_left_point(
+                pdf_width_pts,
+                pdf_height_pts,
+                rotation,
+                flip_x,
+                flip_y,
+                ost_position[i] * points_per_unit,
+                ost_position[i + 1] * points_per_unit);
+            vertices.push_back({point[0], output_size[1] - point[1]});
         }
         return vertices;
     }

@@ -1597,7 +1597,16 @@ namespace ost_pdf_writer
     std::array<double, 4> compute_highlight_rect(const BluebeamHighlight &highlight)
     {
         if (highlight.paths.empty())
-            return {0.0, 0.0, 0.0, 0.0};
+            throw std::invalid_argument("Highlight annotation must contain paths");
+        for (const auto &path : highlight.paths)
+        {
+            for (const auto &point : path)
+            {
+                if (!std::isfinite(point[0]) || !std::isfinite(point[1]))
+                    throw std::invalid_argument(
+                        "Highlight annotation coordinates must be finite");
+            }
+        }
         const auto &first = highlight.paths.front();
         std::array<double, 4> bounds{first[0][0], first[0][1], first[0][0], first[0][1]};
         for (const auto &path : highlight.paths)
@@ -1616,10 +1625,11 @@ namespace ost_pdf_writer
             value = std::round(value * 1000000.0) / 1000000.0;
         return bounds;
     }
-    std::string generate_bluebeam_highlight_dict(const BluebeamHighlight &highlight)
+    std::string generate_bluebeam_highlight_dict(
+        const BluebeamHighlight &highlight,
+        const std::array<double, 4> &rect)
     {
         std::ostringstream oss;
-        auto rect = compute_highlight_rect(highlight);
         auto [r, g, b] = color_to_rgb(highlight.color);
         std::string pdf_date = highlight.created_date.empty() ? generate_pdf_date() : highlight.created_date;
         std::string nm = generate_nm();

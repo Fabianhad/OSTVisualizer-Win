@@ -26,16 +26,10 @@ namespace ost_coord
     std::vector<std::vector<Vec2>> transform_holes_to_3d(
         const std::vector<std::vector<Vec2>> &holes,
         double scale_ratio);
-    Vec2 reverse_rotation(
-        double x_units, double y_units,
-        int rotation_delta,
-        double pdf_width_pts, double pdf_height_pts,
-        double points_per_unit);
     std::vector<Vec2> ost_to_pdf_coordinates(
         const std::vector<double> &ost_position,
         double pdf_width_pts, double pdf_height_pts,
         double scale_factor1, double scale_factor2,
         int rotation,
-        bool flip_x, bool flip_y,
-        double coord_offset_x, double coord_offset_y);
+        bool flip_x, bool flip_y);
 }

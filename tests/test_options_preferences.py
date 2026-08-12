@@ -79,6 +79,7 @@ from ost_visualizer.presentation.components.plan_view.components.zoom_handler im
     ZoomHandlerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.scene.plan_view_z_order import PAPER_HIGHLIGHT_Z
 from ost_visualizer.presentation.config import (
     OPTIONS_DIALOG_TITLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
@@ -4354,7 +4355,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             view._background_item.zValue(), view._visible_frame_item.zValue()
         )
 
-    def test_overlay_only_visible_frame_stays_below_takeoff_body_band(self):
+    def test_overlay_only_visible_frame_stays_below_paper_highlight_band(self):
         view = _visible_frame_lifecycle_view(kind="overlay")
         view._update_tile_coverage(4.0)
         request_id, frame_options = view._rendering_service.frame_calls[-1]
@@ -4367,7 +4368,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             )
         )
         self.assertIsNotNone(view._visible_frame_item)
-        self.assertLess(view._visible_frame_item.zValue(), 0.5)
+        self.assertLess(view._visible_frame_item.zValue(), PAPER_HIGHLIGHT_Z)
 
     def test_visible_frame_reuses_current_buffered_coverage_on_small_scroll(self):
         view = _visible_frame_lifecycle_view()

@@ -40,6 +40,9 @@
 
 ### Fixed
 
+- Fixed Highlight annotations disappearing behind the page image when Plan View
+  displayed only an overlay image or PDF, including high-resolution and Move
+  Overlay Image previews, while retaining normal annotation-layer visibility.
 - Fixed the first Move Overlay Image operation in a session briefly showing the
   original blue composite beneath the moved preview when a cold high-resolution
   PDF frame completed after move mode had taken visual ownership.
@@ -94,9 +97,15 @@
   only one view available; the remaining view now opens without redundant tabs.
 - Fixed repeated page-scale changes shifting the visible plan viewport by one
   pixel per refresh at affected viewport sizes and zoom levels.
-- Fixed Plan View and PDF export scale mismatches when imported page dimensions
-  disagree with the PDF page box; rendering and exported overlays now use the
-  native PDF geometry without changing viewport scroll state.
+- Fixed Plan View and vector PDF export geometry when imported page dimensions
+  disagree with the PDF page box; exports now resolve inherited page boxes,
+  crop origins, UserUnit, and intrinsic rotation, then apply user rotation and
+  flips once to vector backgrounds, existing source-PDF annotation appearances
+  and geometry, and exported OST annotations.
+- Fixed PDF exports retaining a page display mode captured before the save
+  dialog opened; selected pages now use their latest Base Only, Overlay Only,
+  or Show Both configuration without requiring checkbox toggling, and export
+  destinations cannot overwrite either selected base or overlay source files.
 - Fixed Highlights in Plan View, placement previews, and PDF export to use their
   full stored color with multiply compositing and fill-only geometry; Plan View
   keeps square ends while exported annotations remain editable Bluebeam-style

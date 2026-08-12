@@ -21,12 +21,16 @@ from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.page import Page
 from ....visualization.pdf.page_cache import PageCache
 from ....visualization.pdf.render_priority import RenderPriority
+from ....scene.plan_view_z_order import (
+    FOREGROUND_OVERLAY_Z,
+    PAGE_IMAGE_Z,
+    PAGE_VISIBLE_FRAME_Z,
+    overlay_visual_z,
+)
+from ....utils.image_show_mode import SHOW_BOTH, SHOW_OVERLAY
 from .graphics_items import ImageBackgroundItem, TileGraphicsItem
 
 logger = logging.getLogger(__name__)
-_SHOW_MODE_OVERLAY_ONLY = 1
-_PDF_FRAME_CURRENT_Z = 0.35
-_OVERLAY_FRAME_CURRENT_Z = 0.45
 _FRAME_SCALE_LOG_STEP = 0.125
 _VISIBLE_FRAME_OVERSCAN_RATIO = 0.25
 _BASE_RASTER_SCALE_STEP = 0.25
@@ -178,7 +182,7 @@ class PageLoaderMixin:
     def _replace_background_item(self, item: ImageBackgroundItem) -> None:
         self._remove_background_item()
         self._background_item = item
-        self._background_item.setZValue(0)
+        self._background_item.setZValue(PAGE_IMAGE_Z)
         self._scene.addItem(self._background_item)
 
     def _remove_background_item(self) -> None:
@@ -293,7 +297,7 @@ class PageLoaderMixin:
         return bool(
             page
             and self._loaded_visual_kind == VISUAL_KIND_OVERLAY
-            and page.image_show_mode == _SHOW_MODE_OVERLAY_ONLY
+            and page.image_show_mode == SHOW_OVERLAY
             and page.overlay_image_path
             and is_pdf_suffix(page.overlay_image_path)
         )
@@ -303,7 +307,7 @@ class PageLoaderMixin:
         return bool(
             page
             and self._loaded_visual_kind == VISUAL_KIND_OVERLAY
-            and page.image_show_mode == 2
+            and page.image_show_mode == SHOW_BOTH
             and page.overlay_image_path
             and is_pdf_suffix(page.overlay_image_path)
         )
@@ -439,7 +443,7 @@ class PageLoaderMixin:
         show_mode = data["show_mode"]
         show_overlay = data["show_overlay"]
         rotation = data["rotation"]
-        if show_overlay and show_mode != _SHOW_MODE_OVERLAY_ONLY and page.has_overlay:
+        if show_overlay and show_mode != SHOW_OVERLAY and page.has_overlay:
             overlay_render_scale = baseline_render_scale(
                 is_pdf=bool(
                     page.overlay_image_path and is_pdf_suffix(page.overlay_image_path)
@@ -505,8 +509,13 @@ class PageLoaderMixin:
     ):
         item = QGraphicsPixmapItem(overlay_pixmap)
         item.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
-        z_value = 0.45 if show_mode in (_SHOW_MODE_OVERLAY_ONLY, 2) else 0
-        item.setZValue(z_value)
+        item.setZValue(
+            overlay_visual_z(
+                show_mode,
+                primary_z=PAGE_IMAGE_Z,
+                foreground_z=FOREGROUND_OVERLAY_Z,
+            )
+        )
         overlay_width = overlay_pixmap.width()
         overlay_height = overlay_pixmap.height()
         is_pdf = is_pdf_suffix(page.overlay_image_path)
@@ -935,11 +944,14 @@ class PageLoaderMixin:
             tint_rgb = None
             if (
                 context["kind"] == VISUAL_KIND_BASE
-                and page.image_show_mode == 2
+                and page.image_show_mode == SHOW_BOTH
                 and page.has_overlay
             ):
                 tint_rgb = (255, 80, 80)
-            elif context["kind"] == VISUAL_KIND_OVERLAY and page.image_show_mode == 2:
+            elif (
+                context["kind"] == VISUAL_KIND_OVERLAY
+                and page.image_show_mode == SHOW_BOTH
+            ):
                 tint_rgb = (80, 80, 255)
             request_id = self._rendering_service.render_frame_async(
                 file_path=context["file_path"],
@@ -996,9 +1008,15 @@ class PageLoaderMixin:
             QRectF(0.0, 0.0, float(image.width()), float(image.height())),
         )
         if context["kind"] == VISUAL_KIND_OVERLAY:
-            item.setZValue(_OVERLAY_FRAME_CURRENT_Z)
+            item.setZValue(
+                overlay_visual_z(
+                    self._current_page.image_show_mode,
+                    primary_z=PAGE_VISIBLE_FRAME_Z,
+                    foreground_z=FOREGROUND_OVERLAY_Z,
+                )
+            )
         else:
-            item.setZValue(_PDF_FRAME_CURRENT_Z)
+            item.setZValue(PAGE_VISIBLE_FRAME_Z)
         item.setTransform(item_transform)
         self._scene.addItem(item)
         self._visible_frame_item = item
@@ -1045,7 +1063,7 @@ class PageLoaderMixin:
             bitonal=page.bitonal,
             tint_rgb=(
                 (255, 80, 80)
-                if page.image_show_mode == 2 and page.has_overlay
+                if page.image_show_mode == SHOW_BOTH and page.has_overlay
                 else None
             ),
         )

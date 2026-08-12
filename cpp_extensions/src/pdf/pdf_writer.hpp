@@ -3,7 +3,6 @@
 #include <vector>
 #include <array>
 #include <cstdint>
-#include <optional>
 #include "bluebeam_annotation.hpp"
 namespace ost_pdf_writer
 {
@@ -29,17 +28,6 @@ namespace ost_pdf_writer
             double depth;
             AnnotationCaptionData caption;
         };
-        bool add_polygon_annotation(const std::string &pdf_path,
-                                    const std::vector<std::array<double, 2>> &vertices,
-                                    const std::string &label,
-                                    const std::array<uint8_t, 3> &color,
-                                    double fill_opacity);
-        bool add_polygon_annotations_batch(const std::string &pdf_path,
-                                           const std::vector<PolygonAnnotationData> &annotations);
-        bool export_page_with_annotations(const std::string &source_pdf,
-                                          int page_index,
-                                          const std::string &output_pdf,
-                                          const std::vector<PolygonAnnotationData> &annotations);
         struct ArrowAnnotationData
         {
             double x1;
@@ -127,11 +115,13 @@ namespace ost_pdf_writer
             std::array<double, 4> media_box;
             std::array<double, 4> crop_box;
             std::array<double, 4> visible_box;
+            double user_unit;
             int rotation;
             PDFPageGeometryData()
                 : media_box{0.0, 0.0, 0.0, 0.0},
                   crop_box{0.0, 0.0, 0.0, 0.0},
                   visible_box{0.0, 0.0, 0.0, 0.0},
+                  user_unit(1.0),
                   rotation(0) {}
         };
         struct PageExportData
@@ -150,9 +140,16 @@ namespace ost_pdf_writer
             std::vector<HighlightAnnotationData> highlights;
             double page_width;
             double page_height;
+            double source_width;
+            double source_height;
             int rotation;
+            bool flip_x;
+            bool flip_y;
             bool is_blank;
-            PageExportData() : source_pdf(""), page_index(0), page_width(612.0), page_height(792.0), rotation(0), is_blank(false) {}
+            PageExportData()
+                : source_pdf(""), page_index(0), page_width(0.0), page_height(0.0),
+                  source_width(0.0), source_height(0.0), rotation(0),
+                  flip_x(false), flip_y(false), is_blank(false) {}
         };
         bool merge_pages_with_annotations(const std::vector<PageExportData> &pages,
                                           const std::string &output_pdf);

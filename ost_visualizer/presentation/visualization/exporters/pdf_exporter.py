@@ -3,7 +3,7 @@ import math
 import os
 import tempfile
 from dataclasses import replace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 from PySide6.QtCore import QMarginsF, QRectF, QSizeF
 from PySide6.QtGui import (
     QImage,
@@ -89,6 +89,19 @@ _OVERLAY_DIRECT_ROTATION_TOLERANCE_RADIANS = 1e-6
 _ELEVATION_CALLOUT_BOX_WIDTH = 180.0
 _ELEVATION_CALLOUT_BOX_HEIGHT = 52.0
 _ELEVATION_CALLOUT_FONT_SIZE = 10.0
+
+
+class _PDFExportPageInfo(TypedDict):
+    scale_factor1: float
+    scale_factor2: float
+    rotation: int
+    flip_x: bool
+    flip_y: bool
+    width: float
+    height: float
+    view_scale: float
+    export_width: float
+    export_height: float
 
 
 class PDFExporter:
@@ -182,6 +195,7 @@ class PDFExporter:
                         page.uid, bid_annotations or [], page_info
                     )
                     export_data = ost_pdf_writer.PageExportData()
+                    self._configure_export_geometry(export_data, page_info)
                     self._configure_page_background(
                         export_data, page, page_info, temp_dir
                     )
@@ -242,6 +256,18 @@ class PDFExporter:
             except Exception:
                 logger.exception("Failed to clear PDF export %s", resource_name)
 
+    @staticmethod
+    def _configure_export_geometry(
+        export_data: Any, page_info: _PDFExportPageInfo
+    ) -> None:
+        export_data.page_width = float(page_info["export_width"])
+        export_data.page_height = float(page_info["export_height"])
+        export_data.source_width = float(page_info["width"])
+        export_data.source_height = float(page_info["height"])
+        export_data.rotation = int(page_info["rotation"])
+        export_data.flip_x = bool(page_info["flip_x"])
+        export_data.flip_y = bool(page_info["flip_y"])
+
     def _configure_page_background(
         self,
         export_data: Any,
@@ -271,7 +297,7 @@ class PDFExporter:
         elif main_visible:
             if self._try_main_background(export_data, page, page_info, temp_dir):
                 return
-        self._use_blank_background(export_data, page_info)
+        self._use_blank_background(export_data)
 
     def _try_main_background(
         self,
@@ -431,6 +457,9 @@ class PDFExporter:
             page,
             width_pts=float(page_info["width"]),
             height_pts=float(page_info["height"]),
+            rotation=0,
+            flip_x=False,
+            flip_y=False,
         )
 
     def _create_image_source_background_pdf(
@@ -490,11 +519,8 @@ class PDFExporter:
         export_data.is_blank = False
 
     @staticmethod
-    def _use_blank_background(export_data: Any, page_info: PageRenderInfo) -> None:
+    def _use_blank_background(export_data: Any) -> None:
         export_data.is_blank = True
-        export_data.page_width = page_info["width"]
-        export_data.page_height = page_info["height"]
-        export_data.rotation = page_info["rotation"]
 
     @staticmethod
     def _is_annotation_exportable(
@@ -523,12 +549,9 @@ class PDFExporter:
         except (TypeError, ValueError):
             return "left"
 
-    def _build_page_info(self, page: Page) -> PageRenderInfo:
+    def _build_page_info(self, page: Page) -> _PDFExportPageInfo:
         page_width_pts = page.width_pts
         page_height_pts = page.height_pts
-        offset_x = 0.0
-        offset_y = 0.0
-        native_rotation = 0
         image_path = page.image_path or ""
         if is_pdf_suffix(image_path):
             geometries = self._writer.get_page_geometries(image_path)
@@ -539,29 +562,38 @@ class PDFExporter:
                 )
             geometry = geometries[page_idx]
             min_x, min_y, max_x, max_y = geometry.visible_box
-            native_width = max_x - min_x
-            native_height = max_y - min_y
+            user_unit = float(geometry.user_unit)
+            native_width = (max_x - min_x) * user_unit
+            native_height = (max_y - min_y) * user_unit
             if native_width <= 0.0 or native_height <= 0.0:
                 raise ValueError(
                     f"Native PDF page geometry is invalid for page {page_idx}"
                 )
-            page_width_pts = native_width
-            page_height_pts = native_height
-            offset_x = min_x
-            offset_y = min_y
-            native_rotation = int(geometry.rotation or 0) % 360
-        rotation = (native_rotation + page.rotation) % 360
+            native_rotation = int(geometry.rotation)
+            if native_rotation in (90, 270):
+                page_width_pts = native_height
+                page_height_pts = native_width
+            else:
+                page_width_pts = native_width
+                page_height_pts = native_height
+        user_rotation = int(page.rotation) % 360
+        if user_rotation in (90, 270):
+            export_width = page_height_pts
+            export_height = page_width_pts
+        else:
+            export_width = page_width_pts
+            export_height = page_height_pts
         return {
-            "scale_factor1": page.scale_factor1 or 1.0,
-            "scale_factor2": page.scale_factor2 or 1.0,
-            "rotation": rotation,
-            "flip_x": 1 if page.flip_x else 0,
-            "flip_y": 1 if page.flip_y else 0,
+            "scale_factor1": float(page.scale_factor1),
+            "scale_factor2": float(page.scale_factor2),
+            "rotation": user_rotation,
+            "flip_x": bool(page.flip_x),
+            "flip_y": bool(page.flip_y),
             "width": page_width_pts,
             "height": page_height_pts,
+            "export_width": export_width,
+            "export_height": export_height,
             "view_scale": INTERACTIVE_PDF_RENDER_SCALE,
-            "coord_offset_x": offset_x,
-            "coord_offset_y": offset_y,
         }
 
     def _collect_takeoffs(

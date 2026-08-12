@@ -41,6 +41,7 @@ class _FakeWriter:
             media_box=(0.0, 0.0, 612.0, 792.0),
             crop_box=(0.0, 0.0, 612.0, 792.0),
             visible_box=(0.0, 0.0, 612.0, 792.0),
+            user_unit=1.0,
             rotation=0,
         )
         return [geometry, geometry, geometry]

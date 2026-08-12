@@ -18,9 +18,8 @@ from ...domain.entities.takeoff import Takeoff
 from ..interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ..interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ..utils.page_info_builder import build_page_info as build_page_info_util
+from .plan_view_z_order import PAGE_CANVAS_Z, TAKEOFF_BODY_Z, TAKEOFF_LABEL_Z
 
-_TAKEOFF_BODY_Z = 0.5
-_TAKEOFF_LABEL_Z = 20.0
 _TAKEOFF_DRAW_ORDER_STEP = 0.0000001
 
 
@@ -90,7 +89,7 @@ class SceneBuilder:
         canvas = QGraphicsRectItem(0, 0, width, height)
         canvas.setBrush(QBrush(color or QColor(255, 255, 255)))
         canvas.setPen(QPen(QColor(200, 200, 200)))
-        canvas.setZValue(-1)
+        canvas.setZValue(PAGE_CANVAS_Z)
         scene.addItem(canvas)
         return canvas
 
@@ -168,9 +167,9 @@ class SceneBuilder:
             for item in items_to_add:
                 draw_index = uid_to_draw_index[uid_key]
                 if item.data(2) == "condition_label":
-                    item.setZValue(_takeoff_z_value(_TAKEOFF_LABEL_Z, draw_index))
+                    item.setZValue(_takeoff_z_value(TAKEOFF_LABEL_Z, draw_index))
                 else:
-                    item.setZValue(_takeoff_z_value(_TAKEOFF_BODY_Z, draw_index))
+                    item.setZValue(_takeoff_z_value(TAKEOFF_BODY_Z, draw_index))
                 scene.addItem(item)
                 takeoff_items.append(item)
             uid_to_items[uid_key] = items_to_add
@@ -184,9 +183,9 @@ class SceneBuilder:
         for draw_index, takeoff in enumerate(_takeoffs_in_draw_order(takeoffs)):
             for item in uid_to_items.get(str(takeoff.uid), []):
                 base_z = (
-                    _TAKEOFF_LABEL_Z
+                    TAKEOFF_LABEL_Z
                     if item.data(2) == "condition_label"
-                    else _TAKEOFF_BODY_Z
+                    else TAKEOFF_BODY_Z
                 )
                 item.setZValue(_takeoff_z_value(base_z, draw_index))
 

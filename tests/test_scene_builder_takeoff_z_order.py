@@ -20,8 +20,14 @@ from ost_visualizer.presentation.components.plan_view.components.selection_manag
     SelectionManagerMixin,
 )
 from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
-from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    FOREGROUND_OVERLAY_Z,
+    PAGE_IMAGE_Z,
+    PAGE_VISIBLE_FRAME_Z,
     PAPER_HIGHLIGHT_Z,
+    TAKEOFF_BODY_Z,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
 )
 
@@ -319,9 +325,9 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         )
         by_uid = {item.data(0): item for item, _hotlink in results}
         self.assertEqual(by_uid["h1"].zValue(), PAPER_HIGHLIGHT_Z)
-        self.assertGreater(by_uid["h1"].zValue(), 0.35)
-        self.assertLess(by_uid["h1"].zValue(), 0.45)
-        self.assertLess(by_uid["h1"].zValue(), 0.5)
+        self.assertGreater(by_uid["h1"].zValue(), PAGE_VISIBLE_FRAME_Z)
+        self.assertGreater(by_uid["h1"].zValue(), FOREGROUND_OVERLAY_Z)
+        self.assertLess(by_uid["h1"].zValue(), TAKEOFF_BODY_Z)
         self.assertLess(by_uid["h1"].zValue(), by_uid["r1"].zValue())
 
     def test_rotated_highlight_annotation_uses_paper_highlight_band(self):
@@ -343,12 +349,12 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         paper = QGraphicsRectItem(QRectF(0.0, 0.0, 100.0, 100.0))
         paper.setBrush(QBrush(QColor("white")))
         paper.setPen(QPen(Qt.PenStyle.NoPen))
-        paper.setZValue(0.0)
+        paper.setZValue(PAGE_IMAGE_Z)
         scene.addItem(paper)
         frame = QGraphicsRectItem(QRectF(0.0, 0.0, 100.0, 100.0))
         frame.setBrush(QBrush(QColor("white")))
         frame.setPen(QPen(Qt.PenStyle.NoPen))
-        frame.setZValue(0.35)
+        frame.setZValue(PAGE_VISIBLE_FRAME_Z)
         scene.addItem(frame)
         highlight = QGraphicsRectItem(QRectF(10.0, 10.0, 80.0, 80.0))
         highlight_color = QColor("#ffff00")
@@ -360,7 +366,7 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         takeoff = QGraphicsRectItem(QRectF(20.0, 20.0, 60.0, 60.0))
         takeoff.setBrush(QBrush(QColor("#0080ff")))
         takeoff.setPen(QPen(Qt.PenStyle.NoPen))
-        takeoff.setZValue(0.5)
+        takeoff.setZValue(TAKEOFF_BODY_Z)
         scene.addItem(takeoff)
         image = QImage(100, 100, QImage.Format.Format_ARGB32)
         image.fill(QColor("transparent"))
@@ -374,7 +380,7 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         scene = QGraphicsScene()
         takeoff_item = QGraphicsRectItem(QRectF(0.0, 0.0, 20.0, 20.0))
         takeoff_item.setData(0, "t1")
-        takeoff_item.setZValue(0.5)
+        takeoff_item.setZValue(TAKEOFF_BODY_Z)
         scene.addItem(takeoff_item)
         highlight_item = QGraphicsRectItem(QRectF(0.0, 0.0, 20.0, 20.0))
         highlight_item.setData(0, "h1")

@@ -148,6 +148,4 @@ class OSTCoordinateSystem:
             int(page_info.get("rotation", 0)),
             bool(page_info.get("flip_x", False)),
             bool(page_info.get("flip_y", False)),
-            float(page_info.get("coord_offset_x", 0.0) or 0.0),
-            float(page_info.get("coord_offset_y", 0.0) or 0.0),
         )

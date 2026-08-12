@@ -39,6 +39,13 @@ from ....components.plan_view.components.graphics_items import (
     NAMED_VIEW_LABEL_ITEM_KIND,
     ClippedTextGraphicsItem,
 )
+from ....scene.plan_view_z_order import (
+    ANNOTATION_BODY_Z,
+    DIMENSION_LABEL_Z,
+    NAMED_VIEW_LABEL_BACKGROUND_Z,
+    NAMED_VIEW_LABEL_Z,
+    PAPER_HIGHLIGHT_Z,
+)
 from .annotation_renderer import (
     HIGHLIGHT_OPACITY,
     calculate_annotation_geometry,
@@ -54,7 +61,6 @@ AnnotationItemsResult = Tuple[
 ]
 DIMENSION_FONT_SIZE_ADJUSTMENT = 0.75
 NAMED_VIEW_FONT_SIZE_ADJUSTMENT = 0.75
-PAPER_HIGHLIGHT_Z = 0.4
 
 
 def build_highlight_path(points: List[Tuple[float, float]]) -> QPainterPath:
@@ -153,7 +159,7 @@ def update_dimension_text_item(
     text_item.setPos(center_x - text_width / 2.0, center_y - text_height / 2.0)
     text_item.setTransformOriginPoint(text_width / 2.0, text_height / 2.0)
     text_item.setRotation(angle)
-    text_item.setZValue(3)
+    text_item.setZValue(DIMENSION_LABEL_Z)
     return True
 
 
@@ -290,7 +296,7 @@ class AnnotationItemRenderer:
                 scaled_box_width / 2, scaled_box_height / 2
             )
             text_item.setRotation(rotation)
-        text_item.setZValue(2)
+        text_item.setZValue(ANNOTATION_BODY_Z)
         return [(text_item, None)]
 
     def _render_path(
@@ -449,7 +455,7 @@ class AnnotationItemRenderer:
         pen.setWidthF(2.0)
         pen.setCosmetic(True)
         rect_item.setPen(pen)
-        rect_item.setZValue(2)
+        rect_item.setZValue(ANNOTATION_BODY_Z)
         results: List[AnnotationItemResult] = [(rect_item, None)]
         if content:
             font = create_named_view_label_font(self._cs)
@@ -468,14 +474,14 @@ class AnnotationItemRenderer:
             bg_item = QGraphicsRectItem(bg_rect)
             bg_item.setBrush(green_color)
             bg_item.setPen(Qt.PenStyle.NoPen)
-            bg_item.setZValue(3)
+            bg_item.setZValue(NAMED_VIEW_LABEL_BACKGROUND_Z)
             bg_item.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
             results.append((bg_item, None))
             text_item = QGraphicsTextItem(content)
             text_item.setFont(font)
             text_item.setDefaultTextColor(QColor("white"))
             text_item.setPos(text_x - 4, text_y - 4)
-            text_item.setZValue(4)
+            text_item.setZValue(NAMED_VIEW_LABEL_Z)
             text_item.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
             results.append((text_item, None))
         return results
@@ -511,7 +517,7 @@ class AnnotationItemRenderer:
         pen.setCosmetic(True)
         item.setPen(pen)
         item.setBrush(Qt.GlobalColor.transparent)
-        item.setZValue(2)
+        item.setZValue(ANNOTATION_BODY_Z)
         full_link_info = HotlinkDto(
             uid=link_info.get("uid", ""),
             bid_page_uid=link_info.get("bid_page_uid") or bid_page_uid or "",
@@ -536,5 +542,5 @@ class AnnotationItemRenderer:
         pen.setCosmetic(True)
         item.setPen(pen)
         item.setBrush(Qt.GlobalColor.transparent)
-        item.setZValue(2)
+        item.setZValue(ANNOTATION_BODY_Z)
         return item

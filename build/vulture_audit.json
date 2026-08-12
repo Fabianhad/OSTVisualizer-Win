@@ -1,6 +1,6 @@
 {
-  "audit_date": "2026-08-11",
-  "repository_head": "2dd4b111fe2cf5794bac9bbdaad84cc463e8d069",
+  "audit_date": "2026-08-12",
+  "repository_head": "4808e69879a23612986b88699dcff1800829f58a",
   "vulture_version": "2.14",
   "scope": "ost_visualizer",
   "runs": [
@@ -19,7 +19,7 @@
     {
       "minimum_confidence": 60,
       "exit_code": 3,
-      "finding_count": 180,
+      "finding_count": 182,
       "raw_output": null,
       "exit_code_note": "Vulture returns 3 when findings are present."
     }
@@ -220,6 +220,94 @@
         }
       ],
       "evidence": "The remaining changed-file findings are TintedCacheKey dataclass key fields and nanobind assignments with direct native consumers. Removed render API names and the canonical quality module produce no findings."
+    },
+    {
+      "audit_date": "2026-08-12",
+      "reason": "Comprehensive cleanup audit of the current PDF export and Plan View Highlight worktree",
+      "cache_policy": "Invalidated every classification in changed PDF exporter, PageRenderInfo, coordinate-transform, Plan View, and test files; reused only unchanged categories, then compared all current count deltas.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 182
+        }
+      ],
+      "new_findings": [
+        "PageExportData.source_width assignment",
+        "PageExportData.source_height assignment"
+      ],
+      "removed_findings": [],
+      "changed_classifications": [
+        {
+          "symbols": "PageRenderInfo.coord_offset_x and coord_offset_y",
+          "from": "dictionary protocol fields",
+          "to": "obsolete CropBox-origin translation fields; removed",
+          "evidence": "The canonical unrotated output page owns a zero origin. Native Form XObject normalization and the shared page transform now put source content and annotations in that space without annotation offsets."
+        }
+      ],
+      "evidence": "The two count additions are required writes to nanobind PageExportData fields read by pdf_writer.cpp. No 80- or 100-percent finding exists, and no changed Plan View or export lifecycle symbol is reported."
+    },
+    {
+      "audit_date": "2026-08-12",
+      "reason": "Second full-tree cleanup pass over every current status-visible path and newly affected surrounding owner",
+      "cache_policy": "Re-audited every modified and untracked file; no status-visible file was skipped. Invalidated prior PDF exporter, native geometry, Highlight, placement-mode, Plan View z-order, takeoff-renderer, and associated test classifications; reused only unchanged repository-wide categories.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 182
+        }
+      ],
+      "new_findings": [],
+      "removed_findings": [],
+      "changed_classifications": [],
+      "evidence": "Counts are unchanged. The changed-file findings remain nanobind writes with direct C++ readers; the new strict TypedDict, native geometry resolver, Highlight validation, placement mode, z-order owner, and takeoff-renderer cleanup produce no finding."
+    },
+    {
+      "audit_date": "2026-08-12",
+      "reason": "Final regression-focused audit of the complete uncommitted worktree",
+      "cache_policy": "Invalidated and reran every confidence level after the PDF source-annotation transform, export path identity, and Plan View z-order owners changed; existing classifications were reused only when the exact finding and native or runtime consumer remained unchanged.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 182
+        }
+      ],
+      "new_findings": [],
+      "removed_findings": [],
+      "changed_classifications": [],
+      "evidence": "Counts and exact changed-area findings are unchanged: nine pdf_exporter.py assignments are nanobind fields read by the native writer. The export path-identity and Plan View z-order changes produce no Vulture finding."
     }
   ],
   "changed_worktree_relevant_findings": [
@@ -237,25 +325,25 @@
     },
     {
       "symbol": "PageExportData.is_blank assignments",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:490,494",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:519,523",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads the assigned field. Observable assertions exist in tests/test_pdf_overlay_export.py and native validation tests."
     },
     {
       "symbol": "OvalAnnotationData axis assignments",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1074-1077",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1106-1109",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads x_axis_dx, x_axis_dy, y_axis_dx, and y_axis_dy. tests/test_pdf_oval_export.py verifies the values and rendered geometry."
     },
     {
-      "symbol": "PageRenderInfo.coord_offset_x/coord_offset_y",
-      "location": "ost_visualizer/domain/dtos/page_render_info_dto.py:13-14",
-      "classification": "dictionary protocol fields",
-      "evidence": "PDFExporter writes the native visible-box origin under these keys and OSTCoordinateSystem reads them by key for CropBox-aware export coordinates."
+      "symbol": "PageExportData.source_width/source_height assignments",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:265-266",
+      "classification": "native binding contract",
+      "evidence": "The nanobind writer requires and reads both pre-rotation source dimensions to validate and place vector source content. The real-PDF geometry matrix verifies their effect."
     },
     {
       "symbol": "InkAnnotationData.strokes assignment",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1137",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1169",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads strokes for ordinary /Ink annotations; Highlight export now uses its separate typed paths field. Native annotation tests verify /Ink remains unchanged."
     },
@@ -341,12 +429,12 @@
       "retained_test_dynamic_access": [
         {
           "symbol": "PdfOvalCollectionTests.assertSameGeometry getattr",
-          "location": "tests/test_pdf_oval_export.py:124",
+          "location": "tests/test_pdf_oval_export.py:122",
           "reason": "Parameterized comparison of the six typed nanobind geometry fields."
         },
         {
           "symbol": "NativePdfOvalAppearanceTests setattr",
-          "location": "tests/test_pdf_oval_export.py:543",
+          "location": "tests/test_pdf_oval_export.py:526",
           "reason": "Parameterized invalid-value coverage of the typed nanobind oval fields."
         }
       ]

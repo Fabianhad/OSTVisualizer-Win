@@ -32,7 +32,6 @@ NB_MODULE(ost_coord_transform, m)
             nb::arg("scale_factor1"), nb::arg("scale_factor2"),
             nb::arg("rotation"),
             nb::arg("flip_x"), nb::arg("flip_y"),
-            nb::arg("coord_offset_x"), nb::arg("coord_offset_y"),
-            "Convert OST positions to native PDF coordinates with rotation, flips, and page-box origin.");
+            "Convert OST positions to canonical exported-page coordinates with rotation and flips.");
       m.attr("__version__") = "1.0.0";
 }

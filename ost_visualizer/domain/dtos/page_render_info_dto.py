@@ -10,5 +10,3 @@ class PageRenderInfo(TypedDict, total=False):
     width: float
     height: float
     view_scale: float
-    coord_offset_x: float
-    coord_offset_y: float
