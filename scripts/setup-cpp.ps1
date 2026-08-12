@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $CppDir = Join-Path $ProjectRoot 'cpp_extensions'
+Import-Module (Join-Path $PSScriptRoot 'native-dependency-install.psm1') -Force
 
 function Invoke-VerifiedDownload {
     param(
@@ -53,7 +54,8 @@ $PdfiumReleaseTag = 'chromium/7651'
 $PdfiumSha256 = '17c2f2fdb09607163304b19ee5724ac0ea71d244cd74c45d3a8e524396357f59'
 
 if (Test-Path $PdfiumDir) {
-    Write-Host "PDFium $PdfiumVersion already present, skipping download." -ForegroundColor Green
+    Assert-PdfiumInstallation -Directory $PdfiumDir -ExpectedVersion $PdfiumVersion
+    Write-Host "PDFium $PdfiumVersion already present and verified." -ForegroundColor Green
 }
 else {
     Write-Host "Downloading PDFium $PdfiumVersion..." -ForegroundColor Yellow
@@ -64,18 +66,27 @@ else {
     Invoke-VerifiedDownload -Url $PdfiumUrl -Destination $PdfiumArchive -ExpectedSha256 $PdfiumSha256
 
     try {
-        New-Item -ItemType Directory -Path $PdfiumDir -Force | Out-Null
-        tar -xzf $PdfiumArchive -C $PdfiumDir
-        if ($LASTEXITCODE -ne 0) { throw 'Failed to extract PDFium' }
+        Install-NativeDependencyDirectory `
+            -FinalDirectory $PdfiumDir `
+            -PrepareDirectory {
+                param($StagingDirectory)
+                tar -xzf $PdfiumArchive -C $StagingDirectory
+                if ($LASTEXITCODE -ne 0) { throw 'Failed to extract PDFium' }
+                $DllLib = Join-Path $StagingDirectory 'lib\pdfium.dll.lib'
+                if (Test-Path -LiteralPath $DllLib) {
+                    Rename-Item -LiteralPath $DllLib -NewName 'pdfium.lib'
+                }
+                return $StagingDirectory
+            } `
+            -ValidateDirectory {
+                param($Directory)
+                Assert-PdfiumInstallation `
+                    -Directory $Directory `
+                    -ExpectedVersion $PdfiumVersion
+            } | Out-Null
     }
     finally {
         Remove-Item -LiteralPath $PdfiumArchive -Force -ErrorAction SilentlyContinue
-    }
-
-    # Rename pdfium.dll.lib to pdfium.lib (CMakeLists expects pdfium.lib)
-    $DllLib = Join-Path $PdfiumDir 'lib\pdfium.dll.lib'
-    if (Test-Path $DllLib) {
-        Rename-Item $DllLib 'pdfium.lib'
     }
 
     Write-Host "  PDFium downloaded to $PdfiumDir" -ForegroundColor Green
@@ -91,7 +102,8 @@ $QpdfDirName = "qpdf-$QpdfVersion-msvc64"
 $QpdfDir = Join-Path $CppDir $QpdfDirName
 
 if (Test-Path $QpdfDir) {
-    Write-Host "QPDF already present, skipping download." -ForegroundColor Green
+    Assert-QpdfInstallation -Directory $QpdfDir -ExpectedVersion $QpdfVersion
+    Write-Host "QPDF $QpdfVersion already present and verified." -ForegroundColor Green
 }
 else {
     Write-Host "Downloading QPDF $QpdfVersion..." -ForegroundColor Yellow
@@ -102,17 +114,30 @@ else {
     Invoke-VerifiedDownload -Url $QpdfUrl -Destination $QpdfArchive -ExpectedSha256 $QpdfSha256
 
     try {
-        Expand-Archive -LiteralPath $QpdfArchive -DestinationPath $CppDir -Force
+        Install-NativeDependencyDirectory `
+            -FinalDirectory $QpdfDir `
+            -PrepareDirectory {
+                param($StagingDirectory)
+                Expand-Archive `
+                    -LiteralPath $QpdfArchive `
+                    -DestinationPath $StagingDirectory
+                $PreparedDirectory = Join-Path $StagingDirectory $QpdfDirName
+                $QpdfBin = Join-Path $PreparedDirectory 'bin'
+                Get-ChildItem $QpdfBin -Filter 'concrt140*.dll' | Remove-Item -Force
+                Get-ChildItem $QpdfBin -Filter 'msvcp140*.dll' | Remove-Item -Force
+                Get-ChildItem $QpdfBin -Filter 'vcruntime140*.dll' | Remove-Item -Force
+                return $PreparedDirectory
+            } `
+            -ValidateDirectory {
+                param($Directory)
+                Assert-QpdfInstallation `
+                    -Directory $Directory `
+                    -ExpectedVersion $QpdfVersion
+            } | Out-Null
     }
     finally {
         Remove-Item -LiteralPath $QpdfArchive -Force -ErrorAction SilentlyContinue
     }
-
-    # Remove MSVC runtime DLLs (available on any dev machine)
-    $QpdfBin = Join-Path $QpdfDir 'bin'
-    Get-ChildItem $QpdfBin -Filter 'concrt140*.dll' | Remove-Item -Force
-    Get-ChildItem $QpdfBin -Filter 'msvcp140*.dll' | Remove-Item -Force
-    Get-ChildItem $QpdfBin -Filter 'vcruntime140*.dll' | Remove-Item -Force
 
     Write-Host "  QPDF downloaded to $QpdfDir" -ForegroundColor Green
 }

@@ -6,7 +6,10 @@ from .....application.interfaces.i_page_load_strategy_service import (
     IPageLoadStrategyService,
 )
 from .....application.interfaces.i_page_rendering_service import IPageRenderingService
-from .....application.render_quality import baseline_render_scale
+from .....application.render_quality import (
+    RASTER_NATIVE_RENDER_SCALE,
+    baseline_render_scale,
+)
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
@@ -126,11 +129,16 @@ class PageRenderPrefetchCoordinator:
                 bitonal=page.bitonal,
             )
         elif strategy.load_overlay and page.overlay_image_path:
-            render_scale = self._cacheable_prefetch_scale(
-                strategy.pdf_width_pts,
-                strategy.pdf_height_pts,
-                baseline_render_scale(is_pdf=is_pdf_suffix(page.overlay_image_path)),
-            )
+            if is_pdf_suffix(page.overlay_image_path):
+                render_scale = self._cacheable_prefetch_scale(
+                    strategy.pdf_width_pts,
+                    strategy.pdf_height_pts,
+                    baseline_render_scale(is_pdf=True),
+                )
+            else:
+                render_scale = self._native_raster_prefetch_scale(
+                    page.overlay_image_path
+                )
             if render_scale is None:
                 return
             request_id = self._rendering_service.render_overlay_async(
@@ -191,3 +199,15 @@ class PageRenderPrefetchCoordinator:
         ):
             return None
         return render_scale
+
+    def _native_raster_prefetch_scale(self, file_path: str) -> Optional[float]:
+        width_px, height_px = self._page_cache.get_page_size(file_path, 0)
+        if width_px <= 0.0 or height_px <= 0.0:
+            return None
+        if not self._page_cache.can_accept_prefetch_render(
+            width_px,
+            height_px,
+            RASTER_NATIVE_RENDER_SCALE,
+        ):
+            return None
+        return RASTER_NATIVE_RENDER_SCALE

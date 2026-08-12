@@ -340,7 +340,8 @@ Requires Python 3.10+, Visual Studio 2022 (MSVC x64), CMake 3.20+, and Qt 6.10.2
 
 The Python setup retains the required PySide6 6.10.2 version while allowing the
 other Python packages to resolve normally. Native setup downloads pinned,
-SHA-256-verified PDFium and QPDF archives.
+SHA-256-verified PDFium and QPDF archives, stages extraction before installation,
+and validates the exact installed version before reusing an existing directory.
 
 For release builds:
 

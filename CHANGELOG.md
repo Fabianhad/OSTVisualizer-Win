@@ -14,14 +14,16 @@
 
 ### Changed
 
-- Changed interactive PDF rendering to use one 144-DPI baseline across normal
+- Changed interactive PDF rendering to use one 216-DPI baseline across normal
   pages, disabled high-resolution mode, composite overlays, temporary overlay
   movement, prefetch, and rasterized PDF export, while raster sources retain
-  native-pixel rendering and cache or 3D texture limits may reduce scale only
-  through a separate safety floor.
+  native-pixel rendering, raster prefetch admission uses actual source pixel
+  dimensions, and cache or 3D texture limits may reduce scale only through a
+  separate safety floor.
 - Changed source setup to preserve the required PySide6 6.10.2 version, pin and
-  SHA-256-verify native PDFium/QPDF archives, and fail explicitly when Python
-  dependency installation or native extraction fails.
+  SHA-256-verify native PDFium/QPDF archives, validate exact installed versions,
+  stage native extraction before committing dependency directories, and fail
+  explicitly when Python dependency installation or native extraction fails.
 - Changed polygon editing so Cloud and Polygon annotations use the existing Area
   takeoff Add/Subtract Control Point actions, validation, undo, and persistence.
 - Changed application table and tree headers to use consistent sorting,

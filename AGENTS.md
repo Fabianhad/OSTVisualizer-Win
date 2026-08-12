@@ -41,7 +41,10 @@ C++ extensions require Visual Studio 2022, CMake, and Qt 6.10.2 at `C:\Qt\6.10.2
 PySide6 6.10.2 and the downloaded PDFium/QPDF archives are exact-version inputs;
 the other Python requirements intentionally remain unpinned. Native archive URLs
 and SHA-256 digests must be updated together from the authoritative upstream
-release when intentionally upgrading a dependency.
+release when intentionally upgrading a dependency. Native dependency extraction
+uses a sibling staging directory and commits the final directory only after its
+installed version validates; an existing directory must pass the same exact
+version check before reuse.
 
 ## Architecture Guardrails
 
@@ -75,7 +78,8 @@ Threading and events:
   safety floor are distinct concepts; Plan View, overlay previews, prefetch,
   composites, export rasterization, caches, and 3D page textures reuse those
   values without treating the safety floor as ordinary low quality. Zoom-based
-  high-resolution rendering remains a separate dynamic policy.
+  high-resolution rendering remains a separate dynamic policy. Raster prefetch
+  admission uses native source pixel dimensions, not plan point geometry.
 
 Persistence:
 

@@ -131,9 +131,10 @@ class FakeRenderingService:
 
 
 class FakeCache:
-    def __init__(self, can_accept=True, can_accept_render=True):
+    def __init__(self, can_accept=True, can_accept_render=True, sizes=None):
         self.can_accept = can_accept
         self.can_accept_render = can_accept_render
+        self.sizes = sizes or {}
         self.checks = 0
         self.render_checks = []
 
@@ -144,6 +145,9 @@ class FakeCache:
     def can_accept_prefetch_render(self, width_pts, height_pts, scale):
         self.render_checks.append((width_pts, height_pts, scale))
         return self.can_accept_prefetch() and self.can_accept_render
+
+    def get_page_size(self, file_path, page_index):
+        return self.sizes.get((file_path, page_index), (612.0, 792.0))
 
 
 class FakeImageRenderer:
@@ -440,7 +444,8 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
     def test_raster_overlay_prefetch_uses_native_pixel_scale(self):
         rendering = FakeRenderingService()
         size_provider = FakePageSizeProvider({"overlay.tif": (1224.0, 1584.0)})
-        coordinator = self._coordinator(rendering, size_provider=size_provider)
+        cache = FakeCache(sizes={("overlay.tif", 0): (1224.0, 1584.0)})
+        coordinator = self._coordinator(rendering, cache, size_provider)
         pages = [
             self._page("p1", image_path="p1.pdf"),
             self._page(
@@ -455,6 +460,34 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         self.assertEqual(
             rendering.calls[0][2]["render_scale"],
             RASTER_NATIVE_RENDER_SCALE,
+        )
+        self.assertEqual(
+            cache.render_checks,
+            [(1224.0, 1584.0, RASTER_NATIVE_RENDER_SCALE)],
+        )
+
+    def test_uncacheable_raster_overlay_uses_native_dimensions_and_skips_render(self):
+        rendering = FakeRenderingService()
+        native_size = (12000.0, 12000.0)
+        size_provider = FakePageSizeProvider({"overlay.tif": native_size})
+        cache = FakeCache(
+            can_accept_render=False,
+            sizes={("overlay.tif", 0): native_size},
+        )
+        coordinator = self._coordinator(rendering, cache, size_provider)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page(
+                "p2",
+                overlay_image_path="overlay.tif",
+                image_show_mode=1,
+            ),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(rendering.calls, [])
+        self.assertEqual(
+            cache.render_checks,
+            [(12000.0, 12000.0, RASTER_NATIVE_RENDER_SCALE)],
         )
 
     def test_uncacheable_prefetch_estimate_skips_render(self):
