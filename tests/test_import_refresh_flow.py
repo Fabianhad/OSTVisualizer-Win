@@ -1,3 +1,5 @@
+import os
+import shutil
 import struct
 import tempfile
 import unittest
@@ -420,6 +422,107 @@ class ImportRefreshFlowTests(unittest.TestCase):
                 ).read_bytes(),
                 b"%PDF-1.4 unicode",
             )
+
+    @unittest.skipUnless(os.name == "nt", "Windows CAB path behavior")
+    def test_native_cab_resolves_identical_members_from_long_local_paths(self):
+        member_names = ["Project name; 50% (CD).OST", "BidTrans.xml"]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            local_osp = tmp_path / "Package name; spaces (local).osp"
+            _write_legacy_ansi_cab(
+                local_osp,
+                [(member_names[0], b"<XML_ROOT />"), (member_names[1], b"<XML />")],
+            )
+            long_parent = tmp_path
+            segment_index = 0
+            while len(str(long_parent / local_osp.name)) < 300:
+                long_parent /= (
+                    f"network-style segment {segment_index}; spaces (punctuation)"
+                )
+                segment_index += 1
+            extended_long_parent = Path("\\\\?\\" + str(long_parent))
+            extended_long_parent.mkdir(parents=True)
+            extended_long_osp = extended_long_parent / local_osp.name
+            shutil.copyfile(local_osp, extended_long_osp)
+            path_forms = (
+                str(local_osp),
+                "\\\\?\\" + str(local_osp),
+                str(extended_long_osp)[4:],
+                str(extended_long_osp),
+            )
+            expected_package = None
+            for source_path in path_forms:
+                with self.subTest(source_path=source_path):
+                    names = list(osp_importer_module.ost_cab.list_cab(source_path))
+                    self.assertEqual(names, member_names)
+                    package = osp_importer_module._inspect_package(names)
+                    if expected_package is None:
+                        expected_package = package
+                    self.assertEqual(package, expected_package)
+            self.assertEqual(local_osp.read_bytes(), extended_long_osp.read_bytes())
+
+    @unittest.skipUnless(os.name == "nt", "Windows UNC path behavior")
+    def test_native_cab_resolves_and_extracts_identically_from_unc_forms(self):
+        member_names = ["Project name; 50% (CD).ost", "BidTrans.xml"]
+        ost_contents = b"<XML_ROOT />"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp).resolve()
+            local_osp = tmp_path / "Package name; spaces (network).osp"
+            _write_legacy_ansi_cab(
+                local_osp,
+                [(member_names[0], ost_contents), (member_names[1], b"<XML />")],
+            )
+            long_parent = tmp_path
+            segment_index = 0
+            while len(str(long_parent / local_osp.name)) < 300:
+                long_parent /= (
+                    f"network-style segment {segment_index}; spaces (punctuation)"
+                )
+                segment_index += 1
+            extended_long_parent = Path("\\\\?\\" + str(long_parent))
+            extended_long_parent.mkdir(parents=True)
+            extended_long_osp = extended_long_parent / local_osp.name
+            shutil.copyfile(local_osp, extended_long_osp)
+            drive_share = f"{tmp_path.drive[0]}$"
+
+            def as_unc(path: Path, *, extended: bool) -> str:
+                normal_path = str(path)
+                if normal_path.startswith("\\\\?\\"):
+                    normal_path = normal_path[4:]
+                relative_path = normal_path[len(tmp_path.drive) :]
+                prefix = "\\\\?\\UNC\\localhost\\" if extended else "\\\\localhost\\"
+                return prefix + drive_share + relative_path
+
+            short_unc = as_unc(local_osp, extended=False)
+            if not Path(short_unc).is_file():
+                self.skipTest("the local Windows administrative share is unavailable")
+            path_forms = (
+                str(local_osp),
+                short_unc,
+                as_unc(local_osp, extended=True),
+                as_unc(extended_long_osp, extended=False),
+                as_unc(extended_long_osp, extended=True),
+            )
+            expected_package = None
+            for index, source_path in enumerate(path_forms):
+                with self.subTest(source_path=source_path):
+                    names = list(osp_importer_module.ost_cab.list_cab(source_path))
+                    self.assertEqual(names, member_names)
+                    package = osp_importer_module._inspect_package(names)
+                    if expected_package is None:
+                        expected_package = package
+                    self.assertEqual(package, expected_package)
+                    output_dir = tmp_path / f"extracted {index}; output"
+                    output_dir.mkdir()
+                    self.assertTrue(
+                        osp_importer_module.ost_cab.extract_cab(
+                            source_path, str(output_dir)
+                        )
+                    )
+                    self.assertEqual(
+                        (output_dir / member_names[0]).read_bytes(), ost_contents
+                    )
+            self.assertEqual(local_osp.read_bytes(), extended_long_osp.read_bytes())
 
     def test_osp_import_rejects_unsafe_cab_member_paths_before_extraction(self):
         unsafe_names = (

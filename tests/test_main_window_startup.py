@@ -53,6 +53,14 @@ class MainWindowStartupTests(unittest.TestCase):
                     window._workspace_state_model,
                     controller.get_service("workspace_state_model"),
                 )
+                self.assertIs(
+                    window._annotation_view_manager._ui_access_manager,
+                    window.ui_access_manager,
+                )
+                self.assertIs(
+                    window._view_window_manager._ui_access_manager,
+                    window.ui_access_manager,
+                )
             finally:
                 if window is not None:
                     window._workspace_state_coordinator.cleanup()

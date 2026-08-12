@@ -103,6 +103,59 @@ namespace ost_cab
                encode_utf8(filesystem_path.filename().wstring(), filename);
     }
 
+    static bool extended_absolute_path(
+        const std::wstring &path,
+        std::wstring &extended_path)
+    {
+        if (path.empty())
+            return false;
+        std::wstring normalized(path);
+        for (wchar_t &character : normalized)
+        {
+            if (character == L'/')
+                character = L'\\';
+        }
+        if (normalized.rfind(L"\\\\?\\", 0) == 0 ||
+            normalized.rfind(L"\\\\.\\", 0) == 0)
+        {
+            extended_path = std::move(normalized);
+            return true;
+        }
+        if (normalized.rfind(L"\\\\", 0) == 0)
+        {
+            extended_path = L"\\\\?\\UNC\\" + normalized.substr(2);
+            return true;
+        }
+        if (normalized.size() >= 3 && normalized[1] == L':' &&
+            normalized[2] == L'\\')
+        {
+            extended_path = L"\\\\?\\" + normalized;
+            return true;
+        }
+
+        const DWORD required = GetFullPathNameW(
+            normalized.c_str(), 0, nullptr, nullptr);
+        if (required == 0)
+            return false;
+        std::wstring absolute(required, L'\0');
+        const DWORD length = GetFullPathNameW(
+            normalized.c_str(), required, absolute.data(), nullptr);
+        if (length == 0 || length >= required)
+            return false;
+        absolute.resize(length);
+        return extended_absolute_path(absolute, extended_path);
+    }
+
+    static INT_PTR open_wide_file(const std::wstring &path, int oflag)
+    {
+        DWORD access = (oflag & _O_RDWR) ? (GENERIC_READ | GENERIC_WRITE) : (oflag & _O_WRONLY) ? GENERIC_WRITE
+                                                                                                : GENERIC_READ;
+        DWORD disp = (oflag & _O_CREAT) ? CREATE_ALWAYS : OPEN_EXISTING;
+        HANDLE h = CreateFileW(path.c_str(), access, FILE_SHARE_READ, nullptr,
+                               disp, FILE_ATTRIBUTE_NORMAL, nullptr);
+        return (h == INVALID_HANDLE_VALUE) ? -1 : (INT_PTR)h;
+    }
+
     static INT_PTR open_file(const char *path, int oflag)
     {
         std::wstring wide_path;
@@ -111,12 +164,7 @@ namespace ost_cab
             SetLastError(ERROR_NO_UNICODE_TRANSLATION);
             return -1;
         }
-        DWORD access = (oflag & _O_RDWR) ? (GENERIC_READ | GENERIC_WRITE) : (oflag & _O_WRONLY) ? GENERIC_WRITE
-                                                                                                : GENERIC_READ;
-        DWORD disp = (oflag & _O_CREAT) ? CREATE_ALWAYS : OPEN_EXISTING;
-        HANDLE h = CreateFileW(wide_path.c_str(), access, FILE_SHARE_READ, nullptr,
-                               disp, FILE_ATTRIBUTE_NORMAL, nullptr);
-        return (h == INVALID_HANDLE_VALUE) ? -1 : (INT_PTR)h;
+        return open_wide_file(wide_path, oflag);
     }
     static INT_PTR open_file_wo(const std::wstring &path)
     {
@@ -262,11 +310,58 @@ namespace ost_cab
     }
     static FNALLOC(fdi_alloc) { return HeapAlloc(GetProcessHeap(), 0, cb); }
     static FNFREE(fdi_free) { HeapFree(GetProcessHeap(), 0, pv); }
+
+    struct FdiSource
+    {
+        std::wstring path;
+    };
+    constexpr char FDI_SOURCE_OPEN_PATH[] = ".\\ostv-source.cab";
+    static thread_local FdiSource *active_fdi_source = nullptr;
+
+    class ScopedFdiSource
+    {
+    public:
+        explicit ScopedFdiSource(FdiSource &source)
+            : previous_(active_fdi_source)
+        {
+            active_fdi_source = &source;
+        }
+
+        ~ScopedFdiSource()
+        {
+            active_fdi_source = previous_;
+        }
+
+        ScopedFdiSource(const ScopedFdiSource &) = delete;
+        ScopedFdiSource &operator=(const ScopedFdiSource &) = delete;
+
+    private:
+        FdiSource *previous_;
+    };
+
     static FNOPEN(fdi_open)
     {
+        if (active_fdi_source &&
+            std::strcmp(pszFile, FDI_SOURCE_OPEN_PATH) == 0)
+            return open_wide_file(active_fdi_source->path, oflag);
         INT_PTR h = open_file(pszFile, oflag);
         return (h == -1) ? -1 : h;
     }
+
+    static BOOL fdi_copy_source(
+        HFDI hfdi,
+        std::wstring source_path,
+        PFNFDINOTIFY notify,
+        void *context)
+    {
+        FdiSource source{std::move(source_path)};
+        ScopedFdiSource scoped_source(source);
+        char cab_name[] = "ostv-source.cab";
+        char cab_path[] = ".\\";
+        return FDICopy(
+            hfdi, cab_name, cab_path, 0, notify, nullptr, context);
+    }
+
     static FNREAD(fdi_read)
     {
         DWORD n = 0;
@@ -423,20 +518,19 @@ namespace ost_cab
                                   cpuUNKNOWN, &erf);
             if (!hfdi)
                 return false;
-            std::string cab_path;
-            std::string cab_name;
+            std::wstring wide_cab_file;
+            std::wstring extended_cab_file;
             std::wstring wide_output_dir;
-            if (!split_utf8_path(cab_file, cab_path, cab_name) ||
+            if (!decode_utf8(cab_file.c_str(), wide_cab_file) ||
+                !extended_absolute_path(wide_cab_file, extended_cab_file) ||
                 !decode_utf8(output_dir.c_str(), wide_output_dir))
             {
                 FDIDestroy(hfdi);
                 return false;
             }
             FdiContext ctx{std::cref(wide_output_dir)};
-            BOOL ok = FDICopy(hfdi,
-                              const_cast<char *>(cab_name.c_str()),
-                              const_cast<char *>(cab_path.c_str()),
-                              0, fdi_notify, nullptr, &ctx);
+            BOOL ok = fdi_copy_source(
+                hfdi, std::move(extended_cab_file), fdi_notify, &ctx);
             FDIDestroy(hfdi);
             return ok && ctx.success;
         }
@@ -449,18 +543,17 @@ namespace ost_cab
                                   cpuUNKNOWN, &erf);
             if (!hfdi)
                 return names;
-            std::string cab_path;
-            std::string cab_name;
-            if (!split_utf8_path(cab_file, cab_path, cab_name))
+            std::wstring wide_cab_file;
+            std::wstring extended_cab_file;
+            if (!decode_utf8(cab_file.c_str(), wide_cab_file) ||
+                !extended_absolute_path(wide_cab_file, extended_cab_file))
             {
                 FDIDestroy(hfdi);
                 return names;
             }
             FdiContext ctx{std::ref(names)};
-            const BOOL ok = FDICopy(hfdi,
-                                    const_cast<char *>(cab_name.c_str()),
-                                    const_cast<char *>(cab_path.c_str()),
-                                    0, fdi_notify, nullptr, &ctx);
+            const BOOL ok = fdi_copy_source(
+                hfdi, std::move(extended_cab_file), fdi_notify, &ctx);
             FDIDestroy(hfdi);
             if (!ok || !ctx.success)
                 names.clear();

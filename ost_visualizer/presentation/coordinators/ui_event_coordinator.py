@@ -802,6 +802,7 @@ class UIEventCoordinator:
     def _reset_takeoff_workspace_state(self, clear_sidebars: bool = True) -> None:
         self._takeoff_workspace_bid_ref = None
         self._clear_staged_takeoff_restore()
+        self._clear_pending_hotlink_named_view_focus()
         if clear_sidebars:
             self._selected_takeoff_uids = ()
             self._selection_projected_condition_uids = set()

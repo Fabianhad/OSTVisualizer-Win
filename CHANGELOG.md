@@ -50,7 +50,8 @@
   for an editable folder when condition deletion was independently unavailable.
 - Fixed OSP imports and exports with non-ASCII Windows paths or CAB member
   names, including original On-Screen Takeoff packages that store member names
-  in the Windows ANSI encoding; imports also preserve an earlier bid's staged
+  in the Windows ANSI encoding; imports now also read long UNC and extended UNC
+  package paths identically to local copies and preserve an earlier bid's staged
   drawing when a later package uses the same bid and image filenames.
 - Fixed startup and recovery bid restoration traversing the navigation
   state machine without first projecting its loaded-file stage, which could
@@ -198,7 +199,13 @@
   toolbar refreshes, including immediately after the first point; Main and
   detached Annotation windows now share capability-specific annotation state,
   evaluate page settings against the page each window displays, and refresh
-  immediately when permissions or interaction modes change.
+  immediately when permissions or interaction modes change. Annotation windows
+  opened from Hot Links now receive that same canonical access state, and
+  leaving the Takeoff workspace invalidates an in-flight detached-window open
+  before its old-bid window can become visible. Newer Hot Link targets supersede
+  older in-flight opens, closing Annotation also cancels an opening dependent
+  View window, and pending Main-window Hot Link focus cannot cross into another
+  bid that reuses the same page identifier.
 - Fixed grouped plan-item rotation failures so later writes stop after an earlier failed stage and committed position changes remain accurately projected and undoable; mixed takeoff-and-annotation delete undo also preserves takeoff metadata captured before the database reload.
 - Fixed repeated final application-close events rerunning already completed workspace and service cleanup, and one teardown failure no longer skips the remaining stages or retains released application references.
 - Fixed update-dialog failures leaving later application notifications permanently suppressed.

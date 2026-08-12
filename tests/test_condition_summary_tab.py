@@ -1373,6 +1373,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
 
         fake_sidebar = FakeSidebar()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = None
         coordinator._nav = FakeNav()
         coordinator._sidebar = fake_sidebar
         coordinator._tab_widget = FakeTabWidget()

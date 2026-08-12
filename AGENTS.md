@@ -265,6 +265,10 @@ C++ extensions:
 - All 13 native modules are required and imported directly.
 - Do not add Python fallback paths that hide missing native extensions.
 - Add new native module destinations to `tools/check_architecture.py` and the C++ table in this file.
+- Native CAB reads canonicalize source files to extended absolute Unicode paths
+  for `CreateFileW`. The legacy FDI API receives only a short logical cabinet
+  path and name; do not pass local, UNC, or extended-length user paths through
+  FDI's ANSI path-concatenation boundary.
 
 ## MCP Guardrails
 
@@ -311,6 +315,15 @@ Equivalent plan actions in Main and detached windows use
 bid, displayed-page, and annotation-layer context. Page-scoped checks must not
 fall back to the Main Window's active page, and temporary interaction blockers
 are tracked per surface.
+Detached Annotation and View managers receive `UIAccessManager` as a
+constructor-owned dependency. Their singleton lifecycle includes in-flight
+window construction; leaving the Takeoff workspace or shutting down invalidates
+that lifecycle generation, closing Annotation also invalidates its dependent
+View lifecycle, and a constructed window may become visible only if its
+generation is still current. Exact duplicate opens coalesce, while a newer
+distinct target supersedes the older request. Pending Main-window Hot Link
+focus belongs to the current bid workspace and is cleared at that workspace's
+ownership reset.
 
 Free/no-license basics:
 

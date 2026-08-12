@@ -80,6 +80,9 @@ class AnnotationViewBuilder:
         project_data_service = self.container.get("project_data_service")
         config_model = self.container.get("config_model")
         icon_provider = self.container.get("icon_provider")
+        ui_access_manager = (
+            self.container.get("ui_access_manager") if view_kind != "main" else None
+        )
         try:
             parent_window = self.container.get("main_window")
         except KeyError:
@@ -93,6 +96,7 @@ class AnnotationViewBuilder:
             config_model=config_model,
             parent_window=parent_window,
             logger=self.logger.getChild("ViewManager"),
+            ui_access_manager=ui_access_manager,
             view_kind=view_kind,
             write_service=write_service,
             annotation_write_service=annotation_write_service,

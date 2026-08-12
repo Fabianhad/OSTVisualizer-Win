@@ -175,10 +175,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._annotation_write_service = app_controller.get_service(
             "annotation_write_service"
         )
-        self._annotation_view_manager = app_controller.get_service(
-            "annotation_view_manager"
-        )
-        self._view_window_manager = app_controller.get_service("view_window_manager")
         self._pdf_exporter = app_controller.get_service("pdf_exporter")
         self._ost_exporter = app_controller.get_service("ost_exporter")
         self._osp_exporter = app_controller.get_service("osp_exporter")
@@ -214,6 +210,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 "database_capability_service"
             ),
         )
+        app_controller.container.register_instance(
+            "ui_access_manager", self.ui_access_manager
+        )
+        self._annotation_view_manager = app_controller.get_service(
+            "annotation_view_manager"
+        )
+        self._view_window_manager = app_controller.get_service("view_window_manager")
         self._deferred_persistence_manager = DeferredPersistenceManager(
             self._project_write_service,
             app_controller.get_service("sql_workspace_state_service"),
@@ -1283,10 +1286,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         self._apply_workspace_toolbar_visibility()
         if index != TAB_INDEX_TAKEOFF:
-            if self._view_window_manager.is_view_open():
+            if self._view_window_manager.has_active_view_lifecycle():
                 self._workspace_state_coordinator.request_view_restore()
                 self.set_view_window_visible(False)
-            if self._annotation_view_manager.is_view_open():
+            if self._annotation_view_manager.has_active_view_lifecycle():
                 self._workspace_state_coordinator.request_annotation_restore()
                 self.set_annotation_window_visible(False)
             if self.get_mesh_window() is not None:
@@ -1971,7 +1974,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             bid_ref = self.ui_state_manager.get_selected_bid_ref()
             page_uid = self.get_active_takeoff_page_uid()
-            self._annotation_view_manager.set_ui_access_manager(self.ui_access_manager)
             self._annotation_view_manager.open_view(
                 bid_ref,
                 page_uid,
@@ -1981,7 +1983,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 initial_is_fullscreen=initial_is_fullscreen,
             )
             return
-        if self.is_view_window_open():
+        if self._view_window_manager.has_active_view_lifecycle():
             self.set_view_window_visible(False)
         self._annotation_view_manager.close_view()
 
@@ -2041,7 +2043,6 @@ class MainWindow(QtWidgets.QMainWindow):
             named_view_uid = (
                 annotation_view.target_named_view_uid if annotation_view else None
             )
-            self._view_window_manager.set_ui_access_manager(self.ui_access_manager)
             self._view_window_manager.open_view(
                 bid_ref,
                 page_uid,
@@ -2071,7 +2072,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sync_annotation_window_action()
         if visible:
             self._workspace_state_coordinator.track_annotation_window()
-        if not visible and self.is_view_window_open():
+        if not visible and self._view_window_manager.has_active_view_lifecycle():
             self.set_view_window_visible(False)
             return
         self._sync_view_window_action()

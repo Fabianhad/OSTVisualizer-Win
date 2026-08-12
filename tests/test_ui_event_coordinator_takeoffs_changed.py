@@ -4688,6 +4688,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._undo_service = None
         coordinator.ui_access_manager = FakeAccess()
         coordinator._viewer = FakeUnloadViewer()
+        coordinator.plan_view = None
         coordinator._sidebar = FakeSidebar()
         coordinator.opengl_viewer = None
         coordinator._mesh_window = None
@@ -4905,6 +4906,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._plan_view_handler = None
         coordinator._status_panel = None
         coordinator.project_data = ProjectData()
+        coordinator.plan_view = None
         coordinator.ui_access_manager = FakeAccess()
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=TAB_INDEX_TAKEOFF)

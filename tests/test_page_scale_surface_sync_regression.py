@@ -115,6 +115,7 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
                 return "BID_ACTIVE"
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = None
         coordinator.ui_state_manager = ui_state
         coordinator.project_data = project_data
         coordinator.takeoff_sidebar = page_combo

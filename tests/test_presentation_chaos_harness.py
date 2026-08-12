@@ -1826,6 +1826,11 @@ class DetachedChaosRefreshSignaler:
         self.manager._refresh_window()
 
 
+class DetachedChaosAccess:
+    def get_plan_surface_access(self, _context):
+        return PlanSurfaceAccessState()
+
+
 class DetachedWindowChaosHarness:
     def __init__(self, seed: int, test_case: unittest.TestCase):
         self.seed = seed
@@ -1851,7 +1856,8 @@ class DetachedWindowChaosHarness:
         self.manager._window = self.window
         self.manager.repository = self.repository
         self.manager.project_data = self.project_data
-        self.manager._ui_access_manager = None
+        self.manager._ui_access_manager = DetachedChaosAccess()
+        self.manager._remote_surface_id = "detached-plan:chaos"
         self.manager._update_window_navigation = self._update_window_navigation
         self.manager._get_page_data = self._get_page_data
         self.manager._refresh_signaler = DetachedChaosRefreshSignaler(self.manager)

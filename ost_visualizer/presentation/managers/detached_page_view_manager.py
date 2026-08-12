@@ -92,6 +92,7 @@ class DetachedPageViewManager(IShutdownAware):
         coord_factory: ICoordinateTransformerFactory,
         color_service: IColorService,
         infrastructure_provider: IInfrastructureServiceProvider,
+        ui_access_manager,
         window_factory: Callable[..., QtWidgets.QMainWindow],
         write_service=None,
         annotation_write_service=None,
@@ -113,11 +114,12 @@ class DetachedPageViewManager(IShutdownAware):
         self._write_service = write_service
         self._annotation_write_service = annotation_write_service
         self._saved_window_state_provider = saved_window_state_provider
-        self._ui_access_manager = None
+        self._ui_access_manager = ui_access_manager
         self._access_listener_registered = False
         self._window: Optional[QtWidgets.QMainWindow] = None
         self._window_undo_service: Optional[UndoRedoService] = None
         self._opening = False
+        self._lifecycle_generation = 0
         self._visibility_changed_callback = None
         self._refresh_signaler = QtVoidCallback(self._refresh_window, parent_window)
         self._remote_update_generation = 0
@@ -170,6 +172,8 @@ class DetachedPageViewManager(IShutdownAware):
                     "Failed to %s during detached-view manager shutdown", description
                 )
 
+        self._lifecycle_generation += 1
+        self._opening = False
         self._release_access_tracking(suppress_errors=True)
         event_bus = self.event_bus
         if event_bus is not None:
@@ -465,15 +469,6 @@ class DetachedPageViewManager(IShutdownAware):
             pages_with_takeoffs=self._collect_pages_with_takeoffs(view.bid_ref),
         )
 
-    def set_ui_access_manager(self, manager) -> None:
-        if manager is self._ui_access_manager:
-            return
-        self._release_access_tracking()
-        self._ui_access_manager = manager
-        if self.is_view_open():
-            self._register_access_listener()
-            self._refresh_access_state()
-
     def set_visibility_changed_callback(self, callback) -> None:
         self._visibility_changed_callback = callback
 
@@ -486,8 +481,6 @@ class DetachedPageViewManager(IShutdownAware):
         view: AnnotationView,
         page_data: PageViewDto,
     ) -> PlanSurfaceAccessState:
-        if self._ui_access_manager is None or view.bid_ref is None:
-            return PlanSurfaceAccessState()
         annotation_layer_visible = bool(
             page_data and page_data.is_layer_visible(page_data.annotation_layer_uid)
         )
@@ -504,9 +497,6 @@ class DetachedPageViewManager(IShutdownAware):
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
-        if view is None:
-            self._window.set_access_state(PlanSurfaceAccessState())
-            return
         self._window.set_access_state(
             self._get_access_state(view, self._window.page_data)
         )
@@ -613,7 +603,13 @@ class DetachedPageViewManager(IShutdownAware):
     ) -> str:
         if self._opening:
             existing_view = self.repository.get_active_view()
-            return existing_view.uid if existing_view else ""
+            if (
+                existing_view is not None
+                and existing_view.bid_ref == bid_ref
+                and existing_view.target_page_uid == target_page_uid
+                and existing_view.target_named_view_uid == target_named_view_uid
+            ):
+                return existing_view.uid
         if self.is_view_open():
             existing_view = self.repository.get_active_view()
             if existing_view:
@@ -638,6 +634,8 @@ class DetachedPageViewManager(IShutdownAware):
                 self._notify_visibility_changed()
                 return existing_view.uid
         navigation_source = "hotlink" if target_named_view_uid else "unknown"
+        lifecycle_generation = self._lifecycle_generation + 1
+        self._lifecycle_generation = lifecycle_generation
         self._opening = True
         try:
             view = self.repository.create_view(
@@ -652,16 +650,20 @@ class DetachedPageViewManager(IShutdownAware):
                     initial_is_fullscreen,
                 )
             )
-            self._create_window(
+            committed = self._create_window(
                 view,
+                lifecycle_generation,
                 initial_geometry,
                 initial_is_maximized,
                 initial_is_fullscreen,
                 navigation_source,
             )
         except Exception:
-            self._opening = False
+            if self._lifecycle_generation == lifecycle_generation:
+                self._opening = False
             raise
+        if not committed or self._lifecycle_generation != lifecycle_generation:
+            return ""
         self._opening = False
         self._notify_visibility_changed()
         return view.uid
@@ -697,6 +699,8 @@ class DetachedPageViewManager(IShutdownAware):
         return QByteArray.fromBase64(value.encode("ascii"))
 
     def close_view(self) -> None:
+        self._lifecycle_generation += 1
+        self._opening = False
         self._remote_update_generation += 1
         self._release_access_tracking(suppress_errors=True)
         if self._window is not None:
@@ -705,10 +709,7 @@ class DetachedPageViewManager(IShutdownAware):
             if self._window is window:
                 self._window = None
                 self._window_undo_service = None
-                self._opening = False
                 self._notify_visibility_changed()
-        else:
-            self._opening = False
 
     def navigate_to_view(self, page_uid: str, named_view_uid: str) -> None:
         if not self.is_view_open():
@@ -739,6 +740,9 @@ class DetachedPageViewManager(IShutdownAware):
 
     def is_view_open(self) -> bool:
         return self._window is not None
+
+    def has_active_view_lifecycle(self) -> bool:
+        return self._opening or self._window is not None
 
     def get_window(self):
         return self._window
@@ -820,11 +824,12 @@ class DetachedPageViewManager(IShutdownAware):
     def _create_window(
         self,
         view: AnnotationView,
+        lifecycle_generation: int,
         initial_geometry: Optional[QByteArray] = None,
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
         navigation_source: str = "unknown",
-    ) -> None:
+    ) -> bool:
         page_data = self._get_page_data(view)
         coord_system = self._coord_factory.create()
         color_service = self._color_service
@@ -900,6 +905,9 @@ class DetachedPageViewManager(IShutdownAware):
             **snap_preferences.to_options(),
             parent=self.parent_window,
         )
+        if lifecycle_generation != self._lifecycle_generation:
+            window.close()
+            return False
         try:
             window.set_access_state(self._get_access_state(view, page_data))
             window.area_placement_state_changed.connect(
@@ -928,6 +936,7 @@ class DetachedPageViewManager(IShutdownAware):
                     "Failed to close partially initialized detached view"
                 )
             raise
+        return True
 
     def _get_page_data(self, view: AnnotationView) -> PageViewDto:
         self._remote_update_generation += 1
