@@ -898,7 +898,7 @@ class CtrlDragTests(unittest.TestCase):
         view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
         return view
 
-    def _make_flip_view(self, selected_uids):
+    def _make_transform_view(self, selected_uids):
         view = self._make_view(selected_uids)
         view._scene_builder = FakeSceneBuilder()
         view._linear_geom = LinearGeometry()
@@ -929,7 +929,7 @@ class CtrlDragTests(unittest.TestCase):
             "area": Takeoff(
                 uid="area",
                 condition_uid="area",
-                position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],
+                position=[-2.0, 1.0, 11.0, 0.0, 9.0, 12.0, 1.0, 8.0],
             ),
             "linear": Takeoff(
                 uid="linear",
@@ -1007,6 +1007,19 @@ class CtrlDragTests(unittest.TestCase):
         normalized_second = sorted((round(x, 9), round(y, 9)) for x, y in second)
         self.assertEqual(normalized_first, normalized_second)
 
+    def _assert_quarter_turn_bounds(self, before, after):
+        before_center = (
+            (before[0] + before[2]) / 2.0,
+            (before[1] + before[3]) / 2.0,
+        )
+        after_center = (
+            (after[0] + after[2]) / 2.0,
+            (after[1] + after[3]) / 2.0,
+        )
+        self._assert_bounds_almost_equal(before_center, after_center)
+        self.assertAlmostEqual(before[2] - before[0], after[3] - after[1], places=9)
+        self.assertAlmostEqual(before[3] - before[1], after[2] - after[0], places=9)
+
     @staticmethod
     def _rendered_takeoff_selection_bounds(view, uids):
         coordinate_system = view._scene_builder.get_coordinate_system()
@@ -1046,7 +1059,7 @@ class CtrlDragTests(unittest.TestCase):
         for uid in ("linear", "count", "area", "attachment"):
             for horizontal in (True, False):
                 with self.subTest(uid=uid, horizontal=horizontal):
-                    view = self._make_flip_view({uid})
+                    view = self._make_transform_view({uid})
                     before = self._rendered_takeoff_selection_bounds(view, {uid})
                     view.flip_selected_takeoffs(horizontal)
                     after = self._rendered_takeoff_selection_bounds(view, {uid})
@@ -1057,7 +1070,7 @@ class CtrlDragTests(unittest.TestCase):
         for selected in combinations(takeoff_types, 2):
             for horizontal in (True, False):
                 with self.subTest(selected=selected, horizontal=horizontal):
-                    view = self._make_flip_view(set(selected))
+                    view = self._make_transform_view(set(selected))
                     before = self._rendered_takeoff_selection_bounds(view, selected)
                     view.flip_selected_takeoffs(horizontal)
                     after = self._rendered_takeoff_selection_bounds(view, selected)
@@ -1067,7 +1080,7 @@ class CtrlDragTests(unittest.TestCase):
         selected = {"linear", "count", "area", "attachment"}
         for horizontal in (True, False):
             with self.subTest(horizontal=horizontal):
-                view = self._make_flip_view(selected)
+                view = self._make_transform_view(selected)
                 left, top, right, bottom = self._rendered_takeoff_selection_bounds(
                     view, selected
                 )
@@ -1092,7 +1105,7 @@ class CtrlDragTests(unittest.TestCase):
         selected = {"linear", "count", "area", "attachment"}
         for horizontal in (True, False):
             with self.subTest(horizontal=horizontal):
-                view = self._make_flip_view(selected)
+                view = self._make_transform_view(selected)
                 before = self._rendered_takeoff_selection_bounds(view, selected)
                 view.flip_selected_takeoffs(horizontal)
                 after = self._rendered_takeoff_selection_bounds(view, selected)
@@ -1107,7 +1120,7 @@ class CtrlDragTests(unittest.TestCase):
                         display_size=display_size,
                         horizontal=horizontal,
                     ):
-                        view = self._make_flip_view({"area", "count"})
+                        view = self._make_transform_view({"area", "count"})
                         view._current_takeoffs["count"].rotation = math.radians(
                             rotation_degrees
                         )
@@ -1128,7 +1141,7 @@ class CtrlDragTests(unittest.TestCase):
         for horizontal in (True, False):
             with self.subTest(horizontal=horizontal):
                 selected = {"linear", "count"}
-                view = self._make_flip_view(selected)
+                view = self._make_transform_view(selected)
                 view._current_takeoffs["linear"].position = [
                     0.0,
                     0.0,
@@ -1153,7 +1166,7 @@ class CtrlDragTests(unittest.TestCase):
                     screen_units_per_ost=screen_units_per_ost,
                     horizontal=horizontal,
                 ):
-                    view = self._make_flip_view(selected)
+                    view = self._make_transform_view(selected)
                     view._scene_builder.cs.ost_to_screen_pixels = (
                         lambda value: float(value) * screen_units_per_ost
                     )
@@ -1171,7 +1184,7 @@ class CtrlDragTests(unittest.TestCase):
                     screen_units_per_ost=screen_units_per_ost,
                     horizontal=horizontal,
                 ):
-                    view = self._make_flip_view(selected)
+                    view = self._make_transform_view(selected)
                     view._scene_builder.cs.ost_to_screen_pixels = (
                         lambda value: float(value) * screen_units_per_ost
                     )
@@ -1186,7 +1199,7 @@ class CtrlDragTests(unittest.TestCase):
         for horizontal in (True, False):
             with self.subTest(horizontal=horizontal):
                 selected = set(base_selection)
-                view = self._make_flip_view(selected)
+                view = self._make_transform_view(selected)
                 for source_uid in base_selection:
                     duplicate_uid = f"{source_uid}-2"
                     source = view._current_takeoffs[source_uid]
@@ -1211,7 +1224,7 @@ class CtrlDragTests(unittest.TestCase):
         selected = {"linear", "count", "area", "attachment"}
         for horizontal in (True, False):
             with self.subTest(horizontal=horizontal):
-                view = self._make_flip_view(selected)
+                view = self._make_transform_view(selected)
                 original_positions = {
                     uid: list(takeoff.position)
                     for uid, takeoff in view._current_takeoffs.items()
@@ -1231,6 +1244,173 @@ class CtrlDragTests(unittest.TestCase):
                         original_rotations[uid], takeoff.rotation, places=9
                     )
                 self.assertEqual(len(view.flushed_transform_groups), 2)
+
+    def test_each_takeoff_type_rotates_about_its_complete_visible_footprint(self):
+        for uid in ("linear", "count", "area", "attachment"):
+            for degrees in (-90.0, 90.0):
+                with self.subTest(uid=uid, degrees=degrees):
+                    view = self._make_transform_view({uid})
+                    original_rotation = view._current_takeoffs[uid].rotation
+                    before = self._rendered_takeoff_selection_bounds(view, {uid})
+                    view.rotate_selected_takeoffs(degrees)
+                    after = self._rendered_takeoff_selection_bounds(view, {uid})
+                    self._assert_quarter_turn_bounds(before, after)
+                    condition = view._current_conditions[uid]
+                    if condition.is_count or condition.is_attachment:
+                        self.assertAlmostEqual(
+                            view._current_takeoffs[uid].rotation,
+                            original_rotation + math.radians(degrees),
+                        )
+
+    def test_every_pairwise_type_rotation_keeps_one_visible_group_center(self):
+        takeoff_types = ("linear", "count", "area", "attachment")
+        for selected in combinations(takeoff_types, 2):
+            for degrees in (-90.0, 90.0):
+                with self.subTest(selected=selected, degrees=degrees):
+                    view = self._make_transform_view(set(selected))
+                    before = self._rendered_takeoff_selection_bounds(view, selected)
+                    view.rotate_selected_takeoffs(degrees)
+                    after = self._rendered_takeoff_selection_bounds(view, selected)
+                    self._assert_quarter_turn_bounds(before, after)
+
+    def test_full_mixed_rotation_uses_complete_visible_group_pivot(self):
+        selected = {"linear", "count", "area", "attachment"}
+        for degrees in (-90.0, 90.0):
+            with self.subTest(degrees=degrees):
+                view = self._make_transform_view(selected)
+                before = self._rendered_takeoff_selection_bounds(view, selected)
+                view.rotate_selected_takeoffs(degrees)
+                after = self._rendered_takeoff_selection_bounds(view, selected)
+                self._assert_quarter_turn_bounds(before, after)
+                rotation_delta = math.radians(degrees)
+                self.assertAlmostEqual(
+                    view._current_takeoffs["count"].rotation,
+                    math.radians(32.0) + rotation_delta,
+                )
+                self.assertAlmostEqual(
+                    view._current_takeoffs["attachment"].rotation,
+                    math.radians(25.0) + rotation_delta,
+                )
+
+    def test_point_shape_rotation_matrix_keeps_visible_group_center(self):
+        shape_dimensions = (
+            (shapes.SQUARE, 20.0, 8.0),
+            (shapes.RECTANGLE, 20.0, 8.0),
+            (shapes.TRIANGLE, 20.0, 8.0),
+            (shapes.ELLIPSE, 20.0, 8.0),
+        )
+        for point_uid in ("count", "attachment"):
+            display_sizes = (10.0, 75.0, 175.0) if point_uid == "count" else (100.0,)
+            for shape_id, width, depth in shape_dimensions:
+                for display_size in display_sizes:
+                    for screen_units_per_ost in (0.25, 1.0, 4.0):
+                        for initial_degrees in (0.0, 27.0, 143.0):
+                            for degrees in (-90.0, 90.0):
+                                with self.subTest(
+                                    point_uid=point_uid,
+                                    shape_id=shape_id,
+                                    display_size=display_size,
+                                    screen_units_per_ost=screen_units_per_ost,
+                                    initial_degrees=initial_degrees,
+                                    degrees=degrees,
+                                ):
+                                    selected = {"area", point_uid}
+                                    view = self._make_transform_view(selected)
+                                    view._scene_builder.cs.ost_to_screen_pixels = (
+                                        lambda value: float(value)
+                                        * screen_units_per_ost
+                                    )
+                                    condition = view._current_conditions[point_uid]
+                                    condition.shape = shape_id
+                                    condition.width = width
+                                    condition.depth = depth
+                                    condition.display_size = display_size
+                                    point = view._current_takeoffs[point_uid]
+                                    point.rotation = math.radians(initial_degrees)
+                                    before = self._rendered_takeoff_selection_bounds(
+                                        view, selected
+                                    )
+                                    view.rotate_selected_takeoffs(degrees)
+                                    after = self._rendered_takeoff_selection_bounds(
+                                        view, selected
+                                    )
+                                    self._assert_quarter_turn_bounds(before, after)
+                                    self.assertAlmostEqual(
+                                        point.rotation,
+                                        math.radians(initial_degrees + degrees),
+                                    )
+
+    def test_thin_straight_and_curved_linear_rotation_respects_page_scale(self):
+        selected = {"area", "linear"}
+        for curved in (False, True):
+            for screen_units_per_ost in (0.25, 1.0, 4.0):
+                for degrees in (-90.0, 90.0):
+                    with self.subTest(
+                        curved=curved,
+                        screen_units_per_ost=screen_units_per_ost,
+                        degrees=degrees,
+                    ):
+                        view = self._make_transform_view(selected)
+                        view._scene_builder.cs.ost_to_screen_pixels = (
+                            lambda value: float(value) * screen_units_per_ost
+                        )
+                        view._current_conditions["linear"].thickness = 0.1
+                        if curved:
+                            linear = view._current_takeoffs["linear"]
+                            linear.position = [0.0, 0.0, 20.0, 0.0, 10.0, 8.0, 0.0]
+                            linear.curve = Takeoff.CURVE_ENABLED
+                        before = self._rendered_takeoff_selection_bounds(view, selected)
+                        view.rotate_selected_takeoffs(degrees)
+                        after = self._rendered_takeoff_selection_bounds(view, selected)
+                        self._assert_quarter_turn_bounds(before, after)
+
+    def test_left_then_right_restores_mixed_authoritative_geometry(self):
+        selected = {"linear", "count", "area", "attachment"}
+        view = self._make_transform_view(selected)
+        original_positions = {
+            uid: list(takeoff.position)
+            for uid, takeoff in view._current_takeoffs.items()
+        }
+        original_rotations = {
+            uid: takeoff.rotation for uid, takeoff in view._current_takeoffs.items()
+        }
+        view.rotate_selected_takeoffs(-90.0)
+        view.rotate_selected_takeoffs(90.0)
+        for uid, takeoff in view._current_takeoffs.items():
+            self._assert_bounds_almost_equal(original_positions[uid], takeoff.position)
+            self.assertAlmostEqual(original_rotations[uid], takeoff.rotation)
+
+    def test_four_quarter_turns_restore_mixed_visible_geometry(self):
+        selected = {"linear", "count", "area", "attachment"}
+        for degrees in (-90.0, 90.0):
+            with self.subTest(degrees=degrees):
+                view = self._make_transform_view(selected)
+                original_positions = {
+                    uid: list(takeoff.position)
+                    for uid, takeoff in view._current_takeoffs.items()
+                }
+                original_vertices = {
+                    uid: self._takeoff_vertices(view, uid) for uid in selected
+                }
+                original_rotations = {
+                    uid: takeoff.rotation
+                    for uid, takeoff in view._current_takeoffs.items()
+                }
+                for _turn in range(4):
+                    view.rotate_selected_takeoffs(degrees)
+                for uid, takeoff in view._current_takeoffs.items():
+                    self._assert_bounds_almost_equal(
+                        original_positions[uid], takeoff.position
+                    )
+                    self._assert_vertices_almost_equal(
+                        original_vertices[uid], self._takeoff_vertices(view, uid)
+                    )
+                    rotation_delta = math.remainder(
+                        takeoff.rotation - original_rotations[uid],
+                        math.tau,
+                    )
+                    self.assertAlmostEqual(rotation_delta, 0.0)
+                self.assertEqual(len(view.flushed_transform_groups), 4)
 
     def _make_linear_resize_gesture_view(
         self,

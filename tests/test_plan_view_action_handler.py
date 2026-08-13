@@ -4555,6 +4555,36 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(len(event_bus.events), 1)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
 
+    def _make_group_transform_handler(self, takeoff_states, sql_mutations):
+        data = FakeProjectData()
+        data.takeoffs = {
+            uid: Takeoff(
+                uid=uid,
+                condition_uid=f"{uid}-condition",
+                page_uid="p1",
+                position=list(position),
+                rotation=rotation,
+            )
+            for uid, (position, rotation) in takeoff_states.items()
+        }
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = sql_mutations
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        return handler, write, undo
+
     def test_group_flip_payload_matches_mdb_sql_and_mdb_undo_redo(self):
         area_old = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
         area_new = [50.0, 0.0, 40.0, 0.0, 40.0, 10.0, 50.0, 10.0]
@@ -4565,44 +4595,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ("count", count_old, count_new),
         ]
         rotation_changes = [("count", math.radians(32.0), math.radians(-32.0))]
-
-        def make_handler(sql_collaboration_mutations):
-            data = FakeProjectData()
-            data.takeoffs = {
-                "area": Takeoff(
-                    uid="area",
-                    condition_uid="area-condition",
-                    page_uid="p1",
-                    position=list(area_old),
-                ),
-                "count": Takeoff(
-                    uid="count",
-                    condition_uid="count-condition",
-                    page_uid="p1",
-                    position=list(count_old),
-                    rotation=math.radians(32.0),
-                ),
-            }
-            plan_view = FakePlanView(data)
-            write = FakeWriteService()
-            write.sql_collaboration_mutations = sql_collaboration_mutations
-            undo = FakeUndoService()
-            handler = PlanViewActionHandler(
-                plan_view=plan_view,
-                ui_state_manager=FakeUiState(),
-                project_data_svc=data,
-                project_write_svc=write,
-                annotation_write_svc=FakeAnnotationWriteService(),
-                page_settings_bar=FakePageSettingsBar(),
-                undo_svc=undo,
-                event_bus=FakeEventBus(),
-                deferred_persistence_manager=FakeDeferredPersistence(),
-                ui_access_manager=FakeAccess(set(Feature)),
-            )
-            return handler, write, undo
-
-        mdb_handler, mdb_write, mdb_undo = make_handler(False)
-        sql_handler, sql_write, _sql_undo = make_handler(True)
+        takeoff_states = {
+            "area": (area_old, 0.0),
+            "count": (count_old, math.radians(32.0)),
+        }
+        mdb_handler, mdb_write, mdb_undo = self._make_group_transform_handler(
+            takeoff_states, False
+        )
+        sql_handler, sql_write, _sql_undo = self._make_group_transform_handler(
+            takeoff_states, True
+        )
         mdb_handler.on_group_rotation_flushed(
             position_changes,
             [],
@@ -4630,6 +4632,70 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(
             mdb_write.rotation_calls[1][1],
             [("count", math.radians(32.0))],
+        )
+        self.assertEqual(mdb_write.position_calls[2][1], expected_positions)
+        self.assertEqual(mdb_write.rotation_calls[2][1], expected_rotations)
+
+    def test_group_rotate_payload_matches_mdb_sql_and_mdb_undo_redo(self):
+        area_old = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        area_new = [25.0, -15.0, 25.0, -5.0, 15.0, -5.0, 15.0, -15.0]
+        count_old = [30.0, 5.0]
+        count_new = [20.0, 15.0]
+        attachment_old = [40.0, 5.0]
+        attachment_new = [20.0, 25.0]
+        takeoff_states = {
+            "area": (area_old, 0.0),
+            "count": (count_old, math.radians(32.0)),
+            "attachment": (attachment_old, math.radians(25.0)),
+        }
+        position_changes = [
+            ("area", area_old, area_new),
+            ("count", count_old, count_new),
+            ("attachment", attachment_old, attachment_new),
+        ]
+        rotation_changes = [
+            ("count", math.radians(32.0), math.radians(122.0)),
+            ("attachment", math.radians(25.0), math.radians(115.0)),
+        ]
+        expected_positions = [
+            ("area", area_new),
+            ("count", count_new),
+            ("attachment", attachment_new),
+        ]
+        expected_rotations = [
+            ("count", math.radians(122.0)),
+            ("attachment", math.radians(115.0)),
+        ]
+        mdb_handler, mdb_write, mdb_undo = self._make_group_transform_handler(
+            takeoff_states, False
+        )
+        sql_handler, sql_write, _sql_undo = self._make_group_transform_handler(
+            takeoff_states, True
+        )
+        mdb_handler.on_group_rotation_flushed(position_changes, [], rotation_changes)
+        sql_handler.on_group_rotation_flushed(position_changes, [], rotation_changes)
+        self.assertEqual(mdb_write.position_calls[0][1], expected_positions)
+        self.assertEqual(mdb_write.rotation_calls[0][1], expected_rotations)
+        sql_payload = sql_write.queued_geometry[0][2]
+        self.assertEqual(sql_payload["takeoff_positions"], expected_positions)
+        self.assertEqual(sql_payload["takeoff_rotations"], expected_rotations)
+        self.assertEqual(mdb_undo.count, 1)
+        self.assertTrue(mdb_undo.undo())
+        self.assertTrue(mdb_undo.redo())
+        self.assertEqual(
+            mdb_write.position_calls[1][1],
+            [
+                ("area", area_old),
+                ("count", count_old),
+                ("attachment", attachment_old),
+            ],
+        )
+        self.assertEqual(
+            mdb_write.rotation_calls[1][1],
+            [
+                ("count", math.radians(32.0)),
+                ("attachment", math.radians(25.0)),
+            ],
         )
         self.assertEqual(mdb_write.position_calls[2][1], expected_positions)
         self.assertEqual(mdb_write.rotation_calls[2][1], expected_rotations)

@@ -40,9 +40,11 @@
 
 ### Fixed
 
-- Fixed horizontal and vertical takeoff flips translating mixed-type selections;
-  group pivots now include the complete Linear, Area, Count, and Attachment
-  footprint, including rotated and display-scaled point symbols.
+- Fixed Rotate Left/Right and horizontal/vertical takeoff flips translating
+  mixed-type selections; group pivots now include the complete Linear, Area,
+  Count, and Attachment footprint, including rotated and display-scaled point
+  symbols. Rotated non-square Count and Attachment symbols now retain the same
+  footprint orientation in Plan View, PDF export, snapping, and 3D output.
 - Fixed Highlight annotations disappearing behind the page image when Plan View
   displayed only an overlay image or PDF, including high-resolution and Move
   Overlay Image previews, while retaining normal annotation-layer visibility.

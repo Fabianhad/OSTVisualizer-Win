@@ -1,5 +1,6 @@
 import base64
 import copy
+import math
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -430,6 +431,60 @@ class ThreejsExportLayerTests(unittest.TestCase):
         y_values = [vertex[1] for vertex in mesh.vertices]
         self.assertAlmostEqual(max(x_values) - min(x_values), 35.0)
         self.assertAlmostEqual(max(y_values) - min(y_values), 35.0)
+
+    def test_rotated_ellipse_uses_render_minimum_only_for_two_d_threejs(self):
+        condition = Condition(
+            uid="ellipse-count",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.ELLIPSE,
+            width=20.0,
+            depth=2.0,
+            height=10.0,
+            display_size=100.0,
+        )
+        takeoff = Takeoff(
+            uid="count-1",
+            condition_uid=condition.uid,
+            page_uid="page-1",
+            position=[10.0, 20.0],
+            rotation=math.pi / 2.0,
+        )
+        entries, _callouts = process_takeoffs_2d_for_threejs(
+            {condition.uid: condition},
+            [takeoff],
+            ColorService(),
+            _TakeoffService(),
+            {
+                "scale_factor1": 1.0,
+                "scale_factor2": 72.0,
+                "width": 612.0,
+                "height": 792.0,
+            },
+            include_elevation_callouts=False,
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        mesh = MeshFactory(_IdentityMeshCoordinateSystem()).create_mesh_for_takeoff(
+            takeoff,
+            condition,
+        )
+        ring = entries[0]["rings"][0]
+        self.assertAlmostEqual(
+            max(point[0] for point in ring) - min(point[0] for point in ring), 8.0
+        )
+        self.assertAlmostEqual(
+            max(point[1] for point in ring) - min(point[1] for point in ring), 80.0
+        )
+        self.assertIsNotNone(mesh)
+        self.assertAlmostEqual(
+            max(vertex[0] for vertex in mesh.vertices)
+            - min(vertex[0] for vertex in mesh.vertices),
+            2.0,
+        )
+        self.assertAlmostEqual(
+            max(vertex[1] for vertex in mesh.vertices)
+            - min(vertex[1] for vertex in mesh.vertices),
+            20.0,
+        )
 
     def test_html_renderer_adapter_reports_missing_output_as_failure(self):
         adapter = _HtmlRendererAdapter(

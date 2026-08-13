@@ -898,6 +898,20 @@ def navigation_status_coordinator(tab_index=TAB_INDEX_PROJECTS):
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_rotate_takeoff_actions_dispatch_exact_left_and_right_quarter_turns(self):
+        rotations = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = SimpleNamespace(
+            has_selected_takeoffs=True,
+            rotate_selected_takeoffs=lambda degrees: rotations.append(degrees),
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PLAN_ITEMS
+        )
+        coordinator.rotate_selected_takeoffs_left()
+        coordinator.rotate_selected_takeoffs_right()
+        self.assertEqual(rotations, [-90.0, 90.0])
+
     def test_condition_refresh_updates_sidebar_and_active_plan(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

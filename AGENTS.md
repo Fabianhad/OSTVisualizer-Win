@@ -287,7 +287,9 @@ State and identity:
   vertices, and Count/Attachment dimensions, display size, shape origin,
   rotation, and minimum rendered symbol size all contribute; convert those
   display minima through the page coordinate system once. Scene-item bounds and
-  condition labels do not own transform geometry.
+  condition labels do not own transform geometry. Point symbols apply their
+  dimensions and display scale in local shape space before one Cartesian
+  rotation; do not fold rotation into an ellipse's parametric sample angle.
 
 C++ extensions:
 

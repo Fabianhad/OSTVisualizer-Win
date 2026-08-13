@@ -1,3 +1,4 @@
+import math
 import re
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from ost_visualizer.application.dtos.annotation_caption_dto import (
 from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
 from ost_visualizer.application.dtos.page_export_data_dto import PageExportData
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page
@@ -210,6 +212,50 @@ class NativePdfExportGeometryTests(unittest.TestCase):
             height_pts=stored_height,
             scale_factor1=1.0,
             scale_factor2=72.0,
+        )
+
+    def test_rotated_ellipse_takeoff_exports_rotated_physical_footprint(self):
+        exporter = self._exporter()
+        takeoff = Takeoff(
+            uid="ellipse",
+            condition_uid="ellipse-condition",
+            page_uid="page",
+            position=[100.0, 200.0],
+            rotation=math.pi / 2.0,
+        )
+        condition = Condition(
+            uid="ellipse-condition",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.ELLIPSE,
+            width=20.0,
+            depth=2.0,
+            display_size=100.0,
+        )
+        polygons, callouts = exporter._collect_takeoffs(
+            [takeoff],
+            {condition.uid: condition},
+            {
+                "scale_factor1": 1.0,
+                "scale_factor2": 72.0,
+                "rotation": 0,
+                "flip_x": False,
+                "flip_y": False,
+                "width": 612.0,
+                "height": 792.0,
+                "view_scale": 1.0,
+            },
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+            caption_settings=AnnotationCaptionSettingsDto(False, ()),
+            elevation_callouts_enabled=False,
+        )
+        self.assertEqual(callouts, [])
+        self.assertEqual(len(polygons), 1)
+        vertices = polygons[0].vertices
+        self.assertAlmostEqual(
+            max(x for x, _y in vertices) - min(x for x, _y in vertices), 2.0
+        )
+        self.assertAlmostEqual(
+            max(y for _x, y in vertices) - min(y for _x, y in vertices), 20.0
         )
 
     def test_mismatched_metadata_uses_native_geometry_for_every_export_overlay(self):

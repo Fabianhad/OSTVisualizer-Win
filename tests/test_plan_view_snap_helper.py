@@ -443,6 +443,34 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual(segments[0][0], 2.0)
         self.assertEqual(segments[0][1], 0.0)
 
+    def test_rotated_ellipse_snap_uses_rotated_physical_footprint(self):
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["count"] = Condition(
+            uid="count",
+            condition_type=Condition.TYPE_COUNT,
+            layer_visible=True,
+            shape=shapes.ELLIPSE,
+            width=20.0,
+            depth=2.0,
+            display_size=100.0,
+        )
+        harness._current_takeoffs["c1"] = Takeoff(
+            uid="c1",
+            condition_uid="count",
+            position=[10.0, 20.0],
+            rotation=math.pi / 2.0,
+        )
+        segments = harness._build_takeoff_snap_segments()
+        points = [(segment[0], segment[1]) for segment in segments]
+        self.assertEqual(len(segments), 32)
+        self.assertAlmostEqual(
+            max(x for x, _y in points) - min(x for x, _y in points), 2.0
+        )
+        self.assertAlmostEqual(
+            max(y for _x, y in points) - min(y for _x, y in points), 20.0
+        )
+
     def test_linear_takeoff_snap_skips_degenerate_segments(self):
         harness = PlacementHarness()
         harness._current_page.image_path = None

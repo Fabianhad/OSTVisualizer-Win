@@ -56,10 +56,13 @@ def create_polygon_points(
 ) -> list[tuple[float, float]]:
     points = []
     ry = half_depth if half_depth is not None else half_width
+    cos_r, sin_r = math.cos(rotation), math.sin(rotation)
     for i in range(sides):
-        angle = angle_offset + i * 2 * math.pi / sides + rotation
-        x = center_x + half_width * math.cos(angle)
-        y = center_y + ry * math.sin(angle)
+        angle = angle_offset + i * 2 * math.pi / sides
+        px = half_width * math.cos(angle)
+        py = ry * math.sin(angle)
+        x = center_x + px * cos_r - py * sin_r
+        y = center_y + px * sin_r + py * cos_r
         points.append((x, y))
     return points
 
