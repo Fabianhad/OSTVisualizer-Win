@@ -20,7 +20,10 @@ from .....domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
 )
-from ....visualization.core.geometry.takeoff_geometry import compute_line_angle
+from ....visualization.core.geometry.takeoff_geometry import (
+    MINIMUM_RENDERED_LINEAR_THICKNESS,
+    compute_line_angle,
+)
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
     build_dimension_path,
@@ -547,7 +550,10 @@ class DragHandlerMixin:
                         path_item.setPath(new_path)
                 elif condition.is_linear:
                     thickness_ost = condition.thickness if condition.thickness else 1.0
-                    thickness_px = max(cs.ost_to_screen_pixels(thickness_ost), 2.0)
+                    thickness_px = max(
+                        cs.ost_to_screen_pixels(thickness_ost),
+                        MINIMUM_RENDERED_LINEAR_THICKNESS,
+                    )
                     new_path = None
                     if is_curved_linear and len(new_pos) >= 6:
                         rx = list(new_pos[:6])

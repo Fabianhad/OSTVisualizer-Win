@@ -4,6 +4,7 @@ from ....domain.entities import shape as shapes
 from ....domain.entities.condition import Condition
 from ....domain.entities.takeoff import Takeoff
 from ..core.boolean_operations import boolean_union
+from ..core.geometry.takeoff_geometry import resolve_point_takeoff_shape
 from ..core.mesh_generator import MeshData, MeshGenerator
 
 
@@ -178,17 +179,10 @@ class MeshFactory:
         if len(position) < 2:
             return None
         x, y = position[:2]
-        shape_id = condition.shape if condition.shape else shapes.RECTANGLE
-        width = max(condition.width if condition.width else 1, 1)
-        if shape_id == shapes.SQUARE or shape_id == shapes.CIRCLE:
-            depth = width
-        else:
-            depth = max(condition.depth if condition.depth else width, 1)
+        shape_id, width, depth = resolve_point_takeoff_shape(condition)
         height = max(condition.height if condition.height else 1, 1)
         if condition.is_count:
             scale = max(condition.display_size, 0.1) / 100.0
-            width *= scale
-            depth *= scale
             height *= scale
         z_offset = condition.z_value if condition.z_value else 0
         is_top = condition.is_top if condition.is_top else False

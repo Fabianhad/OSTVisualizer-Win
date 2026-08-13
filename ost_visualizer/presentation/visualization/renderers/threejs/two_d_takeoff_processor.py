@@ -22,9 +22,13 @@ from ...core.geometry.ost_linear_geom import (
     proc_curved_pos,
 )
 from ...core.geometry.takeoff_geometry import (
+    MINIMUM_RENDERED_LINEAR_THICKNESS,
+    MINIMUM_RENDERED_POINT_TAKEOFF_SIZE,
+    apply_minimum_point_takeoff_size,
     compute_count_vertices,
     compute_curved_linear_vertices,
     compute_straight_linear_vertices,
+    resolve_point_takeoff_shape,
 )
 from ...services.color_service import int_to_hex
 
@@ -160,7 +164,7 @@ def _linear_ring(
     thickness = _ost_to_pdf_points(
         condition.thickness if condition.thickness else 1.0, coord_system
     )
-    thickness = max(thickness, 2.0)
+    thickness = max(thickness, MINIMUM_RENDERED_LINEAR_THICKNESS)
     if takeoff.curve >= 0 and len(position) >= 6:
         rx1, ry1, rx2, ry2, rcx, rcy = position[:6]
         rx1, ry1, rx2, ry2, rcx, rcy = proc_curved_pos(
@@ -202,25 +206,15 @@ def _count_ring(
     if not center_points:
         return []
     cx, cy = center_points[0]
-    width_ost = max(condition.width if condition.width else 1.0, 1.0)
-    if condition.shape in (0, 1):
-        depth_ost = width_ost
-    else:
-        depth_ost = max(condition.depth if condition.depth else width_ost, 1.0)
-    if condition.is_count:
-        scale = max(condition.display_size, 0.1) / 100.0
-        width_ost *= scale
-        depth_ost *= scale
+    shape_id, width_ost, depth_ost = resolve_point_takeoff_shape(condition)
     width = _ost_to_pdf_points(width_ost, coord_system)
     depth = _ost_to_pdf_points(depth_ost, coord_system)
-    min_dimension = min(width, depth)
-    if 0 < min_dimension < 8.0:
-        scale = 8.0 / min_dimension
-        width *= scale
-        depth *= scale
-    vertices = compute_count_vertices(
-        cx, cy, condition.shape, width, depth, takeoff.rotation
+    width, depth = apply_minimum_point_takeoff_size(
+        width,
+        depth,
+        MINIMUM_RENDERED_POINT_TAKEOFF_SIZE,
     )
+    vertices = compute_count_vertices(cx, cy, shape_id, width, depth, takeoff.rotation)
     return _points_to_ring(vertices)
 
 

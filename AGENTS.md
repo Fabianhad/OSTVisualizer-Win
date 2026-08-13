@@ -281,6 +281,13 @@ State and identity:
   high-resolution, and overlay-move preview imagery must all remain below paper
   Highlights, while takeoff bodies remain above them; source type alone must
   not determine stacking.
+- Multi-takeoff transforms derive one model-space selection pivot from the
+  complete footprints owned by `visualization/core/geometry/takeoff_geometry.py`.
+  Linear thickness, the Plan View minimum rendered line thickness, curves, Area
+  vertices, and Count/Attachment dimensions, display size, shape origin,
+  rotation, and minimum rendered symbol size all contribute; convert those
+  display minima through the page coordinate system once. Scene-item bounds and
+  condition labels do not own transform geometry.
 
 C++ extensions:
 

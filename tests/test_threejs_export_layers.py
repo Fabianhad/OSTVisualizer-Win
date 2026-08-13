@@ -17,6 +17,7 @@ from ost_visualizer.infrastructure.visualization_provider import (
     _HtmlExportStrategyAdapter,
     _HtmlRendererAdapter,
 )
+from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
@@ -30,6 +31,7 @@ from ost_visualizer.domain.services.page_image_plane_transform import (
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
+from ost_visualizer.presentation.visualization.meshing.mesh_factory import MeshFactory
 from ost_visualizer.presentation.visualization.renderers.threejs.adapters.threejs_mesh_adapter import (
     ThreejsMeshAdapter,
 )
@@ -77,6 +79,18 @@ class _ProjectModel:
 
     def get_page_takeoffs(self, page_uid):
         return list(self.takeoffs.get(page_uid, []))
+
+
+class _IdentityMeshCoordinateSystem:
+    scale_ratio = 1.0
+
+    @staticmethod
+    def transform_to_3d(x, y):
+        return float(x), float(y)
+
+    @staticmethod
+    def ost_to_real_units(value):
+        return float(value)
 
 
 class _ExportStrategy:
@@ -392,6 +406,31 @@ class _ProjectData:
 
 
 class ThreejsExportLayerTests(unittest.TestCase):
+    def test_square_count_mesh_uses_same_display_scaled_footprint_as_2d(self):
+        condition = Condition(
+            uid="square-count",
+            condition_type=Condition.TYPE_COUNT,
+            shape=shapes.SQUARE,
+            width=20.0,
+            depth=12.0,
+            height=10.0,
+            display_size=175.0,
+        )
+        takeoff = Takeoff(
+            uid="count-1",
+            condition_uid=condition.uid,
+            position=[10.0, 20.0],
+        )
+        mesh = MeshFactory(_IdentityMeshCoordinateSystem()).create_mesh_for_takeoff(
+            takeoff,
+            condition,
+        )
+        self.assertIsNotNone(mesh)
+        x_values = [vertex[0] for vertex in mesh.vertices]
+        y_values = [vertex[1] for vertex in mesh.vertices]
+        self.assertAlmostEqual(max(x_values) - min(x_values), 35.0)
+        self.assertAlmostEqual(max(y_values) - min(y_values), 35.0)
+
     def test_html_renderer_adapter_reports_missing_output_as_failure(self):
         adapter = _HtmlRendererAdapter(
             SimpleNamespace(create=lambda: object()),

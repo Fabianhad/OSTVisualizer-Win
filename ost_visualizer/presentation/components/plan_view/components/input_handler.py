@@ -66,6 +66,12 @@ from ....utils.view_context_menu import (
     build_selected_takeoff_context_state,
     context_command_state,
 )
+from ....visualization.core.geometry.takeoff_geometry import (
+    MINIMUM_RENDERED_LINEAR_THICKNESS,
+    MINIMUM_RENDERED_POINT_TAKEOFF_SIZE,
+    compute_takeoff_footprint_bounds,
+    mirror_point_takeoff_rotation,
+)
 from .geometry_utils import (
     mirror_points_around,
     polygon_centroid,
@@ -2155,16 +2161,38 @@ class InputHandlerMixin:
         }
 
     def _takeoff_transform_center(self, uids: set):
-        xs = []
-        ys = []
+        coordinate_system = self._scene_builder.get_coordinate_system()
+        screen_pixels_per_ost = coordinate_system.ost_to_screen_pixels(1.0)
+        minimum_point_dimension = (
+            MINIMUM_RENDERED_POINT_TAKEOFF_SIZE / screen_pixels_per_ost
+        )
+        minimum_linear_thickness = (
+            MINIMUM_RENDERED_LINEAR_THICKNESS / screen_pixels_per_ost
+        )
+        left = None
+        top = None
+        right = None
+        bottom = None
         for uid in uids:
-            pos = self._current_takeoffs[uid].position
-            for i in range(len(pos) // 2):
-                xs.append(pos[i * 2])
-                ys.append(pos[i * 2 + 1])
-        if not xs or not ys:
+            takeoff = self._current_takeoffs[uid]
+            condition = self._current_conditions[takeoff.condition_uid]
+            bounds = compute_takeoff_footprint_bounds(
+                takeoff,
+                condition,
+                self._linear_geom,
+                minimum_point_dimension,
+                minimum_linear_thickness,
+            )
+            if bounds is None:
+                return None
+            item_left, item_top, item_right, item_bottom = bounds
+            left = item_left if left is None else min(left, item_left)
+            top = item_top if top is None else min(top, item_top)
+            right = item_right if right is None else max(right, item_right)
+            bottom = item_bottom if bottom is None else max(bottom, item_bottom)
+        if left is None or top is None or right is None or bottom is None:
             return None
-        return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+        return (left + right) / 2.0, (top + bottom) / 2.0
 
     def _expanded_takeoff_transform_uids(self, selected_uids: set) -> set:
         affected = set(selected_uids)
@@ -2209,16 +2237,17 @@ class InputHandlerMixin:
             takeoff.position = new_pos
             self._dirty_positions[uid] = new_pos
             has_changes = True
-            if condition and condition.is_count:
+            if condition and (condition.is_count or condition.is_attachment):
                 orig_rotation = takeoff.rotation
                 if uid not in self._rotation_before_edit:
                     self._rotation_before_edit[uid] = orig_rotation
                 if transform_kind == "rotate":
                     new_rotation = orig_rotation + math.radians(degrees)
-                elif horizontal:
-                    new_rotation = math.pi - orig_rotation
                 else:
-                    new_rotation = -orig_rotation
+                    new_rotation = mirror_point_takeoff_rotation(
+                        orig_rotation,
+                        horizontal,
+                    )
                 takeoff.rotation = new_rotation
                 self._dirty_rotations[uid] = new_rotation
         if has_changes:

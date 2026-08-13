@@ -34,7 +34,6 @@ from ....application.render_quality import (
     baseline_render_scale,
 )
 from ....domain.dtos.page_render_info_dto import PageRenderInfo
-from ....domain.entities import shape as shapes
 from ....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
     ANNOTATION_TYPE_CLOUD,
@@ -68,6 +67,7 @@ from ..core.geometry.takeoff_geometry import (
     compute_count_vertices,
     compute_curved_linear_vertices,
     compute_straight_linear_vertices,
+    resolve_point_takeoff_shape,
 )
 from ..pdf.page_cache import PageCache
 from ..pdf.renderers.annotation_renderer import (
@@ -749,18 +749,7 @@ class PDFExporter:
                 depth_inches = height
             elif cond_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
                 cx, cy = position[0], position[1]
-                shape_id = condition.shape if condition.shape else shapes.SQUARE
-                width_ost = max(condition.width if condition.width else 1, 1)
-                if shape_id == shapes.SQUARE or shape_id == shapes.CIRCLE:
-                    depth_ost = width_ost
-                else:
-                    depth_ost = max(
-                        condition.depth if condition.depth else width_ost, 1
-                    )
-                if condition.is_count:
-                    display_scale = max(condition.display_size, 0.1) / 100.0
-                    width_ost *= display_scale
-                    depth_ost *= display_scale
+                shape_id, width_ost, depth_ost = resolve_point_takeoff_shape(condition)
                 rotation = takeoff.rotation
                 verts = compute_count_vertices(
                     cx, cy, shape_id, width_ost, depth_ost, rotation

@@ -1,3 +1,4 @@
+import math
 import unittest
 import uuid
 import weakref
@@ -4553,6 +4554,85 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].rotation, 45.0)
         self.assertEqual(len(event_bus.events), 1)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
+
+    def test_group_flip_payload_matches_mdb_sql_and_mdb_undo_redo(self):
+        area_old = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        area_new = [50.0, 0.0, 40.0, 0.0, 40.0, 10.0, 50.0, 10.0]
+        count_old = [30.0, 5.0]
+        count_new = [20.0, 5.0]
+        position_changes = [
+            ("area", area_old, area_new),
+            ("count", count_old, count_new),
+        ]
+        rotation_changes = [("count", math.radians(32.0), math.radians(-32.0))]
+
+        def make_handler(sql_collaboration_mutations):
+            data = FakeProjectData()
+            data.takeoffs = {
+                "area": Takeoff(
+                    uid="area",
+                    condition_uid="area-condition",
+                    page_uid="p1",
+                    position=list(area_old),
+                ),
+                "count": Takeoff(
+                    uid="count",
+                    condition_uid="count-condition",
+                    page_uid="p1",
+                    position=list(count_old),
+                    rotation=math.radians(32.0),
+                ),
+            }
+            plan_view = FakePlanView(data)
+            write = FakeWriteService()
+            write.sql_collaboration_mutations = sql_collaboration_mutations
+            undo = FakeUndoService()
+            handler = PlanViewActionHandler(
+                plan_view=plan_view,
+                ui_state_manager=FakeUiState(),
+                project_data_svc=data,
+                project_write_svc=write,
+                annotation_write_svc=FakeAnnotationWriteService(),
+                page_settings_bar=FakePageSettingsBar(),
+                undo_svc=undo,
+                event_bus=FakeEventBus(),
+                deferred_persistence_manager=FakeDeferredPersistence(),
+                ui_access_manager=FakeAccess(set(Feature)),
+            )
+            return handler, write, undo
+
+        mdb_handler, mdb_write, mdb_undo = make_handler(False)
+        sql_handler, sql_write, _sql_undo = make_handler(True)
+        mdb_handler.on_group_rotation_flushed(
+            position_changes,
+            [],
+            rotation_changes,
+        )
+        sql_handler.on_group_rotation_flushed(
+            position_changes,
+            [],
+            rotation_changes,
+        )
+        expected_positions = [("area", area_new), ("count", count_new)]
+        expected_rotations = [("count", math.radians(-32.0))]
+        self.assertEqual(mdb_write.position_calls[0][1], expected_positions)
+        self.assertEqual(mdb_write.rotation_calls[0][1], expected_rotations)
+        sql_payload = sql_write.queued_geometry[0][2]
+        self.assertEqual(sql_payload["takeoff_positions"], expected_positions)
+        self.assertEqual(sql_payload["takeoff_rotations"], expected_rotations)
+        self.assertEqual(mdb_undo.count, 1)
+        self.assertTrue(mdb_undo.undo())
+        self.assertTrue(mdb_undo.redo())
+        self.assertEqual(
+            mdb_write.position_calls[1][1],
+            [("area", area_old), ("count", count_old)],
+        )
+        self.assertEqual(
+            mdb_write.rotation_calls[1][1],
+            [("count", math.radians(32.0))],
+        )
+        self.assertEqual(mdb_write.position_calls[2][1], expected_positions)
+        self.assertEqual(mdb_write.rotation_calls[2][1], expected_rotations)
 
     def test_group_rotation_undo_redo_after_page_scale_change_uses_current_scale(
         self,

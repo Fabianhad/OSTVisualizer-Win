@@ -1,6 +1,7 @@
 import math
 import os
 import unittest
+from itertools import combinations
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -17,7 +18,9 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
 )
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
+from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
 from ost_visualizer.domain.entities import pattern as pattern_values
+from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_CLOUD,
     ANNOTATION_TYPE_DIMENSION,
@@ -56,11 +59,22 @@ from ost_visualizer.presentation.modes.cursor import (
 from ost_visualizer.presentation.utils.annotation_defaults import (
     set_annotation_style_for_tool,
 )
+from ost_visualizer.presentation.visualization.core.geometry.linear_geometry import (
+    LinearGeometry,
+)
+from ost_visualizer.presentation.visualization.core.geometry.takeoff_geometry import (
+    MINIMUM_RENDERED_LINEAR_THICKNESS,
+    MINIMUM_RENDERED_POINT_TAKEOFF_SIZE,
+    compute_takeoff_footprint_vertices,
+)
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
 )
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
     format_dimension_distance,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
+    TakeoffRenderer,
 )
 
 
@@ -729,6 +743,19 @@ class FakeColorService:
         return color, 1.0
 
 
+class FakeTakeoffRendererColorService:
+    @staticmethod
+    def get_2d_color_for_takeoff(
+        takeoff,
+        _condition,
+        color_map,
+        _page_area_selections=None,
+        *,
+        inactive_object_color,
+    ):
+        return color_map[takeoff.condition_uid]
+
+
 class FakeSceneBuilder:
     def __init__(self):
         self.cs = FakeCoordinateSystem()
@@ -762,6 +789,22 @@ class FakeLinearGeom:
         dx = x2 - x1
         dy = y2 - y1
         return (dx * dx + dy * dy) ** 0.5
+
+
+class IdentityCoordinateSystem:
+    def __init__(self, screen_units_per_ost=1.0):
+        self.page_info = {"view_scale": 1.0}
+        self._screen_units_per_ost = float(screen_units_per_ost)
+
+    @staticmethod
+    def parse_position(position):
+        return list(position)
+
+    def transform_vertices_to_2d(self, position):
+        return [value * self._screen_units_per_ost for value in position]
+
+    def ost_to_pdf_points(self, value):
+        return float(value) * self._screen_units_per_ost
 
 
 class CtrlDragTests(unittest.TestCase):
@@ -854,6 +897,340 @@ class CtrlDragTests(unittest.TestCase):
         view._dirty_ann_positions = {}
         view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
         return view
+
+    def _make_flip_view(self, selected_uids):
+        view = self._make_view(selected_uids)
+        view._scene_builder = FakeSceneBuilder()
+        view._linear_geom = LinearGeometry()
+        view._current_conditions = {
+            "linear": Condition(
+                uid="linear",
+                condition_type=Condition.TYPE_LINEAR,
+                thickness=4.0,
+            ),
+            "count": Condition(
+                uid="count",
+                condition_type=Condition.TYPE_COUNT,
+                shape=shapes.TRIANGLE,
+                width=20.0,
+                depth=12.0,
+                display_size=150.0,
+            ),
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+            "attachment": Condition(
+                uid="attachment",
+                condition_type=Condition.TYPE_ATTACHMENT,
+                shape=shapes.TRIANGLE,
+                width=14.0,
+                depth=8.0,
+            ),
+        }
+        view._current_takeoffs = {
+            "area": Takeoff(
+                uid="area",
+                condition_uid="area",
+                position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],
+            ),
+            "linear": Takeoff(
+                uid="linear",
+                condition_uid="linear",
+                position=[12.0, 2.0, 22.0, 2.0],
+            ),
+            "count": Takeoff(
+                uid="count",
+                condition_uid="count",
+                position=[30.0, 5.0],
+                rotation=math.radians(32.0),
+            ),
+            "attachment": Takeoff(
+                uid="attachment",
+                condition_uid="attachment",
+                position=[45.0, 5.0],
+                rotation=math.radians(25.0),
+            ),
+        }
+        view._rotation_before_edit = {}
+        view._dirty_rotations = {}
+        view.flushed_transform_groups = []
+
+        def flush_rotation_group():
+            position_changes = [
+                (
+                    uid,
+                    list(view._position_before_edit[uid]),
+                    list(new_position),
+                )
+                for uid, new_position in view._dirty_positions.items()
+            ]
+            rotation_changes = [
+                (uid, view._rotation_before_edit[uid], new_rotation)
+                for uid, new_rotation in view._dirty_rotations.items()
+            ]
+            view.flushed_transform_groups.append((position_changes, rotation_changes))
+            view._position_before_edit.clear()
+            view._dirty_positions.clear()
+            view._rotation_before_edit.clear()
+            view._dirty_rotations.clear()
+
+        view._flush_rotation_group = flush_rotation_group
+        return view
+
+    @staticmethod
+    def _minimum_rendered_dimensions(view):
+        coordinate_system = view._scene_builder.get_coordinate_system()
+        screen_units_per_ost = coordinate_system.ost_to_screen_pixels(1.0)
+        return (
+            MINIMUM_RENDERED_POINT_TAKEOFF_SIZE / screen_units_per_ost,
+            MINIMUM_RENDERED_LINEAR_THICKNESS / screen_units_per_ost,
+        )
+
+    @staticmethod
+    def _takeoff_vertices(view, uid):
+        takeoff = view._current_takeoffs[uid]
+        minimum_point_dimension, minimum_linear_thickness = (
+            CtrlDragTests._minimum_rendered_dimensions(view)
+        )
+        return compute_takeoff_footprint_vertices(
+            takeoff,
+            view._current_conditions[takeoff.condition_uid],
+            view._linear_geom,
+            minimum_point_dimension,
+            minimum_linear_thickness,
+        )
+
+    def _assert_bounds_almost_equal(self, first, second):
+        for first_value, second_value in zip(first, second):
+            self.assertAlmostEqual(first_value, second_value, places=9)
+
+    def _assert_vertices_almost_equal(self, first, second):
+        normalized_first = sorted((round(x, 9), round(y, 9)) for x, y in first)
+        normalized_second = sorted((round(x, 9), round(y, 9)) for x, y in second)
+        self.assertEqual(normalized_first, normalized_second)
+
+    @staticmethod
+    def _rendered_takeoff_selection_bounds(view, uids):
+        coordinate_system = view._scene_builder.get_coordinate_system()
+        renderer = TakeoffRenderer(
+            IdentityCoordinateSystem(coordinate_system.ost_to_screen_pixels(1.0)),
+            FakeTakeoffRendererColorService(),
+        )
+        takeoffs = [view._current_takeoffs[uid] for uid in uids]
+        color_map = {
+            takeoff.condition_uid: ColorWithOpacity("#123456", 1.0)
+            for takeoff in takeoffs
+        }
+        bounds = None
+        rendered = renderer.create_all_path_items(
+            takeoffs,
+            view._current_conditions,
+            color_map,
+            inactive_object_color="#808080",
+        )
+        for _uid, takeoff_items in rendered:
+            items = (
+                takeoff_items if isinstance(takeoff_items, list) else [takeoff_items]
+            )
+            for item in items:
+                if not isinstance(item, QGraphicsPathItem):
+                    continue
+                item_bounds = item.path().boundingRect()
+                bounds = item_bounds if bounds is None else bounds.united(item_bounds)
+        return (
+            bounds.left(),
+            bounds.top(),
+            bounds.right(),
+            bounds.bottom(),
+        )
+
+    def test_each_takeoff_type_flips_about_its_complete_footprint(self):
+        for uid in ("linear", "count", "area", "attachment"):
+            for horizontal in (True, False):
+                with self.subTest(uid=uid, horizontal=horizontal):
+                    view = self._make_flip_view({uid})
+                    before = self._rendered_takeoff_selection_bounds(view, {uid})
+                    view.flip_selected_takeoffs(horizontal)
+                    after = self._rendered_takeoff_selection_bounds(view, {uid})
+                    self._assert_bounds_almost_equal(before, after)
+
+    def test_every_pairwise_type_flip_preserves_group_bounds(self):
+        takeoff_types = ("linear", "count", "area", "attachment")
+        for selected in combinations(takeoff_types, 2):
+            for horizontal in (True, False):
+                with self.subTest(selected=selected, horizontal=horizontal):
+                    view = self._make_flip_view(set(selected))
+                    before = self._rendered_takeoff_selection_bounds(view, selected)
+                    view.flip_selected_takeoffs(horizontal)
+                    after = self._rendered_takeoff_selection_bounds(view, selected)
+                    self._assert_bounds_almost_equal(before, after)
+
+    def test_full_mixed_flip_reflects_every_authoritative_footprint_once(self):
+        selected = {"linear", "count", "area", "attachment"}
+        for horizontal in (True, False):
+            with self.subTest(horizontal=horizontal):
+                view = self._make_flip_view(selected)
+                left, top, right, bottom = self._rendered_takeoff_selection_bounds(
+                    view, selected
+                )
+                pivot_x = (left + right) / 2.0
+                pivot_y = (top + bottom) / 2.0
+                before = {uid: self._takeoff_vertices(view, uid) for uid in selected}
+                view.flip_selected_takeoffs(horizontal)
+                for uid in selected:
+                    expected = [
+                        (
+                            2.0 * pivot_x - x if horizontal else x,
+                            y if horizontal else 2.0 * pivot_y - y,
+                        )
+                        for x, y in before[uid]
+                    ]
+                    self._assert_vertices_almost_equal(
+                        expected,
+                        self._takeoff_vertices(view, uid),
+                    )
+
+    def test_full_mixed_flip_keeps_rendered_selection_in_place(self):
+        selected = {"linear", "count", "area", "attachment"}
+        for horizontal in (True, False):
+            with self.subTest(horizontal=horizontal):
+                view = self._make_flip_view(selected)
+                before = self._rendered_takeoff_selection_bounds(view, selected)
+                view.flip_selected_takeoffs(horizontal)
+                after = self._rendered_takeoff_selection_bounds(view, selected)
+                self._assert_bounds_almost_equal(before, after)
+
+    def test_rotated_count_size_matrix_cannot_shift_flip_pivot(self):
+        for rotation_degrees in (0.0, 27.0, 90.0, 143.0):
+            for display_size in (10.0, 25.0, 50.0, 100.0, 175.0):
+                for horizontal in (True, False):
+                    with self.subTest(
+                        rotation=rotation_degrees,
+                        display_size=display_size,
+                        horizontal=horizontal,
+                    ):
+                        view = self._make_flip_view({"area", "count"})
+                        view._current_takeoffs["count"].rotation = math.radians(
+                            rotation_degrees
+                        )
+                        view._current_conditions["count"].display_size = display_size
+                        rendered_before = self._rendered_takeoff_selection_bounds(
+                            view, {"area", "count"}
+                        )
+                        view.flip_selected_takeoffs(horizontal)
+                        rendered_after = self._rendered_takeoff_selection_bounds(
+                            view, {"area", "count"}
+                        )
+                        self._assert_bounds_almost_equal(
+                            rendered_before,
+                            rendered_after,
+                        )
+
+    def test_curved_linear_and_count_flip_preserves_group_bounds(self):
+        for horizontal in (True, False):
+            with self.subTest(horizontal=horizontal):
+                selected = {"linear", "count"}
+                view = self._make_flip_view(selected)
+                view._current_takeoffs["linear"].position = [
+                    0.0,
+                    0.0,
+                    20.0,
+                    0.0,
+                    10.0,
+                    8.0,
+                    0.0,
+                ]
+                view._current_takeoffs["linear"].curve = Takeoff.CURVE_ENABLED
+                view._current_conditions["linear"].thickness = 0.25
+                before = self._rendered_takeoff_selection_bounds(view, selected)
+                view.flip_selected_takeoffs(horizontal)
+                after = self._rendered_takeoff_selection_bounds(view, selected)
+                self._assert_bounds_almost_equal(before, after)
+
+    def test_page_scale_and_calibration_preserve_small_count_rendered_bounds(self):
+        selected = {"area", "count"}
+        for screen_units_per_ost in (0.25, 1.0, 4.0):
+            for horizontal in (True, False):
+                with self.subTest(
+                    screen_units_per_ost=screen_units_per_ost,
+                    horizontal=horizontal,
+                ):
+                    view = self._make_flip_view(selected)
+                    view._scene_builder.cs.ost_to_screen_pixels = (
+                        lambda value: float(value) * screen_units_per_ost
+                    )
+                    view._current_conditions["count"].display_size = 10.0
+                    before = self._rendered_takeoff_selection_bounds(view, selected)
+                    view.flip_selected_takeoffs(horizontal)
+                    after = self._rendered_takeoff_selection_bounds(view, selected)
+                    self._assert_bounds_almost_equal(before, after)
+
+    def test_page_scale_preserves_thin_linear_rendered_bounds(self):
+        selected = {"area", "linear"}
+        for screen_units_per_ost in (0.25, 1.0, 4.0):
+            for horizontal in (True, False):
+                with self.subTest(
+                    screen_units_per_ost=screen_units_per_ost,
+                    horizontal=horizontal,
+                ):
+                    view = self._make_flip_view(selected)
+                    view._scene_builder.cs.ost_to_screen_pixels = (
+                        lambda value: float(value) * screen_units_per_ost
+                    )
+                    view._current_conditions["linear"].thickness = 0.1
+                    before = self._rendered_takeoff_selection_bounds(view, selected)
+                    view.flip_selected_takeoffs(horizontal)
+                    after = self._rendered_takeoff_selection_bounds(view, selected)
+                    self._assert_bounds_almost_equal(before, after)
+
+    def test_mixed_flip_with_multiple_objects_per_type_preserves_bounds(self):
+        base_selection = {"linear", "count", "area", "attachment"}
+        for horizontal in (True, False):
+            with self.subTest(horizontal=horizontal):
+                selected = set(base_selection)
+                view = self._make_flip_view(selected)
+                for source_uid in base_selection:
+                    duplicate_uid = f"{source_uid}-2"
+                    source = view._current_takeoffs[source_uid]
+                    duplicate_position = list(source.position)
+                    for index in range(0, len(duplicate_position), 2):
+                        duplicate_position[index] += 70.0
+                        duplicate_position[index + 1] += 30.0
+                    view._current_takeoffs[duplicate_uid] = Takeoff(
+                        uid=duplicate_uid,
+                        condition_uid=source.condition_uid,
+                        position=duplicate_position,
+                        rotation=source.rotation,
+                    )
+                    selected.add(duplicate_uid)
+                view._selected_uids = set(selected)
+                before = self._rendered_takeoff_selection_bounds(view, selected)
+                view.flip_selected_takeoffs(horizontal)
+                after = self._rendered_takeoff_selection_bounds(view, selected)
+                self._assert_bounds_almost_equal(before, after)
+
+    def test_double_mixed_flip_restores_authoritative_geometry_and_rotation(self):
+        selected = {"linear", "count", "area", "attachment"}
+        for horizontal in (True, False):
+            with self.subTest(horizontal=horizontal):
+                view = self._make_flip_view(selected)
+                original_positions = {
+                    uid: list(takeoff.position)
+                    for uid, takeoff in view._current_takeoffs.items()
+                }
+                original_rotations = {
+                    uid: takeoff.rotation
+                    for uid, takeoff in view._current_takeoffs.items()
+                }
+                view.flip_selected_takeoffs(horizontal)
+                view.flip_selected_takeoffs(horizontal)
+                for uid, takeoff in view._current_takeoffs.items():
+                    for original, restored in zip(
+                        original_positions[uid], takeoff.position
+                    ):
+                        self.assertAlmostEqual(original, restored, places=9)
+                    self.assertAlmostEqual(
+                        original_rotations[uid], takeoff.rotation, places=9
+                    )
+                self.assertEqual(len(view.flushed_transform_groups), 2)
 
     def _make_linear_resize_gesture_view(
         self,

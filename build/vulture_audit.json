@@ -1,6 +1,6 @@
 {
-  "audit_date": "2026-08-12",
-  "repository_head": "4808e69879a23612986b88699dcff1800829f58a",
+  "audit_date": "2026-08-13",
+  "repository_head": "c1cc727ece958bd670b8d69c9043529ee3c1d7a8",
   "vulture_version": "2.14",
   "scope": "ost_visualizer",
   "runs": [
@@ -25,6 +25,32 @@
     }
   ],
   "incremental_rechecks": [
+    {
+      "audit_date": "2026-08-13",
+      "reason": "Full cleanup and correctness audit of the mixed-takeoff flip worktree",
+      "cache_policy": "Invalidated every cached classification for the eight changed production files and reran all three confidence levels. Unchanged repository-wide runtime classifications were reused only after the exact finding and its native or Qt consumer were reverified.",
+      "results": [
+        {
+          "minimum_confidence": 100,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 80,
+          "exit_code": 0,
+          "finding_count": 0
+        },
+        {
+          "minimum_confidence": 60,
+          "exit_code": 3,
+          "finding_count": 182
+        }
+      ],
+      "new_findings": [],
+      "removed_findings": [],
+      "changed_classifications": [],
+      "evidence": "No new flip, footprint, renderer, mesh, export, or persistence symbol is reported. The changed-file findings are three Qt event overrides in input_handler.py and nine nanobind assignments in pdf_exporter.py; all are unchanged runtime contracts with direct consumers."
+    },
     {
       "audit_date": "2026-08-06",
       "reason": "Second cleanup pass over the complete uncommitted worktree",
@@ -312,16 +338,10 @@
   ],
   "changed_worktree_relevant_findings": [
     {
-      "symbol": "OptionsDialog.get_config",
-      "location": "ost_visualizer/presentation/dialogs/options/dialog.py:61",
-      "classification": "used",
-      "evidence": "Public dialog result contract used by tests/test_options_preferences.py at lines 868, 981, 1009, 1069, 2390, 2475, and 2539."
-    },
-    {
-      "symbol": "MainWindow.createPopupMenu",
-      "location": "ost_visualizer/presentation/main_window.py:1475",
+      "symbol": "InputHandlerMixin wheelEvent/mouseDoubleClickEvent/contextMenuEvent",
+      "location": "ost_visualizer/presentation/components/plan_view/components/input_handler.py:391,440,2856",
       "classification": "Qt virtual override",
-      "evidence": "QMainWindow invokes createPopupMenu through Qt's virtual dispatch; there is no required Python call site."
+      "evidence": "QGraphicsView dispatches these handlers through Qt's virtual method boundary; their focused Plan View interaction tests passed."
     },
     {
       "symbol": "PageExportData.is_blank assignments",
@@ -331,7 +351,7 @@
     },
     {
       "symbol": "OvalAnnotationData axis assignments",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1106-1109",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1095-1098",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads x_axis_dx, x_axis_dy, y_axis_dx, and y_axis_dy. tests/test_pdf_oval_export.py verifies the values and rendered geometry."
     },
@@ -343,15 +363,9 @@
     },
     {
       "symbol": "InkAnnotationData.strokes assignment",
-      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1169",
+      "location": "ost_visualizer/presentation/visualization/exporters/pdf_exporter.py:1158",
       "classification": "native binding contract",
       "evidence": "The nanobind PDF writer reads strokes for ordinary /Ink annotations; Highlight export now uses its separate typed paths field. Native annotation tests verify /Ink remains unchanged."
-    },
-    {
-      "symbol": "TintedCacheKey.tint_r/tint_g/tint_b",
-      "location": "ost_visualizer/presentation/visualization/pdf/page_cache.py:87-89",
-      "classification": "dataclass cache-key fields",
-      "evidence": "The fields participate in generated dataclass equality and hashing so differently tinted page renders cannot share a cache entry. Vulture cannot observe generated dataclass consumers."
     }
   ],
   "remaining_60_percent_categories": [

@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QGraphicsPathItem,
     QGraphicsRectItem,
 )
-from .....domain.entities import shape as shapes
 from .....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
     ANNOTATION_TYPE_CLOUD,
@@ -39,8 +38,10 @@ from ....utils.annotation_defaults import (
 )
 from ....utils.image_show_mode import mode_to_flags
 from ....visualization.core.geometry.takeoff_geometry import (
+    MINIMUM_RENDERED_LINEAR_THICKNESS,
     compute_count_vertices,
     compute_line_angle,
+    resolve_point_takeoff_shape,
 )
 from ....visualization.pdf import ost_pdf
 from ....visualization.pdf.pdfium_lock import pdfium_lock
@@ -366,16 +367,7 @@ class PlacementModeMixin:
                 return
             cx = float(takeoff.position[0])
             cy = float(takeoff.position[1])
-            shape_id = condition.shape if condition.shape else shapes.SQUARE
-            width_ost = max(condition.width if condition.width else 1.0, 1.0)
-            if shape_id == shapes.SQUARE or shape_id == shapes.CIRCLE:
-                depth_ost = width_ost
-            else:
-                depth_ost = max(condition.depth if condition.depth else width_ost, 1.0)
-            if condition.is_count:
-                scale = max(condition.display_size, 0.1) / 100.0
-                width_ost *= scale
-                depth_ost *= scale
+            shape_id, width_ost, depth_ost = resolve_point_takeoff_shape(condition)
             points = compute_count_vertices(
                 cx,
                 cy,
@@ -1786,7 +1778,7 @@ class PlacementModeMixin:
         thickness_ost = condition.thickness if condition.thickness else 1.0
         view_scale = cs.page_info.get("view_scale", 1.0)
         thickness_px = cs.ost_to_pdf_points(thickness_ost) * view_scale
-        thickness_px = max(thickness_px, 2.0)
+        thickness_px = max(thickness_px, MINIMUM_RENDERED_LINEAR_THICKNESS)
         dx, dy = x2 - x1, y2 - y1
         length = math.sqrt(dx * dx + dy * dy)
         if length < 0.001:

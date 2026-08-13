@@ -5,7 +5,6 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsTextIte
 from .....application.dtos.color_dtos import ColorWithOpacity
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....domain.entities import pattern as pt
-from .....domain.entities import shape as shapes
 from .....domain.entities.annotation import int_color_to_hex
 from .....domain.entities.condition import Condition
 from .....domain.entities.takeoff import Takeoff
@@ -19,10 +18,14 @@ from ...core.geometry.ost_linear_geom import (
     proc_curved_pos,
 )
 from ...core.geometry.takeoff_geometry import (
+    MINIMUM_RENDERED_LINEAR_THICKNESS,
+    MINIMUM_RENDERED_POINT_TAKEOFF_SIZE,
+    apply_minimum_point_takeoff_size,
     compute_count_vertices,
     compute_curved_linear_vertices,
     compute_line_angle,
     compute_straight_linear_vertices,
+    resolve_point_takeoff_shape,
 )
 from ...pdf.renderers import pattern_renderer as pr
 from ...services.color_service import ColorService
@@ -547,7 +550,7 @@ class TakeoffRenderer:
         thickness_ost = condition.thickness if condition.thickness else 1.0
         view_scale = self._cs.page_info.get("view_scale", 1.0)
         thickness_px = self._cs.ost_to_pdf_points(thickness_ost) * view_scale
-        thickness_px = max(thickness_px, 2.0)
+        thickness_px = max(thickness_px, MINIMUM_RENDERED_LINEAR_THICKNESS)
         if curve >= 0 and len(raw_position) >= 6:
             rx1, ry1, rx2, ry2, rcx, rcy = raw_position[:6]
             rx1, ry1, rx2, ry2, rcx, rcy = proc_curved_pos(
@@ -598,24 +601,15 @@ class TakeoffRenderer:
         if len(position) < 2:
             return None
         x, y = position[0], position[1]
-        shape_id = condition.shape if condition.shape else shapes.SQUARE
-        width_ost = max(condition.width if condition.width else 1, 1)
-        if shape_id == shapes.SQUARE or shape_id == shapes.CIRCLE:
-            depth_ost = width_ost
-        else:
-            depth_ost = max(condition.depth if condition.depth else width_ost, 1)
-        if condition.is_count:
-            scale = max(condition.display_size, 0.1) / 100.0
-            width_ost *= scale
-            depth_ost *= scale
+        shape_id, width_ost, depth_ost = resolve_point_takeoff_shape(condition)
         view_scale = self._cs.page_info.get("view_scale", 1.0)
         width_px = self._cs.ost_to_pdf_points(width_ost) * view_scale
         depth_px = self._cs.ost_to_pdf_points(depth_ost) * view_scale
-        min_dim = min(width_px, depth_px)
-        if 0 < min_dim < 8.0:
-            scale = 8.0 / min_dim
-            width_px *= scale
-            depth_px *= scale
+        width_px, depth_px = apply_minimum_point_takeoff_size(
+            width_px,
+            depth_px,
+            MINIMUM_RENDERED_POINT_TAKEOFF_SIZE,
+        )
         rotation = takeoff.rotation
         verts = compute_count_vertices(x, y, shape_id, width_px, depth_px, rotation)
         return self._vertices_to_path(verts)
