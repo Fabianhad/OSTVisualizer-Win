@@ -25,15 +25,22 @@ from ost_visualizer.application.use_cases.license.utils.license_use_case import 
 )
 from ost_visualizer.domain.aggregates.license_aggregate import LicenseAggregate
 from ost_visualizer.domain.entities.license import License, LicenseStatus
+from ost_visualizer.domain.services.hardware_identity import HWID_VERSION
+from ost_visualizer.domain.services.hardware_identity import HardwareIdentityError
+
+TEST_HWID = "v1:" + "A" * 64
 
 
 class FakeModel:
     def __init__(self):
         self.license_key = "LIC-test-key"
-        self.hwid = "hwid-a"
+        self.hwid = TEST_HWID
+        self.hwid_version = HWID_VERSION
+        self.expiry_date = None
         self.offline_grace_hours = 72
         self.clear_calls = 0
         self.valid = False
+        self.hwid_error = None
 
     def has_license(self):
         return bool(self.license_key)
@@ -45,6 +52,13 @@ class FakeModel:
         return False
 
     def ensure_hwid(self):
+        if self.hwid_error is not None:
+            raise self.hwid_error
+        return self.hwid
+
+    def require_canonical_hwid(self):
+        if self.hwid_error is not None:
+            raise self.hwid_error
         return self.hwid
 
     def has_valid_license(self):
@@ -148,7 +162,8 @@ class LicenseActivationContractTests(unittest.TestCase):
             license_key="LIC-test-key",
             expiry_date=now + timedelta(days=30),
             signature="signed",
-            hwid="hwid-a",
+            hwid=TEST_HWID,
+            hwid_version=HWID_VERSION,
             last_validated=now + timedelta(days=30),
             signed_expiry_date=(now + timedelta(days=30)).isoformat(),
         )
@@ -162,7 +177,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         aggregate = LicenseAggregate(
             repository,
-            hwid_provider=lambda: "hwid-a",
+            hwid_provider=lambda: TEST_HWID,
             signature_verifier=verifier,
             offline_grace_hours=72,
         )
@@ -384,8 +399,103 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         self.assertEqual(publisher.activated_calls, 1)
 
-    def _build_orchestrator(self, validate, activate, publisher, callback_bridge=None):
+    def test_startup_hwid_failure_is_explicit_and_skips_server_validation(self):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "must not run",
+        )
         model = FakeModel()
+        model.hwid = None
+        model.hwid_error = HardwareIdentityError("firmware unavailable")
+        validate = FakeUseCase(invalid)
+        publisher = FakeEventPublisher()
+        orchestrator = self._build_orchestrator(
+            validate,
+            FakeUseCase(invalid),
+            publisher,
+            model=model,
+        )
+        orchestrator.initialize()
+        self.assertEqual(validate.calls, [])
+        self.assertEqual(orchestrator.get_license_info().status, "hwid_unavailable")
+        self.assertIn(
+            "hardware identity is unavailable",
+            orchestrator.get_view_model().message,
+        )
+        self.assertFalse(orchestrator.get_view_model().hardware_identity_available)
+        self.assertEqual(len(publisher.invalidated), 1)
+        self.assertIn("hardware identity is unavailable", publisher.invalidated[0][0])
+
+    def test_activation_hwid_failure_returns_explicit_message(self):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "must not run",
+        )
+        model = FakeModel()
+        model.hwid = None
+        model.hwid_error = HardwareIdentityError("firmware unavailable")
+        activate = FakeUseCase(invalid)
+        orchestrator = self._build_orchestrator(
+            FakeUseCase(invalid),
+            activate,
+            FakeEventPublisher(),
+            model=model,
+        )
+        outcomes = []
+        orchestrator.activate_license_async(
+            "LIC-test-key",
+            lambda success, message: outcomes.append((success, message)),
+        )
+        self.assertEqual(activate.calls, [])
+        self.assertEqual(len(outcomes), 1)
+        self.assertFalse(outcomes[0][0])
+        self.assertIn("hardware identity is unavailable", outcomes[0][1])
+
+    def test_periodic_hwid_failure_marshals_notification_to_callback_bridge(self):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "must not run",
+        )
+        model = FakeModel()
+        model.hwid_error = HardwareIdentityError("firmware unavailable")
+        bridge = ImmediateCallbackBridge()
+        publisher = FakeEventPublisher()
+        orchestrator = self._build_orchestrator(
+            FakeUseCase(invalid),
+            FakeUseCase(invalid),
+            publisher,
+            callback_bridge=bridge,
+            model=model,
+        )
+        result = orchestrator._perform_periodic_validation()
+        self.assertEqual(
+            result.operation_status,
+            LicenseOperationStatus.HWID_UNAVAILABLE,
+        )
+        self.assertEqual(
+            bridge.dispatched,
+            [(False, result.message, LicenseStatus.HWID_UNAVAILABLE)],
+        )
+        self.assertEqual(
+            publisher.invalidated,
+            [(result.message, LicenseStatus.HWID_UNAVAILABLE)],
+        )
+
+    def _build_orchestrator(
+        self,
+        validate,
+        activate,
+        publisher,
+        callback_bridge=None,
+        model=None,
+    ):
+        model = model or FakeModel()
         return LicenseOrchestrator(
             license_model=model,
             validate_use_case=validate,

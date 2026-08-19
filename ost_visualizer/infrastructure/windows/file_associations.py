@@ -19,7 +19,7 @@ DEFAULT_VALUE = ""
 
 
 class FileAssociationRegistryError(RuntimeError):
-    pass
+    """Raised when Windows file-association registry access is unavailable."""
 
 
 class IRegistry(Protocol):

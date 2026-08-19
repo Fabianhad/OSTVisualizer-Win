@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Fixed machine license identities changing when WMIC, WMI results, user-profile
+  files, or unrelated devices changed. The canonical HWID v1 pins one SMBIOS
+  System UUID or machine-scoped installation UUID, uses a full SHA-256 value,
+  fails explicitly when the pinned identity is unavailable, and clears invalid
+  local license caches for reactivation.
 - Fixed grid-snapped multi-item moves changing the spacing between selected
   objects when their original positions had different grid offsets; drag
   previews, committed Access and SQL moves, and undo/redo now apply one shared

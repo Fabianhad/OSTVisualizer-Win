@@ -133,7 +133,7 @@ class _CoverSheetSettingsOps(SettingsOperationsMixin, PageOperationsMixin):
         return self.schema
 
     def _require_write_columns(self, *_args):
-        return None
+        pass
 
     def _next_uid(self, _cursor, _table):
         return 99
@@ -228,7 +228,7 @@ class _PageScaleOps(PageOperationsMixin):
         return self.schema
 
     def _require_write_columns(self, *_args):
-        return None
+        pass
 
     @staticmethod
     def _record_caught_mutation_error(_exc):
@@ -245,10 +245,10 @@ class _FailingPositionScaleOps(_PageScaleOps):
 
 class _FakeLogger:
     def exception(self, *_args):
-        return None
+        pass
 
     def warning(self, *_args):
-        return None
+        pass
 
 
 class _AllDeleteColumnsSchema:
@@ -383,7 +383,7 @@ class _OverlayScaleOps(PageOperationsMixin):
 
     @staticmethod
     def _require_write_columns(*_args):
-        return None
+        pass
 
     @staticmethod
     def _record_caught_mutation_error(_exc):
@@ -409,7 +409,7 @@ class _OverlayScaleOps(PageOperationsMixin):
 
 class _FakeIconProvider:
     def set_window_icon(self, _window):
-        return None
+        pass
 
 
 class _FakeCoverSheetDialog:
@@ -1612,7 +1612,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         class Schema:
             @staticmethod
             def require_column(_table, _column):
-                return None
+                pass
 
             @staticmethod
             def optional_table_missing(table):

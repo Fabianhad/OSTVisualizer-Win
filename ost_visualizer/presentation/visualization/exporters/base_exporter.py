@@ -216,5 +216,4 @@ class BaseExporter(ABC):
         materials_info: Dict,
         bid_conditions: Dict,
         display_mode: str,
-    ):
-        pass
+    ): ...

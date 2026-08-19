@@ -34,7 +34,7 @@ class ContextActionSpec:
 
 @dataclass(frozen=True)
 class ContextSeparatorSpec:
-    pass
+    """Marks a separator entry in a context-menu specification."""
 
 
 ContextMenuEntry = Union[ContextActionSpec, ContextSeparatorSpec]

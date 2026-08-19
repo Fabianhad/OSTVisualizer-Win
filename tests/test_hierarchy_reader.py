@@ -62,7 +62,7 @@ class _Schema:
         return False
 
     def require_column(self, _table, _column):
-        return None
+        pass
 
     def optional_column(self, _table, column, _default):
         return f"[{column}]"

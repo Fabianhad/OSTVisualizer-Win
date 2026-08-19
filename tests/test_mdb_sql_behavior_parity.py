@@ -91,7 +91,7 @@ class _SequenceUseCase:
 
 class _Recorder:
     def record(self, *_args, **_kwargs):
-        return None
+        pass
 
 
 class _CapturedQueueProvider:

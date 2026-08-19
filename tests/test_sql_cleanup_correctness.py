@@ -159,7 +159,7 @@ class _CredentialStore:
         return None
 
     def write_password(self, _target, _username, _password):
-        return None
+        pass
 
     def delete_password(self, target):
         self.deleted.append(target)
@@ -245,7 +245,7 @@ class _InspectionCursor:
         return []
 
     def close(self):
-        return None
+        pass
 
 
 class _InspectionLease:
@@ -329,7 +329,7 @@ class _CreationCursor:
         return (0,)
 
     def close(self):
-        return None
+        pass
 
 
 class _CreationLease:
@@ -830,7 +830,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
             @staticmethod
             def rollback():
-                return None
+                pass
 
         class _SqlConnections:
             @contextlib.contextmanager
@@ -1973,7 +1973,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _Cursor:
             def close(self):
-                return None
+                pass
 
         class _Connection:
             def __init__(self):
@@ -1996,7 +1996,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         class _Schema:
             @staticmethod
             def require_column(_table, _column):
-                return None
+                pass
 
             @staticmethod
             def column_exists(_table, _column):

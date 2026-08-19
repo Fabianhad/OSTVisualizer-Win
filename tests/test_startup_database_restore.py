@@ -416,7 +416,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             file_entries = [original]
 
             def reload(self):
-                return None
+                pass
 
             def update_entries(self, entries):
                 self.file_entries = list(entries)

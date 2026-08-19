@@ -116,7 +116,7 @@ from .bid_comparison_service import BidComparisonResult, BidComparisonService
 
 
 class McpReadError(ValueError):
-    pass
+    """Raised when an MCP read request violates the bounded read contract."""
 
 
 @dataclass

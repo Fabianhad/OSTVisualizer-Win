@@ -90,7 +90,7 @@ class _ExplodingPainter:
         type(self).last_instance = self
 
     def setRenderHint(self, *_args):
-        return None
+        pass
 
     def drawImage(self, *_args):
         raise RuntimeError("draw failed")

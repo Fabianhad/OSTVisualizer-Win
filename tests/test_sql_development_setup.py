@@ -32,13 +32,13 @@ class SqlDevelopmentSetupTests(unittest.TestCase):
     def test_provisioning_refuses_a_different_instance_on_the_default_port(self):
         class _Cursor:
             def execute(self, _sql):
-                return None
+                pass
 
             def fetchone(self):
                 return ("UNRELATED",)
 
             def close(self):
-                return None
+                pass
 
         class _Connection:
             def cursor(self):

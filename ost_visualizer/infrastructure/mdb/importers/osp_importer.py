@@ -22,7 +22,7 @@ _IMAGE_PATH_ATTRS = ("ImagePath", "OverlayImagePath")
 
 
 class _OspFormatError(ValueError):
-    pass
+    """Raised when an OSP archive violates the supported package format."""
 
 
 @dataclass(frozen=True)

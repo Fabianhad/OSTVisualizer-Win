@@ -945,7 +945,7 @@ class SqlDialogTests(unittest.TestCase):
             backend = DatabaseBackend.SQL_SERVER
 
             def __init__(self, _icon_provider, _parent=None):
-                return None
+                pass
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1135,7 +1135,7 @@ class SqlDialogTests(unittest.TestCase):
     def test_access_choice_delegates_to_existing_file_picker(self):
         class _AcceptedAccessDialog:
             def __init__(self, _icon_provider, _parent=None):
-                return None
+                pass
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1189,7 +1189,7 @@ class SqlDialogTests(unittest.TestCase):
 
         class _ConnectionDialog:
             def __init__(self, _icon_provider, _parent=None):
-                return None
+                pass
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted
@@ -1302,7 +1302,7 @@ class SqlDialogTests(unittest.TestCase):
 
         class _ConnectionDialog:
             def __init__(self, _icon_provider, _parent=None):
-                return None
+                pass
 
             def exec(self):
                 return QtWidgets.QDialog.DialogCode.Accepted

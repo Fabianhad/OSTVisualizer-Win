@@ -61,8 +61,11 @@ class FakeIconProvider:
 
 
 class FakeLicenseOrchestrator:
+    def __init__(self, view_model=None):
+        self._view_model = view_model or LicenseViewModelDto(has_license=False)
+
     def get_view_model(self):
-        return LicenseViewModelDto(has_license=False)
+        return self._view_model
 
     def has_valid_license(self):
         return False
@@ -139,6 +142,30 @@ class DialogLifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(dialog.event_bus)
         self.assertIsNone(dialog.license_orchestrator)
+
+    def test_license_dialog_projects_hardware_identity_failure(self):
+        _app()
+        event_bus = FakeEventBus()
+        message = "The machine identity is unavailable."
+        dialog = LicenseDialog(
+            FakeIconProvider(),
+            None,
+            FakeLicenseOrchestrator(
+                LicenseViewModelDto(
+                    has_license=False,
+                    message=message,
+                    hardware_identity_available=False,
+                )
+            ),
+            event_bus,
+        )
+        try:
+            self.assertEqual(
+                dialog.status_label.text(), "Status: Hardware ID Unavailable"
+            )
+            self.assertEqual(dialog.status_label.toolTip(), message)
+        finally:
+            dialog.done(0)
 
     def test_event_coordinator_cleanup_releases_event_bus_reference(self):
         event_bus = FakeEventBus()

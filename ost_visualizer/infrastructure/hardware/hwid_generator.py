@@ -1,106 +1,107 @@
-import hashlib
-import subprocess
+import logging
 import uuid
 from pathlib import Path
-from typing import Optional
-from ..app_paths import get_app_data_dir
+from typing import Callable, Optional, Protocol
+from ...domain.services.hardware_identity import (
+    HardwareIdentityError,
+    HardwareIdentitySource,
+    MachineIdentity,
+    build_hwid,
+)
+from ..app_paths import get_machine_app_data_dir
+from ..persistence.repositories.json_machine_identity_repository import (
+    JsonMachineIdentityRepository,
+)
+from .smbios_system_uuid import SmbiosSystemUuidReader
 
-_INSTALL_ID_FILENAME = "install_id.txt"
-_GENERIC_VALUES = {
-    "",
-    "none",
-    "unknown",
-    "null",
-    "to be filled by o.e.m.",
-    "default string",
-    "system serial number",
-    "base board serial number",
-    "00000000-0000-0000-0000-000000000000",
-    "00000000000000000000000000000000",
-}
+_MACHINE_IDENTITY_FILENAME = "hardware_identity_v1.json"
 
 
+class ISystemUuidReader(Protocol):
+    def read_system_uuid(self) -> Optional[uuid.UUID]: ...
+class IMachineIdentityRepository(Protocol):
+    def load(self) -> Optional[MachineIdentity]: ...
+    def create_if_absent(self, identity: MachineIdentity) -> MachineIdentity: ...
 class HWIDGenerator:
-    def __init__(self, app_data_dir: Optional[Path] = None):
-        self._cached_hwid = None
-        self._app_data_dir = app_data_dir or get_app_data_dir()
+    def __init__(
+        self,
+        identity_path: Optional[Path] = None,
+        system_uuid_reader: Optional[ISystemUuidReader] = None,
+        identity_factory: Callable[[], uuid.UUID] = uuid.uuid4,
+        identity_repository: Optional[IMachineIdentityRepository] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        if identity_path is not None and identity_repository is not None:
+            raise ValueError(
+                "Specify either an identity path or an identity repository, not both"
+            )
+        self._identity_path = identity_path
+        self._system_uuid_reader = system_uuid_reader
+        self._identity_factory = identity_factory
+        self._identity_repository = identity_repository
+        self._cached_hwid: Optional[str] = None
+        self._logger = logger or logging.getLogger(__name__)
 
     def get_hwid(self) -> str:
-        if self._cached_hwid:
+        if self._cached_hwid is not None:
             return self._cached_hwid
-        stable_id = self._get_system_uuid()
-        if not stable_id:
-            stable_id = self._get_motherboard_serial()
-        if stable_id:
-            source = f"MACHINE:{stable_id}"
-        else:
-            source = f"INSTALL:{self._get_or_create_install_id()}"
-        self._cached_hwid = self._hash_hwid(source)
-        return self._cached_hwid
-
-    def _get_motherboard_serial(self) -> Optional[str]:
         try:
-            result = subprocess.run(
-                ["wmic", "baseboard", "get", "serialnumber", "/value"],
-                capture_output=True,
-                text=True,
-                timeout=5,
+            repository = self._get_repository()
+            identity = repository.load()
+            if identity is None:
+                candidate = self._create_identity()
+                identity = repository.create_if_absent(candidate)
+                if identity != candidate:
+                    self._verify_pinned_identity(identity)
+            else:
+                self._verify_pinned_identity(identity)
+            self._cached_hwid = build_hwid(identity)
+            return self._cached_hwid
+        except HardwareIdentityError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise HardwareIdentityError(
+                "The pinned machine identity is unavailable or invalid"
+            ) from exc
+
+    def _create_identity(self) -> MachineIdentity:
+        system_uuid = self._get_system_uuid_reader().read_system_uuid()
+        if system_uuid is not None:
+            return MachineIdentity.create(
+                HardwareIdentitySource.SMBIOS_SYSTEM_UUID,
+                system_uuid,
             )
-            for line in result.stdout.split("\n"):
-                if "SerialNumber=" in line:
-                    serial = line.split("=")[1].strip()
-                    if self._is_useful_identifier(serial):
-                        return serial
-        except (OSError, subprocess.SubprocessError):
-            pass
-        return None
+        installation_uuid = self._identity_factory()
+        return MachineIdentity.create(
+            HardwareIdentitySource.INSTALLATION_UUID,
+            installation_uuid,
+        )
 
-    def _get_system_uuid(self) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["wmic", "csproduct", "get", "uuid", "/value"],
-                capture_output=True,
-                text=True,
-                timeout=5,
+    def _verify_pinned_identity(self, identity: MachineIdentity) -> None:
+        if identity.source == HardwareIdentitySource.INSTALLATION_UUID:
+            return
+        observed_uuid = self._get_system_uuid_reader().read_system_uuid()
+        if observed_uuid is None:
+            raise HardwareIdentityError(
+                "The pinned SMBIOS System UUID is temporarily unavailable"
             )
-            for line in result.stdout.split("\n"):
-                if "UUID=" in line:
-                    uuid_val = line.split("=")[1].strip()
-                    normalized = uuid_val.replace("-", "").upper()
-                    if self._is_useful_identifier(
-                        uuid_val
-                    ) and self._is_useful_identifier(normalized):
-                        return normalized
-        except (OSError, subprocess.SubprocessError):
-            pass
-        return None
+        if str(observed_uuid).upper() != identity.identifier:
+            raise HardwareIdentityError(
+                "The SMBIOS System UUID does not match the pinned machine identity"
+            )
 
-    def _get_or_create_install_id(self) -> str:
-        install_id_path = self._app_data_dir / _INSTALL_ID_FILENAME
-        install_id_path.parent.mkdir(parents=True, exist_ok=True)
-        if install_id_path.exists():
-            try:
-                install_id = install_id_path.read_text(encoding="utf-8").strip()
-                if self._is_useful_identifier(install_id):
-                    return install_id
-            except OSError:
-                pass
-        install_id = uuid.uuid4().hex.upper()
-        install_id_path.write_text(install_id, encoding="utf-8")
-        return install_id
+    def _get_repository(self) -> IMachineIdentityRepository:
+        if self._identity_repository is None:
+            identity_path = self._identity_path
+            if identity_path is None:
+                identity_path = get_machine_app_data_dir() / _MACHINE_IDENTITY_FILENAME
+            self._identity_repository = JsonMachineIdentityRepository(
+                identity_path,
+                logger=self._logger.getChild("MachineIdentityRepository"),
+            )
+        return self._identity_repository
 
-    @staticmethod
-    def _hash_hwid(value: str) -> str:
-        return hashlib.sha256(value.encode()).hexdigest()[:16].upper()
-
-    @staticmethod
-    def _is_useful_identifier(value: Optional[str]) -> bool:
-        if value is None:
-            return False
-        normalized = value.strip().lower()
-        if normalized in _GENERIC_VALUES:
-            return False
-        compact = normalized.replace("-", "").replace(" ", "")
-        if compact and set(compact) == {"0"}:
-            return False
-        return bool(normalized)
+    def _get_system_uuid_reader(self) -> ISystemUuidReader:
+        if self._system_uuid_reader is None:
+            self._system_uuid_reader = SmbiosSystemUuidReader()
+        return self._system_uuid_reader

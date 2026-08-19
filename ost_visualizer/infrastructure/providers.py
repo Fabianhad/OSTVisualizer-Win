@@ -119,7 +119,9 @@ class RepositoryProvider(IRepositoryProvider):
         ] = None,
     ):
         self.logger = logger
-        self._hwid_generator = HWIDGenerator()
+        self._hwid_generator = HWIDGenerator(
+            logger=self.logger.getChild("HWIDGenerator")
+        )
         self._descriptor_registry = descriptor_registry
         self._project_reader_factory = project_reader_factory
 

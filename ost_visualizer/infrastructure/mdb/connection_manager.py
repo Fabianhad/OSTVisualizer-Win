@@ -7,7 +7,7 @@ from ..database.connection_wrapper import ConnectionWrapper
 
 
 class WriteBlockedError(Exception):
-    pass
+    """Raised when an MDB write is attempted while writes are blocked."""
 
 
 class MdbConnectionManager:

@@ -1089,7 +1089,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
             return "source.ost", ""
 
         def ignore_message(_parent, _title, _message):
-            return None
+            pass
 
         try:
             FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Rejected

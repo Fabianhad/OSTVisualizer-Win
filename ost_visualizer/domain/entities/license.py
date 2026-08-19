@@ -12,6 +12,7 @@ class LicenseStatus(Enum):
     NO_LICENSE = "no_license"
     NETWORK_ERROR = "network_error"
     GRACE = "grace"
+    HWID_UNAVAILABLE = "hwid_unavailable"
 
 
 class LicenseValidationResult(Enum):
@@ -19,6 +20,7 @@ class LicenseValidationResult(Enum):
     NO_LICENSE = auto()
     EXPIRED = auto()
     HWID_MISMATCH = auto()
+    HWID_VERSION_MISMATCH = auto()
     SIGNATURE_INVALID = auto()
 
 
@@ -28,6 +30,7 @@ class License:
     expiry_date: Optional[datetime] = None
     signature: Optional[str] = None
     hwid: Optional[str] = None
+    hwid_version: Optional[str] = None
     last_validated: Optional[datetime] = None
     signed_expiry_date: Optional[str] = None
 
@@ -37,6 +40,7 @@ class License:
             "expiry_date": self.expiry_date.isoformat() if self.expiry_date else None,
             "signature": self.signature,
             "hwid": self.hwid,
+            "hwid_version": self.hwid_version,
             "last_validated": (
                 self.last_validated.isoformat() if self.last_validated else None
             ),
@@ -61,6 +65,7 @@ class License:
             expiry_date=expiry_date,
             signature=data.get("signature"),
             hwid=data.get("hwid"),
+            hwid_version=data.get("hwid_version"),
             last_validated=last_validated,
             signed_expiry_date=data.get("signed_expiry_date"),
         )
@@ -72,6 +77,7 @@ class License:
             "expiry_date",
             "signature",
             "hwid",
+            "hwid_version",
             "last_validated",
             "signed_expiry_date",
         )

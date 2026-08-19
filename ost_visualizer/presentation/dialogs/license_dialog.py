@@ -134,9 +134,13 @@ class LicenseDialog(QtWidgets.QDialog):
             return
         view_model: LicenseViewModelDto = self.license_orchestrator.get_view_model()
         has_license = view_model.has_license
-        self.status_label.setText(
-            f"Status: {'Activated' if has_license else 'Not Activated'}"
+        status_text = (
+            "Hardware ID Unavailable"
+            if not view_model.hardware_identity_available
+            else "Activated" if has_license else "Not Activated"
         )
+        self.status_label.setText(f"Status: {status_text}")
+        self.status_label.setToolTip(view_model.message or "")
         if view_model.expiry_date:
             parsed = QtCore.QDate.fromString(view_model.expiry_date[:10], "yyyy-MM-dd")
             formatted = (

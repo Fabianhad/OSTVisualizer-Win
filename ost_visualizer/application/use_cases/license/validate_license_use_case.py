@@ -3,6 +3,7 @@ from typing import Optional
 from ....domain.aggregates.license_aggregate import LicenseAggregate
 from ....domain.entities.license import LicenseStatus
 from ....domain.repositories.i_license_api_client import ILicenseApiClient
+from ....domain.services.hardware_identity import HWID_VERSION
 from ...dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 from .utils.license_use_case import (
     build_success_result,
@@ -69,6 +70,7 @@ class ValidateLicenseUseCase:
                     expiry_date=signed_response.expiry_date,
                     signature=signed_response.signature,
                     hwid=hwid,
+                    hwid_version=HWID_VERSION,
                     signed_expiry_date=signed_response.expiry_date_text,
                 )
             except (OSError, ValueError) as exc:

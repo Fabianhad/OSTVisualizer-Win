@@ -5,6 +5,11 @@ from ...config.license_config import LICENSE_OFFLINE_GRACE_HOURS
 from ..entities.license import License, LicenseValidationResult
 from ..repositories.i_license_repository import ILicenseRepository
 from ..repositories.i_license_signature_verifier import ILicenseSignatureVerifier
+from ..services.hardware_identity import (
+    HWID_VERSION,
+    HardwareIdentityError,
+    is_canonical_hwid,
+)
 
 
 class LicenseAggregate:
@@ -55,14 +60,18 @@ class LicenseAggregate:
         expiry_date: datetime,
         signature: Optional[str],
         hwid: str,
+        hwid_version: str,
         signed_expiry_date: str,
     ) -> None:
+        if hwid_version != HWID_VERSION or not is_canonical_hwid(hwid):
+            raise ValueError("License update does not contain a canonical HWID")
         previous_license = self._license
         self._license = License(
             license_key=license_key,
             expiry_date=expiry_date,
             signature=signature,
             hwid=hwid,
+            hwid_version=hwid_version,
             last_validated=datetime.now(timezone.utc),
             signed_expiry_date=signed_expiry_date,
         )
@@ -96,12 +105,29 @@ class LicenseAggregate:
     def hwid(self) -> Optional[str]:
         return self._license.hwid
 
-    def ensure_hwid(self) -> Optional[str]:
-        if self._license.hwid:
-            return self._license.hwid
-        hwid = self.hwid_provider()
-        self._license.hwid = hwid
-        return hwid
+    @property
+    def hwid_version(self) -> Optional[str]:
+        return self._license.hwid_version
+
+    def ensure_hwid(self) -> str:
+        canonical_hwid = self.require_canonical_hwid()
+        if self._has_canonical_cached_hwid():
+            if self._license.hwid != canonical_hwid:
+                raise HardwareIdentityError(
+                    "The machine HWID does not match the cached license"
+                )
+            return canonical_hwid
+        self._license.hwid = canonical_hwid
+        self._license.hwid_version = HWID_VERSION
+        return canonical_hwid
+
+    def require_canonical_hwid(self) -> str:
+        canonical_hwid = self.hwid_provider()
+        if not is_canonical_hwid(canonical_hwid):
+            raise HardwareIdentityError(
+                "The hardware identity provider returned an invalid HWID"
+            )
+        return canonical_hwid
 
     @property
     def last_validated(self) -> Optional[datetime]:
@@ -116,11 +142,13 @@ class LicenseAggregate:
     def validate(self) -> LicenseValidationResult:
         if not self.has_license():
             return LicenseValidationResult.NO_LICENSE
+        if not self._has_canonical_cached_hwid():
+            return LicenseValidationResult.HWID_VERSION_MISMATCH
         if self.is_expired():
             return LicenseValidationResult.EXPIRED
         if not self.has_valid_cached_signature():
             return LicenseValidationResult.SIGNATURE_INVALID
-        if not self._matches_current_hwid():
+        if not self._matches_machine_hwid():
             return LicenseValidationResult.HWID_MISMATCH
         return LicenseValidationResult.VALID
 
@@ -130,11 +158,13 @@ class LicenseAggregate:
     def can_use_offline_grace(self) -> bool:
         if not self.has_license():
             return False
+        if not self._has_canonical_cached_hwid():
+            return False
         if self.is_expired():
             return False
         if not self.has_valid_cached_signature():
             return False
-        if not self._matches_current_hwid():
+        if not self._matches_machine_hwid():
             return False
         if not self._license.last_validated:
             return False
@@ -160,6 +190,8 @@ class LicenseAggregate:
         hwid: str,
         signature: Optional[str],
     ) -> bool:
+        if not is_canonical_hwid(hwid):
+            return False
         if not self.signature_verifier:
             self.logger.warning("No license signature verifier configured")
             return False
@@ -181,9 +213,12 @@ class LicenseAggregate:
 
     def clear_if_invalid(self) -> bool:
         result = self.validate()
-        if result == LicenseValidationResult.HWID_MISMATCH:
+        if result in (
+            LicenseValidationResult.HWID_MISMATCH,
+            LicenseValidationResult.HWID_VERSION_MISMATCH,
+        ):
             self.logger.warning(
-                "HWID mismatch detected. Clearing invalid cached license."
+                "Canonical HWID validation failed. Clearing invalid cached license."
             )
             self.clear()
             return True
@@ -209,9 +244,21 @@ class LicenseAggregate:
                 exc,
             )
 
-    def _matches_current_hwid(self) -> bool:
+    def _matches_machine_hwid(self) -> bool:
         stored_hwid = self._license.hwid
-        return bool(stored_hwid) and stored_hwid == self.hwid_provider()
+        return (
+            bool(stored_hwid)
+            and is_canonical_hwid(stored_hwid)
+            and stored_hwid == self.hwid_provider()
+        )
+
+    def _has_canonical_cached_hwid(self) -> bool:
+        stored_hwid = self._license.hwid
+        return (
+            self._license.hwid_version == HWID_VERSION
+            and bool(stored_hwid)
+            and is_canonical_hwid(stored_hwid)
+        )
 
     @staticmethod
     def _normalize_datetime(value: datetime) -> Optional[datetime]:

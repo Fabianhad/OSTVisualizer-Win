@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Literal, Optional, Tuple
 from .....config.license_config import MAX_HWID_LENGTH, MAX_LICENSE_KEY_LENGTH
 from .....domain.entities.license import LicenseStatus
+from .....domain.services.hardware_identity import is_canonical_hwid
 from ....dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 
 LicenseOperation = Literal["activate", "deactivate", "validate"]
@@ -49,7 +50,7 @@ def clean_hwid(hwid: Optional[str]) -> Optional[str]:
     if hwid is None:
         return None
     cleaned = hwid.strip()
-    if not cleaned or len(cleaned) > MAX_HWID_LENGTH:
+    if not cleaned or len(cleaned) > MAX_HWID_LENGTH or not is_canonical_hwid(cleaned):
         return None
     return cleaned
 

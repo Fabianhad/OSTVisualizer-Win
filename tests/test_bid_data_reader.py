@@ -20,7 +20,7 @@ class _Schema:
 
     @staticmethod
     def require_column(_table, _column):
-        return None
+        pass
 
     @staticmethod
     def column_exists(_table, _column):

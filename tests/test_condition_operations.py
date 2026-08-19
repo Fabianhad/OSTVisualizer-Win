@@ -60,7 +60,7 @@ class _ConditionWriter(ConditionOperationsMixin):
 
     @staticmethod
     def _require_write_columns(_schema, _table, _columns):
-        return None
+        pass
 
     def _execute_update_values(
         self,

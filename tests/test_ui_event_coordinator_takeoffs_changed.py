@@ -75,7 +75,7 @@ class FakeUiState:
 
 class FakeSqlCollaboration:
     def update_presence(self, *_args):
-        return None
+        pass
 
     def status(self, database_id):
         return CollaborationStatus(database_id, SynchronizationState.STOPPED)

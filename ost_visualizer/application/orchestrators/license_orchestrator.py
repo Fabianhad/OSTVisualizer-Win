@@ -3,6 +3,7 @@ from typing import Any, Callable, Optional
 from ...domain.aggregates.license_aggregate import LicenseAggregate
 from ...domain.entities.license import LicenseStatus
 from ...domain.entities.license_info import LicenseInfo
+from ...domain.services.hardware_identity import HardwareIdentityError
 from ..dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 from ..dtos.license_view_model_dto import LicenseViewModelDto
 from ..interfaces.i_license_validation_scheduler import ILicenseValidationScheduler
@@ -37,14 +38,20 @@ class LicenseOrchestrator:
         self._callback_bridge = callback_bridge
         self._logger = logger
         self._current_license_status: Optional[LicenseStatus] = None
+        self._status_message: Optional[str] = None
         self._operation_in_progress: bool = False
 
     def initialize(self) -> None:
         if self._scheduler.is_running():
             return
-        self._ensure_hwid()
-        self._model.clear_if_invalid()
         self._scheduler.set_task(self._perform_periodic_validation)
+        try:
+            self._model.clear_if_invalid()
+            self._ensure_hwid()
+        except HardwareIdentityError as exc:
+            self._handle_hwid_failure(exc)
+            self._scheduler.start()
+            return
         if self._model.has_license():
             if self._model.can_use_offline_grace():
                 self._current_license_status = LicenseStatus.GRACE
@@ -70,8 +77,12 @@ class LicenseOrchestrator:
         if self._operation_in_progress:
             callback(False, "Another license operation is in progress")
             return
+        try:
+            self._ensure_hwid()
+        except HardwareIdentityError as exc:
+            callback(False, self._handle_hwid_failure(exc))
+            return
         self._operation_in_progress = True
-        self._ensure_hwid()
 
         def operation() -> tuple[bool, str, Any]:
             result = self._activate_use_case.execute(license_key)
@@ -182,17 +193,36 @@ class LicenseOrchestrator:
             status=info.status or "No active license",
             expiry_date=info.expiry_date,
             license_key=info.license_key,
-            message=None,
+            message=self._status_message,
+            hardware_identity_available=(
+                self._current_license_status != LicenseStatus.HWID_UNAVAILABLE
+            ),
         )
 
     def _ensure_hwid(self) -> None:
-        if self._model.hwid:
-            return
         self._model.ensure_hwid()
 
     def _perform_periodic_validation(self) -> Optional[LicenseOperationResultDto]:
         if not self._model.has_license():
             return None
+        try:
+            self._model.require_canonical_hwid()
+        except HardwareIdentityError as exc:
+            message = self._hardware_identity_failure_message(exc)
+            result = LicenseOperationResultDto(
+                success=False,
+                operation_status=LicenseOperationStatus.HWID_UNAVAILABLE,
+                license_status=LicenseStatus.HWID_UNAVAILABLE,
+                message=message,
+            )
+            self._apply_result(result)
+            callback_bridge = self._callback_bridge
+            if callback_bridge is not None:
+                callback_bridge.dispatch(
+                    self._publish_periodic_validation_outcome,
+                    (result.success, result.message, result.license_status),
+                )
+            return result
         result = self._validate_use_case.execute()
         self._apply_result(result)
         callback_bridge = self._callback_bridge
@@ -223,10 +253,16 @@ class LicenseOrchestrator:
             LicenseStatus.INVALID,
             LicenseStatus.EXPIRED,
             LicenseStatus.NETWORK_ERROR,
+            LicenseStatus.HWID_UNAVAILABLE,
         ):
             self._event_publisher.publish_invalidated(message, license_status)
 
     def _apply_result(self, result: LicenseOperationResultDto) -> None:
+        self._status_message = (
+            result.message
+            if result.license_status == LicenseStatus.HWID_UNAVAILABLE
+            else None
+        )
         if result.license_status:
             if (
                 result.license_status == LicenseStatus.NETWORK_ERROR
@@ -245,3 +281,21 @@ class LicenseOrchestrator:
             self._current_license_status = LicenseStatus.VALID
         else:
             self._current_license_status = LicenseStatus.INVALID
+
+    def _handle_hwid_failure(self, exc: HardwareIdentityError) -> str:
+        message = self._hardware_identity_failure_message(exc)
+        self._current_license_status = LicenseStatus.HWID_UNAVAILABLE
+        self._status_message = message
+        self._event_publisher.publish_invalidated(
+            message,
+            LicenseStatus.HWID_UNAVAILABLE,
+        )
+        return message
+
+    def _hardware_identity_failure_message(self, exc: HardwareIdentityError) -> str:
+        message = (
+            "This computer's hardware identity is unavailable. "
+            "Restart Windows and try again; if the problem continues, contact support."
+        )
+        self._logger.error("Hardware identity validation failed: %s", exc)
+        return message

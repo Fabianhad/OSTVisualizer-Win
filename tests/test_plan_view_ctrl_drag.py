@@ -591,7 +591,7 @@ class CapturingMenu:
         return action
 
     def addSeparator(self):
-        return None
+        pass
 
     def exec(self, _pos):
         if CapturingMenu.action_text_to_return is None:

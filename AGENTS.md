@@ -63,6 +63,12 @@ infrastructure ----------|
 - `config/di_config.py` is the composition root and may wire all layers.
 - `presentation/main_window.py` is the presentation composition root. Other presentation files should receive dependencies by constructor injection.
 - `ServiceContainer.get_by_interface()` is expected only for runtime discovery such as `IShutdownAware`.
+- Declaration-only `Protocol` and `@abstractmethod` methods use `...`. Production
+  exception and marker classes use a concise, meaningful docstring as their sole
+  body. Intentional concrete no-op hooks use `pass`; an explicit `return None`
+  is reserved for contracts where absence is the result. Test doubles follow the
+  same no-op-versus-absence distinction, while empty test shell classes use
+  `pass`.
 
 Threading and events:
 
@@ -113,6 +119,15 @@ Persistence:
   Header-owning views require the workspace-state aggregate at construction;
   production callers must not silently fall back to nonpersistent headers.
 - New JSON persistence should use `JsonRepositoryBase` for atomic writes.
+- License machine identity uses only the canonical HWID v1 implementation. Read
+  the SMBIOS System UUID through `GetSystemFirmwareTable`, normalize it as a UUID,
+  and pin its source in the machine-scoped ProgramData identity record. A machine
+  with a definitively unusable firmware UUID may pin one installation UUID there;
+  a transient firmware or persistence failure must fail explicitly and must not
+  select or regenerate another source. The unsupported per-user `install_id.txt`
+  never participates. HWID v1 is `v1:` plus the complete uppercase SHA-256 digest,
+  calculated from `OST_VISUALIZER_HWID|v1|<source>|<normalized_uuid>`, and
+  license caches must carry the matching explicit HWID version.
 - Saved databases use stable backend-aware descriptors in `file_state.json`.
   SQL passwords belong only in Windows Credential Manager; never place them in
   JSON, logs, exception text, labels, command lines, snapshots, or `repr` output.

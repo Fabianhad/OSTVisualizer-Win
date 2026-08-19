@@ -9,3 +9,4 @@ class LicenseViewModelDto:
     expiry_date: Optional[str] = None
     license_key: Optional[str] = None
     message: Optional[str] = None
+    hardware_identity_available: bool = True

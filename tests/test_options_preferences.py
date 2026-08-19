@@ -3176,7 +3176,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 return SimpleNamespace(m11=lambda: 4.0)
 
             def _request_crosshair_repaint(self):
-                return None
+                pass
 
             def _uses_dynamic_tile_coverage(self):
                 return True

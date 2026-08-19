@@ -2078,7 +2078,7 @@ def _detached_toolbar_renderers():
 
 class FakeWindowIconProvider:
     def set_window_icon(self, _window):
-        return None
+        pass
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):

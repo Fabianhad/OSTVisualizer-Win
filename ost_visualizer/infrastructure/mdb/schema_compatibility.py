@@ -5,7 +5,7 @@ import pyodbc
 
 
 class UnsupportedMdbSchemaError(RuntimeError):
-    pass
+    """Raised when an MDB schema cannot satisfy the supported contract."""
 
 
 @dataclass

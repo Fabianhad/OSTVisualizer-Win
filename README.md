@@ -67,6 +67,17 @@ This software is source-available under the [Elastic License 2.0](LICENSE).
 
 A commercial license unlocks 3D visualization, editing, and import/export for production use. One license key per machine.
 
+Machine licensing uses the canonical HWID v1 identity. OST Visualizer reads the
+SMBIOS System UUID directly through the supported Windows firmware-table API and
+pins that normalized UUID in `C:\ProgramData\OST Visualizer\hardware_identity_v1.json`.
+Machines whose firmware has no usable System UUID receive one generated
+installation UUID in the same machine-scoped file. The chosen source never
+changes automatically, and a temporarily unavailable or changed pinned identity
+causes an explicit license failure instead of generating a different HWID.
+Per-user `~/.ost_visualizer/install_id.txt` files are unsupported and ignored.
+License caches without the canonical `hwid_version` value `v1` are cleared and
+require activation.
+
 **[Get a commercial license](https://fabianhad.com/ost3d/download)**
 
 For licensing questions, contact [fabian@fabianhad.com](mailto:fabian@fabianhad.com).

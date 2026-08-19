@@ -31,7 +31,7 @@ class _Connection:
 
 class _Schema:
     def require_column(self, _table, _column):
-        return None
+        pass
 
 
 class _LayerOperations(LayerOperationsMixin):

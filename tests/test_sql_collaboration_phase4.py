@@ -2781,7 +2781,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
 
         class _HierarchyProjectData(_ProjectData):
             def replace_database_hierarchy(self, _file_entry, _cdn_types):
-                return None
+                pass
 
         service = RemoteChangeReconciliationService(
             _HierarchyProjectData(database_id),

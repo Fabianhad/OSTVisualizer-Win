@@ -14,6 +14,7 @@ class LicenseOperationStatus(Enum):
     DEVICE_ACTIVATION_INACTIVE = "device_activation_inactive"
     REVOKED = "revoked"
     NO_LICENSE = "no_license"
+    HWID_UNAVAILABLE = "hwid_unavailable"
 
 
 @dataclass

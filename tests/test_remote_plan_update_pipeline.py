@@ -416,16 +416,16 @@ class _ViewerPlan:
         return True
 
     def set_snap_settings(self, *_settings):
-        return None
+        pass
 
     def prefetch_nearby_pages(self, *_args):
-        return None
+        pass
 
     def has_active_remote_projection_blocker(self):
         return self.blocks_remote_projection
 
     def clear(self):
-        return None
+        pass
 
 
 class ViewerRemotePlanUpdateTests(unittest.TestCase):

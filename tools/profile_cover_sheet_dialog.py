@@ -18,7 +18,7 @@ from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDia
 class _IconProvider:
     @staticmethod
     def set_window_icon(_window) -> None:
-        return None
+        pass
 
 
 def _build_data(page_count: int, paths: list[str]) -> CoverSheetData:

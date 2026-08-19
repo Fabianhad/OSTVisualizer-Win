@@ -61,6 +61,10 @@ class MainWindowStartupTests(unittest.TestCase):
                     window._view_window_manager._ui_access_manager,
                     window.ui_access_manager,
                 )
+                left_splitter = window.get_left_splitter()
+                self.assertEqual(left_splitter.minimumWidth(), 320)
+                self.assertIs(left_splitter.widget(0), window._conditions_sidebar)
+                self.assertIs(left_splitter.widget(1), window._bid_layers_sidebar)
             finally:
                 if window is not None:
                     window._workspace_state_coordinator.cleanup()

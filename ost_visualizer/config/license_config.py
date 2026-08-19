@@ -1,4 +1,5 @@
 from pathlib import Path
+from ..domain.services.hardware_identity import HWID_EXTERNAL_LENGTH
 
 
 def _load_trusted_public_key() -> str:
@@ -17,4 +18,4 @@ LICENSE_OFFLINE_GRACE_HOURS = 72
 LICENSE_VALIDATION_INTERVAL_SECONDS = 300
 TRUSTED_LICENSE_PUBLIC_KEY_PEM = _load_trusted_public_key()
 MAX_LICENSE_KEY_LENGTH = 80
-MAX_HWID_LENGTH = 64
+MAX_HWID_LENGTH = HWID_EXTERNAL_LENGTH

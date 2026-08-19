@@ -3097,7 +3097,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             return 0, None, None
 
         def add_no_context_actions(_menu):
-            return None
+            pass
 
         view = self._make_plan_view()
         self._install_page_canvas(

@@ -42,7 +42,7 @@ class _ResultExporter(BaseExporter):
         return {}, {}
 
     def _apply_boolean_operations(self, _takeoffs_by_group):
-        return None
+        pass
 
     def _write_output(
         self,

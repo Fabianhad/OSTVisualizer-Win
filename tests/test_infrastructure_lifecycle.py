@@ -429,7 +429,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
     def test_database_creator_closes_connection_before_raising_cleanup_error(self):
         class FakeCursor:
             def execute(self, _sql):
-                return None
+                pass
 
             def close(self):
                 raise RuntimeError("cursor close failed")
@@ -442,7 +442,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 return FakeCursor()
 
             def commit(self):
-                return None
+                pass
 
             def rollback(self):
                 raise AssertionError("successful schema should not roll back")
