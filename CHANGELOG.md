@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Fixed grid-snapped multi-item moves changing the spacing between selected
+  objects when their original positions had different grid offsets; drag
+  previews, committed Access and SQL moves, and undo/redo now apply one shared
+  snapped group translation.
+- Fixed flipped curved Linear takeoffs retaining the original signed curve
+  offset, which could put the curve on the wrong side and shift a subsequent
+  mixed-selection rotation.
+- Fixed active-page restoration being able to skip the bid-active navigation
+  stage and log an invalid-transition warning after a file or bid context change.
+- Fixed repeated Select All or current-area selection commands leaving only the
+  previously active condition highlighted when the selected takeoff IDs had not
+  changed; the Conditions sidebar now reprojects every represented condition.
+
 ## 1.2.5 - 2026-08-17
 
 ### Added

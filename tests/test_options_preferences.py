@@ -4862,6 +4862,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             "pasted": [50.0, 75.0, 54.0, 79.0]
         }
         view._intelligent_paste_guide_items = []
+        view._current_takeoffs = {}
+        view._current_conditions = {}
         view._current_annotations = {}
         view._snap_increments = 0.0
         return view
@@ -4971,7 +4973,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         lines = self._guide_lines(view)
         self.assertEqual(len(lines), 2)
         self.assertTrue(all(line.x1() == line.x2() for line in lines))
-        self.assertEqual([line.x1() for line in lines], [10.0, 44.0])
+        self.assertEqual([line.x1() for line in lines], [11.0, 49.0])
 
     def test_intelligent_paste_multi_object_x_axis_guides_use_preview_union_bounds(
         self,
@@ -4988,7 +4990,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         lines = self._guide_lines(view)
         self.assertEqual(len(lines), 2)
         self.assertTrue(all(line.y1() == line.y2() for line in lines))
-        self.assertEqual([line.y1() for line in lines], [20.0, 44.0])
+        self.assertEqual([line.y1() for line in lines], [15.0, 44.0])
 
     def test_intelligent_paste_multi_object_both_axis_guides_use_preview_union_bounds(
         self,
@@ -5006,8 +5008,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(len(lines), 4)
         horizontal = [line for line in lines if line.y1() == line.y2()]
         vertical = [line for line in lines if line.x1() == line.x2()]
-        self.assertEqual([line.y1() for line in horizontal], [20.0, 44.0])
-        self.assertEqual([line.x1() for line in vertical], [10.0, 44.0])
+        self.assertEqual([line.y1() for line in horizontal], [15.0, 44.0])
+        self.assertEqual([line.x1() for line in vertical], [11.0, 49.0])
 
     def test_page_label_preferences_update_page_combo_labels(self):
         combo = PageComboBox()

@@ -73,7 +73,7 @@ from ....visualization.core.geometry.takeoff_geometry import (
     mirror_point_takeoff_rotation,
 )
 from .geometry_utils import (
-    mirror_points_around,
+    mirror_position_coords,
     polygon_centroid,
     polygon_is_valid,
     rotate_points_around,
@@ -1649,21 +1649,29 @@ class InputHandlerMixin:
             pos[index + 1] = pos[index + 1] + snapped_dy
         return pos
 
-    def _compute_snapped_multi_drag_position(
+    def _translate_group_plan_item_position(
         self, uid: str, orig_pos: list, ost_dx: float, ost_dy: float
     ) -> list:
         ann = self._current_annotations.get(uid)
         if ann and ann.is_ink:
-            return self._compute_ink_drag_position(orig_pos, ost_dx, ost_dy)
-        text_move = ann is not None and ann.is_text
-        return self.compute_new_position(
-            orig_pos,
-            ost_dx,
-            ost_dy,
-            -1,
-            0,
-            move_only_first_pair=text_move,
-        )
+            pos = list(orig_pos)
+            start = 1 if len(pos) % 2 == 1 else 0
+            for index in range(start, len(pos) - 1, 2):
+                pos[index] += ost_dx
+                pos[index + 1] += ost_dy
+            return pos
+        if ann and ann.is_text:
+            pos = list(orig_pos)
+            if len(pos) >= 2:
+                pos[0] += ost_dx
+                pos[1] += ost_dy
+            return pos
+        return self._translate_position(orig_pos, ost_dx, ost_dy)
+
+    def _snapped_group_translation_delta(
+        self, ost_dx: float, ost_dy: float
+    ) -> tuple[float, float]:
+        return self.snap_ost(ost_dx), self.snap_ost(ost_dy)
 
     def _snapped_multi_drag_scene_delta(
         self,
@@ -1734,6 +1742,7 @@ class InputHandlerMixin:
         *,
         preserve_zero_axes: bool = False,
     ) -> dict:
+        group_dx, group_dy = self._snapped_group_translation_delta(ost_dx, ost_dy)
         child_parent_by_uid = self._area_child_parent_map(
             orig_positions, child_uids=orig_positions
         )
@@ -1741,8 +1750,8 @@ class InputHandlerMixin:
         for uid, orig_pos in orig_positions.items():
             if uid in child_parent_by_uid:
                 continue
-            new_pos = self._compute_snapped_multi_drag_position(
-                uid, orig_pos, ost_dx, ost_dy
+            new_pos = self._translate_group_plan_item_position(
+                uid, orig_pos, group_dx, group_dy
             )
             if preserve_zero_axes:
                 ann = self._current_annotations.get(uid)
@@ -1776,7 +1785,9 @@ class InputHandlerMixin:
     def _update_snapped_multi_drag_preview(
         self, scene_dx: float, scene_dy: float, ost_dx: float, ost_dy: float
     ) -> None:
-        fallback_delta = QtCore.QPointF(scene_dx, scene_dy)
+        group_dx, group_dy = self._snapped_group_translation_delta(ost_dx, ost_dy)
+        fallback_sdx, fallback_sdy = self.ost_to_scene_delta(group_dx, group_dy)
+        fallback_delta = QtCore.QPointF(fallback_sdx, fallback_sdy)
         preview_delta_by_uid = {}
         new_positions = self._compute_group_translation_positions(
             self._drag_multi_orig_positions, ost_dx, ost_dy
@@ -1805,7 +1816,8 @@ class InputHandlerMixin:
             item.moveBy(delta.x(), delta.y())
 
     def _apply_position_keyboard_move(self, ost_dx: float, ost_dy: float) -> bool:
-        fallback_sdx, fallback_sdy = self.ost_to_scene_delta(ost_dx, ost_dy)
+        group_dx, group_dy = self._snapped_group_translation_delta(ost_dx, ost_dy)
+        fallback_sdx, fallback_sdy = self.ost_to_scene_delta(group_dx, group_dy)
         fallback_delta = QtCore.QPointF(fallback_sdx, fallback_sdy)
         delta_by_uid = {}
         moved = False
@@ -2231,7 +2243,15 @@ class InputHandlerMixin:
             if transform_kind == "rotate":
                 new_pos = rotate_points_around(orig_pos, degrees, center_x, center_y)
             else:
-                new_pos = mirror_points_around(orig_pos, center_x, center_y, horizontal)
+                new_pos = mirror_position_coords(
+                    orig_pos,
+                    center_x,
+                    center_y,
+                    horizontal,
+                    is_curved=bool(
+                        condition and condition.is_linear and takeoff.curve >= 0
+                    ),
+                )
             if uid not in self._position_before_edit:
                 self._position_before_edit[uid] = orig_pos
             takeoff.position = new_pos

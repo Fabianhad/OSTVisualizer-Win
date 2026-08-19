@@ -1904,6 +1904,20 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             coordinator._sync_navigation_for_active_page(bid_ref, None)
         self.assertEqual(coordinator._nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
 
+    def test_active_page_signal_projects_bid_base_before_selected_page_state(self):
+        bid_ref = BidRef("active.mdb", "bid-1")
+        coordinator = self._make_page_selection_coordinator(
+            bid_ref=bid_ref,
+            current_state=NavState.FILE_LOADED_NO_BID,
+        )
+        logger = "ost_visualizer.presentation.coordinators.navigation_state_machine"
+        with self.assertNoLogs(logger, level="WARNING"):
+            coordinator._sync_navigation_for_active_page(bid_ref, "page-1")
+        self.assertEqual(
+            coordinator._nav.current_state,
+            NavState.BID_ACTIVE_PAGES_SELECTED,
+        )
+
     def test_master_condition_type_save_warns_when_refresh_fails(self):
         warnings = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

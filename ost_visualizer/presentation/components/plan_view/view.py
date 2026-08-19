@@ -234,6 +234,7 @@ class TakeoffPlanView(
     hole_created = Signal(str, list, str, str)
     elements_deleted = Signal(list)
     takeoff_selection_changed = Signal(list)
+    takeoff_selection_command_applied = Signal(list)
     plan_item_selection_changed = Signal(list)
     geometry_edit_lease_requested = Signal(list)
     cursor_mode_change_requested = Signal(str)
@@ -3531,11 +3532,15 @@ class TakeoffPlanView(
         self, ost_dx: float, ost_dy: float
     ) -> Optional[QtCore.QRectF]:
         min_x = min_y = max_x = max_y = None
-        for uid, start_pos in self._intelligent_paste_drag_positions_start_ost.items():
-            preview_pos = self._compute_snapped_multi_drag_position(
-                uid, start_pos, ost_dx, ost_dy
-            )
-            for i in range(0, len(preview_pos) - 1, 2):
+        preview_positions = self._compute_group_translation_positions(
+            self._intelligent_paste_drag_positions_start_ost,
+            ost_dx,
+            ost_dy,
+        )
+        for uid, preview_pos in preview_positions.items():
+            ann = self._current_annotations.get(uid)
+            start = 1 if ann and ann.is_ink and len(preview_pos) % 2 == 1 else 0
+            for i in range(start, len(preview_pos) - 1, 2):
                 point = self._ost_to_scene_pos(preview_pos[i], preview_pos[i + 1])
                 if min_x is None:
                     min_x = max_x = point.x()
@@ -3730,6 +3735,7 @@ class TakeoffPlanView(
             if self._is_selectable(uid)
         }
         self.set_selected_uids(all_uids)
+        self.takeoff_selection_command_applied.emit(self.get_selected_takeoff_uids())
 
     def set_snap_settings(self, takeoff_increments: float, measure_base: int) -> None:
         if takeoff_increments <= 0:

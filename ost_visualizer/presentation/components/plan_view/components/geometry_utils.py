@@ -145,3 +145,17 @@ def mirror_points_around(
         else:
             result[i * 2 + 1] = (2.0 * center_y) - pos[i * 2 + 1]
     return result
+
+
+def mirror_position_coords(
+    pos: list,
+    center_x: float,
+    center_y: float,
+    horizontal: bool,
+    *,
+    is_curved: bool = False,
+) -> list:
+    result = mirror_points_around(pos, center_x, center_y, horizontal)
+    if is_curved and len(result) >= 7:
+        result[6] = -pos[6]
+    return result

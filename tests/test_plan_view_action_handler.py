@@ -4585,6 +4585,60 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         return handler, write, undo
 
+    def test_group_move_payload_matches_mdb_sql_and_mdb_undo_redo(self):
+        first_old = [3.0, 3.0, 13.0, 3.0]
+        second_old = [22.0, 22.0, 32.0, 22.0]
+        first_new = [13.0, 13.0, 23.0, 13.0]
+        second_new = [32.0, 32.0, 42.0, 32.0]
+        takeoff_states = {
+            "first": (first_old, 0.0),
+            "second": (second_old, 0.0),
+        }
+        changes = [
+            ("first", first_old, first_new),
+            ("second", second_old, second_new),
+        ]
+        expected = [("first", first_new), ("second", second_new)]
+        mdb_handler, mdb_write, mdb_undo = self._make_group_transform_handler(
+            takeoff_states, False
+        )
+        sql_handler, sql_write, _sql_undo = self._make_group_transform_handler(
+            takeoff_states, True
+        )
+        mdb_handler.on_positions_flushed(changes, [])
+        sql_handler.on_positions_flushed(changes, [])
+        self.assertEqual(mdb_write.position_calls[0][1], expected)
+        self.assertEqual(sql_write.queued_geometry[0][2]["takeoff_positions"], expected)
+        self.assertEqual(mdb_undo.count, 1)
+        self.assertTrue(mdb_undo.undo())
+        self.assertTrue(mdb_undo.redo())
+        self.assertEqual(
+            mdb_write.position_calls[1][1],
+            [("first", first_old), ("second", second_old)],
+        )
+        self.assertEqual(mdb_write.position_calls[2][1], expected)
+
+    def test_curved_linear_flip_payload_matches_mdb_sql_and_mdb_undo_redo(self):
+        old_position = [0.0, 0.0, 20.0, 0.0, 10.0, 8.0, -8.0]
+        new_position = [40.0, 0.0, 20.0, 0.0, 30.0, 8.0, 8.0]
+        takeoff_states = {"linear": (old_position, 0.0)}
+        changes = [("linear", old_position, new_position)]
+        expected = [("linear", new_position)]
+        mdb_handler, mdb_write, mdb_undo = self._make_group_transform_handler(
+            takeoff_states, False
+        )
+        sql_handler, sql_write, _sql_undo = self._make_group_transform_handler(
+            takeoff_states, True
+        )
+        mdb_handler.on_group_rotation_flushed(changes, [], [])
+        sql_handler.on_group_rotation_flushed(changes, [], [])
+        self.assertEqual(mdb_write.position_calls[0][1], expected)
+        self.assertEqual(sql_write.queued_geometry[0][2]["takeoff_positions"], expected)
+        self.assertTrue(mdb_undo.undo())
+        self.assertTrue(mdb_undo.redo())
+        self.assertEqual(mdb_write.position_calls[1][1], [("linear", old_position)])
+        self.assertEqual(mdb_write.position_calls[2][1], expected)
+
     def test_group_flip_payload_matches_mdb_sql_and_mdb_undo_redo(self):
         area_old = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
         area_new = [50.0, 0.0, 40.0, 0.0, 40.0, 10.0, 50.0, 10.0]

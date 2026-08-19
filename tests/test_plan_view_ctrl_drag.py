@@ -1158,6 +1158,34 @@ class CtrlDragTests(unittest.TestCase):
                 after = self._rendered_takeoff_selection_bounds(view, selected)
                 self._assert_bounds_almost_equal(before, after)
 
+    def test_curved_linear_flip_reflects_signed_offset_footprint(self):
+        selected = {"linear", "count"}
+        for horizontal in (True, False):
+            with self.subTest(horizontal=horizontal):
+                view = self._make_transform_view(selected)
+                linear = view._current_takeoffs["linear"]
+                linear.position = [0.0, 0.0, 20.0, 0.0, 10.0, 8.0, -8.0]
+                linear.curve = Takeoff.CURVE_ENABLED
+                left, top, right, bottom = self._rendered_takeoff_selection_bounds(
+                    view, selected
+                )
+                pivot_x = (left + right) / 2.0
+                pivot_y = (top + bottom) / 2.0
+                before = self._takeoff_vertices(view, "linear")
+                view.flip_selected_takeoffs(horizontal)
+                expected = [
+                    (
+                        2.0 * pivot_x - x if horizontal else x,
+                        y if horizontal else 2.0 * pivot_y - y,
+                    )
+                    for x, y in before
+                ]
+                self._assert_vertices_almost_equal(
+                    expected,
+                    self._takeoff_vertices(view, "linear"),
+                )
+                self.assertEqual(linear.position[6], 8.0)
+
     def test_page_scale_and_calibration_preserve_small_count_rendered_bounds(self):
         selected = {"area", "count"}
         for screen_units_per_ost in (0.25, 1.0, 4.0):
@@ -1379,6 +1407,66 @@ class CtrlDragTests(unittest.TestCase):
         for uid, takeoff in view._current_takeoffs.items():
             self._assert_bounds_almost_equal(original_positions[uid], takeoff.position)
             self.assertAlmostEqual(original_rotations[uid], takeoff.rotation)
+
+    def test_flip_then_rotate_uses_one_stable_canonical_group_pivot(self):
+        selected = {"linear", "count", "area", "attachment"}
+        for horizontal in (True, False):
+            for screen_units_per_ost in (0.25, 1.0, 4.0):
+                with self.subTest(
+                    horizontal=horizontal,
+                    screen_units_per_ost=screen_units_per_ost,
+                ):
+                    view = self._make_transform_view(selected)
+                    view._scene_builder.cs.ost_to_screen_pixels = (
+                        lambda value: float(value) * screen_units_per_ost
+                    )
+                    view._current_conditions["linear"].thickness = 0.1
+                    linear = view._current_takeoffs["linear"]
+                    linear.position = [0.0, 0.0, 20.0, 0.0, 7.0, 9.0, -8.0]
+                    linear.curve = Takeoff.CURVE_ENABLED
+                    view._current_conditions["count"].shape = shapes.SQUARE
+                    view._current_conditions["count"].display_size = 10.0
+                    view._current_conditions["attachment"].shape = shapes.TRIANGLE
+                    original_positions = {
+                        uid: list(view._current_takeoffs[uid].position)
+                        for uid in selected
+                    }
+                    original_rotations = {
+                        uid: view._current_takeoffs[uid].rotation for uid in selected
+                    }
+                    original_bounds = self._rendered_takeoff_selection_bounds(
+                        view, selected
+                    )
+                    original_center = (
+                        (original_bounds[0] + original_bounds[2]) / 2.0,
+                        (original_bounds[1] + original_bounds[3]) / 2.0,
+                    )
+                    view.flip_selected_takeoffs(horizontal)
+                    flipped_bounds = self._rendered_takeoff_selection_bounds(
+                        view, selected
+                    )
+                    self._assert_bounds_almost_equal(original_bounds, flipped_bounds)
+                    view.rotate_selected_takeoffs(90.0)
+                    rotated_bounds = self._rendered_takeoff_selection_bounds(
+                        view, selected
+                    )
+                    rotated_center = (
+                        (rotated_bounds[0] + rotated_bounds[2]) / 2.0,
+                        (rotated_bounds[1] + rotated_bounds[3]) / 2.0,
+                    )
+                    self._assert_bounds_almost_equal(original_center, rotated_center)
+                    view.rotate_selected_takeoffs(-90.0)
+                    view.flip_selected_takeoffs(horizontal)
+                    for uid in selected:
+                        self._assert_bounds_almost_equal(
+                            original_positions[uid],
+                            view._current_takeoffs[uid].position,
+                        )
+                        self.assertAlmostEqual(
+                            original_rotations[uid],
+                            view._current_takeoffs[uid].rotation,
+                            places=9,
+                        )
 
     def test_four_quarter_turns_restore_mixed_visible_geometry(self):
         selected = {"linear", "count", "area", "attachment"}
@@ -3181,7 +3269,7 @@ class CtrlDragTests(unittest.TestCase):
         self.assertIs(selection_item.scene(), scene)
         self.assertEqual(view.cursor_mode_change_requested.emitted, [("slope_rotate",)])
 
-    def test_multi_takeoff_drag_preview_uses_snapped_item_deltas(self):
+    def test_multi_takeoff_drag_preview_and_commit_preserve_group_offsets(self):
         view = self._make_view({"t1", "t2"})
         view._current_takeoffs["t1"].position = [3.0, 3.0, 13.0, 3.0]
         view._current_takeoffs["t2"].position = [22.0, 22.0, 32.0, 22.0]
@@ -3204,13 +3292,24 @@ class CtrlDragTests(unittest.TestCase):
         view.mouseMoveEvent(move)
         self.assertTrue(move.accepted)
         self.assertEqual(
-            view._uid_to_items["t1"][0].pos(), QtCore.QPointF(107.0, 107.0)
+            view._uid_to_items["t1"][0].pos(), QtCore.QPointF(110.0, 110.0)
         )
         self.assertEqual(
-            view._uid_to_items["t2"][0].pos(), QtCore.QPointF(208.0, 208.0)
+            view._uid_to_items["t2"][0].pos(), QtCore.QPointF(210.0, 210.0)
         )
-        self.assertEqual(border1.pos(), QtCore.QPointF(307.0, 307.0))
-        self.assertEqual(border2.pos(), QtCore.QPointF(408.0, 408.0))
+        self.assertEqual(border1.pos(), QtCore.QPointF(310.0, 310.0))
+        self.assertEqual(border2.pos(), QtCore.QPointF(410.0, 410.0))
+        view.mouseReleaseEvent(
+            FakeMouseEvent(x=6, y=6, buttons=Qt.MouseButton.NoButton)
+        )
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [13.0, 13.0, 23.0, 13.0],
+        )
+        self.assertEqual(
+            view._current_takeoffs["t2"].position,
+            [32.0, 32.0, 42.0, 32.0],
+        )
 
     def test_multi_drag_moves_unselected_hole_with_selected_area_parent(self):
         view = self._make_view({"parent", "t2"})
@@ -3251,21 +3350,21 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(set(view._drag_multi_orig_positions), {"parent", "hole", "t2"})
         view.mouseMoveEvent(FakeMouseEvent(x=6, y=6))
         self.assertEqual(
-            view._uid_to_items["parent"][0].pos(), QtCore.QPointF(107.0, 107.0)
+            view._uid_to_items["parent"][0].pos(), QtCore.QPointF(110.0, 110.0)
         )
         self.assertEqual(
-            view._uid_to_items["hole"][0].pos(), QtCore.QPointF(157.0, 157.0)
+            view._uid_to_items["hole"][0].pos(), QtCore.QPointF(160.0, 160.0)
         )
         view.mouseReleaseEvent(
             FakeMouseEvent(x=6, y=6, buttons=Qt.MouseButton.NoButton)
         )
         self.assertEqual(
             view._current_takeoffs["parent"].position,
-            [10.0, 10.0, 20.0, 10.0, 20.0, 20.0, 10.0, 20.0],
+            [13.0, 13.0, 23.0, 13.0, 23.0, 23.0, 13.0, 23.0],
         )
         self.assertEqual(
             view._current_takeoffs["hole"].position,
-            [13.0, 13.0, 16.0, 13.0, 16.0, 16.0, 13.0, 16.0],
+            [16.0, 16.0, 19.0, 16.0, 19.0, 19.0, 16.0, 19.0],
         )
 
     def test_multi_hotlink_arrow_move_updates_graphics_and_dirty_positions(self):
@@ -3436,14 +3535,14 @@ class CtrlDragTests(unittest.TestCase):
         InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
         self.assertEqual(
             view._current_takeoffs["parent"].position,
-            [10.0, 3.0, 20.0, 3.0, 20.0, 13.0, 10.0, 13.0],
+            [13.0, 3.0, 23.0, 3.0, 23.0, 13.0, 13.0, 13.0],
         )
         self.assertEqual(
             view._current_takeoffs["hole"].position,
-            [13.0, 6.0, 16.0, 6.0, 16.0, 9.0, 13.0, 9.0],
+            [16.0, 6.0, 19.0, 6.0, 19.0, 9.0, 16.0, 9.0],
         )
         self.assertEqual(
-            view._uid_to_items["hole"][0].pos(), QtCore.QPointF(157.0, 150.0)
+            view._uid_to_items["hole"][0].pos(), QtCore.QPointF(160.0, 150.0)
         )
         self.assertEqual(
             set(view._dirty_positions),
@@ -3960,7 +4059,7 @@ class CtrlDragTests(unittest.TestCase):
             position=[0.25, 10.0, 20.0, 30.0, 40.0],
         )
         view._current_annotations = {"ink1": annotation}
-        moved = view._compute_snapped_multi_drag_position(
+        moved = view._translate_group_plan_item_position(
             "ink1", annotation.position, 3.0, -4.0
         )
         self.assertEqual(moved, [0.25, 13.0, 16.0, 33.0, 36.0])

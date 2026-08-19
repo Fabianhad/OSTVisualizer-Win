@@ -406,6 +406,7 @@ class SelectionManagerMixin:
                 continue
             selected_uids.add(uid)
         self.set_selected_uids(selected_uids)
+        self.takeoff_selection_command_applied.emit(self.get_selected_takeoff_uids())
 
     def _pt_to_scene(self, x: float, y: float) -> QtCore.QPointF:
         transform = self._current_page_transform()

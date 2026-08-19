@@ -267,10 +267,11 @@ State and identity:
 - Mirrored UI/render state is acceptable when synchronized from an owner; avoid adding competing mutation paths or extra refresh/event dispatch paths.
 - `UIEventCoordinator` owns the canonical cross-view takeoff selection and its
   takeoff-to-condition sidebar projection. Direct 2D/3D user selections update
-  that owner; mirrored viewer updates remain non-emitting. Plan cursor mode is
-  authoritative for interaction state, and its toolbar actions must remain in
-  the existing exclusive action group rather than using signal-blocked checked
-  states that bypass group exclusivity.
+  that owner; mirrored viewer updates remain non-emitting. Explicit Plan View
+  selection commands reclaim that projection even when the selected takeoff IDs
+  are unchanged. Plan cursor mode is authoritative for interaction state, and
+  its toolbar actions must remain in the existing exclusive action group rather
+  than using signal-blocked checked states that bypass group exclusivity.
 - Annotation-layer visibility is authoritative in `ProjectDataService`. Plan
   snapshots must retain hidden annotations so every open plan surface can
   reveal the existing scene items when the layer is enabled; do not filter
@@ -290,6 +291,11 @@ State and identity:
   condition labels do not own transform geometry. Point symbols apply their
   dimensions and display scale in local shape space before one Cartesian
   rotation; do not fold rotation into an ellipse's parametric sample angle.
+  Curved Linear reflections reverse the stored signed curve offset exactly once;
+  rotations preserve it.
+- Multi-item movement applies one grid-snapped model-space translation to the
+  complete selection. Preview, commit, Access/SQL persistence, and undo/redo
+  preserve every item's original offset; do not snap each item independently.
 
 C++ extensions:
 

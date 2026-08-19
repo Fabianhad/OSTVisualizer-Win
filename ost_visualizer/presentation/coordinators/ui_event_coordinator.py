@@ -753,6 +753,9 @@ class UIEventCoordinator:
         self._viewer.plan_view = view
         self._toolbar.set_plan_view(view)
         view.takeoff_selection_changed.connect(self._on_takeoff_selection_changed)
+        view.takeoff_selection_command_applied.connect(
+            self._on_takeoff_selection_command_applied
+        )
         view.backout_mode_changed.connect(self._on_backout_mode_changed)
         view.clipboard_changed.connect(self._toolbar.refresh)
         view.text_annotation_edit_mode_changed.connect(
@@ -1179,6 +1182,7 @@ class UIEventCoordinator:
         condition_uids: set[str],
         *,
         selection_changed: bool,
+        selection_command_applied: bool = False,
     ) -> bool:
         current = set(self.ui_state_manager.highlighted_condition_uids)
         previously_projected = set(self._selection_projected_condition_uids)
@@ -1196,7 +1200,7 @@ class UIEventCoordinator:
                     self._selection_projected_condition_uids = set(condition_uids)
                 return False
             takeoff_owns_highlight = bool(previously_projected)
-            if takeoff_owns_highlight or selection_changed:
+            if takeoff_owns_highlight or selection_changed or selection_command_applied:
                 self._selection_projected_condition_uids = set(condition_uids)
                 takeoff_owns_highlight = True
             if not takeoff_owns_highlight:
@@ -1224,7 +1228,13 @@ class UIEventCoordinator:
     _SOURCE_3D = "3d_embedded"
     _SOURCE_3D_WINDOW = "3d_window"
 
-    def _sync_selection(self, source: str, takeoff_uids: list) -> None:
+    def _sync_selection(
+        self,
+        source: str,
+        takeoff_uids: list,
+        *,
+        selection_command_applied: bool = False,
+    ) -> None:
         if self._placement is None or self._nav is None:
             return
         selected_uids, cond_uids = self._canonical_takeoff_selection(takeoff_uids)
@@ -1234,6 +1244,7 @@ class UIEventCoordinator:
         projection_changed = self._project_takeoff_selection_conditions(
             cond_uids,
             selection_changed=selection_changed,
+            selection_command_applied=selection_command_applied,
         )
         if not selection_changed:
             if (
@@ -1270,6 +1281,16 @@ class UIEventCoordinator:
         if self._placement is None or self._nav is None:
             return
         self._sync_selection(self._SOURCE_2D, uids)
+        self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_takeoff_selection_command_applied(self, uids: list) -> None:
+        if self._placement is None or self._nav is None:
+            return
+        self._sync_selection(
+            self._SOURCE_2D,
+            uids,
+            selection_command_applied=True,
+        )
         self._restore_project_tree_bid_selection_if_needed()
 
     def _on_backout_mode_changed(self, _active: bool) -> None:
@@ -3503,6 +3524,8 @@ class UIEventCoordinator:
             return
         if self._nav.current_state == NavState.PLACE_MODE:
             return
+        if self._nav.current_state == NavState.FILE_LOADED_NO_BID:
+            self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
         if self._nav.current_state != NavState.BID_ACTIVE_PAGES_SELECTED:
             self._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
 
