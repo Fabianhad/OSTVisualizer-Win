@@ -46,6 +46,7 @@ class SmbiosSystemUuidReader:
             ) from exc
 
     def _read_raw_smbios(self) -> bytes:
+        ctypes.set_last_error(0)
         size = self._api.GetSystemFirmwareTable(
             _RAW_SMBIOS_PROVIDER,
             0,
@@ -53,10 +54,9 @@ class SmbiosSystemUuidReader:
             0,
         )
         if not size:
-            raise HardwareIdentityError(
-                "Unable to query the SMBIOS firmware table size"
-            )
+            raise _firmware_api_error("Unable to query the SMBIOS firmware table size")
         buffer = ctypes.create_string_buffer(size)
+        ctypes.set_last_error(0)
         written = self._api.GetSystemFirmwareTable(
             _RAW_SMBIOS_PROVIDER,
             0,
@@ -64,10 +64,25 @@ class SmbiosSystemUuidReader:
             size,
         )
         if not written:
-            raise HardwareIdentityError("Unable to read the SMBIOS firmware table")
+            raise _firmware_api_error("Unable to read the SMBIOS firmware table")
         if written > size:
-            raise HardwareIdentityError("The SMBIOS firmware table changed while read")
+            raise HardwareIdentityError(
+                "The SMBIOS firmware table grew while it was being read "
+                f"(allocated {size} bytes, now requires {written})"
+            )
         return buffer.raw[:written]
+
+
+def _firmware_api_error(message: str) -> HardwareIdentityError:
+    error_code = ctypes.get_last_error()
+    if not error_code:
+        return HardwareIdentityError(
+            f"{message} (Windows did not report an error code)"
+        )
+    error_text = ctypes.FormatError(error_code).strip()
+    return HardwareIdentityError(
+        f"{message} (Windows error {error_code}: {error_text})"
+    )
 
 
 def parse_smbios_system_uuid(raw_smbios: bytes) -> Optional[uuid.UUID]:

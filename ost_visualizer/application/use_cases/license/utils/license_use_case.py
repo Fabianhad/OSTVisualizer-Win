@@ -122,7 +122,10 @@ def map_error(
         return (
             LicenseOperationStatus.FAILED,
             LicenseStatus.INVALID,
-            "Unable to determine this computer's hardware ID.",
+            (
+                "The license server rejected this computer's hardware ID. "
+                "Please contact support."
+            ),
         )
     raise ValueError(f"Unknown license error contract: {error_name}")
 

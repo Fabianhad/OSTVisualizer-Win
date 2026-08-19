@@ -4,6 +4,7 @@ import json
 import os
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 import uuid
@@ -18,8 +19,13 @@ from ost_visualizer.application.use_cases.license.activate_license_use_case impo
 from ost_visualizer.application.use_cases.license.validate_license_use_case import (
     ValidateLicenseUseCase,
 )
+from ost_visualizer.application.use_cases.license.utils.license_use_case import (
+    ERROR_CONTRACT,
+    ERROR_INVALID_HWID,
+)
+from ost_visualizer.application.dtos.license_dto import LicenseOperationStatus
 from ost_visualizer.domain.aggregates.license_aggregate import LicenseAggregate
-from ost_visualizer.domain.entities.license import License
+from ost_visualizer.domain.entities.license import License, LicenseStatus
 from ost_visualizer.domain.services.hardware_identity import (
     HWID_VERSION,
     HardwareIdentityError,
@@ -30,6 +36,7 @@ from ost_visualizer.domain.services.hardware_identity import (
 )
 from ost_visualizer.infrastructure.app_paths import get_machine_app_data_dir
 from ost_visualizer.infrastructure.external.license_api_client import LicenseApiClient
+from ost_visualizer.infrastructure.hardware import hwid_generator, smbios_system_uuid
 from ost_visualizer.infrastructure.hardware.hwid_generator import HWIDGenerator
 from ost_visualizer.infrastructure.hardware.smbios_system_uuid import (
     SmbiosSystemUuidReader,
@@ -104,6 +111,29 @@ class RecordingLicenseApi:
         }
 
 
+class RejectingHardwareIdApi:
+    def __init__(self):
+        self.calls = []
+
+    def activate(self, license_key, hwid):
+        self.calls.append((license_key, hwid))
+        return False, {
+            "success": False,
+            "error": "HWID too long",
+            "error_name": ERROR_INVALID_HWID,
+            "error_code": ERROR_CONTRACT[ERROR_INVALID_HWID],
+        }
+
+    def validate(self, license_key, hwid):
+        self.calls.append((license_key, hwid))
+        return False, {
+            "valid": False,
+            "error": "HWID too long",
+            "error_name": ERROR_INVALID_HWID,
+            "error_code": ERROR_CONTRACT[ERROR_INVALID_HWID],
+        }
+
+
 class HwidV1Tests(unittest.TestCase):
     def test_reader_uses_windows_firmware_table_api(self):
         raw_smbios = _build_raw_smbios(SYSTEM_UUID)
@@ -139,6 +169,37 @@ class HwidV1Tests(unittest.TestCase):
         self.assertEqual(firmware_function.calls[0][1:], (0, 0))
         self.assertEqual(firmware_function.calls[1][1:], (0, len(raw_smbios)))
 
+    def test_reader_preserves_windows_error_code_when_size_query_fails(self):
+        class FirmwareTableFunction:
+            def __init__(self):
+                self.argtypes = None
+                self.restype = None
+
+            def __call__(self, _provider, _table_id, _buffer, _buffer_size):
+                ctypes.set_last_error(5)
+                return 0
+
+        kernel32 = type(
+            "Kernel32",
+            (),
+            {"GetSystemFirmwareTable": FirmwareTableFunction()},
+        )()
+        with self.assertRaisesRegex(HardwareIdentityError, "Windows error 5"):
+            SmbiosSystemUuidReader(kernel32).read_system_uuid()
+
+    @unittest.skipUnless(
+        sys.platform == "win32"
+        and os.environ.get("OSTV_RUN_WINDOWS_FIRMWARE_INTEGRATION") == "1",
+        "set OSTV_RUN_WINDOWS_FIRMWARE_INTEGRATION=1 for the live firmware API test",
+    )
+    def test_live_windows_firmware_api_returns_valid_system_uuid(self):
+        reader = SmbiosSystemUuidReader()
+        raw_smbios = reader._read_raw_smbios()
+        self.assertGreaterEqual(len(raw_smbios), 8)
+        identifier = parse_smbios_system_uuid(raw_smbios)
+        self.assertIsInstance(identifier, uuid.UUID)
+        self.assertEqual(reader.read_system_uuid(), identifier)
+
     def test_smbios_uuid_is_parsed_with_canonical_byte_order(self):
         raw = _build_raw_smbios(SYSTEM_UUID, version=(3, 2))
         parsed = parse_smbios_system_uuid(raw)
@@ -159,12 +220,33 @@ class HwidV1Tests(unittest.TestCase):
             uuid.UUID(int=(1 << 128) - 1),
             uuid.UUID("00010203-0405-0607-0809-0A0B0C0D0E0F"),
             uuid.UUID("03000200-0400-0500-0006-000700080009"),
+            uuid.UUID("DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF"),
         )
         for identifier in unusable:
             with self.subTest(identifier=identifier):
                 self.assertIsNone(
                     parse_smbios_system_uuid(_build_raw_smbios(identifier))
                 )
+
+    def test_legitimate_non_rfc_and_sparse_vendor_uuids_are_accepted(self):
+        identifiers = (
+            uuid.UUID("12345678-1234-0000-0011-223344556677"),
+            uuid.UUID("00000000-0000-0000-0000-000000000001"),
+            uuid.UUID("00112233-4455-6677-C899-AABBCCDDEEFF"),
+        )
+        for identifier in identifiers:
+            with self.subTest(identifier=identifier):
+                self.assertEqual(
+                    parse_smbios_system_uuid(_build_raw_smbios(identifier)),
+                    identifier,
+                )
+
+    def test_missing_system_information_record_returns_no_uuid(self):
+        self.assertIsNone(parse_smbios_system_uuid(_build_raw_smbios(None)))
+
+    def test_duplicate_identical_system_information_records_are_accepted(self):
+        raw = _build_raw_smbios(SYSTEM_UUID, extra_system_uuid=SYSTEM_UUID)
+        self.assertEqual(parse_smbios_system_uuid(raw), SYSTEM_UUID)
 
     def test_malformed_smbios_is_an_explicit_failure(self):
         malformed_tables = (
@@ -275,9 +357,6 @@ class HwidV1Tests(unittest.TestCase):
                     self.assertEqual(observed, baseline)
 
     def test_generator_has_only_canonical_identity_sources(self):
-        from ost_visualizer.infrastructure.hardware import hwid_generator
-        from ost_visualizer.infrastructure.hardware import smbios_system_uuid
-
         production_source = (
             inspect.getsource(hwid_generator) + inspect.getsource(smbios_system_uuid)
         ).lower()
@@ -406,6 +485,60 @@ class HwidV1Tests(unittest.TestCase):
                 ).get_hwid()
         self.assertEqual(factory_calls, [])
 
+    def test_corrupt_identity_record_is_not_replaced(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            identity_path = Path(temp_dir) / "hardware_identity_v1.json"
+            identity_path.write_text("{not-json", encoding="utf-8")
+            generator = HWIDGenerator(
+                identity_path=identity_path,
+                system_uuid_reader=FixedSystemUuidReader(SYSTEM_UUID),
+            )
+            with self.assertRaisesRegex(HardwareIdentityError, "invalid"):
+                generator.get_hwid()
+            self.assertEqual(identity_path.read_text(encoding="utf-8"), "{not-json")
+            self.assertFalse(
+                identity_path.with_name(
+                    "hardware_identity_v1.json.initialized"
+                ).exists()
+            )
+
+    def test_existing_identity_without_marker_is_loaded_and_marked(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            identity_path = Path(temp_dir) / "hardware_identity_v1.json"
+            identity = MachineIdentity.create(
+                HardwareIdentitySource.SMBIOS_SYSTEM_UUID,
+                SYSTEM_UUID,
+            )
+            identity_path.write_text(
+                json.dumps(identity.to_dict()),
+                encoding="utf-8",
+            )
+            hwid = HWIDGenerator(
+                identity_path=identity_path,
+                system_uuid_reader=FixedSystemUuidReader(SYSTEM_UUID),
+            ).get_hwid()
+            marker_path = identity_path.with_name(
+                "hardware_identity_v1.json.initialized"
+            )
+            self.assertEqual(hwid, build_hwid(identity))
+            self.assertTrue(marker_path.exists())
+
+    def test_machine_identity_write_permission_failure_is_explicit(self):
+        class PermissionDeniedRepository:
+            def load(self):
+                return None
+
+            def create_if_absent(self, _identity):
+                raise PermissionError("machine identity directory is read-only")
+
+        generator = HWIDGenerator(
+            identity_repository=PermissionDeniedRepository(),
+            system_uuid_reader=FixedSystemUuidReader(SYSTEM_UUID),
+        )
+        with self.assertRaises(HardwareIdentityError) as raised:
+            generator.get_hwid()
+        self.assertIsInstance(raised.exception.__cause__, PermissionError)
+
     def test_concurrent_fallback_startup_persists_one_atomic_identity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             identity_path = Path(temp_dir) / "hardware_identity_v1.json"
@@ -521,6 +654,41 @@ class HwidV1LicenseContractTests(unittest.TestCase):
                 for payload, _signature in verifier.payloads
             )
         )
+
+    def test_valid_generated_hwid_rejected_by_server_is_not_reported_unavailable(self):
+        aggregate = LicenseAggregate(
+            MemoryLicenseRepository(),
+            hwid_provider=lambda: self.hwid,
+            signature_verifier=AcceptingSignatureVerifier(),
+        )
+        aggregate.ensure_hwid()
+        api = RejectingHardwareIdApi()
+        result = ActivateLicenseUseCase(aggregate, api).execute("LIC-TEST")
+        self.assertFalse(result.success)
+        self.assertEqual(result.operation_status, LicenseOperationStatus.FAILED)
+        self.assertEqual(result.license_status, LicenseStatus.INVALID)
+        self.assertIn("license server rejected", result.message)
+        self.assertNotIn("Unable to determine", result.message)
+        self.assertEqual(api.calls, [("LIC-TEST", self.hwid)])
+
+    def test_validation_logs_server_hwid_rejection_reason(self):
+        cached = License(
+            license_key="LIC-TEST",
+            hwid=self.hwid,
+            hwid_version=HWID_VERSION,
+        )
+        aggregate = LicenseAggregate(
+            MemoryLicenseRepository(cached),
+            hwid_provider=lambda: self.hwid,
+            signature_verifier=AcceptingSignatureVerifier(),
+        )
+        api = RejectingHardwareIdApi()
+        use_case = ValidateLicenseUseCase(aggregate, api)
+        with self.assertLogs(use_case.logger, level="WARNING") as captured:
+            result = use_case.execute()
+        self.assertFalse(result.success)
+        self.assertIn("license server rejected", result.message)
+        self.assertTrue(any("HWID too long" in line for line in captured.output))
 
     def test_local_validation_and_offline_grace_require_canonical_hwid(self):
         now = datetime.now(timezone.utc)

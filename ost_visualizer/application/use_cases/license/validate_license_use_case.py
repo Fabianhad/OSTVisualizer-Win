@@ -91,7 +91,7 @@ class ValidateLicenseUseCase:
         return self._failure_result(response)
 
     def _failure_result(self, response: Optional[dict]) -> LicenseOperationResultDto:
-        return parse_failure_response(
+        failure = parse_failure_response(
             response,
             operation="validate",
             network_message=(
@@ -99,4 +99,11 @@ class ValidateLicenseUseCase:
                 "validated. Please check your internet connection."
             ),
             network_license_status=LicenseStatus.NETWORK_ERROR,
-        ).result
+        )
+        if response is not None:
+            self.logger.warning(
+                "License validation failed: %s (code: %s)",
+                failure.server_message,
+                failure.error_code,
+            )
+        return failure.result

@@ -428,6 +428,40 @@ class LicenseActivationContractTests(unittest.TestCase):
         self.assertEqual(len(publisher.invalidated), 1)
         self.assertIn("hardware identity is unavailable", publisher.invalidated[0][0])
 
+    def test_startup_populates_hwid_before_license_state_projection(self):
+        class PopulatingHwidModel(FakeModel):
+            def __init__(self):
+                super().__init__()
+                self.license_key = None
+                self.hwid = None
+                self.ensure_calls = 0
+
+            def ensure_hwid(self):
+                self.ensure_calls += 1
+                self.hwid = TEST_HWID
+                return self.hwid
+
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "must not run",
+        )
+        model = PopulatingHwidModel()
+        validate = FakeUseCase(invalid)
+        publisher = FakeEventPublisher()
+        orchestrator = self._build_orchestrator(
+            validate,
+            FakeUseCase(invalid),
+            publisher,
+            model=model,
+        )
+        orchestrator.initialize()
+        self.assertEqual(model.ensure_calls, 1)
+        self.assertEqual(model.hwid, TEST_HWID)
+        self.assertEqual(validate.calls, [])
+        self.assertEqual(publisher.lost_calls, 1)
+
     def test_activation_hwid_failure_returns_explicit_message(self):
         invalid = self._result(
             False,

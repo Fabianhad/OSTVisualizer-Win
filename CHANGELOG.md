@@ -8,7 +8,9 @@
   files, or unrelated devices changed. The canonical HWID v1 pins one SMBIOS
   System UUID or machine-scoped installation UUID, uses a full SHA-256 value,
   fails explicitly when the pinned identity is unavailable, and clears invalid
-  local license caches for reactivation.
+  local license caches for reactivation. Firmware API failures now retain the
+  Windows error details in diagnostics, and server rejection of a generated
+  HWID is reported separately from local hardware-identity unavailability.
 - Fixed grid-snapped multi-item moves changing the spacing between selected
   objects when their original positions had different grid offsets; drag
   previews, committed Access and SQL moves, and undo/redo now apply one shared
