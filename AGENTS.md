@@ -128,6 +128,13 @@ Persistence:
   never participates. HWID v1 is `v1:` plus the complete uppercase SHA-256 digest,
   calculated from `OST_VISUALIZER_HWID|v1|<source>|<normalized_uuid>`, and
   license caches must carry the matching explicit HWID version.
+- License activation requests require one versioned `activation_identity`
+  object containing the Windows SAM-compatible account name, NetBIOS computer
+  name, and the computer's domain/workgroup join type and name. Collect it only
+  through the canonical Windows provider, keep it separate from HWID generation
+  and signature inputs, and do not send an older payload without it. These
+  client-reported fields are activation audit context, not trusted authorization
+  claims or stable machine identity.
 - Saved databases use stable backend-aware descriptors in `file_state.json`.
   SQL passwords belong only in Windows Credential Manager; never place them in
   JSON, logs, exception text, labels, command lines, snapshots, or `repr` output.

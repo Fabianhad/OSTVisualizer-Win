@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Added a required Windows activation audit identity so license activations
+  record the initiating `DOMAIN\User`, computer name, and domain/workgroup join
+  context without incorporating mutable account or network names into the HWID.
+
 ### Fixed
 
 - Fixed machine license identities changing when WMIC, WMI results, user-profile

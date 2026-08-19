@@ -3,6 +3,7 @@ from typing import Optional
 from ....domain.aggregates.license_aggregate import LicenseAggregate
 from ....domain.repositories.i_license_api_client import ILicenseApiClient
 from ....domain.services.hardware_identity import HWID_VERSION
+from ...dtos.license_activation_identity_dto import LicenseActivationIdentityError
 from ...dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 from .utils.license_use_case import (
     build_success_result,
@@ -38,7 +39,17 @@ class ActivateLicenseUseCase:
                 operation_status=LicenseOperationStatus.FAILED,
                 message="Unable to determine this computer's hardware ID.",
             )
-        success, response = self.api_client.activate(cleaned_key, hwid)
+        try:
+            success, response = self.api_client.activate(cleaned_key, hwid)
+        except LicenseActivationIdentityError as exc:
+            self.logger.error("License activation identity unavailable: %s", exc)
+            return create_error_result(
+                operation_status=LicenseOperationStatus.FAILED,
+                message=(
+                    "Unable to identify the current Windows user and computer "
+                    "for license activation. Please contact support."
+                ),
+            )
         if success and response is not None:
             signed_response, contract_error = parse_signed_success_response(
                 response, success_field="success", operation="activate"

@@ -5,6 +5,12 @@ import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional, Tuple
+from ...application.dtos.license_activation_identity_dto import (
+    LICENSE_ACTIVATION_IDENTITY_PAYLOAD_FIELD,
+)
+from ...application.interfaces.i_license_activation_identity_provider import (
+    ILicenseActivationIdentityProvider,
+)
 
 _TRANSIENT_ERRORS = (urllib.error.URLError, TimeoutError, OSError)
 
@@ -12,6 +18,7 @@ _TRANSIENT_ERRORS = (urllib.error.URLError, TimeoutError, OSError)
 class LicenseApiClient:
     def __init__(
         self,
+        activation_identity_provider: ILicenseActivationIdentityProvider,
         base_url: str = "https://fabianhad.com/ost3d/api",
         timeout: int = 10,
         logger: Optional[logging.Logger] = None,
@@ -19,6 +26,7 @@ class LicenseApiClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
+        self._activation_identity_provider = activation_identity_provider
         self._ssl_context = ssl.create_default_context()
 
     def validate(
@@ -30,7 +38,14 @@ class LicenseApiClient:
     def activate(
         self, license_key: str, hwid: Optional[str]
     ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        payload = {"license_key": license_key, "hwid": hwid}
+        activation_identity = self._activation_identity_provider.get_identity()
+        payload = {
+            "license_key": license_key,
+            "hwid": hwid,
+            LICENSE_ACTIVATION_IDENTITY_PAYLOAD_FIELD: (
+                activation_identity.to_payload()
+            ),
+        }
         return self._post("activate", payload)
 
     def deactivate(

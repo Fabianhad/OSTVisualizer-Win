@@ -78,6 +78,15 @@ Per-user `~/.ost_visualizer/install_id.txt` files are unsupported and ignored.
 License caches without the canonical `hwid_version` value `v1` are cleared and
 require activation.
 
+Each activation also sends a required, versioned audit identity containing the
+current Windows `DOMAIN\User` account, NetBIOS computer name, and whether the
+computer is domain-joined, workgroup-joined, or unjoined, including its join
+name when applicable. This records who initiated activation and from which
+computer context. It is not part of the HWID or license-signature payload and
+does not affect the machine identity when a user, computer name, or domain
+membership changes. The audit values are reported by the client and should not
+be treated as independently authenticated Windows claims by the license server.
+
 **[Get a commercial license](https://fabianhad.com/ost3d/download)**
 
 For licensing questions, contact [fabian@fabianhad.com](mailto:fabian@fabianhad.com).

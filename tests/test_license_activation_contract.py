@@ -5,6 +5,11 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.config.license_config import _load_trusted_public_key
+from ost_visualizer.application.dtos.license_activation_identity_dto import (
+    LICENSE_ACTIVATION_IDENTITY_VERSION,
+    LicenseActivationIdentityDto,
+    WindowsJoinType,
+)
 from ost_visualizer.application.dtos.license_dto import (
     LicenseOperationResultDto,
     LicenseOperationStatus,
@@ -12,12 +17,16 @@ from ost_visualizer.application.dtos.license_dto import (
 from ost_visualizer.application.orchestrators.license_orchestrator import (
     LicenseOrchestrator,
 )
+from ost_visualizer.application.use_cases.license.activate_license_use_case import (
+    ActivateLicenseUseCase,
+)
 from ost_visualizer.application.use_cases.license.deactivate_license_use_case import (
     DeactivateLicenseUseCase,
 )
 from ost_visualizer.application.use_cases.license.utils.license_use_case import (
     ERROR_CONTRACT,
     ERROR_DEVICE_ACTIVATION_INACTIVE,
+    ERROR_INVALID_ACTIVATION_IDENTITY,
     ERROR_LICENSE_NOT_FOUND,
     ERROR_MAX_ACTIVATIONS_REACHED,
     parse_failure_response,
@@ -27,6 +36,7 @@ from ost_visualizer.domain.aggregates.license_aggregate import LicenseAggregate
 from ost_visualizer.domain.entities.license import License, LicenseStatus
 from ost_visualizer.domain.services.hardware_identity import HWID_VERSION
 from ost_visualizer.domain.services.hardware_identity import HardwareIdentityError
+from ost_visualizer.infrastructure.external.license_api_client import LicenseApiClient
 
 TEST_HWID = "v1:" + "A" * 64
 
@@ -203,6 +213,27 @@ class LicenseActivationContractTests(unittest.TestCase):
             failure.error_code, ERROR_CONTRACT[ERROR_DEVICE_ACTIVATION_INACTIVE]
         )
 
+    def test_failure_parser_maps_invalid_activation_identity_contract(self):
+        failure = parse_failure_response(
+            {
+                "success": False,
+                "error": "Invalid activation identity",
+                "error_name": ERROR_INVALID_ACTIVATION_IDENTITY,
+                "error_code": ERROR_CONTRACT[ERROR_INVALID_ACTIVATION_IDENTITY],
+            },
+            operation="activate",
+            network_message="network",
+        )
+        self.assertEqual(
+            failure.result.operation_status,
+            LicenseOperationStatus.FAILED,
+        )
+        self.assertIn("Windows activation identity", failure.result.message)
+        self.assertEqual(
+            failure.error_code,
+            ERROR_CONTRACT[ERROR_INVALID_ACTIVATION_IDENTITY],
+        )
+
     def test_failure_parser_rejects_numeric_only_legacy_payload(self):
         failure = parse_failure_response(
             {
@@ -272,6 +303,61 @@ class LicenseActivationContractTests(unittest.TestCase):
         self.assertEqual(activate.calls, ["LIC-test-key"])
         self.assertEqual(publisher.activated_calls, 1)
         self.assertEqual(publisher.invalidated, [])
+
+    def test_startup_reactivation_uses_required_activation_identity_payload(self):
+        validate = FakeUseCase(
+            self._result(
+                False,
+                LicenseOperationStatus.DEVICE_ACTIVATION_INACTIVE,
+                LicenseStatus.INVALID,
+                "inactive",
+                ERROR_CONTRACT[ERROR_DEVICE_ACTIVATION_INACTIVE],
+            )
+        )
+        activation_identity = LicenseActivationIdentityDto(
+            version=LICENSE_ACTIVATION_IDENTITY_VERSION,
+            windows_account=r"EXAMPLE\Estimator",
+            computer_name="ESTIMATOR-PC",
+            join_type=WindowsJoinType.DOMAIN,
+            join_name="EXAMPLE",
+        )
+        client = LicenseApiClient(
+            activation_identity_provider=SimpleNamespace(
+                get_identity=lambda: activation_identity
+            )
+        )
+        activation_limit = {
+            "success": False,
+            "error": "Maximum activations reached",
+            "error_name": ERROR_MAX_ACTIVATIONS_REACHED,
+            "error_code": ERROR_CONTRACT[ERROR_MAX_ACTIVATIONS_REACHED],
+        }
+        model = FakeModel()
+        activate = ActivateLicenseUseCase(model, client)
+        orchestrator = self._build_orchestrator(
+            validate,
+            activate,
+            FakeEventPublisher(),
+            model=model,
+        )
+        with patch.object(
+            client, "_post", return_value=(False, activation_limit)
+        ) as post:
+            orchestrator.initialize()
+        post.assert_called_once_with(
+            "activate",
+            {
+                "license_key": "LIC-test-key",
+                "hwid": TEST_HWID,
+                "activation_identity": {
+                    "version": "v1",
+                    "windows_account": r"EXAMPLE\Estimator",
+                    "computer_name": "ESTIMATOR-PC",
+                    "join_type": "domain",
+                    "join_name": "EXAMPLE",
+                },
+            },
+        )
 
     def test_startup_validation_does_not_activate_for_max_device_error(self):
         validate = FakeUseCase(

@@ -3,6 +3,7 @@ import logging
 import sys
 from pathlib import Path
 from ..infrastructure.app_paths import get_app_data_dir
+from .server import run_stdio_server
 
 LOGGER = logging.getLogger("ost_visualizer.mcp")
 
@@ -52,16 +53,6 @@ def main(argv=None) -> int:
     args = _parse_args(argv)
     app_data_dir = get_app_data_dir()
     logger = _configure_logging(app_data_dir, args.log_level)
-    try:
-        from .server import run_stdio_server
-    except ImportError as exc:
-        print(
-            "OST Visualizer MCP server failed to import. "
-            "Run scripts\\setup.ps1 and verify the application dependencies.",
-            file=sys.stderr,
-        )
-        logger.exception("Failed to import MCP server: %s", exc)
-        return 1
     run_stdio_server(
         app_data_dir=app_data_dir,
         logger=logger,

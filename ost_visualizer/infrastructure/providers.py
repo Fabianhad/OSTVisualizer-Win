@@ -83,6 +83,9 @@ from .database.reader_router import DatabaseProjectReader
 from .database.writer_router import DatabaseProjectWriter
 from .external.license_api_client import LicenseApiClient
 from .hardware.hwid_generator import HWIDGenerator
+from .windows.license_activation_identity import (
+    WindowsLicenseActivationIdentityProvider,
+)
 from .mdb.connection_manager import MdbConnectionManager
 from .mdb.database_creator import DatabaseCreator
 from .mdb.exporters.ost_exporter import OstExporter
@@ -371,4 +374,7 @@ class ApiClientProvider(IApiClientProvider):
         self.logger = logger
 
     def get_license_api_client(self) -> ILicenseApiClient:
-        return LicenseApiClient(logger=self.logger.getChild("LicenseApiClient"))
+        return LicenseApiClient(
+            activation_identity_provider=WindowsLicenseActivationIdentityProvider(),
+            logger=self.logger.getChild("LicenseApiClient"),
+        )

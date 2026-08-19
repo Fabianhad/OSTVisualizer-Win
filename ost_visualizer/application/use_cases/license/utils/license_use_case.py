@@ -13,6 +13,7 @@ ERROR_LICENSE_REVOKED = "LICENSE_REVOKED"
 ERROR_MAX_ACTIVATIONS_REACHED = "MAX_ACTIVATIONS_REACHED"
 ERROR_INVALID_HWID = "INVALID_HWID"
 ERROR_DEVICE_ACTIVATION_INACTIVE = "DEVICE_ACTIVATION_INACTIVE"
+ERROR_INVALID_ACTIVATION_IDENTITY = "INVALID_ACTIVATION_IDENTITY"
 ERROR_CONTRACT = {
     ERROR_LICENSE_NOT_FOUND: 1001,
     ERROR_LICENSE_EXPIRED: 1002,
@@ -20,6 +21,7 @@ ERROR_CONTRACT = {
     ERROR_MAX_ACTIVATIONS_REACHED: 1005,
     ERROR_INVALID_HWID: 1006,
     ERROR_DEVICE_ACTIVATION_INACTIVE: 1007,
+    ERROR_INVALID_ACTIVATION_IDENTITY: 1008,
 }
 
 
@@ -124,6 +126,15 @@ def map_error(
             LicenseStatus.INVALID,
             (
                 "The license server rejected this computer's hardware ID. "
+                "Please contact support."
+            ),
+        )
+    elif error_name == ERROR_INVALID_ACTIVATION_IDENTITY:
+        return (
+            LicenseOperationStatus.FAILED,
+            LicenseStatus.INVALID,
+            (
+                "The license server rejected the Windows activation identity. "
                 "Please contact support."
             ),
         )

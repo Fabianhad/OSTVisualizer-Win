@@ -24,6 +24,12 @@ from ost_visualizer.application.use_cases.license.utils.license_use_case import 
     ERROR_INVALID_HWID,
 )
 from ost_visualizer.application.dtos.license_dto import LicenseOperationStatus
+from ost_visualizer.application.dtos.license_activation_identity_dto import (
+    LICENSE_ACTIVATION_IDENTITY_VERSION,
+    LicenseActivationIdentityDto,
+    LicenseActivationIdentityError,
+    WindowsJoinType,
+)
 from ost_visualizer.domain.aggregates.license_aggregate import LicenseAggregate
 from ost_visualizer.domain.entities.license import License, LicenseStatus
 from ost_visualizer.domain.services.hardware_identity import (
@@ -132,6 +138,22 @@ class RejectingHardwareIdApi:
             "error_name": ERROR_INVALID_HWID,
             "error_code": ERROR_CONTRACT[ERROR_INVALID_HWID],
         }
+
+
+class FixedActivationIdentityProvider:
+    def get_identity(self):
+        return LicenseActivationIdentityDto(
+            version=LICENSE_ACTIVATION_IDENTITY_VERSION,
+            windows_account=r"EXAMPLE\Estimator",
+            computer_name="ESTIMATOR-PC",
+            join_type=WindowsJoinType.DOMAIN,
+            join_name="EXAMPLE",
+        )
+
+
+class UnavailableActivationIdentityApi:
+    def activate(self, _license_key, _hwid):
+        raise LicenseActivationIdentityError("Windows account query failed")
 
 
 class HwidV1Tests(unittest.TestCase):
@@ -648,9 +670,14 @@ class HwidV1LicenseContractTests(unittest.TestCase):
         )
         self.assertEqual(aggregate.hwid, self.hwid)
         self.assertEqual(aggregate.hwid_version, HWID_VERSION)
+        expected_signature_payload = {
+            "license_key": "LIC-TEST",
+            "expiry_date": "2099-01-01T00:00:00+00:00",
+            "hwid": self.hwid,
+        }
         self.assertTrue(
             all(
-                payload["hwid"] == self.hwid
+                payload == expected_signature_payload
                 for payload, _signature in verifier.payloads
             )
         )
@@ -670,6 +697,26 @@ class HwidV1LicenseContractTests(unittest.TestCase):
         self.assertIn("license server rejected", result.message)
         self.assertNotIn("Unable to determine", result.message)
         self.assertEqual(api.calls, [("LIC-TEST", self.hwid)])
+
+    def test_activation_identity_failure_is_distinct_from_hwid_failure(self):
+        aggregate = LicenseAggregate(
+            MemoryLicenseRepository(),
+            hwid_provider=lambda: self.hwid,
+            signature_verifier=AcceptingSignatureVerifier(),
+        )
+        aggregate.ensure_hwid()
+        use_case = ActivateLicenseUseCase(
+            aggregate,
+            UnavailableActivationIdentityApi(),
+        )
+        with self.assertLogs(use_case.logger, level="ERROR") as captured:
+            result = use_case.execute("LIC-TEST")
+        self.assertFalse(result.success)
+        self.assertIn("Windows user and computer", result.message)
+        self.assertNotIn("hardware ID", result.message)
+        self.assertTrue(
+            any("Windows account query failed" in line for line in captured.output)
+        )
 
     def test_validation_logs_server_hwid_rejection_reason(self):
         cached = License(
@@ -760,12 +807,24 @@ class HwidV1LicenseContractTests(unittest.TestCase):
         self.assertEqual(provider_calls, [])
 
     def test_api_payload_keeps_one_self_versioned_hwid_field(self):
-        client = LicenseApiClient()
+        client = LicenseApiClient(
+            activation_identity_provider=FixedActivationIdentityProvider()
+        )
         with patch.object(client, "_post", return_value=(False, None)) as post:
             client.activate("LIC-TEST", self.hwid)
         post.assert_called_once_with(
             "activate",
-            {"license_key": "LIC-TEST", "hwid": self.hwid},
+            {
+                "license_key": "LIC-TEST",
+                "hwid": self.hwid,
+                "activation_identity": {
+                    "version": "v1",
+                    "windows_account": r"EXAMPLE\Estimator",
+                    "computer_name": "ESTIMATOR-PC",
+                    "join_type": "domain",
+                    "join_name": "EXAMPLE",
+                },
+            },
         )
 
 
