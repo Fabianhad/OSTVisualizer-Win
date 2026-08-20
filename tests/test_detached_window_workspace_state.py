@@ -1217,7 +1217,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             [360, 1516],
         )
 
-    def test_capture_persists_summary_grouping_and_semantic_header_layouts(self):
+    def test_capture_persists_summary_header_and_dialog_window_state(self):
         class CaptureShell:
             def get_takeoff_splitter_sizes(self):
                 return [300, 700]
@@ -1303,9 +1303,13 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             order=["name", "area"],
             sort_column="name",
         )
-        coordinator.workspace_state_model, _repository = _workspace_state_model(
+        coordinator.workspace_state_model, repository = _workspace_state_model(
             coordinator._state
         )
+        current_state = coordinator.workspace_state_model.state
+        current_state.dialog_sizes["cover_sheet"] = [760, 560]
+        current_state.dialog_maximized["cover_sheet"] = True
+        coordinator.workspace_state_model.update_state(current_state)
         coordinator._pending_mesh_restore = False
         coordinator._pending_annotation_restore = False
         coordinator._pending_view_restore = False
@@ -1317,6 +1321,12 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             captured.header_layouts["condition_summary"].widths,
             {"name": 222, "area": 145},
         )
+        self.assertEqual(captured.dialog_sizes, {"cover_sheet": [760, 560]})
+        self.assertEqual(captured.dialog_maximized, {"cover_sheet": True})
+        coordinator.workspace_state_model.update_state(captured)
+        reloaded = WorkspaceStateAggregate(repository).state
+        self.assertEqual(reloaded.dialog_sizes, {"cover_sheet": [760, 560]})
+        self.assertEqual(reloaded.dialog_maximized, {"cover_sheet": True})
 
     def test_restore_applies_summary_grouping_without_owning_header_layout(self):
         class Shell:

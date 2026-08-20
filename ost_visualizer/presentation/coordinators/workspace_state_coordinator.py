@@ -663,7 +663,10 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             previous_splitter_sizes,
         )
         state = WorkspaceState()
-        state.header_layouts = self.workspace_state_model.state.header_layouts
+        current_state = self.workspace_state_model.state
+        state.header_layouts = current_state.header_layouts
+        state.dialog_sizes = current_state.dialog_sizes
+        state.dialog_maximized = current_state.dialog_maximized
         state.main_window.geometry_b64 = self._encode_byte_array(
             self._shell.saveGeometry()
         )
