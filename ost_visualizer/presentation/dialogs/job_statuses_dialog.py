@@ -12,6 +12,9 @@ from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.dialog import BasePickerDialog, ItemRecord
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.persistent_header import PersistentHeaderController
+from ..utils.windows import PersistentDialogWindowState
+
+_DIALOG_WINDOW_STATE_KEY = "job_statuses"
 
 
 class _StatusRecord(ItemRecord):
@@ -21,8 +24,6 @@ class _StatusRecord(ItemRecord):
 
 class JobStatusesDialog(BasePickerDialog):
     _window_title = "Job Statuses"
-    _window_width = JOB_STATUSES_WINDOW_WIDTH
-    _window_height = JOB_STATUSES_WINDOW_HEIGHT
     _button_width = JOB_STATUSES_BUTTON_WIDTH
     _uid_col = 1
     _name_col = 1
@@ -72,6 +73,12 @@ class JobStatusesDialog(BasePickerDialog):
             workspace_state_model,
             sorting=False,
             movable=True,
+        )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+            QtCore.QSize(JOB_STATUSES_WINDOW_WIDTH, JOB_STATUSES_WINDOW_HEIGHT),
         )
 
     def _configure_tree(self) -> None:

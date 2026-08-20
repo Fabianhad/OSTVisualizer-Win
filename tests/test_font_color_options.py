@@ -13,10 +13,7 @@ from ost_visualizer.domain.entities.workspace_state import TakeoffWorkspaceState
 from ost_visualizer.infrastructure.persistence.repositories.json_config_repository import (
     JsonConfigRepository,
 )
-from ost_visualizer.presentation.config import (
-    FONT_DIALOG_HEIGHT,
-    FONT_DIALOG_WIDTH,
-)
+from ost_visualizer.presentation.config import FONT_DIALOG_WIDTH
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.dialogs.options.font_dialog import FontDialog
 from ost_visualizer.presentation.dialogs.options.fonts_colors_tab import (
@@ -246,9 +243,8 @@ class FontColorOptionsTests(unittest.TestCase):
     def test_font_dialog_contract_and_shared_size_list(self):
         dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, True))
         try:
-            self.assertEqual((dialog.width(), dialog.height()), (450, 370))
             self.assertEqual(dialog.width(), FONT_DIALOG_WIDTH)
-            self.assertEqual(dialog.height(), FONT_DIALOG_HEIGHT)
+            self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
             self.assertTrue(dialog.isModal())
             self.assertEqual(
                 dialog.windowModality(), QtCore.Qt.WindowModality.ApplicationModal

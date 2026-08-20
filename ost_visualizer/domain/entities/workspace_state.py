@@ -21,6 +21,8 @@ WORKSPACE_KEY_PROJECT_WORKSPACE = "project_workspace"
 WORKSPACE_KEY_TOOLBAR_VISIBILITY = "toolbar_visibility"
 WORKSPACE_KEY_DETACHED_WINDOWS = "detached_windows"
 WORKSPACE_KEY_HEADER_LAYOUTS = "header_layouts"
+WORKSPACE_KEY_DIALOG_SIZES = "dialog_sizes"
+WORKSPACE_KEY_DIALOG_MAXIMIZED = "dialog_maximized"
 WORKSPACE_KEY_ACTIVE_VIEW = "active_view"
 WORKSPACE_KEY_SELECTED_NODE = "selected_node"
 WORKSPACE_KEY_KIND = "kind"
@@ -77,6 +79,16 @@ def _coerce_size_dict(value) -> Dict[str, List[int]]:
         if len(size) >= 2 and size[0] > 0 and size[1] > 0:
             result[str(key)] = size[:2]
     return result
+
+
+def _coerce_bool_dict(value) -> Dict[str, bool]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): raw_value
+        for key, raw_value in value.items()
+        if isinstance(raw_value, bool)
+    }
 
 
 def _coerce_positive_int_dict(value) -> Dict[str, int]:
@@ -441,7 +453,7 @@ class ToolbarVisibilityState:
 
 @dataclass
 class WorkspaceState:
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 2
+    CURRENT_SCHEMA_VERSION: ClassVar[int] = 3
     schema_version: int = CURRENT_SCHEMA_VERSION
     main_window: MainWindowWorkspaceState = field(
         default_factory=MainWindowWorkspaceState
@@ -457,6 +469,8 @@ class WorkspaceState:
     )
     detached_windows: DetachedWindowsState = field(default_factory=DetachedWindowsState)
     header_layouts: Dict[str, HeaderLayoutState] = field(default_factory=dict)
+    dialog_sizes: Dict[str, List[int]] = field(default_factory=dict)
+    dialog_maximized: Dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -470,6 +484,11 @@ class WorkspaceState:
                 str(key): layout.to_dict()
                 for key, layout in self.header_layouts.items()
             },
+            WORKSPACE_KEY_DIALOG_SIZES: {
+                str(key): list(size)
+                for key, size in _coerce_size_dict(self.dialog_sizes).items()
+            },
+            WORKSPACE_KEY_DIALOG_MAXIMIZED: _coerce_bool_dict(self.dialog_maximized),
         }
 
     @classmethod
@@ -506,4 +525,8 @@ class WorkspaceState:
                     else {}
                 ).items()
             },
+            dialog_sizes=_coerce_size_dict(data.get(WORKSPACE_KEY_DIALOG_SIZES)),
+            dialog_maximized=_coerce_bool_dict(
+                data.get(WORKSPACE_KEY_DIALOG_MAXIMIZED)
+            ),
         )

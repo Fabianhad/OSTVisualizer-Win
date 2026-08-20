@@ -29,7 +29,7 @@ from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm, show_info, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
-from ..utils.windows import remove_minimize
+from ..utils.windows import PersistentDialogWindowState
 from .select_database_type_dialog import SelectDatabaseTypeDialog
 from .sql_connection_dialog import SqlConnectionDialog
 from .sql_database_dialog import (
@@ -39,6 +39,7 @@ from .sql_database_dialog import (
 )
 
 logger = logging.getLogger(__name__)
+_DIALOG_WINDOW_STATE_KEY = "open_files"
 
 
 class OpenFilesDialog(QtWidgets.QDialog):
@@ -86,12 +87,17 @@ class OpenFilesDialog(QtWidgets.QDialog):
             ),
             default_sort_column="database",
         )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            self._workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+            QtCore.QSize(OPEN_FILE_WIDTH, OPEN_FILE_HEIGHT),
+        )
         self._update_remove_button_state()
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("Open Databases")
         self.setModal(True)
-        self.resize(OPEN_FILE_WIDTH, OPEN_FILE_HEIGHT)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
@@ -465,7 +471,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        remove_minimize(self)
+        self._window_state.apply_show_state()
 
     def closeEvent(self, event) -> None:
         event.accept()

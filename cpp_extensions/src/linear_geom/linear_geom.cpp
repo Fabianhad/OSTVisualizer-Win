@@ -3,7 +3,6 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
-
 namespace ost_linear
 {
     static void require_positive_segments(int segments)
@@ -11,13 +10,11 @@ namespace ost_linear
         if (segments < 1)
             throw std::invalid_argument("segments must be at least 1");
     }
-
     static void require_curve_point_count(int point_count)
     {
         if (point_count < 2)
             throw std::invalid_argument("curve point count must be at least 2");
     }
-
     static inline bool has_slope_factor(std::optional<double> rise,
                                         std::optional<double> run,
                                         double &rise_v, double &run_v)

@@ -4,11 +4,10 @@ from PySide6 import QtCore, QtWidgets
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
-    RENAME_PAGE_WINDOW_HEIGHT,
     RENAME_PAGE_WINDOW_WIDTH,
 )
 from ..utils.messagebox import show_warning
-from ..utils.windows import remove_minimize_maximize
+from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 
 _NAV_BUTTON_WIDTH = 100
 
@@ -39,7 +38,6 @@ class RenamePageDialog(QtWidgets.QDialog):
     def _setup_ui(self) -> None:
         self.setWindowTitle("Rename Page")
         self.setModal(True)
-        self.setFixedSize(RENAME_PAGE_WINDOW_WIDTH, RENAME_PAGE_WINDOW_HEIGHT)
         remove_minimize_maximize(self)
         if self._icon_provider:
             self._icon_provider.set_window_icon(self)
@@ -86,6 +84,7 @@ class RenamePageDialog(QtWidgets.QDialog):
         nav_layout.addWidget(self._previous_btn)
         nav_layout.addWidget(self._next_btn)
         main_layout.addLayout(nav_layout)
+        set_fixed_width_auto_height(self, RENAME_PAGE_WINDOW_WIDTH)
 
     def _resolve_current_index(self, current_page_uid: str) -> int:
         for index, page in enumerate(self._pages):

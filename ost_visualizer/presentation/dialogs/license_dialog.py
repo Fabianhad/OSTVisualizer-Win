@@ -40,8 +40,6 @@ class LicenseDialog(QtWidgets.QDialog):
         self.setWindowTitle("License Authorization")
         self.setModal(True)
         remove_minimize_maximize(self)
-        self.resize(LICENSE_WINDOW_WIDTH, LICENSE_WINDOW_HEIGHT)
-        self.setMinimumSize(LICENSE_WINDOW_WIDTH, LICENSE_WINDOW_HEIGHT)
         self.icon_provider.set_window_icon(self)
         outer_layout = QtWidgets.QVBoxLayout(self)
         outer_layout.setContentsMargins(*RELAXED_MARGINS)
@@ -88,6 +86,7 @@ class LicenseDialog(QtWidgets.QDialog):
             self.close_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight
         )
         outer_layout.addLayout(action_row)
+        self.setFixedSize(LICENSE_WINDOW_WIDTH, LICENSE_WINDOW_HEIGHT)
 
     def _setup_event_subscriptions(self) -> None:
         self.event_bus.subscribe(

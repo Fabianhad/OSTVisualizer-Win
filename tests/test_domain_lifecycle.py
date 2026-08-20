@@ -220,6 +220,40 @@ class DomainLifecycleTests(unittest.TestCase):
         self.assertTrue(state.takeoff_workspace.summary_group_by_type)
         self.assertFalse(state.takeoff_workspace.summary_group_by_page)
         self.assertEqual(state.header_layouts, {})
+        self.assertEqual(state.dialog_sizes, {})
+        self.assertEqual(state.dialog_maximized, {})
+
+    def test_workspace_dialog_window_state_round_trips_and_ignores_invalid_values(
+        self,
+    ):
+        state = WorkspaceState.from_dict(
+            {
+                "dialog_sizes": {
+                    "cover_sheet": ["900", "650"],
+                    "zero_width": [0, 500],
+                    "missing_height": [700],
+                    "invalid": ["wide", "tall"],
+                },
+                "dialog_maximized": {
+                    "cover_sheet": True,
+                    "windowed": False,
+                    "invalid": 1,
+                },
+            }
+        )
+        self.assertEqual(state.dialog_sizes, {"cover_sheet": [900, 650]})
+        self.assertEqual(
+            state.dialog_maximized,
+            {"cover_sheet": True, "windowed": False},
+        )
+        self.assertEqual(
+            state.to_dict()["dialog_sizes"],
+            {"cover_sheet": [900, 650]},
+        )
+        self.assertEqual(
+            state.to_dict()["dialog_maximized"],
+            {"cover_sheet": True, "windowed": False},
+        )
 
     def test_workspace_semantic_header_state_round_trips_and_ignores_invalid_values(
         self,

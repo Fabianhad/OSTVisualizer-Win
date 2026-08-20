@@ -4,12 +4,11 @@ from PySide6 import QtCore, QtWidgets
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
-    SCALE_WINDOW_HEIGHT,
     SCALE_WINDOW_WIDTH,
 )
 from ..utils.messagebox import show_warning
 from ..utils.scales import SCALES_BY_STYLE
-from ..utils.windows import remove_minimize_maximize
+from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 
 _SCALE_STYLES = (
     (1, "Architectural"),
@@ -50,7 +49,6 @@ class SetScaleDialog(QtWidgets.QDialog):
     def _setup_ui(self) -> None:
         self.setWindowTitle("Set Scale")
         self.setModal(True)
-        self.setFixedSize(SCALE_WINDOW_WIDTH, SCALE_WINDOW_HEIGHT)
         remove_minimize_maximize(self)
         if self._icon_provider:
             self._icon_provider.set_window_icon(self)
@@ -114,6 +112,7 @@ class SetScaleDialog(QtWidgets.QDialog):
         main_layout.addLayout(form)
         main_layout.addStretch()
         self._build_bottom_buttons(main_layout)
+        set_fixed_width_auto_height(self, SCALE_WINDOW_WIDTH)
 
     def _build_bottom_buttons(self, parent_layout: QtWidgets.QVBoxLayout) -> None:
         btn_layout = QtWidgets.QHBoxLayout()

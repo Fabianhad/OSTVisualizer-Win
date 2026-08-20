@@ -11,11 +11,10 @@ from ..config import (
     NO_MARGINS,
     RELAXED_MARGINS,
     RELAXED_SPACING,
-    SQL_CONNECTION_DIALOG_HEIGHT,
     SQL_CONNECTION_DIALOG_WIDTH,
 )
 from ..utils.messagebox import show_warning
-from ..utils.windows import remove_minimize_maximize, set_initial_window_size
+from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 
 
 @dataclass(frozen=True, repr=False)
@@ -184,9 +183,7 @@ class SqlConnectionDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         self.server_input.returnPressed.connect(self._accept_if_valid)
         self.username_input.returnPressed.connect(self._accept_if_valid)
         self.password_input.returnPressed.connect(self._accept_if_valid)
-        set_initial_window_size(
-            self, SQL_CONNECTION_DIALOG_WIDTH, SQL_CONNECTION_DIALOG_HEIGHT
-        )
+        set_fixed_width_auto_height(self, SQL_CONNECTION_DIALOG_WIDTH)
 
     def _accept_if_valid(self) -> None:
         result = self._validated_connection()

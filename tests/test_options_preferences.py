@@ -87,7 +87,6 @@ from ost_visualizer.presentation.config import (
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_EXPORT,
-    OPTIONS_WINDOW_HEIGHT,
     OPTIONS_WINDOW_WIDTH,
     TAB_INDEX_TAKEOFF,
 )
@@ -1191,9 +1190,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(bool(flags & QtCore.Qt.WindowType.WindowMinimizeButtonHint))
         self.assertFalse(bool(flags & QtCore.Qt.WindowType.WindowMaximizeButtonHint))
         self.assertEqual(dialog.minimumWidth(), OPTIONS_WINDOW_WIDTH)
-        self.assertEqual(dialog.minimumHeight(), OPTIONS_WINDOW_HEIGHT)
         self.assertEqual(dialog.maximumWidth(), OPTIONS_WINDOW_WIDTH)
-        self.assertEqual(dialog.maximumHeight(), OPTIONS_WINDOW_HEIGHT)
+        self.assertEqual(dialog.minimumHeight(), dialog.maximumHeight())
         dialog.close()
 
     def test_options_dialog_contains_options_export_and_mcp_setup_tabs(self):

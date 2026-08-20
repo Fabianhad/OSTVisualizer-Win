@@ -12,11 +12,10 @@ from ...config import (
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
-    OPTIONS_WINDOW_HEIGHT,
     OPTIONS_WINDOW_WIDTH,
 )
 from ...utils.messagebox import confirm, show_warning
-from ...utils.windows import remove_minimize_maximize
+from ...utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 from .components import ExportTab, McpSetupTab, OptionsTab
 from .fonts_colors_tab import FontsColorsTab
 
@@ -38,7 +37,6 @@ class OptionsDialog(QtWidgets.QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(OPTIONS_DIALOG_TITLE)
-        self.setFixedSize(OPTIONS_WINDOW_WIDTH, OPTIONS_WINDOW_HEIGHT)
         remove_minimize_maximize(self)
         self._applied_config = replace(config)
         self._config = replace(config)
@@ -57,6 +55,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._load_config()
         self._connect_change_signals()
         self._update_apply_enabled()
+        set_fixed_width_auto_height(self, OPTIONS_WINDOW_WIDTH)
 
     def get_config(self) -> Config:
         return replace(self._config)

@@ -99,11 +99,8 @@ from ost_visualizer.presentation.controllers.menu_controller import MenuControll
 from ost_visualizer.presentation.config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
-    NEW_DATABASE_TYPE_DIALOG_HEIGHT,
     NEW_DATABASE_TYPE_DIALOG_WIDTH,
-    SELECT_DATABASE_TYPE_DIALOG_HEIGHT,
     SELECT_DATABASE_TYPE_DIALOG_WIDTH,
-    SQL_CONNECTION_DIALOG_HEIGHT,
     SQL_CONNECTION_DIALOG_WIDTH,
     SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT,
     SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
@@ -686,10 +683,7 @@ class SqlDialogTests(unittest.TestCase):
         bridge.deleteLater()
 
     def test_database_type_defaults_to_access(self):
-        self.assertEqual(
-            (SELECT_DATABASE_TYPE_DIALOG_WIDTH, SELECT_DATABASE_TYPE_DIALOG_HEIGHT),
-            (270, 110),
-        )
+        self.assertEqual(SELECT_DATABASE_TYPE_DIALOG_WIDTH, 270)
         dialog = SelectDatabaseTypeDialog(self.icon_provider)
         try:
             margins = dialog.layout().contentsMargins()
@@ -699,7 +693,14 @@ class SqlDialogTests(unittest.TestCase):
             )
             self.assertEqual(dialog.layout().spacing(), COMPACT_SPACING)
             self.assertEqual(dialog.size().width(), SELECT_DATABASE_TYPE_DIALOG_WIDTH)
-            self.assertEqual(dialog.size().height(), SELECT_DATABASE_TYPE_DIALOG_HEIGHT)
+            self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
+            self.assertEqual(
+                dialog.button_box.orientation(), QtCore.Qt.Orientation.Vertical
+            )
+            self.assertEqual(
+                dialog.layout().itemAt(1).alignment(),
+                QtCore.Qt.AlignmentFlag.AlignBottom,
+            )
             self.assertTrue(dialog.access_radio.isChecked())
             self.assertEqual(dialog.selected_backend(), DatabaseBackend.ACCESS)
             dialog.sql_server_radio.setChecked(True)
@@ -732,21 +733,15 @@ class SqlDialogTests(unittest.TestCase):
             dialog.deleteLater()
 
     def test_sql_dialog_titles_dimensions_and_modes(self):
-        self.assertEqual(
-            (SQL_CONNECTION_DIALOG_WIDTH, SQL_CONNECTION_DIALOG_HEIGHT),
-            (320, 240),
-        )
+        self.assertEqual(SQL_CONNECTION_DIALOG_WIDTH, 320)
         self.assertEqual(
             (
                 SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
                 SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT,
             ),
-            (320, 360),
+            (320, 280),
         )
-        self.assertEqual(
-            (NEW_DATABASE_TYPE_DIALOG_WIDTH, NEW_DATABASE_TYPE_DIALOG_HEIGHT),
-            (350, 230),
-        )
+        self.assertEqual(NEW_DATABASE_TYPE_DIALOG_WIDTH, 350)
         connection = SqlConnectionDialog(self.icon_provider)
         margins = connection.layout().contentsMargins()
         self.assertEqual(
@@ -756,7 +751,7 @@ class SqlDialogTests(unittest.TestCase):
         self.assertEqual(connection.layout().spacing(), RELAXED_SPACING)
         self.assertEqual(connection.windowTitle(), "Connect to SQL Server")
         self.assertEqual(connection.size().width(), SQL_CONNECTION_DIALOG_WIDTH)
-        self.assertEqual(connection.size().height(), SQL_CONNECTION_DIALOG_HEIGHT)
+        self.assertEqual(connection.minimumSize(), connection.maximumSize())
         connection.cleanup()
         connection.deleteLater()
         initial = SqlConnectionDialogResult(
@@ -785,6 +780,7 @@ class SqlDialogTests(unittest.TestCase):
             self.assertEqual(
                 dialog.size().height(), SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT
             )
+            self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
             self.assertTrue(dialog.server_input.isReadOnly())
             self.assertFalse(dialog.database_combo.isHidden())
             self.assertTrue(dialog.database_name_input.isHidden())
@@ -814,7 +810,7 @@ class SqlDialogTests(unittest.TestCase):
                 (margins.left(), margins.top(), margins.right(), margins.bottom()),
                 RELAXED_MARGINS,
             )
-            self.assertEqual(type_dialog.layout().spacing(), COMPACT_SPACING)
+            self.assertEqual(type_dialog.layout().spacing(), RELAXED_SPACING)
             option_margins = type_dialog.access_button.layout().contentsMargins()
             self.assertEqual(
                 (
@@ -830,8 +826,14 @@ class SqlDialogTests(unittest.TestCase):
             )
             self.assertEqual(type_dialog.windowTitle(), "New Database Type")
             self.assertEqual(type_dialog.size().width(), NEW_DATABASE_TYPE_DIALOG_WIDTH)
+            self.assertEqual(type_dialog.minimumSize(), type_dialog.maximumSize())
             self.assertEqual(
-                type_dialog.size().height(), NEW_DATABASE_TYPE_DIALOG_HEIGHT
+                type_dialog.access_button.layout().itemAt(0).widget().text(),
+                "Microsoft Access Database (Most Users)",
+            )
+            self.assertEqual(
+                type_dialog.sql_server_button.layout().itemAt(0).widget().text(),
+                "Microsoft SQL Server Database",
             )
         finally:
             type_dialog.cleanup()

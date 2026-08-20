@@ -16,7 +16,9 @@ from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
-from ..utils.windows import remove_minimize, set_initial_window_size
+from ..utils.windows import PersistentDialogWindowState
+
+_DIALOG_WINDOW_STATE_KEY = "layers"
 
 
 class LayersDialogMode(Enum):
@@ -91,6 +93,12 @@ class LayersDialog(QtWidgets.QDialog):
             movable=True,
             persisted_width_keys=("layer",),
         )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+            QtCore.QSize(LAYERS_WINDOW_WIDTH, LAYERS_WINDOW_HEIGHT),
+        )
 
     def _filter_layers_for_mode(self, layers: List[BidLayer]) -> List[BidLayer]:
         if self._mode == LayersDialogMode.DEFAULT_LAYERS:
@@ -100,7 +108,6 @@ class LayersDialog(QtWidgets.QDialog):
     def _setup_ui(self) -> None:
         self.setWindowTitle("Layers")
         self.setModal(True)
-        set_initial_window_size(self, LAYERS_WINDOW_WIDTH, LAYERS_WINDOW_HEIGHT)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QHBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
@@ -715,7 +722,7 @@ class LayersDialog(QtWidgets.QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        remove_minimize(self)
+        self._window_state.apply_show_state()
 
     def closeEvent(self, event) -> None:
         if self._operation_pending:

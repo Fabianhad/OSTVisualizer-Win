@@ -38,12 +38,10 @@ namespace ost_cab
         return MultiByteToWideChar(
                    code_page, flags, value, size, decoded.data(), required) == required;
     }
-
     static bool decode_utf8(const char *value, std::wstring &decoded)
     {
         return decode_multibyte(value, CP_UTF8, MB_ERR_INVALID_CHARS, decoded);
     }
-
     static bool encode_utf8(const std::wstring &value, std::string &encoded)
     {
         if (value.empty())
@@ -73,7 +71,6 @@ namespace ost_cab
                    nullptr,
                    nullptr) == required;
     }
-
     static bool decode_cab_member(
         const char *value,
         USHORT attributes,
@@ -83,7 +80,6 @@ namespace ost_cab
             return decode_utf8(value, decoded);
         return decode_multibyte(value, CP_ACP, 0, decoded);
     }
-
     static bool split_utf8_path(
         const std::string &path,
         std::string &directory,
@@ -102,7 +98,6 @@ namespace ost_cab
         return encode_utf8(wide_directory, directory) &&
                encode_utf8(filesystem_path.filename().wstring(), filename);
     }
-
     static bool extended_absolute_path(
         const std::wstring &path,
         std::wstring &extended_path)
@@ -132,7 +127,6 @@ namespace ost_cab
             extended_path = L"\\\\?\\" + normalized;
             return true;
         }
-
         const DWORD required = GetFullPathNameW(
             normalized.c_str(), 0, nullptr, nullptr);
         if (required == 0)
@@ -145,7 +139,6 @@ namespace ost_cab
         absolute.resize(length);
         return extended_absolute_path(absolute, extended_path);
     }
-
     static INT_PTR open_wide_file(const std::wstring &path, int oflag)
     {
         DWORD access = (oflag & _O_RDWR) ? (GENERIC_READ | GENERIC_WRITE) : (oflag & _O_WRONLY) ? GENERIC_WRITE
@@ -155,7 +148,6 @@ namespace ost_cab
                                disp, FILE_ATTRIBUTE_NORMAL, nullptr);
         return (h == INVALID_HANDLE_VALUE) ? -1 : (INT_PTR)h;
     }
-
     static INT_PTR open_file(const char *path, int oflag)
     {
         std::wstring wide_path;
@@ -310,14 +302,12 @@ namespace ost_cab
     }
     static FNALLOC(fdi_alloc) { return HeapAlloc(GetProcessHeap(), 0, cb); }
     static FNFREE(fdi_free) { HeapFree(GetProcessHeap(), 0, pv); }
-
     struct FdiSource
     {
         std::wstring path;
     };
     constexpr char FDI_SOURCE_OPEN_PATH[] = ".\\ostv-source.cab";
     static thread_local FdiSource *active_fdi_source = nullptr;
-
     class ScopedFdiSource
     {
     public:
@@ -326,19 +316,16 @@ namespace ost_cab
         {
             active_fdi_source = &source;
         }
-
         ~ScopedFdiSource()
         {
             active_fdi_source = previous_;
         }
-
         ScopedFdiSource(const ScopedFdiSource &) = delete;
         ScopedFdiSource &operator=(const ScopedFdiSource &) = delete;
 
     private:
         FdiSource *previous_;
     };
-
     static FNOPEN(fdi_open)
     {
         if (active_fdi_source &&
@@ -347,7 +334,6 @@ namespace ost_cab
         INT_PTR h = open_file(pszFile, oflag);
         return (h == -1) ? -1 : h;
     }
-
     static BOOL fdi_copy_source(
         HFDI hfdi,
         std::wstring source_path,
@@ -361,7 +347,6 @@ namespace ost_cab
         return FDICopy(
             hfdi, cab_name, cab_path, 0, notify, nullptr, context);
     }
-
     static FNREAD(fdi_read)
     {
         DWORD n = 0;
@@ -387,7 +372,6 @@ namespace ost_cab
     }
     using ExtractionDirectory = std::reference_wrapper<const std::wstring>;
     using MemberNames = std::reference_wrapper<std::vector<std::string>>;
-
     struct FdiContext
     {
         std::variant<ExtractionDirectory, MemberNames> destination;

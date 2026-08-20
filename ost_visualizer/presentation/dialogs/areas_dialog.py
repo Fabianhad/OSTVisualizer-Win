@@ -22,6 +22,9 @@ from ..utils.dialog import (
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
+from ..utils.windows import PersistentDialogWindowState
+
+_DIALOG_WINDOW_STATE_KEY = "bid_areas"
 
 
 class BidAreasDialog(BaseListDialog):
@@ -69,11 +72,17 @@ class BidAreasDialog(BaseListDialog):
             sorting=False,
             movable=False,
         )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+            QtCore.QSize(BID_AREAS_WINDOW_WIDTH, BID_AREAS_WINDOW_HEIGHT),
+        )
         if not self._has_license:
             self._set_controls_interactive(False)
 
     def _setup_ui(self) -> None:
-        self._setup_window("Bid Areas", BID_AREAS_WINDOW_WIDTH, BID_AREAS_WINDOW_HEIGHT)
+        self._setup_window("Bid Areas")
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
         main_layout.setSpacing(RELAXED_SPACING)

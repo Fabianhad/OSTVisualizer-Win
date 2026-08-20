@@ -4,7 +4,6 @@ from shiboken6 import isValid
 from ..config import COMPACT_SPACING, RELAXED_MARGINS, RELAXED_SPACING
 from .condition_tree_style import apply_tree_indentation
 from .messagebox import confirm_multi_delete
-from .windows import remove_minimize, set_initial_window_size
 
 
 class ItemRecord(TypedDict):
@@ -55,10 +54,9 @@ class BaseListDialog(QtWidgets.QDialog):
         self._save_done: bool = False
         self._new_counter: int = 0
 
-    def _setup_window(self, title: str, width: int, height: int) -> None:
+    def _setup_window(self, title: str) -> None:
         self.setWindowTitle(title)
         self.setModal(True)
-        set_initial_window_size(self, width, height)
         self.icon_provider.set_window_icon(self)
 
     def _save_pending(self) -> bool:
@@ -81,7 +79,7 @@ class BaseListDialog(QtWidgets.QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        remove_minimize(self)
+        self._window_state.apply_show_state()
 
     def cleanup(self) -> None:
         self.icon_provider = None
@@ -95,8 +93,6 @@ class BaseListDialog(QtWidgets.QDialog):
 
 class BasePickerDialog(BaseListDialog):
     _window_title: str = ""
-    _window_width: int = 400
-    _window_height: int = 400
     _button_width: int = 90
     _uid_col: int = 0
     _name_col: int = 0
@@ -131,7 +127,7 @@ class BasePickerDialog(BaseListDialog):
             self._on_new_with_name(initial_name)
 
     def _setup_ui(self) -> None:
-        self._setup_window(self._window_title, self._window_width, self._window_height)
+        self._setup_window(self._window_title)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
         main_layout.setSpacing(RELAXED_SPACING)

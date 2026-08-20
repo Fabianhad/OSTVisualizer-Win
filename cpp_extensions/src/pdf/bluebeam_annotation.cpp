@@ -16,7 +16,6 @@ namespace ost_pdf_writer
     constexpr double CLOUD_SCALLOP_SIZE_SCALE = 0.25;
     constexpr double MEASUREMENT_CAPTION_FONT_SIZE = 12.0;
     constexpr double MEASUREMENT_CAPTION_LINE_HEIGHT = 13.8;
-
     std::string generate_nm()
     {
         static std::mt19937 rng(std::random_device{}());
@@ -348,19 +347,16 @@ namespace ost_pdf_writer
         }
         oss << "h ";
     }
-
     static double point_distance(const std::array<double, 2> &a,
                                  const std::array<double, 2> &b)
     {
         return std::hypot(b[0] - a[0], b[1] - a[1]);
     }
-
     static std::array<double, 2> midpoint(const std::array<double, 2> &a,
                                           const std::array<double, 2> &b)
     {
         return {(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5};
     }
-
     static std::array<double, 2> normalize(double x, double y)
     {
         double length = std::hypot(x, y);
@@ -370,7 +366,6 @@ namespace ost_pdf_writer
         }
         return {x / length, y / length};
     }
-
     static std::vector<std::array<double, 2>> normalize_cloud_vertices(
         const std::vector<std::array<double, 2>> &vertices)
     {
@@ -399,14 +394,12 @@ namespace ost_pdf_writer
         }
         return points;
     }
-
     struct PerimeterEdge
     {
         std::array<double, 2> start;
         std::array<double, 2> end;
         double length;
     };
-
     static std::vector<PerimeterEdge> polygon_perimeter_edges(
         const std::vector<std::array<double, 2>> &points)
     {
@@ -427,7 +420,6 @@ namespace ost_pdf_writer
         }
         return edges;
     }
-
     static double calculate_cloud_scallop_radius(double average_edge_length)
     {
         double base_radius = std::max(
@@ -436,7 +428,6 @@ namespace ost_pdf_writer
                      CLOUD_SCALLOP_MAX_RADIUS));
         return base_radius * CLOUD_SCALLOP_SIZE_SCALE;
     }
-
     static std::vector<std::array<double, 2>> sample_along_perimeter(
         const std::vector<std::array<double, 2>> &points,
         int sample_count)
@@ -470,7 +461,6 @@ namespace ost_pdf_writer
         }
         return samples;
     }
-
     static std::vector<std::array<double, 2>> compute_centers_from_samples(
         const std::vector<std::array<double, 2>> &samples,
         double radius)
@@ -493,7 +483,6 @@ namespace ost_pdf_writer
         }
         return centers;
     }
-
     struct CloudCurveSegment
     {
         std::array<double, 2> start;
@@ -501,7 +490,6 @@ namespace ost_pdf_writer
         std::array<double, 2> cp2;
         std::array<double, 2> end;
     };
-
     static std::vector<CloudCurveSegment> cloud_arc_to_bezier(
         const std::array<double, 2> &center,
         double radius,
@@ -545,7 +533,6 @@ namespace ost_pdf_writer
         }
         return segments;
     }
-
     static std::vector<CloudCurveSegment> build_cloud_curve_segments(
         const std::vector<std::array<double, 2>> &vertices)
     {
@@ -599,7 +586,6 @@ namespace ost_pdf_writer
         }
         return segments;
     }
-
     static void emit_cloud_appearance_path(std::ostringstream &oss,
                                            const std::vector<CloudCurveSegment> &segments)
     {
@@ -911,7 +897,6 @@ namespace ost_pdf_writer
             add_bbox_point(bb, dimension.x1 - nx * tick_half, dimension.y1 - ny * tick_half);
             add_bbox_point(bb, dimension.x2 + nx * tick_half, dimension.y2 + ny * tick_half);
             add_bbox_point(bb, dimension.x2 - nx * tick_half, dimension.y2 - ny * tick_half);
-
             DimensionTextLayout text = calculate_dimension_text_layout(dimension, dx, dy);
             double along_x = text.ux * text.text_width / 2.0;
             double along_y = text.uy * text.text_width / 2.0;
@@ -1335,7 +1320,6 @@ namespace ost_pdf_writer
         }
         return 0;
     }
-
     static double estimate_text_width(const std::string &text, double font_size)
     {
         double width = 0.0;
@@ -1345,7 +1329,6 @@ namespace ost_pdf_writer
         }
         return width;
     }
-
     static std::vector<std::string> split_long_word(
         const std::string &word,
         double max_width,
@@ -1372,7 +1355,6 @@ namespace ost_pdf_writer
         }
         return chunks;
     }
-
     static void append_wrapped_word(
         std::vector<std::string> &lines,
         std::string &current_line,
@@ -1413,7 +1395,6 @@ namespace ost_pdf_writer
             }
         }
     }
-
     static std::vector<std::string> wrap_text_lines(
         const std::string &content,
         double max_width,
@@ -1451,7 +1432,6 @@ namespace ost_pdf_writer
         }
         return lines;
     }
-
     std::string generate_bluebeam_text_dict(const BluebeamText &text)
     {
         auto [r, g, b] = color_to_rgb(text.color);

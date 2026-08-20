@@ -18,8 +18,10 @@ from ..utils.dialog import save_result_mapping, save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
-from ..utils.windows import remove_minimize, set_initial_window_size
+from ..utils.windows import PersistentDialogWindowState
 from .employee_detail_dialog import EmployeeDetailDialog
+
+_DIALOG_WINDOW_STATE_KEY = "employees"
 
 
 class EmployeesDialog(QtWidgets.QDialog):
@@ -75,13 +77,18 @@ class EmployeesDialog(QtWidgets.QDialog):
             movable=True,
             default_sort_column="employee_number",
         )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+            QtCore.QSize(EMPLOYEES_WINDOW_WIDTH, EMPLOYEES_WINDOW_HEIGHT),
+        )
         if initial_first_name is not None:
             self._on_new_with_first_name(initial_first_name)
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("Employees")
         self.setModal(True)
-        set_initial_window_size(self, EMPLOYEES_WINDOW_WIDTH, EMPLOYEES_WINDOW_HEIGHT)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
@@ -460,7 +467,7 @@ class EmployeesDialog(QtWidgets.QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        remove_minimize(self)
+        self._window_state.apply_show_state()
 
     def cleanup(self) -> None:
         self.icon_provider = None

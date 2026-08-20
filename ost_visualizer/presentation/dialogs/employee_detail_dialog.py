@@ -4,7 +4,6 @@ from ...domain.entities.employee import PayClass
 from ..config import (
     COMPACT_SPACING,
     EMPLOYEES_BUTTON_WIDTH,
-    EMPLOYEES_DETAIL_HEIGHT,
     EMPLOYEES_DETAIL_WIDTH,
     RELAXED_MARGINS,
     RELAXED_SPACING,
@@ -12,7 +11,7 @@ from ..config import (
 from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..utils.button_policy import apply_no_highlight_button_policy
 from ..utils.messagebox import confirm_not_found, show_warning
-from ..utils.windows import remove_minimize_maximize
+from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 from .payroll_class_dialog import PayrollClassListDialog
 
 
@@ -45,7 +44,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
     def _setup_ui(self) -> None:
         self.setWindowTitle("Employee Detail")
         self.setModal(True)
-        self.setFixedSize(EMPLOYEES_DETAIL_WIDTH, EMPLOYEES_DETAIL_HEIGHT)
+        remove_minimize_maximize(self)
         self.icon_provider.set_window_icon(self)
         outer = QtWidgets.QHBoxLayout(self)
         outer.setContentsMargins(*RELAXED_MARGINS)
@@ -150,6 +149,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         btn_layout.addWidget(self.btn_next)
         btn_layout.addStretch()
         outer.addLayout(btn_layout)
+        set_fixed_width_auto_height(self, EMPLOYEES_DETAIL_WIDTH)
 
     def _populate_pay_class_combo(self) -> None:
         self.combo_pay_class.blockSignals(True)

@@ -164,8 +164,6 @@ class AboutDialog(QtWidgets.QDialog):
         self.setWindowTitle("About OST Visualizer")
         self.setModal(True)
         remove_minimize_maximize(self)
-        self.resize(ABOUT_WINDOW_WIDTH, ABOUT_WINDOW_HEIGHT)
-        self.setMinimumSize(ABOUT_WINDOW_WIDTH, ABOUT_WINDOW_HEIGHT)
         self.icon_provider.set_window_icon(self)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(*RELAXED_MARGINS)
@@ -185,6 +183,7 @@ class AboutDialog(QtWidgets.QDialog):
         layout.addWidget(
             self.close_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight
         )
+        self.setFixedSize(ABOUT_WINDOW_WIDTH, ABOUT_WINDOW_HEIGHT)
 
     def _load_html_content(self) -> str:
         return (

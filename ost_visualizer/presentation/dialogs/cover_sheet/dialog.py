@@ -14,8 +14,6 @@ from ....domain.entities.identity_refs import BidRef
 from ...components.progress_dialog import ProgressDialog, ProgressReporter
 from ...config import (
     COMPACT_SPACING,
-    COVER_SHEET_WINDOW_HEIGHT,
-    COVER_SHEET_WINDOW_WIDTH,
     DEFAULT_ICON_SIZE,
     DIALOG_BUTTON_WIDTH,
     INLINE_MARGINS,
@@ -35,7 +33,7 @@ from ...utils.messagebox import (
 from ...utils.overlay_context_menu import IMAGE_FILE_FILTER
 from ...utils.persistent_header import PersistentHeaderController
 from ...utils.scales import ALL_SCALES, ARCH_SCALES, SCALES_BY_STYLE
-from ...utils.windows import remove_minimize, set_initial_window_size
+from ...utils.windows import PersistentDialogWindowState
 from ..areas_dialog import BidAreasDialog
 from ..employees_dialog import EmployeesDialog
 from ..job_statuses_dialog import JobStatusesDialog
@@ -60,6 +58,7 @@ from .row_model import CoverSheetPageRow, PdfPageSize
 logger = logging.getLogger(__name__)
 PdfPageIndexData = Tuple[int, Optional[float], Optional[float]]
 _DIALOG_GENERATIONS = itertools.count(1)
+_DIALOG_WINDOW_STATE_KEY = "cover_sheet"
 
 
 class _PathLineEdit(QtWidgets.QLineEdit):
@@ -241,16 +240,15 @@ class CoverSheetDialog(QtWidgets.QDialog):
             sorting=False,
             movable=True,
         )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            self._workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+        )
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("New Project" if self._create_mode else "Cover Sheet")
         self.setModal(True)
-        self.setWindowFlags(
-            self.windowFlags() | QtCore.Qt.WindowType.WindowMaximizeButtonHint
-        )
-        set_initial_window_size(
-            self, COVER_SHEET_WINDOW_WIDTH, COVER_SHEET_WINDOW_HEIGHT
-        )
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
@@ -2344,5 +2342,4 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def showEvent(self, event: QtWidgets.QApplication.event) -> None:
         super().showEvent(event)
-        self.showMaximized()
-        remove_minimize(self)
+        self._window_state.apply_show_state()

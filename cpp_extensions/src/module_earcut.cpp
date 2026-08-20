@@ -4,7 +4,6 @@
 #include <nanobind/stl/vector.h>
 #include <stdexcept>
 #include <vector>
-
 #include "earcut/earcut.hpp"
 namespace nb = nanobind;
 std::vector<uint32_t> earcut_triangulate(

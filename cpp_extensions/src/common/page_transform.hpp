@@ -1,10 +1,8 @@
 #pragma once
-
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
-
 namespace ost_page_transform
 {
     inline void validate_dimensions(double width, double height)
@@ -13,7 +11,6 @@ namespace ost_page_transform
             width <= 0.0 || height <= 0.0)
             throw std::invalid_argument("Page dimensions must be finite and positive");
     }
-
     inline int normalize_quarter_turn(int rotation)
     {
         int normalized = ((rotation % 360) + 360) % 360;
@@ -21,7 +18,6 @@ namespace ost_page_transform
             throw std::invalid_argument("Page rotation must be a multiple of 90 degrees");
         return normalized;
     }
-
     inline std::array<double, 2> output_dimensions(
         double width, double height, int rotation)
     {
@@ -31,7 +27,6 @@ namespace ost_page_transform
             return {height, width};
         return {width, height};
     }
-
     inline std::array<double, 2> transform_top_left_point(
         double width,
         double height,
@@ -45,7 +40,6 @@ namespace ost_page_transform
             throw std::invalid_argument("Page coordinates must be finite");
         validate_dimensions(width, height);
         int normalized = normalize_quarter_turn(rotation);
-
         double transformed_x = flip_x ? width - x : x;
         double transformed_y = flip_y ? height - y : y;
         switch (normalized)
@@ -60,7 +54,6 @@ namespace ost_page_transform
             return {transformed_x, transformed_y};
         }
     }
-
     inline bool dimensions_match(
         double actual_width,
         double actual_height,

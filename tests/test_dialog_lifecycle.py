@@ -15,6 +15,7 @@ from ost_visualizer.presentation.coordinators.event_coordinator import EventCoor
 from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.dialog import BaseListDialog
+from ost_visualizer.presentation.utils.windows import set_fixed_width_auto_height
 
 
 def _app():
@@ -115,6 +116,24 @@ class FakeProgressDialog:
 
 
 class DialogLifecycleTests(unittest.TestCase):
+    def test_fixed_width_auto_height_tracks_layout_spacing(self):
+        _app()
+        dialog = QtWidgets.QDialog()
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addWidget(QtWidgets.QLabel("First row"))
+        layout.addWidget(QtWidgets.QLabel("Second row"))
+        layout.setSpacing(5)
+        set_fixed_width_auto_height(dialog, 240)
+        compact_height = dialog.height()
+        layout.setSpacing(25)
+        set_fixed_width_auto_height(dialog, 240)
+        try:
+            self.assertEqual(dialog.width(), 240)
+            self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
+            self.assertEqual(dialog.height(), compact_height + 20)
+        finally:
+            dialog.deleteLater()
+
     def test_base_list_dialog_cleanup_releases_save_callback(self):
         dialog = BaseListDialog.__new__(BaseListDialog)
         retained = object()

@@ -10,12 +10,13 @@ from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.dialog import BasePickerDialog, ItemRecord
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.persistent_header import PersistentHeaderController
+from ..utils.windows import PersistentDialogWindowState
+
+_DIALOG_WINDOW_STATE_KEY = "payroll_classes"
 
 
 class PayrollClassListDialog(BasePickerDialog):
     _window_title = "Payroll Class List"
-    _window_width = PAYROLL_CLASS_WINDOW_WIDTH
-    _window_height = PAYROLL_CLASS_WINDOW_HEIGHT
     _button_width = PAYROLL_CLASS_BUTTON_WIDTH
     _uid_col = 0
     _name_col = 0
@@ -61,6 +62,12 @@ class PayrollClassListDialog(BasePickerDialog):
             sorting=True,
             movable=True,
             default_sort_column="payroll_class",
+        )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+            QtCore.QSize(PAYROLL_CLASS_WINDOW_WIDTH, PAYROLL_CLASS_WINDOW_HEIGHT),
         )
 
     def _configure_tree(self) -> None:

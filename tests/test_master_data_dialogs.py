@@ -23,6 +23,22 @@ from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
+from ost_visualizer.presentation.config import (
+    BID_AREAS_WINDOW_HEIGHT,
+    BID_AREAS_WINDOW_WIDTH,
+    CDNTYPE_WINDOW_HEIGHT,
+    CDNTYPE_WINDOW_WIDTH,
+    EMPLOYEES_WINDOW_HEIGHT,
+    EMPLOYEES_WINDOW_WIDTH,
+    LAYERS_WINDOW_HEIGHT,
+    LAYERS_WINDOW_WIDTH,
+    JOB_STATUSES_WINDOW_HEIGHT,
+    JOB_STATUSES_WINDOW_WIDTH,
+    OPEN_FILE_HEIGHT,
+    OPEN_FILE_WIDTH,
+    PAYROLL_CLASS_WINDOW_HEIGHT,
+    PAYROLL_CLASS_WINDOW_WIDTH,
+)
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
@@ -453,6 +469,139 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             if sidebar is not None:
                 sidebar.close()
                 sidebar.deleteLater()
+
+    def test_resizable_list_dialogs_persist_windowed_and_maximized_state(self):
+        cases = (
+            (
+                "bid_areas",
+                QtCore.QSize(BID_AREAS_WINDOW_WIDTH, BID_AREAS_WINDOW_HEIGHT),
+                lambda model: BidAreasDialog(
+                    FakeIconProvider(),
+                    workspace_state_model=model,
+                    bid_areas=[self._area()],
+                ),
+            ),
+            (
+                "condition_types",
+                QtCore.QSize(CDNTYPE_WINDOW_WIDTH, CDNTYPE_WINDOW_HEIGHT),
+                lambda model: ConditionTypesDialog(
+                    FakeIconProvider(),
+                    workspace_state_model=model,
+                    condition_types=[CdnType(uid="type-1", name="Concrete")],
+                    save_fn=lambda _changes: {},
+                    reload_fn=lambda: [CdnType(uid="type-1", name="Concrete")],
+                ),
+            ),
+            (
+                "employees",
+                QtCore.QSize(EMPLOYEES_WINDOW_WIDTH, EMPLOYEES_WINDOW_HEIGHT),
+                lambda model: EmployeesDialog(
+                    FakeIconProvider(),
+                    workspace_state_model=model,
+                    employees=[],
+                ),
+            ),
+            (
+                "job_statuses",
+                QtCore.QSize(JOB_STATUSES_WINDOW_WIDTH, JOB_STATUSES_WINDOW_HEIGHT),
+                lambda model: JobStatusesDialog(
+                    FakeIconProvider(),
+                    workspace_state_model=model,
+                    job_statuses=[
+                        JobStatus(
+                            uid="status-1",
+                            name="Bidding",
+                            locked=False,
+                            sequence=1,
+                        )
+                    ],
+                ),
+            ),
+            (
+                "layers",
+                QtCore.QSize(LAYERS_WINDOW_WIDTH, LAYERS_WINDOW_HEIGHT),
+                lambda model: LayersDialog(
+                    FakeIconProvider(),
+                    workspace_state_model=model,
+                    layers=[self._layer("layer-1", "Layer 1", 1)],
+                ),
+            ),
+            (
+                "open_files",
+                QtCore.QSize(OPEN_FILE_WIDTH, OPEN_FILE_HEIGHT),
+                lambda model: OpenFilesDialog(
+                    FakeIconProvider(),
+                    None,
+                    [],
+                    object(),
+                    workspace_state_model=model,
+                ),
+            ),
+            (
+                "payroll_classes",
+                QtCore.QSize(PAYROLL_CLASS_WINDOW_WIDTH, PAYROLL_CLASS_WINDOW_HEIGHT),
+                lambda model: PayrollClassListDialog(
+                    FakeIconProvider(),
+                    workspace_state_model=model,
+                    pay_classes=[PayClass(uid="pay-1", name="Regular")],
+                ),
+            ),
+        )
+        for key, default_size, factory in cases:
+            with self.subTest(dialog=key):
+                model = make_workspace_state_model()
+                source = factory(model)
+                try:
+                    self.assertEqual(
+                        source.size(),
+                        source._window_state._bounded_size(default_size),
+                    )
+                    self.assertGreater(source.maximumWidth(), source.minimumWidth())
+                    self.assertGreater(source.maximumHeight(), source.minimumHeight())
+                    flags = source.windowFlags()
+                    self.assertFalse(
+                        bool(flags & QtCore.Qt.WindowType.WindowMinimizeButtonHint)
+                    )
+                    self.assertTrue(
+                        bool(flags & QtCore.Qt.WindowType.WindowMaximizeButtonHint)
+                    )
+                    self.assertTrue(
+                        bool(flags & QtCore.Qt.WindowType.WindowCloseButtonHint)
+                    )
+                    resized = QtCore.QSize(
+                        min(
+                            source.width() + 20, source.screen().availableSize().width()
+                        ),
+                        min(
+                            source.height() + 20,
+                            source.screen().availableSize().height(),
+                        ),
+                    )
+                    source.resize(resized)
+                    resized = source.size()
+                    source.show()
+                    self.app.processEvents()
+                    source.showMaximized()
+                    self.app.processEvents()
+                    self.assertTrue(source.isMaximized())
+                    source.reject()
+                finally:
+                    source.cleanup()
+                    source.deleteLater()
+                self.assertEqual(model.state.dialog_sizes[key], list(resized.toTuple()))
+                self.assertTrue(model.state.dialog_maximized[key])
+                restored = factory(model)
+                try:
+                    restored.show()
+                    self.app.processEvents()
+                    self.assertTrue(restored.isMaximized())
+                    restored.showNormal()
+                    self.app.processEvents()
+                    restored.reject()
+                finally:
+                    restored.cleanup()
+                    restored.deleteLater()
+                self.assertFalse(model.state.dialog_maximized[key])
 
     def test_employees_picker_keeps_select_and_cancel_buttons(self):
         dialog = self._employee_dialog()

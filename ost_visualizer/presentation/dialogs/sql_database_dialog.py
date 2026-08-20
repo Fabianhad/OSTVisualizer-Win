@@ -23,7 +23,7 @@ from ..config import (
     SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
 )
 from ..utils.messagebox import show_warning
-from ..utils.windows import remove_minimize_maximize, set_initial_window_size
+from ..utils.windows import remove_minimize_maximize
 from .sql_connection_dialog import SqlConnectionDialogResult, SqlConnectionFormMixin
 
 
@@ -114,8 +114,7 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         self.password_input.returnPressed.connect(self._accept_if_valid)
         self.database_name_input.returnPressed.connect(self._accept_if_valid)
         layout.addWidget(self.button_box)
-        set_initial_window_size(
-            self,
+        self.setFixedSize(
             SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
             SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT,
         )

@@ -4,7 +4,6 @@ from ....domain.entities.font_definition import FontDefinition
 from ...config import (
     COMPACT_SPACING,
     DIALOG_BUTTON_WIDTH,
-    FONT_DIALOG_HEIGHT,
     FONT_DIALOG_WIDTH,
 )
 from ...utils.annotation_style_controls import TEXT_FONT_SIZES
@@ -14,7 +13,7 @@ from ...utils.font_catalog import (
     qfont_from_resolved_definition,
     resolve_font_definition,
 )
-from ...utils.windows import remove_minimize_maximize
+from ...utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 
 
 class FontDialog(QtWidgets.QDialog):
@@ -25,13 +24,13 @@ class FontDialog(QtWidgets.QDialog):
         self.setWindowTitle("Font")
         self.setModal(True)
         self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
-        self.setFixedSize(FONT_DIALOG_WIDTH, FONT_DIALOG_HEIGHT)
         remove_minimize_maximize(self)
         self._selected = resolve_font_definition(definition)
         self._syncing = False
         self._build_ui()
         self._load_selection()
         self.sample_group.setFixedHeight(self.sample_group.sizeHint().height())
+        set_fixed_width_auto_height(self, FONT_DIALOG_WIDTH)
 
     def selected_font(self) -> FontDefinition | None:
         if self.result() != QtWidgets.QDialog.DialogCode.Accepted:

@@ -2,13 +2,12 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from PySide6 import QtCore, QtWidgets
 from ..config import (
-    ADJUST_IMAGES_WINDOW_HEIGHT,
     ADJUST_IMAGES_WINDOW_WIDTH,
     COMPACT_MARGINS,
     COMPACT_SPACING,
 )
 from ..utils.messagebox import show_warning
-from ..utils.windows import remove_minimize_maximize
+from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 
 _ROTATION_OPTIONS = (
     (0, "Original rotation"),
@@ -54,7 +53,6 @@ class AdjustImagesDialog(QtWidgets.QDialog):
     def _setup_ui(self) -> None:
         self.setWindowTitle("Adjust Images")
         self.setModal(True)
-        self.setFixedSize(ADJUST_IMAGES_WINDOW_WIDTH, ADJUST_IMAGES_WINDOW_HEIGHT)
         remove_minimize_maximize(self)
         if self._icon_provider:
             self._icon_provider.set_window_icon(self)
@@ -79,6 +77,7 @@ class AdjustImagesDialog(QtWidgets.QDialog):
         main_layout.addLayout(content_layout)
         main_layout.addStretch()
         self._build_bottom_buttons(main_layout)
+        set_fixed_width_auto_height(self, ADJUST_IMAGES_WINDOW_WIDTH)
 
     def _build_orientation_group(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Orientation")

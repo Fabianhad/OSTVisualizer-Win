@@ -11,7 +11,6 @@ namespace ost_pdf_writer
         std::string label;
         uint32_t measurement_types = 0;
     };
-
     struct BluebeamPolygon
     {
         std::vector<std::array<double, 2>> vertices;

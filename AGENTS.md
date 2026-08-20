@@ -104,6 +104,15 @@ Persistence:
 - JSON state lives under `~/.ost_visualizer/`.
 - Durable preferences belong in `config.json`.
 - Restorable workspace shell state belongs in `workspace_state.json`.
+- Resizable application-dialog dimensions and maximized state belong in the semantic
+  `WorkspaceState.dialog_sizes` and `WorkspaceState.dialog_maximized` maps under
+  stable presentation-owned keys. Restored normal sizes are bounded to the
+  available screen, and dialogs reopen in their saved maximized or windowed
+  state. Cover Sheet derives its first size from the current layout; Condition
+  Types, Employees, Layers, Open Files, Bid Areas, Job Statuses, and Payroll
+  Classes use their configured initial sizes. Do not store these values in
+  QSettings or as opaque Qt geometry. Standard Qt dialogs retain their native
+  sizing behavior and are not brought into this application-dialog policy.
 - Font and color creation defaults plus the live inactive-object color belong to
   `Config` in `config.json`. Workspace annotation styles retain only alignment
   and unrelated tool defaults; explicit font and color columns on existing

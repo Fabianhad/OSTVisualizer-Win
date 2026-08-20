@@ -774,7 +774,6 @@ namespace ost_pdf_writer
             y_axis[0] - origin[0], y_axis[1] - origin[1],
             origin[0], origin[1]);
     }
-
     static QPDFMatrix compose_transforms(
         QPDFMatrix const &first, QPDFMatrix const &second)
     {
@@ -796,7 +795,6 @@ namespace ost_pdf_writer
             y_axis[0] - origin[0], y_axis[1] - origin[1],
             origin[0], origin[1]);
     }
-
     static QPDFObjectHandle transformed_coordinate_container(
         QPDFObjectHandle coordinates,
         QPDFMatrix const &transform,
@@ -840,7 +838,6 @@ namespace ost_pdf_writer
         }
         return coordinates;
     }
-
     static void transform_copied_annotation_geometry(
         QPDFObjectHandle annotation, QPDFMatrix const &transform)
     {
@@ -853,7 +850,6 @@ namespace ost_pdf_writer
             if (transformed)
                 annotation.replaceKey(key, coordinates);
         }
-
         double length_scale = std::sqrt(std::abs(
             transform.a * transform.d - transform.b * transform.c));
         QPDFObjectHandle border = annotation.getKey("/Border");
@@ -895,7 +891,6 @@ namespace ost_pdf_writer
                         value.getNumericValue() * length_scale));
         }
     }
-
     static void copy_source_annotations(
         QPDFPageObjectHelper &destination,
         QPDFPageObjectHelper selected_page,
@@ -916,7 +911,6 @@ namespace ost_pdf_writer
             transform_copied_annotation_geometry(
                 annotations.getArrayItem(index), transform);
     }
-
     static QPDFObjectHandle create_blank_page_object(QPDF &qpdf, double width, double height)
     {
         QPDFObjectHandle page = QPDFObjectHandle::newDictionary();
@@ -929,7 +923,6 @@ namespace ost_pdf_writer
         page.replaceKey("/MediaBox", media_box);
         return qpdf.makeIndirectObject(page);
     }
-
     static bool add_canonical_source_page(
         QPDF &output,
         QPDFPageDocumentHelper &output_pages,
@@ -944,7 +937,6 @@ namespace ost_pdf_writer
             output, output_width, output_height);
         output_pages.addPage(blank_page, false);
         QPDFPageObjectHelper destination = output_pages.getAllPages().back();
-
         PDFWriter::PDFPageGeometryData geometry = resolve_page_geometry(selected_page);
         const std::array<double, 4> &visible = geometry.visible_box;
         selected_page.getObjectHandle().replaceKey(
@@ -954,7 +946,6 @@ namespace ost_pdf_writer
                     visible[0], visible[1], visible[2], visible[3])));
         selected_page.getObjectHandle().replaceKey(
             "/UserUnit", QPDFObjectHandle::newReal(geometry.user_unit));
-
         QPDFObjectHandle foreign_form = selected_page.getFormXObjectForPage(true);
         QPDFObjectHandle source_form = output.copyForeignObject(foreign_form);
         QPDFObjectHandle resources = destination.getObjectHandle().getKey("/Resources");
@@ -972,7 +963,6 @@ namespace ost_pdf_writer
         int min_suffix = 1;
         std::string name = resources.getUniqueResourceName("/OstSource", min_suffix);
         xobjects.replaceKey(name, source_form);
-
         QPDFMatrix source_to_base;
         std::string placement = destination.placeFormXObject(
             source_form,

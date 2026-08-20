@@ -29,7 +29,6 @@ namespace ost_snap
         void build(const std::vector<RawSegment> &raw);
         std::optional<SnapHit> query(float x, float y, float radius) const;
         std::size_t size() const noexcept;
-
     private:
         std::vector<Segment> segments_;
     };

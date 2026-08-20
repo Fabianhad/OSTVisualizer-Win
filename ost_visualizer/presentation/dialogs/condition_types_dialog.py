@@ -15,7 +15,9 @@ from ..utils.dialog import save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
-from ..utils.windows import remove_minimize, set_initial_window_size
+from ..utils.windows import PersistentDialogWindowState
+
+_DIALOG_WINDOW_STATE_KEY = "condition_types"
 
 
 class ConditionTypesDialog(QtWidgets.QDialog):
@@ -65,11 +67,16 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             movable=False,
             default_sort_column="condition_type",
         )
+        self._window_state = PersistentDialogWindowState(
+            self,
+            workspace_state_model,
+            _DIALOG_WINDOW_STATE_KEY,
+            QtCore.QSize(CDNTYPE_WINDOW_WIDTH, CDNTYPE_WINDOW_HEIGHT),
+        )
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("Condition Types")
         self.setModal(True)
-        set_initial_window_size(self, CDNTYPE_WINDOW_WIDTH, CDNTYPE_WINDOW_HEIGHT)
         self.icon_provider.set_window_icon(self)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
@@ -549,7 +556,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        remove_minimize(self)
+        self._window_state.apply_show_state()
 
     def closeEvent(self, event) -> None:
         if self._operation_pending:

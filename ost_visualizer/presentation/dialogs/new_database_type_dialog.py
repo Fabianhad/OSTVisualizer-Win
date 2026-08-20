@@ -4,11 +4,11 @@ from ...domain.entities.database_descriptor import DatabaseBackend
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
-    NEW_DATABASE_TYPE_DIALOG_HEIGHT,
     NEW_DATABASE_TYPE_DIALOG_WIDTH,
     RELAXED_MARGINS,
+    RELAXED_SPACING,
 )
-from ..utils.windows import remove_minimize_maximize, set_initial_window_size
+from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 
 
 class NewDatabaseTypeDialog(QtWidgets.QDialog):
@@ -25,7 +25,7 @@ class NewDatabaseTypeDialog(QtWidgets.QDialog):
         self._selected_backend: DatabaseBackend | None = None
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(*RELAXED_MARGINS)
-        layout.setSpacing(COMPACT_SPACING)
+        layout.setSpacing(RELAXED_SPACING)
         self.access_button = self._add_option(
             layout,
             "Microsoft Access Database (Most Users)",
@@ -40,9 +40,7 @@ class NewDatabaseTypeDialog(QtWidgets.QDialog):
             "and are wanting to setup an enterprise database server.",
             DatabaseBackend.SQL_SERVER,
         )
-        set_initial_window_size(
-            self, NEW_DATABASE_TYPE_DIALOG_WIDTH, NEW_DATABASE_TYPE_DIALOG_HEIGHT
-        )
+        set_fixed_width_auto_height(self, NEW_DATABASE_TYPE_DIALOG_WIDTH)
 
     def _add_option(
         self,
@@ -65,6 +63,7 @@ class NewDatabaseTypeDialog(QtWidgets.QDialog):
         description_label.setWordWrap(True)
         button_layout.addWidget(title_label)
         button_layout.addWidget(description_label)
+        button_layout.addStretch()
         button.clicked.connect(lambda: self._select(backend))
         layout.addWidget(button)
         return button

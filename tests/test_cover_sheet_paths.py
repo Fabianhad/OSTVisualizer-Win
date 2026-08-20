@@ -1805,6 +1805,128 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         finally:
             restored.deleteLater()
 
+    def test_cover_sheet_initial_size_comes_from_layout_and_has_window_controls(self):
+        model = _FakeWorkspaceStateModel()
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            self.assertEqual(
+                dialog.size(),
+                dialog._window_state._bounded_size(dialog.sizeHint()),
+            )
+            self.assertGreater(dialog.maximumWidth(), dialog.minimumWidth())
+            self.assertGreater(dialog.maximumHeight(), dialog.minimumHeight())
+            flags = dialog.windowFlags()
+            self.assertFalse(
+                bool(flags & QtCore.Qt.WindowType.WindowMinimizeButtonHint)
+            )
+            self.assertTrue(bool(flags & QtCore.Qt.WindowType.WindowMaximizeButtonHint))
+            self.assertTrue(bool(flags & QtCore.Qt.WindowType.WindowCloseButtonHint))
+            self.assertNotIn("cover_sheet", model.state.dialog_sizes)
+            self.assertNotIn("cover_sheet", model.state.dialog_maximized)
+        finally:
+            dialog.deleteLater()
+
+    def test_cover_sheet_persists_and_restores_resized_window(self):
+        model = _FakeWorkspaceStateModel()
+        source = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            source.resize(760, 560)
+            saved_size = [source.width(), source.height()]
+            source.reject()
+        finally:
+            source.deleteLater()
+        self.assertEqual(model.state.dialog_sizes["cover_sheet"], saved_size)
+        self.assertFalse(model.state.dialog_maximized["cover_sheet"])
+        restored = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            self.assertEqual(
+                restored.size(),
+                restored._window_state._bounded_size(QtCore.QSize(*saved_size)),
+            )
+        finally:
+            restored.deleteLater()
+
+    def test_cover_sheet_bounds_oversized_saved_window_to_available_screen(self):
+        state = WorkspaceState(
+            dialog_sizes={"cover_sheet": [100_000, 100_000]},
+        )
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=_FakeWorkspaceStateModel(state),
+        )
+        try:
+            self.assertEqual(dialog.size(), dialog.screen().availableGeometry().size())
+        finally:
+            dialog.deleteLater()
+
+    def test_cover_sheet_persists_and_restores_maximized_state(self):
+        model = _FakeWorkspaceStateModel()
+        source = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            source.resize(760, 560)
+            source.show()
+            self.app.processEvents()
+            source.showMaximized()
+            self.app.processEvents()
+            self.assertTrue(source.isMaximized())
+            source.reject()
+        finally:
+            source.deleteLater()
+        self.assertEqual(model.state.dialog_sizes["cover_sheet"], [760, 560])
+        self.assertTrue(model.state.dialog_maximized["cover_sheet"])
+        restored = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            restored.show()
+            self.app.processEvents()
+            self.assertTrue(restored.isMaximized())
+            restored.showNormal()
+            self.app.processEvents()
+            self.assertFalse(restored.isMaximized())
+        finally:
+            restored.reject()
+            restored.deleteLater()
+        self.assertFalse(model.state.dialog_maximized["cover_sheet"])
+        windowed = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            windowed.show()
+            self.app.processEvents()
+            self.assertFalse(windowed.isMaximized())
+        finally:
+            windowed.reject()
+            windowed.deleteLater()
+
     def test_cover_sheet_plan_header_invalid_state_keeps_default_layout(self):
         state = WorkspaceState()
         state.header_layouts["cover_sheet_pages"] = HeaderLayoutState(

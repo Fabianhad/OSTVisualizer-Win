@@ -40,8 +40,6 @@ class UpdateDialog(QtWidgets.QDialog):
         self.setModal(True)
         remove_minimize_maximize(self)
         self.icon_provider.set_window_icon(self)
-        self.resize(UPDATE_WINDOW_WIDTH, UPDATE_WINDOW_HEIGHT)
-        self.setMinimumWidth(UPDATE_WINDOW_WIDTH)
         main_layout = QtWidgets.QVBoxLayout(self)
         main_layout.setContentsMargins(*RELAXED_MARGINS)
         main_layout.setSpacing(RELAXED_SPACING)
@@ -74,6 +72,7 @@ class UpdateDialog(QtWidgets.QDialog):
         download_button.clicked.connect(self._on_yes)
         later_button.clicked.connect(self.reject)
         main_layout.addWidget(button_box)
+        self.setFixedSize(UPDATE_WINDOW_WIDTH, UPDATE_WINDOW_HEIGHT)
 
     def _on_yes(self) -> None:
         download_url = self.version_info.download_url

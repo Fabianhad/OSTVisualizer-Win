@@ -44,6 +44,7 @@ class SynchronizationConflictDialog(QtWidgets.QDialog):
                 lambda _checked=False, selected=action: self._choose(selected)
             )
         layout.addWidget(button_box)
+        layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetFixedSize)
 
     def _choose(self, action: ConflictResolutionAction) -> None:
         self._selected_action = action
