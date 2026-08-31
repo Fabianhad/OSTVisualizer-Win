@@ -5,11 +5,6 @@ import os
 import subprocess
 import unittest
 from pathlib import Path
-from ost_visualizer.infrastructure.sql.credential_store import WindowsCredentialStore
-from tools.manage_sql_development import (
-    CLIENT_CREDENTIAL_TARGET,
-    INTEGRATION_CREDENTIAL_TARGET,
-)
 
 
 class SqlDevelopmentLifecycleIntegrationTests(unittest.TestCase):
@@ -17,6 +12,17 @@ class SqlDevelopmentLifecycleIntegrationTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        if os.name != "nt":
+            raise unittest.SkipTest("SQL lifecycle integration tests require Windows.")
+
+        from ost_visualizer.infrastructure.sql.credential_store import (
+            WindowsCredentialStore,
+        )
+        from tools.manage_sql_development import (
+            CLIENT_CREDENTIAL_TARGET,
+            INTEGRATION_CREDENTIAL_TARGET,
+        )
+
         required = (
             "OSTV_SQL_LIFECYCLE_TESTS",
             "OSTV_SQL_DESTRUCTIVE_TESTS",
@@ -33,6 +39,8 @@ class SqlDevelopmentLifecycleIntegrationTests(unittest.TestCase):
         cls.repo_root = Path(__file__).resolve().parents[1]
         cls.setup_script = cls.repo_root / "scripts" / "setup-sql-development.ps1"
         cls.credential_store = WindowsCredentialStore()
+        cls.client_credential_target = CLIENT_CREDENTIAL_TARGET
+        cls.integration_credential_target = INTEGRATION_CREDENTIAL_TARGET
 
     def test_idempotency_rotation_teardown_and_fresh_rebuild(self):
         environment_removed = False
@@ -90,12 +98,12 @@ class SqlDevelopmentLifecycleIntegrationTests(unittest.TestCase):
         )
 
     def _required_client_password(self) -> str:
-        value = self.credential_store.read_password(CLIENT_CREDENTIAL_TARGET)
+        value = self.credential_store.read_password(self.client_credential_target)
         self.assertIsNotNone(value)
         return str(value)
 
     def _machine_snapshot(self) -> dict[str, object]:
-        script = """
+        script = r"""
 $service=Get-CimInstance Win32_Service -Filter "Name='MSSQL`$OSTVDEV'"
 $databaseCount=Invoke-Sqlcmd -ServerInstance 'tcp:localhost' `
     -Database master -Encrypt Mandatory -TrustServerCertificate:$false `
@@ -128,7 +136,7 @@ $firewallCount=@(Get-NetFirewallRule -DisplayName `
         return json.loads(completed.stdout)
 
     def _assert_owned_environment_absent(self) -> None:
-        script = """
+        script = r"""
 $serviceCount=@(Get-Service -Name 'MSSQL$OSTVDEV' -ErrorAction SilentlyContinue).Count
 $registryExists=Test-Path -LiteralPath 'HKLM:\SOFTWARE\OSTVisualizer\SqlDevelopment'
 $instanceRegistry='HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
@@ -176,9 +184,11 @@ $backupRootExists=Test-Path -LiteralPath `
         self.assertEqual(result["root_personal_count"], 0)
         self.assertEqual(result["root_trusted_count"], 0)
         self.assertFalse(result["backup_root_exists"])
-        self.assertIsNone(self.credential_store.read_password(CLIENT_CREDENTIAL_TARGET))
         self.assertIsNone(
-            self.credential_store.read_password(INTEGRATION_CREDENTIAL_TARGET)
+            self.credential_store.read_password(self.client_credential_target)
+        )
+        self.assertIsNone(
+            self.credential_store.read_password(self.integration_credential_target)
         )
         self.assertFalse(
             (self.repo_root / ".secrets" / "sql-development.json").exists()
