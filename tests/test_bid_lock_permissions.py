@@ -5,8 +5,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtWidgets
-from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.application.dtos.update_condition_dto import (
+    UpdateConditionDto,
+    UpdateConditionResultDto,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    ChangeOperation,
     DatabaseMutationResult,
     MutationOutcomeStatus,
     QueuedMutationResult,
@@ -17,6 +21,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 from ost_visualizer.application.services.active_bid_write_guard import (
     ActiveBidWriteGuard,
 )
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     DeleteValidationResult,
     ProjectWriteService,
@@ -64,6 +69,7 @@ from tests.workspace_state_test_support import make_workspace_state_model
 class _EventBus:
     def __init__(self):
         self.subscriptions = []
+        self.published = []
 
     def subscribe(self, event_type, callback):
         self.subscriptions.append((event_type, callback))
@@ -72,7 +78,7 @@ class _EventBus:
         self.subscriptions.remove((event_type, callback))
 
     def publish(self, event_type, **call_options):
-        pass
+        self.published.append((event_type, call_options))
 
 
 class _License:
@@ -371,8 +377,18 @@ class _ConditionStructureWriteService:
         )
         return SimpleNamespace(success=True)
 
-    def reload_and_notify(self, file_path):
-        self.reloads.append(file_path)
+    def reload_conditions_and_notify(
+        self, file_path, bid_uid, condition_uids, changed_fields, change_operations
+    ):
+        self.reloads.append(
+            (
+                file_path,
+                bid_uid,
+                list(condition_uids),
+                list(changed_fields),
+                list(change_operations),
+            )
+        )
         return True
 
 
@@ -475,6 +491,37 @@ class _MoveToDeletedWriteService:
         self.notifications.append(file_path)
 
 
+class _QueuedHierarchyDeleteWriteService:
+    def __init__(self):
+        self.callbacks = []
+
+    @staticmethod
+    def uses_sql_collaboration_mutations(_database_id):
+        return True
+
+    def queue_bids_move(
+        self,
+        _file_path,
+        _uids,
+        _target_project_uid,
+        callback,
+        **_options,
+    ):
+        self.callbacks.append(callback)
+
+    def queue_projects_delete(self, _file_path, _uids, callback):
+        self.callbacks.append(callback)
+
+    def queue_bids_duplicate(
+        self,
+        _file_path,
+        _uids,
+        _target_project_uid,
+        callback,
+    ):
+        self.callbacks.append(callback)
+
+
 class _DeleteBidUiState:
     def __init__(self, bid_ref):
         self._bid_ref = bid_ref
@@ -551,6 +598,7 @@ def _write_service(
     reload_success=True,
     save_takeoffs_condition=None,
     database_capability=None,
+    event_bus=None,
 ):
     logger = logging.getLogger(__name__ + ".write_service")
     logger.propagate = False
@@ -616,7 +664,7 @@ def _write_service(
         save_annotation_text_properties=forbidden,
         save_annotation_styles=forbidden,
         reload_database=lambda _file_path: reload_success,
-        event_bus=_EventBus(),
+        event_bus=event_bus or _EventBus(),
         logger=logger,
         bid_write_guard=ActiveBidWriteGuard(project_data, logger),
         project_data_service=project_data,
@@ -984,7 +1032,18 @@ class BidLockPermissionTests(unittest.TestCase):
             ],
             [False, False],
         )
-        self.assertEqual(write_service.reloads, ["db.mdb"])
+        self.assertEqual(
+            write_service.reloads,
+            [
+                (
+                    "db.mdb",
+                    "bid-1",
+                    ["cond-1", "cond-2"],
+                    ["layer_uid"],
+                    [ChangeOperation.UPDATE],
+                )
+            ],
+        )
 
     def test_condition_duplicate_refresh_failure_warns_without_placement(self):
         warnings = []
@@ -1462,6 +1521,77 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual("The SQL collaboration session expired.", result.error)
 
+    def test_mdb_condition_update_publishes_targeted_fields_without_database_refresh(
+        self,
+    ):
+        project_data = _ProjectData()
+        events = _EventBus()
+        service, _, _, _ = _write_service(project_data, event_bus=events)
+        service._update_condition = _UseCase(UpdateConditionResultDto(success=True))
+        updates = UpdateConditionDto()
+        updates.set("name", "Level 2 (Top: 12'-0\")")
+        updates.set("z_value", 144.0)
+        result = service.update_condition(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            "12",
+            updates,
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(
+            events.published,
+            [
+                (
+                    AppEvents.CONDITIONS_CHANGED,
+                    {
+                        "database_id": project_data.bid_ref.file_path,
+                        "bid_uid": project_data.bid_ref.bid_uid,
+                        "condition_uids": ["12"],
+                        "changed_fields": ["name", "z_value"],
+                        "change_operations": ["update"],
+                        "invalidates_undo": False,
+                    },
+                )
+            ],
+        )
+
+    def test_condition_name_elevation_metadata_is_classified_for_mesh_refresh(self):
+        project_data = _ProjectData()
+        project_data.conditions["12"] = Condition(uid="12", name="Walls @T 10' - 0\"")
+        events = _EventBus()
+        service, _, _, _ = _write_service(project_data, event_bus=events)
+        service._update_condition = _UseCase(UpdateConditionResultDto(success=True))
+        updates = UpdateConditionDto()
+        updates.set("name", "Renamed Walls @B 8' - 0\"")
+        result = service.update_condition(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            "12",
+            updates,
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(
+            events.published[0][1]["changed_fields"],
+            ["is_top", "name", "z_value"],
+        )
+
+    def test_plain_condition_rename_remains_non_mesh_metadata(self):
+        project_data = _ProjectData()
+        project_data.conditions["12"] = Condition(uid="12", name="Walls @T 10' - 0\"")
+        events = _EventBus()
+        service, _, _, _ = _write_service(project_data, event_bus=events)
+        service._update_condition = _UseCase(UpdateConditionResultDto(success=True))
+        updates = UpdateConditionDto()
+        updates.set("name", "Renamed Walls @T 10' - 0\"")
+        result = service.update_condition(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            "12",
+            updates,
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(events.published[0][1]["changed_fields"], ["name"])
+
     def test_locked_bid_expected_block_does_not_warn(self):
         project_data = _ProjectData()
         project_data.locked = True
@@ -1631,6 +1761,7 @@ class BidLockPermissionTests(unittest.TestCase):
             clear_bid_calls=[],
             find_project_uid_for_bid=lambda _ref: selected_project_uid,
             get_hierarchy=lambda: hierarchy,
+            get_current_file_path=lambda: "C:/jobs/test.mdb",
             project_exists=lambda project_uid, file_path: any(
                 entry.file_path == file_path and project_uid in entry.bid_projects
                 for entry in hierarchy.loaded_files
@@ -1874,6 +2005,244 @@ class BidLockPermissionTests(unittest.TestCase):
             write_service.move_calls,
             [("C:/jobs/test.mdb", ["bid-1"], "1", "project-2", False)],
         )
+
+    def test_sql_bid_delete_completion_does_not_replace_newer_bid_selection(self):
+        original = BidRef("C:/jobs/test.mdb", "bid-1")
+        replacement = BidRef("C:/jobs/test.mdb", "bid-2")
+        ui_state = _DeleteBidUiState(original)
+        project_data = self._delete_project_data(remaining_uids=["bid-2"])
+        write_service = _QueuedHierarchyDeleteWriteService()
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler.delete_selected(
+                {
+                    "kind": "bid",
+                    "file_path": original.file_path,
+                    "bid_uid": replacement.bid_uid,
+                    "project_uid": None,
+                }
+            )
+        self.assertEqual(len(write_service.callbacks), 1)
+        ui_state.set_bid_selection(replacement)
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=original.file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000101",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(ui_state.get_selected_bid_ref(), replacement)
+        self.assertEqual(project_data.clear_bid_calls, [])
+
+    def test_sql_duplicate_completion_recomputes_current_toolbar_state(self):
+        bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(remaining_uids=["bid-1"])
+        write_service = _QueuedHierarchyDeleteWriteService()
+        duplicate_action = _FakeAction()
+        duplicate_action.setEnabled(True)
+        refresh_calls = []
+
+        def refresh_toolbar():
+            refresh_calls.append(True)
+            duplicate_action.setEnabled(False)
+
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_duplicate_action(duplicate_action)
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+                refresh_toolbar=refresh_toolbar,
+            )
+        )
+        handler.duplicate_selected()
+        self.assertFalse(duplicate_action.isEnabled())
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=bid_ref.file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000105",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(refresh_calls, [True])
+        self.assertFalse(duplicate_action.isEnabled())
+
+    def test_sql_bid_delete_completion_replaces_unchanged_deleted_selection(self):
+        original = BidRef("C:/jobs/test.mdb", "bid-1")
+        replacement = BidRef("C:/jobs/test.mdb", "bid-2")
+        ui_state = _DeleteBidUiState(original)
+        project_data = self._delete_project_data(remaining_uids=["bid-2"])
+        write_service = _QueuedHierarchyDeleteWriteService()
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler.delete_selected(
+                {
+                    "kind": "bid",
+                    "file_path": original.file_path,
+                    "bid_uid": replacement.bid_uid,
+                    "project_uid": None,
+                }
+            )
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=original.file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000103",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(ui_state.get_selected_bid_ref(), replacement)
+        self.assertEqual(project_data.clear_bid_calls, [True])
+
+    def test_sql_project_delete_completion_does_not_replace_newer_project_selection(
+        self,
+    ):
+        file_path = "C:/jobs/test.mdb"
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path=file_path,
+                    display_name="test.mdb",
+                    bid_projects={
+                        "project-delete": HierarchyProjectInfo(name="Delete", bids=[]),
+                        "project-keep": HierarchyProjectInfo(name="Keep", bids=[]),
+                    },
+                )
+            ]
+        )
+        project_data = SimpleNamespace(
+            get_hierarchy=lambda: hierarchy,
+            project_has_bids=lambda _project_uid, _file_path=None: False,
+            project_exists=lambda project_uid, _file_path: project_uid
+            in hierarchy.loaded_files[0].bid_projects,
+        )
+        ui_state = _DeleteBidUiState(BidRef(file_path, "unused"))
+        ui_state.set_bid_selection(None)
+        ui_state.set_file_path(file_path)
+        ui_state.set_project_uid("project-delete")
+        write_service = _QueuedHierarchyDeleteWriteService()
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler.delete_selected()
+        self.assertEqual(len(write_service.callbacks), 1)
+        ui_state.set_project_uid("project-keep")
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000102",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(ui_state.selected_file_path, file_path)
+        self.assertEqual(ui_state.selected_project_uid, "project-keep")
+
+    def test_sql_project_delete_completion_clears_unchanged_deleted_selection(self):
+        file_path = "C:/jobs/test.mdb"
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path=file_path,
+                    display_name="test.mdb",
+                    bid_projects={
+                        "project-delete": HierarchyProjectInfo(name="Delete", bids=[])
+                    },
+                )
+            ]
+        )
+        project_data = SimpleNamespace(
+            get_hierarchy=lambda: hierarchy,
+            project_has_bids=lambda _project_uid, _file_path=None: False,
+            project_exists=lambda project_uid, _file_path: project_uid
+            in hierarchy.loaded_files[0].bid_projects,
+        )
+        ui_state = _DeleteBidUiState(BidRef(file_path, "unused"))
+        ui_state.set_bid_selection(None)
+        ui_state.set_file_path(file_path)
+        ui_state.set_project_uid("project-delete")
+        write_service = _QueuedHierarchyDeleteWriteService()
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler.delete_selected()
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000104",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(ui_state.selected_file_path, file_path)
+        self.assertIsNone(ui_state.selected_project_uid)
 
     def test_permanently_deleting_active_deleted_bid_selects_replacement_before_refresh(
         self,
@@ -2205,6 +2574,38 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(result.value, {"new_condition_type": "type-new"})
         self.assertEqual(reload_calls, [])
+
+    def test_mdb_condition_type_save_refreshes_sidebar_without_database_event(self):
+        project_data = _ProjectData()
+        events = _EventBus()
+        service, *_ = _write_service(project_data, event_bus=events)
+        service._save_condition_types = _UseCase({"new_condition_type": "type-new"})
+        changes = {
+            "new": [{"uid": "new_condition_type", "name": "Concrete"}],
+            "updated": [],
+            "deleted_uids": [],
+        }
+        result = service.save_condition_types_result(
+            project_data.bid_ref.file_path,
+            changes,
+        )
+        self.assertTrue(result)
+        self.assertEqual(
+            events.published,
+            [
+                (
+                    AppEvents.CONDITIONS_CHANGED,
+                    {
+                        "database_id": project_data.bid_ref.file_path,
+                        "bid_uid": project_data.bid_ref.bid_uid,
+                        "condition_uids": [],
+                        "changed_fields": ["condition_type_catalog"],
+                        "change_operations": [],
+                        "invalidates_undo": False,
+                    },
+                )
+            ],
+        )
 
     def test_condition_folder_delete_result_blocks_in_use_folder(self):
         project_data = _ProjectData()

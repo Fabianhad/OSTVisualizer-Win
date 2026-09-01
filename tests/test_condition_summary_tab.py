@@ -1421,7 +1421,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         self.assertEqual(_condition_row_uids(tab._root_node), ["c1"])
         tab.deleteLater()
 
-    def test_delete_condition_flow_refreshes_summary_via_shared_ui_refresh(self):
+    def test_delete_condition_flow_uses_shared_condition_event_projection(self):
         from ost_visualizer.presentation.handlers import condition_action_handler
 
         conditions = {
@@ -1445,6 +1445,8 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             )
             tab.load_summary(root, tab.grouping)
 
+        condition_event_projections = []
+
         class FakeWriteService:
             @staticmethod
             def uses_sql_collaboration_mutations(_database_id):
@@ -1453,6 +1455,8 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             def delete_conditions(self, _file_path, _bid_uid, condition_uids):
                 for uid in condition_uids:
                     conditions.pop(uid, None)
+                condition_event_projections.append("conditions_changed")
+                reload_summary()
                 return True
 
         class FakeSidebar:
@@ -1465,7 +1469,6 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             def condition_selection_after_delete(self, _condition_uids):
                 return None
 
-        refreshes = []
         coordinator = type(
             "FakeCoordinator",
             (),
@@ -1478,10 +1481,6 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
                 "flush_deferred_for_file": lambda self, _file_path: True,
                 "highlight_sidebar": lambda self, _uids, reveal=True: None,
                 "ensure_select_mode": lambda self: None,
-                "refresh_conditions_ui": lambda self: (
-                    refreshes.append("refresh"),
-                    reload_summary(),
-                ),
             },
         )()
         ui_state = type(
@@ -1510,7 +1509,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         finally:
             condition_action_handler.confirm_delete_conditions = original_confirm
             tab.deleteLater()
-        self.assertEqual(refreshes, ["refresh"])
+        self.assertEqual(condition_event_projections, ["conditions_changed"])
         self.assertNotIn("c1", conditions)
         self.assertEqual(tab.tree.topLevelItemCount(), 0)
 

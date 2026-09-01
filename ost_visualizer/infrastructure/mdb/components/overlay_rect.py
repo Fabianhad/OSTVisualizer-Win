@@ -74,9 +74,11 @@ def replacement_overlay_storage_values(
     height_inches: float,
     scale_factor1: float,
     scale_factor2: float,
+    *,
+    original_image_path: str,
 ) -> dict[str, object]:
     path = str(overlay_image_path or "")
-    return {
+    values = {
         "OverlayImagePath": path,
         "OverlayRect": (
             full_page_overlay_rect(
@@ -90,4 +92,12 @@ def replacement_overlay_storage_values(
         ),
         "OverlayOffsetX": 0.0,
         "OverlayOffsetY": 0.0,
+        "OverlayRotation": 0.0,
+        "OverlayResized": 0,
+        "DeskewRotationOverlay": 0.0,
     }
+    if not path:
+        values["Show"] = 0
+    elif not str(original_image_path or ""):
+        values["Show"] = 1
+    return values

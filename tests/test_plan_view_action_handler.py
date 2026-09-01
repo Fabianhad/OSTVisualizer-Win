@@ -15,6 +15,7 @@ from ost_visualizer.application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     EditLeaseHandle,
+    EditLeaseLoss,
     EditLeaseResult,
     MutationExecutionResult,
     MutationOutcomeStatus,
@@ -3940,6 +3941,51 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.ended_edit_leases, [handle])
         self.assertEqual(plan_view.geometry_lease_granted, set())
 
+    def test_sql_geometry_lease_loss_requires_a_fresh_lease_for_same_selection(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_geometry_edit_lease_requested(["t1"])
+        database_id, resources, dependencies, options, lease_callback = (
+            write.edit_lease_requests[0]
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-before-reconnect",
+            runtime_generation=3,
+            operation_id=options["operation_id"],
+            owning_surface="main-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+            locks=tuple(
+                ResourceLock(database_id, resource, f"lock-{index}")
+                for index, resource in enumerate(resources)
+            ),
+        )
+        lease_callback(EditLeaseResult(True, handle=handle))
+        handler.on_edit_lease_lost(
+            EditLeaseLoss(
+                database_id=database_id,
+                draft_id=handle.draft_id,
+                runtime_generation=handle.runtime_generation,
+                operation_id=handle.operation_id,
+                owning_surface=handle.owning_surface,
+                resources=handle.resources,
+                reason="trust-lost",
+            )
+        )
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+        self.assertIsNone(handler._geometry_edit_lease_handle)
+        self.assertEqual(write.ended_edit_leases, [])
+        handler.on_geometry_edit_lease_requested(["t1"])
+        self.assertEqual(len(write.edit_lease_requests), 2)
+
     def test_sql_position_failure_restores_preview_after_confirmed_failure(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -3960,6 +4006,67 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             )
         )
         self.assertEqual(plan_view.restored_positions, [(changes, [])])
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+
+    def test_sql_position_failure_does_not_restore_preview_after_page_switch(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        handler.on_positions_flushed(changes, [])
+        plan_view.current_page_uid = "p2"
+        write.queued_geometry[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.restored_positions, [])
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+
+    def test_sql_property_failure_does_not_restore_editor_state_after_bid_switch(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        selected_bid = [BidRef("bid.mdb", "7")]
+        ui_state = FakeUiState()
+        ui_state.get_selected_bid_ref = lambda: selected_bid[0]
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=ui_state,
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        changes = [("t1", "name", {"FontBold": False}, {"FontBold": True})]
+        handler.on_condition_text_properties_flushed(changes)
+        selected_bid[0] = BidRef("other.mdb", "9")
+        plan_view.current_page_uid = "other-page"
+        write.queued_properties[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.restored_condition_text_properties, [])
         self.assertEqual(plan_view.pending_mutation_uids, set())
 
     def test_sql_takeoff_property_edit_uses_queue_not_qt_thread_writer(self):
@@ -5208,6 +5315,46 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertNotIn("t1", data.takeoffs)
         self.assertEqual(plan_view.pending_mutation_uids, set())
         self.assertEqual(undo.count, 1)
+
+    def test_sql_delete_failure_does_not_restore_selection_after_bid_switch(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        selected_bid = [BidRef("bid.mdb", "7")]
+        ui_state = FakeUiState()
+        ui_state.get_selected_bid_ref = lambda: selected_bid[0]
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=ui_state,
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_elements_deleted(["t1"])
+        callback = write.queued_deletes[0][-1]
+        selected_bid[0] = BidRef("other.mdb", "9")
+        plan_view.current_page_uid = "other-page"
+        plan_view.selected = {"other-selection"}
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.selected, {"other-selection"})
+        self.assertEqual(plan_view.pending_mutation_uids, set())
 
     def test_count_takeoff_delete_with_known_extras_uses_targeted_path(self):
         data = FakeProjectData()

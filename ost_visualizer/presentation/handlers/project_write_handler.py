@@ -45,7 +45,6 @@ class ProjectWriteHandler:
         self._write_service = project_write_service
         self._deferred_persistence = deferred_persistence_manager
         self._duplicate_action = None
-        self._duplicate_action_was_enabled = False
         self._duplicate_in_progress = False
         self._ui_event_coordinator = None
         self._pending_sql_operations: set[tuple[str, ...]] = set()
@@ -213,12 +212,10 @@ class ProjectWriteHandler:
 
     def _set_duplicate_busy(self, busy: bool) -> None:
         self._duplicate_in_progress = busy
-        if self._duplicate_action:
-            if busy:
-                self._duplicate_action_was_enabled = self._duplicate_action.isEnabled()
-                self._duplicate_action.setEnabled(False)
-            else:
-                self._duplicate_action.setEnabled(self._duplicate_action_was_enabled)
+        if busy and self._duplicate_action:
+            self._duplicate_action.setEnabled(False)
+        elif not busy and self._ui_event_coordinator is not None:
+            self._ui_event_coordinator.refresh_toolbar()
 
     def delete_selected(self, selection_after_delete: Optional[dict] = None) -> None:
         bid_refs = self.ui_state_manager.get_selected_bid_refs()
@@ -635,6 +632,7 @@ class ProjectWriteHandler:
                     and selected_bid.file_path == file_path
                     and selected_bid.bid_uid in uids
                 )
+                selection_owner = selected_bid if clears_active_bid else None
                 if self._uses_sql_queue(file_path):
                     self._submit_sql_hierarchy_operation(
                         file_path,
@@ -647,11 +645,11 @@ class ProjectWriteHandler:
                                 callback,
                             )
                         ),
-                        lambda _result, fp=file_path, clears=clears_active_bid: (
+                        lambda _result, fp=file_path, owner=selection_owner: (
                             self._finish_sql_bid_removal(
                                 fp,
                                 selection_after_delete,
-                                clears,
+                                owner,
                             )
                         ),
                     )
@@ -706,6 +704,7 @@ class ProjectWriteHandler:
                         and selected_bid.file_path == file_path
                         and selected_bid.bid_uid in uids
                     )
+                    selection_owner = selected_bid if clears_active_bid else None
                     if self._uses_sql_queue(file_path):
                         self._submit_sql_hierarchy_operation(
                             file_path,
@@ -720,11 +719,11 @@ class ProjectWriteHandler:
                                 callback,
                                 original_project_uid=orig,
                             ),
-                            lambda _result, fp=file_path, clears=clears_active_bid: (
+                            lambda _result, fp=file_path, owner=selection_owner: (
                                 self._finish_sql_bid_removal(
                                     fp,
                                     selection_after_delete,
-                                    clears,
+                                    owner,
                                 )
                             ),
                         )
@@ -763,14 +762,30 @@ class ProjectWriteHandler:
         self,
         file_path: str,
         selection_after_delete: Optional[dict],
-        clears_active_bid: bool,
+        selection_owner: Optional[BidRef],
     ) -> None:
-        if clears_active_bid:
-            self.ui_state_manager.set_bid_selection(None)
-            if self.project_data.get_current_file_path() == file_path:
-                self.project_data.clear_bid()
-        if clears_active_bid or selection_after_delete:
-            self._apply_delete_selection_state(file_path, selection_after_delete)
+        if (
+            selection_owner is None
+            or self.ui_state_manager.get_selected_bid_ref() != selection_owner
+        ):
+            return
+        self.ui_state_manager.set_bid_selection(None)
+        if self.project_data.get_current_file_path() == file_path:
+            self.project_data.clear_bid()
+        self._apply_delete_selection_state(file_path, selection_after_delete)
+
+    def _finish_sql_project_removal(
+        self,
+        file_path: str,
+        project_uids: tuple[str, ...],
+    ) -> None:
+        if (
+            self.ui_state_manager.get_selected_bid_ref() is not None
+            or not self._same_file(file_path, self.ui_state_manager.selected_file_path)
+            or set(self.ui_state_manager.selected_project_uids) != set(project_uids)
+        ):
+            return
+        self._apply_delete_selection_state(file_path, None)
 
     def _apply_delete_selection_state(
         self, file_path: str, selection_state: Optional[dict]
@@ -885,6 +900,7 @@ class ProjectWriteHandler:
         if not self._flush_deferred_for_file(file_path):
             return
         if self._uses_sql_queue(file_path):
+            selected_project_uids = tuple(deletable)
             self._submit_sql_hierarchy_operation(
                 file_path,
                 ("delete_projects", *deletable),
@@ -894,7 +910,10 @@ class ProjectWriteHandler:
                     deletable,
                     callback,
                 ),
-                lambda _result: self._apply_delete_selection_state(file_path, None),
+                lambda _result: self._finish_sql_project_removal(
+                    file_path,
+                    selected_project_uids,
+                ),
             )
             return
         if not self._write_service.delete_projects(file_path, deletable):

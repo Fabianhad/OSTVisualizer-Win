@@ -57,6 +57,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._surface_window: QtGui.QWindow | None = None
         self._surface_screen: QtGui.QScreen | None = None
         self._current_bid_ref: Optional[BidRef] = None
+        self._displayed_scene_page_uids: tuple[str, ...] = ()
         self._loading_bid_ref: Optional[BidRef] = None
         self._accepted_scene_bid_ref: Optional[BidRef] = None
         self._requested_scene_page_uids: Optional[tuple[str, ...]] = None
@@ -1004,6 +1005,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         if not is_same_bid:
             self.suspend_rendering()
         self._current_bid_ref = bid_ref
+        self._displayed_scene_page_uids = scene_identity.page_uids
         self._loading_bid_ref = None
         self._scene_refresh_pending = False
         self._page_floor_elevations = validated_page_floor_elevations
@@ -1043,6 +1045,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._loading_bid_ref = bid_ref
         self._set_scene_request(bid_ref, ())
         self._camera_initialized_for_scene = False
+        self._displayed_scene_page_uids = ()
         self._page_floor_elevations = {}
         if self._renderer:
             self._renderer.scene.clear()
@@ -1063,11 +1066,24 @@ class OpenGLViewer(QtWidgets.QWidget):
         if self._destroyed or not self._claim_scene_result(scene_identity):
             return
         bid_ref = scene_identity.bid_ref
+        if (
+            bid_ref == self._current_bid_ref
+            and scene_identity.page_uids == self._displayed_scene_page_uids
+            and self._has_renderable_content()
+        ):
+            self._loading_bid_ref = None
+            self._scene_refresh_pending = False
+            if self._render_suspended:
+                self.resume_rendering()
+            else:
+                self.update()
+            return
         is_new_bid = bid_ref != self._current_bid_ref
         if is_new_bid:
             self._selected_takeoff_uids.clear()
             self._camera_initialized_for_scene = False
         self._current_bid_ref = bid_ref
+        self._displayed_scene_page_uids = ()
         self._loading_bid_ref = None
         self._scene_refresh_pending = True
         self._page_floor_elevations = {}
@@ -1250,6 +1266,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._zoom_reference_distance = 0.0
         self._selected_takeoff_uids = []
         self._current_bid_ref = None
+        self._displayed_scene_page_uids = ()
         self._loading_bid_ref = None
         self._accepted_scene_bid_ref = None
         self._requested_scene_page_uids = None
@@ -1291,6 +1308,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             return
         self._destroyed = True
         self._current_bid_ref = None
+        self._displayed_scene_page_uids = ()
         self._loading_bid_ref = None
         self._accepted_scene_bid_ref = None
         self._requested_scene_page_uids = None

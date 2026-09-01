@@ -7,11 +7,13 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
 from ....application.dtos.collaboration_dtos import (
     EditLeaseHandle,
+    EditLeaseLoss,
     MutationOutcomeStatus,
     PlanItemsPastePayload,
     QueuedMutationResult,
     ResourceRef,
 )
+from ....application.events.app_events import AppEvents
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
@@ -278,6 +280,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._apply_named_view_focus_after_resize
         )
         self.load_view(view, navigation_source=navigation_source)
+        self.event_bus.subscribe(AppEvents.EDIT_LEASE_LOST, self._on_edit_lease_lost)
 
     def set_initial_window_state(
         self,
@@ -1233,6 +1236,21 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             if handle is not None and self._project_write_svc is not None:
                 self._project_write_svc.end_plan_edit_lease(handle)
 
+    def _on_edit_lease_lost(self, loss: EditLeaseLoss) -> None:
+        handle = self._geometry_edit_lease_handle
+        if (
+            handle is None
+            or loss.database_id != handle.database_id
+            or loss.runtime_generation != handle.runtime_generation
+            or loss.draft_id != handle.draft_id
+        ):
+            return
+        self._geometry_edit_lease_handle = None
+        self._geometry_edit_lease_request_id = ""
+        self._geometry_edit_lease_selection.clear()
+        if self.plan_view is not None:
+            self.plan_view.disable_geometry_edit_leasing()
+
     def _on_plan_item_selection_changed(self, selected_uids: list) -> None:
         selection = {str(uid) for uid in selected_uids if uid}
         if (
@@ -1396,6 +1414,18 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
         )
 
+    def _annotation_context_is_current(
+        self, bid_ref, page_uids: tuple[str, ...]
+    ) -> bool:
+        return bool(
+            self.view is not None
+            and self.view.bid_ref == bid_ref
+            and self.plan_view is not None
+            and (
+                not page_uids or str(self.plan_view.current_page_uid or "") in page_uids
+            )
+        )
+
     def _queue_sql_annotation_geometry(self, db_path: str, ann_changes: list) -> None:
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
@@ -1440,11 +1470,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             window._set_annotation_items_pending(keys, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                window.plan_view.restore_flushed_positions([], ann_changes)
-                if window.plan_view.current_page_uid in page_uids:
+                if window._annotation_context_is_current(bid_ref, page_uids):
+                    window.plan_view.restore_flushed_positions([], ann_changes)
                     window.plan_view.set_selected_uids(keys)
                 return
-            if window.plan_view.current_page_uid in page_uids:
+            if window._annotation_context_is_current(bid_ref, page_uids):
                 window.plan_view.set_selected_uids(keys)
             window._push_sql_annotation_geometry_history(
                 bid_ref,
@@ -1528,11 +1558,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             window._set_annotation_items_pending(keys, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                restore()
-                if window.plan_view.current_page_uid in page_uids:
+                if window._annotation_context_is_current(bid_ref, page_uids):
+                    restore()
                     window.plan_view.set_selected_uids(keys)
                 return
-            if window.plan_view.current_page_uid in page_uids:
+            if window._annotation_context_is_current(bid_ref, page_uids):
                 window.plan_view.set_selected_uids(keys)
             window._push_sql_annotation_property_history(
                 bid_ref,
@@ -1631,17 +1661,17 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 for source_uid, uid in uid_map.items()
             }
             keys = window._annotation_keys_for_identities(identities)
-            if (
-                keys
-                and window.plan_view is not None
-                and window.plan_view.current_page_uid == specs[0].page_uid
-            ):
+            page_uids = tuple(dict.fromkeys(str(spec.page_uid) for spec in specs))
+            context_is_current = window._annotation_context_is_current(
+                bid_ref, page_uids
+            )
+            if keys and context_is_current:
                 window.plan_view.set_selected_uids(keys)
                 if source_anchor:
                     window.plan_view.mark_intelligent_paste_drag_pending(
                         sorted(keys), source_anchor
                     )
-            if reactivate_annotation_type and window.plan_view is not None:
+            if reactivate_annotation_type and context_is_current:
                 window.plan_view.activate_annotation_placement(
                     reactivate_annotation_type
                 )
@@ -1747,7 +1777,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             window._set_annotation_items_pending(pending_keys, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                window.plan_view.set_selected_uids(requested_selection_uids)
+                if window._annotation_context_is_current(bid_ref, page_uids):
+                    window.plan_view.set_selected_uids(requested_selection_uids)
                 return
             window._push_sql_annotation_delete_history(
                 bid_ref,
@@ -2624,6 +2655,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._annotation_tool_buttons = {}
         self._page_view_states.clear()
         self._named_views = []
+        event_bus = self.event_bus
+        if event_bus is not None:
+            cleanup_step(
+                "unsubscribe edit lease loss",
+                lambda: event_bus.unsubscribe(
+                    AppEvents.EDIT_LEASE_LOST,
+                    self._on_edit_lease_lost,
+                ),
+            )
         self.event_bus = None
         self.view = None
         self.page_data = None

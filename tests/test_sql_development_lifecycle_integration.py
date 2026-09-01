@@ -14,7 +14,6 @@ class SqlDevelopmentLifecycleIntegrationTests(unittest.TestCase):
     def setUpClass(cls):
         if os.name != "nt":
             raise unittest.SkipTest("SQL lifecycle integration tests require Windows.")
-
         from ost_visualizer.infrastructure.sql.credential_store import (
             WindowsCredentialStore,
         )

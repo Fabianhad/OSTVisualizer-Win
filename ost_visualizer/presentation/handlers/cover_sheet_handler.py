@@ -1,11 +1,17 @@
 from PySide6 import QtWidgets
 from ...application.dtos.collaboration_dtos import (
+    EditLeaseHandle,
     MutationOutcomeStatus,
     QueuedMutationResult,
+    ResourceRef,
+)
+from ...application.dtos.collaboration_resource_catalog import (
+    CollaborationResourceType,
 )
 from ..dialogs.cover_sheet.context import CoverSheetContext
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..managers.ui_access_manager import Feature
+from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical
 from ..utils.ost_blocking import exec_with_ost_blocking
 
@@ -40,6 +46,50 @@ class CoverSheetHandler:
 
     def set_ui_event_coordinator(self, coordinator) -> None:
         self._ui_event_coordinator = coordinator
+
+    @staticmethod
+    def _master_data_edit_resources(data) -> tuple[ResourceRef, ...]:
+        return (
+            ResourceRef(
+                CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+                "database",
+            ),
+            ResourceRef(
+                CollaborationResourceType.EMPLOYEES_COLLECTION.value,
+                "database",
+            ),
+            ResourceRef(
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+                "database",
+            ),
+            *(ResourceRef("job_status", str(item.uid)) for item in data.job_statuses),
+            *(ResourceRef("employee", str(item.uid)) for item in data.employees),
+            *(ResourceRef("pay_class", str(item.uid)) for item in data.pay_classes),
+        )
+
+    def create_new_bid_lease_session(
+        self, file_path: str, project_uid: str | None, data
+    ) -> ModalEditLeaseSession:
+        if self._ui_event_coordinator is None:
+            raise RuntimeError(
+                "SQL New Project requires the collaboration edit coordinator"
+            )
+        resources = (
+            ResourceRef("project_bids", project_uid or "orphan"),
+            *self._master_data_edit_resources(data),
+        )
+        dependencies = (
+            ResourceRef("default_layers_collection", "database"),
+            *((ResourceRef("project", str(project_uid)),) if project_uid else ()),
+        )
+        return ModalEditLeaseSession(
+            self._ui_event_coordinator,
+            file_path,
+            resources,
+            "NewProjectCoverSheetDialog",
+            event_bus=self._event_bus,
+            dependency_resources=dependencies,
+        )
 
     @staticmethod
     def _mutation_result_remains_pending(result: QueuedMutationResult) -> bool:
@@ -77,8 +127,10 @@ class CoverSheetHandler:
                 file_path
             )
             used_employee_uids = self._project_data.get_used_employee_uids(file_path)
+            bid_areas = self._project_data.get_bid_area_snapshot()
         else:
             used_employee_uids = self._read_service.get_estimator_uids_in_use(file_path)
+            bid_areas = []
         pages_with_takeoffs = (
             {
                 page.uid
@@ -114,6 +166,41 @@ class CoverSheetHandler:
             deferred_persistence_manager=self._deferred_persistence,
         )
         locked_at_open = self._project_data.is_current_bid_locked()
+        lease_session = None
+        if uses_sql_queue:
+            if self._ui_event_coordinator is None:
+                raise RuntimeError(
+                    "SQL Cover Sheet requires the collaboration edit coordinator"
+                )
+            bid_value = int(bid_uid)
+            resources = (
+                ResourceRef("cover_sheet", bid_uid, bid_value),
+                ResourceRef("bid", bid_uid, bid_value),
+                *self._master_data_edit_resources(data),
+                ResourceRef(
+                    CollaborationResourceType.AREAS_COLLECTION.value,
+                    bid_uid,
+                    bid_value,
+                ),
+                *(ResourceRef("area", str(item.uid), bid_value) for item in bid_areas),
+            )
+            dependencies = tuple(
+                ResourceRef(resource_type, bid_uid, bid_value)
+                for resource_type in (
+                    "pages_collection",
+                    "conditions_collection",
+                    "takeoffs_collection",
+                    "annotations_collection",
+                )
+            )
+            lease_session = ModalEditLeaseSession(
+                self._ui_event_coordinator,
+                file_path,
+                resources,
+                "CoverSheetDialog",
+                event_bus=self._event_bus,
+                dependency_resources=dependencies,
+            )
         dialog = CoverSheetDialog(
             self.icon_provider,
             self.window,
@@ -123,13 +210,17 @@ class CoverSheetHandler:
             context=context,
             save_job_statuses_async_fn=(
                 (
-                    lambda changes, completed: self._save_master_data_async(
-                        file_path,
-                        "Job Statuses",
-                        self._write_service.queue_job_statuses_save,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_master_data_async(
+                            file_path,
+                            "Job Statuses",
+                            self._write_service.queue_job_statuses_save,
+                            changes,
+                            lease_completed,
+                            "job_statuses",
+                            edit_lease_handle=handle,
+                        ),
                         completed,
-                        "job_statuses",
                     )
                 )
                 if uses_sql_queue
@@ -142,13 +233,17 @@ class CoverSheetHandler:
             ),
             save_employees_async_fn=(
                 (
-                    lambda changes, completed: self._save_master_data_async(
-                        file_path,
-                        "Employees",
-                        self._write_service.queue_employees_save,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_master_data_async(
+                            file_path,
+                            "Employees",
+                            self._write_service.queue_employees_save,
+                            changes,
+                            lease_completed,
+                            "employees",
+                            edit_lease_handle=handle,
+                        ),
                         completed,
-                        "employees",
                     )
                 )
                 if uses_sql_queue
@@ -156,13 +251,17 @@ class CoverSheetHandler:
             ),
             save_pay_classes_async_fn=(
                 (
-                    lambda changes, completed: self._save_master_data_async(
-                        file_path,
-                        "Payroll Classes",
-                        self._write_service.queue_pay_classes_save,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_master_data_async(
+                            file_path,
+                            "Payroll Classes",
+                            self._write_service.queue_pay_classes_save,
+                            changes,
+                            lease_completed,
+                            "pay_classes",
+                            edit_lease_handle=handle,
+                        ),
                         completed,
-                        "pay_classes",
                     )
                 )
                 if uses_sql_queue
@@ -180,8 +279,14 @@ class CoverSheetHandler:
             ),
             save_bid_areas_async_fn=(
                 (
-                    lambda changes, completed: self._save_bid_areas_async(
-                        bid_ref, changes, completed
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_bid_areas_async(
+                            bid_ref,
+                            changes,
+                            lease_completed,
+                            edit_lease_handle=handle,
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -194,15 +299,24 @@ class CoverSheetHandler:
             ),
             save_cover_sheet_async_fn=(
                 (
-                    lambda updates, completed: (
-                        self._save_locked_bid_status_async(
-                            bid_ref,
-                            data.job_status_uid,
-                            updates,
-                            completed,
-                        )
-                        if locked_at_open
-                        else self._save_cover_sheet_async(bid_ref, updates, completed)
+                    lambda updates, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: (
+                            self._save_locked_bid_status_async(
+                                bid_ref,
+                                data.job_status_uid,
+                                updates,
+                                lambda success: lease_completed(success, None),
+                                edit_lease_handle=handle,
+                            )
+                            if locked_at_open
+                            else self._save_cover_sheet_async(
+                                bid_ref,
+                                updates,
+                                lambda success: lease_completed(success, None),
+                                edit_lease_handle=handle,
+                            )
+                        ),
+                        lambda success, _value: completed(success),
                     )
                 )
                 if uses_sql_queue
@@ -216,28 +330,48 @@ class CoverSheetHandler:
             pages_requiring_delete_confirmation=pages_requiring_delete_confirmation,
             workspace_state_model=self._workspace_state_model,
         )
-        try:
-            result = exec_with_ost_blocking(dialog, self._event_bus)
-            if result == QtWidgets.QDialog.DialogCode.Accepted:
-                if uses_sql_queue:
-                    return
-                updates = dialog.get_updates()
-                if locked_at_open:
-                    self._save_locked_bid_status_change(
-                        context, data.job_status_uid, updates
-                    )
-                    return
-                if not context.save_cover_sheet(updates):
-                    show_critical(
-                        self.window,
-                        "Cover Sheet",
-                        f"Failed to save cover sheet data. {DB_LOCKED_HINT}",
-                    )
-        finally:
-            dialog.deleteLater()
+
+        def execute_dialog() -> None:
+            try:
+                result = exec_with_ost_blocking(dialog, self._event_bus)
+                if result == QtWidgets.QDialog.DialogCode.Accepted:
+                    if uses_sql_queue:
+                        return
+                    updates = dialog.get_updates()
+                    if locked_at_open:
+                        self._save_locked_bid_status_change(
+                            context, data.job_status_uid, updates
+                        )
+                        return
+                    if not context.save_cover_sheet(updates):
+                        show_critical(
+                            self.window,
+                            "Cover Sheet",
+                            f"Failed to save cover sheet data. {DB_LOCKED_HINT}",
+                        )
+            finally:
+                if lease_session is not None:
+                    lease_session.close()
+                dialog.deleteLater()
+
+        if lease_session is None:
+            execute_dialog()
+            return
+        lease_session.bind_dialog(dialog)
+        lease_session.request_initial(
+            lambda result: execute_dialog() if result.granted else dialog.deleteLater()
+        )
 
     def _save_master_data_async(
-        self, file_path, title, queue_fn, changes, completed, result_family
+        self,
+        file_path,
+        title,
+        queue_fn,
+        changes,
+        completed,
+        result_family,
+        *,
+        edit_lease_handle: EditLeaseHandle | None = None,
     ) -> bool:
         def finish(result: QueuedMutationResult) -> None:
             if self._mutation_result_remains_pending(result):
@@ -251,14 +385,30 @@ class CoverSheetHandler:
             completed(False, None)
 
         try:
-            queue_fn(file_path, changes, finish)
+            if edit_lease_handle is None:
+                queue_fn(file_path, changes, finish)
+            else:
+                queue_fn(
+                    file_path,
+                    changes,
+                    finish,
+                    edit_lease_handle=edit_lease_handle,
+                )
         except (RuntimeError, ValueError) as exc:
             show_critical(self.window, title, str(exc))
             return False
         return True
 
     def save_master_data_async(
-        self, file_path, title, queue_fn, changes, completed, result_family
+        self,
+        file_path,
+        title,
+        queue_fn,
+        changes,
+        completed,
+        result_family,
+        *,
+        edit_lease_handle: EditLeaseHandle | None = None,
     ) -> bool:
         return self._save_master_data_async(
             file_path,
@@ -267,9 +417,18 @@ class CoverSheetHandler:
             changes,
             completed,
             result_family,
+            edit_lease_handle=edit_lease_handle,
         )
 
-    def create_bid_async(self, file_path, project_uid, updates, completed) -> bool:
+    def create_bid_async(
+        self,
+        file_path,
+        project_uid,
+        updates,
+        completed,
+        *,
+        edit_lease_handle: EditLeaseHandle | None = None,
+    ) -> bool:
         def finish(result: QueuedMutationResult) -> None:
             if self._mutation_result_remains_pending(result):
                 return
@@ -281,14 +440,25 @@ class CoverSheetHandler:
 
         try:
             self._write_service.queue_bid_create(
-                file_path, project_uid, updates, finish
+                file_path,
+                project_uid,
+                updates,
+                finish,
+                edit_lease_handle=edit_lease_handle,
             )
         except (RuntimeError, ValueError) as exc:
             show_critical(self.window, "New Project", str(exc))
             return False
         return True
 
-    def _save_bid_areas_async(self, bid_ref, changes, completed) -> bool:
+    def _save_bid_areas_async(
+        self,
+        bid_ref,
+        changes,
+        completed,
+        *,
+        edit_lease_handle: EditLeaseHandle | None = None,
+    ) -> bool:
         def finish(result: QueuedMutationResult) -> None:
             if self._mutation_result_remains_pending(result):
                 return
@@ -301,15 +471,31 @@ class CoverSheetHandler:
             completed(False, None)
 
         try:
-            self._write_service.queue_bid_areas_save(
-                bid_ref.file_path, bid_ref.bid_uid, changes, finish
-            )
+            if edit_lease_handle is None:
+                self._write_service.queue_bid_areas_save(
+                    bid_ref.file_path, bid_ref.bid_uid, changes, finish
+                )
+            else:
+                self._write_service.queue_bid_areas_save(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    changes,
+                    finish,
+                    edit_lease_handle=edit_lease_handle,
+                )
         except (RuntimeError, ValueError) as exc:
             show_critical(self.window, "Bid Areas", str(exc))
             return False
         return True
 
-    def _save_cover_sheet_async(self, bid_ref, updates, completed) -> bool:
+    def _save_cover_sheet_async(
+        self,
+        bid_ref,
+        updates,
+        completed,
+        *,
+        edit_lease_handle: EditLeaseHandle | None = None,
+    ) -> bool:
         def finish(result: QueuedMutationResult) -> None:
             if self._mutation_result_remains_pending(result):
                 return
@@ -320,16 +506,31 @@ class CoverSheetHandler:
             completed(False)
 
         try:
-            self._write_service.queue_cover_sheet_save(
-                bid_ref.file_path, bid_ref.bid_uid, updates, finish
-            )
+            if edit_lease_handle is None:
+                self._write_service.queue_cover_sheet_save(
+                    bid_ref.file_path, bid_ref.bid_uid, updates, finish
+                )
+            else:
+                self._write_service.queue_cover_sheet_save(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    updates,
+                    finish,
+                    edit_lease_handle=edit_lease_handle,
+                )
         except (RuntimeError, ValueError) as exc:
             show_critical(self.window, "Cover Sheet", str(exc))
             return False
         return True
 
     def _save_locked_bid_status_async(
-        self, bid_ref, current_status_uid, updates, completed
+        self,
+        bid_ref,
+        current_status_uid,
+        updates,
+        completed,
+        *,
+        edit_lease_handle: EditLeaseHandle | None = None,
     ) -> bool:
         new_status_uid = str(updates.get("job_status_uid") or "")
         if str(current_status_uid or "") == new_status_uid:
@@ -346,9 +547,18 @@ class CoverSheetHandler:
             completed(False)
 
         try:
-            self._write_service.queue_bid_job_status_update(
-                bid_ref.file_path, bid_ref.bid_uid, new_status_uid, finish
-            )
+            if edit_lease_handle is None:
+                self._write_service.queue_bid_job_status_update(
+                    bid_ref.file_path, bid_ref.bid_uid, new_status_uid, finish
+                )
+            else:
+                self._write_service.queue_bid_job_status_update(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    new_status_uid,
+                    finish,
+                    edit_lease_handle=edit_lease_handle,
+                )
         except (RuntimeError, ValueError) as exc:
             show_critical(self.window, "Cover Sheet", str(exc))
             return False

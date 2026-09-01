@@ -26,11 +26,16 @@ class RenamePageDialog(QtWidgets.QDialog):
         pages: List[PageRenameTarget],
         current_page_uid: str,
         save_fn: Callable[[str, str], bool],
+        *,
+        save_async_fn=None,
     ) -> None:
         super().__init__(parent)
         self._icon_provider = icon_provider
         self._pages = list(pages)
         self._save_fn = save_fn
+        self._save_async_fn = save_async_fn
+        self._save_pending = False
+        self._interactive_requested = True
         self._current_index = self._resolve_current_index(current_page_uid)
         self._setup_ui()
         self._load_current_page()
@@ -140,16 +145,56 @@ class RenamePageDialog(QtWidgets.QDialog):
         if new_name == page.name:
             self.accept()
             return
+        if self._save_async_fn is not None:
+            self._save_pending = True
+            self._apply_interactivity()
+
+            def completed(success: bool) -> None:
+                self._save_pending = False
+                self._apply_interactivity()
+                if success:
+                    self.accept()
+                else:
+                    show_warning(self, "Save Failed", "Failed to rename page.")
+
+            try:
+                started = self._save_async_fn(page.uid, new_name, completed)
+            except Exception:
+                self._save_pending = False
+                self._apply_interactivity()
+                raise
+            if not started:
+                self._save_pending = False
+                self._apply_interactivity()
+            return
         if not self._save_fn(page.uid, new_name):
             show_warning(self, "Save Failed", "Failed to rename page.")
             return
         self.accept()
 
     def set_interactive(self, enabled: bool) -> None:
-        interactive = bool(enabled)
+        self._interactive_requested = bool(enabled)
+        self._apply_interactivity()
+
+    def _apply_interactivity(self) -> None:
+        interactive = self._interactive_requested and not self._save_pending
         self._new_name_edit.setEnabled(interactive)
         self._ok_btn.setEnabled(interactive)
+
+    def done(self, result: int) -> None:
+        if self._save_pending:
+            return
+        super().done(result)
+
+    def closeEvent(self, event) -> None:
+        if self._save_pending:
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         QtCore.QTimer.singleShot(0, self._select_new_name)
+
+    def cleanup(self) -> None:
+        pass

@@ -69,6 +69,7 @@ _MAX_QUEUED_MUTATIONS = 64
 class _DatabaseRuntime:
     database_id: str
     generation: int
+    session_generation: int = 0
     retry_initial_failure: bool = True
     stop_event: threading.Event = field(default_factory=threading.Event)
     ready_event: threading.Event = field(default_factory=threading.Event)
@@ -1075,9 +1076,7 @@ class SqlCollaborationCoordinator:
                         platform.node(),
                         APPLICATION_VERSION,
                     )
-                    with runtime.lock:
-                        runtime.session = session
-                        runtime.acknowledged_version = session.last_acknowledged_version
+                    session_generation = self._install_session(runtime, session)
                     self._concurrency_tokens.load_database(runtime.database_id)
                     hydrated = self._remote_reader.initial_reconciliation(
                         runtime.database_id,
@@ -1090,6 +1089,7 @@ class SqlCollaborationCoordinator:
                         (
                             runtime.database_id,
                             runtime.generation,
+                            session_generation,
                             hydrated,
                         ),
                     )
@@ -1118,18 +1118,13 @@ class SqlCollaborationCoordinator:
                     needs_restored_event = caught_up and not runtime.healthy
                     runtime.healthy = caught_up
                     active_session = runtime.session
+                    active_session_generation = runtime.session_generation
                 if needs_restored_event and active_session is not None:
                     if not self._capabilities.mark_connected(runtime.database_id):
-                        with runtime.lock:
-                            runtime.healthy = False
-                        self._dispatcher.dispatch(
-                            self._on_disconnected,
-                            (
-                                runtime.database_id,
-                                runtime.generation,
-                                SynchronizationState.READ_ONLY,
-                                "SQL edit permissions or schema trust changed.",
-                            ),
+                        self._handle_worker_failure(
+                            runtime,
+                            "SQL edit permissions or schema trust changed.",
+                            SynchronizationState.READ_ONLY,
                         )
                         break
                     with runtime.lock:
@@ -1143,6 +1138,7 @@ class SqlCollaborationCoordinator:
                         (
                             runtime.database_id,
                             runtime.generation,
+                            active_session_generation,
                         ),
                     )
                 runtime.command_event.wait(self._next_poll_interval(runtime))
@@ -1193,6 +1189,21 @@ class SqlCollaborationCoordinator:
                     (runtime.database_id, runtime.generation, str(exc)),
                 )
 
+    @staticmethod
+    def _install_session(
+        runtime: _DatabaseRuntime,
+        session: DatabaseSession,
+    ) -> int:
+        with runtime.lock:
+            runtime.session_generation += 1
+            runtime.session = session
+            runtime.acknowledged_version = session.last_acknowledged_version
+            runtime.observed_high_water_version = session.last_acknowledged_version
+            runtime.feed_epoch = ""
+            runtime.pending_delivery = False
+            runtime.healthy = False
+            return runtime.session_generation
+
     def _process_mutation_requests(self, runtime: _DatabaseRuntime) -> None:
         if runtime.stop_event.is_set():
             return
@@ -1221,6 +1232,7 @@ class SqlCollaborationCoordinator:
                     and not runtime.stop_event.is_set()
                     and self._capabilities.is_editable(request.database_id)
                 )
+                session_generation = runtime.session_generation
                 if ready and not cancelled:
                     self._pending_mutations.transition(
                         request.operation_id,
@@ -1563,6 +1575,7 @@ class SqlCollaborationCoordinator:
                         request.callback,
                         result,
                         local_hydrated,
+                        session_generation,
                     )
                 else:
                     self._dispatch_mutation_result(request.callback, result)
@@ -1585,8 +1598,9 @@ class SqlCollaborationCoordinator:
             or draft.database_id != request.database_id
             or draft.runtime_generation != runtime.generation
             or draft.owning_surface != request.owning_surface
-            or draft.affected_resources != request.resources
-            or draft.dependency_resources != request.dependency_resources
+            or draft.affected_resources != handle.resources
+            or draft.dependency_resources != handle.dependency_resources
+            or not set(request.resources).issubset(handle.resources)
             or draft.leases != handle.locks
         ):
             return None
@@ -1724,17 +1738,19 @@ class SqlCollaborationCoordinator:
         callback: Callable[[QueuedMutationResult], None],
         result: QueuedMutationResult,
         hydrated,
+        session_generation: int,
     ) -> None:
         self._dispatcher.dispatch(
             self._apply_local_mutation_result,
-            (callback, result, hydrated),
+            (callback, result, hydrated, session_generation),
         )
 
     def _apply_local_mutation_result(self, payload) -> None:
-        callback, result, hydrated = payload
-        if not self.is_runtime_current(
+        callback, result, hydrated, session_generation = payload
+        if not self._is_session_current(
             result.database_id,
             result.runtime_generation,
+            session_generation,
         ):
             stale_result = QueuedMutationResult(
                 database_id=result.database_id,
@@ -1760,7 +1776,13 @@ class SqlCollaborationCoordinator:
         barrier = RemoteProjectionBarrier(
             database_id=result.database_id,
             runtime_generation=result.runtime_generation,
-            is_runtime_current=self.is_runtime_current,
+            is_runtime_current=lambda database_id, runtime_generation: (
+                self._is_session_current(
+                    database_id,
+                    runtime_generation,
+                    session_generation,
+                )
+            ),
             on_complete=lambda applied: self._finish_local_mutation_result(
                 callback,
                 result,
@@ -2188,6 +2210,7 @@ class SqlCollaborationCoordinator:
     def _heartbeat(self, runtime: _DatabaseRuntime) -> None:
         with runtime.lock:
             session = runtime.session
+            session_generation = runtime.session_generation
             acknowledged = runtime.acknowledged_version
             bid_uid = runtime.bid_uid
             page_uid = runtime.page_uid
@@ -2229,12 +2252,19 @@ class SqlCollaborationCoordinator:
             )
             self._dispatcher.dispatch(
                 self._publish_presence,
-                (runtime.database_id, runtime.generation, str(bid_uid), users),
+                (
+                    runtime.database_id,
+                    runtime.generation,
+                    session_generation,
+                    str(bid_uid),
+                    users,
+                ),
             )
 
     def _poll_locks(self, runtime: _DatabaseRuntime) -> None:
         with runtime.lock:
             session = runtime.session
+            session_generation = runtime.session_generation
             bid_uid = runtime.bid_uid
         if session is None:
             return
@@ -2248,6 +2278,7 @@ class SqlCollaborationCoordinator:
             (
                 runtime.database_id,
                 runtime.generation,
+                session_generation,
                 frozenset(lock.resource for lock in external_locks),
             ),
         )
@@ -2267,6 +2298,7 @@ class SqlCollaborationCoordinator:
                 return
             acknowledged = runtime.acknowledged_version
             session_id = runtime.session.session_id
+            session_generation = runtime.session_generation
         poll_result = self._store.poll_changes(
             runtime.database_id,
             acknowledged,
@@ -2288,10 +2320,11 @@ class SqlCollaborationCoordinator:
             with runtime.lock:
                 runtime.pending_delivery = True
             self._dispatcher.dispatch(
-                self._on_reconciliation_required,
+                self._on_session_reconciliation_required,
                 (
                     runtime.database_id,
                     runtime.generation,
+                    session_generation,
                     "The SQL change feed was reset.",
                 ),
             )
@@ -2304,10 +2337,11 @@ class SqlCollaborationCoordinator:
                 runtime.pending_delivery = True
                 runtime.retention_gap_count += 1
             self._dispatcher.dispatch(
-                self._on_reconciliation_required,
+                self._on_session_reconciliation_required,
                 (
                     runtime.database_id,
                     runtime.generation,
+                    session_generation,
                     "The SQL Change Tracking checkpoint is no longer valid.",
                 ),
             )
@@ -2318,7 +2352,12 @@ class SqlCollaborationCoordinator:
             runtime.pending_delivery = True
         self._dispatcher.dispatch(
             self._on_remote_batch,
-            (runtime.database_id, runtime.generation, poll_result.remote_batch),
+            (
+                runtime.database_id,
+                runtime.generation,
+                session_generation,
+                poll_result.remote_batch,
+            ),
         )
 
     def _next_poll_interval(self, runtime: _DatabaseRuntime) -> float:
@@ -2386,8 +2425,8 @@ class SqlCollaborationCoordinator:
         return max(0.05, base + random.uniform(-jitter, jitter))
 
     def _on_session_started(self, payload) -> None:
-        database_id, generation, hydrated = payload
-        runtime = self._runtime(database_id, generation)
+        database_id, generation, session_generation, hydrated = payload
+        runtime = self._session_runtime(database_id, generation, session_generation)
         if runtime is None:
             return
         attempt = self._apply_reconciliation(hydrated)
@@ -2599,8 +2638,12 @@ class SqlCollaborationCoordinator:
         )
 
     def _on_connection_restored(self, payload) -> None:
-        database_id, generation = payload
-        if self._runtime(database_id, generation) is None:
+        database_id, generation, session_generation = payload
+        if not self._is_session_current(
+            database_id,
+            generation,
+            session_generation,
+        ):
             return
         self._set_state(
             database_id,
@@ -2608,18 +2651,25 @@ class SqlCollaborationCoordinator:
         )
 
     def _on_remote_batch(self, payload) -> None:
-        database_id, generation, hydrated = payload
-        runtime = self._runtime(database_id, generation)
+        database_id, generation, session_generation, hydrated = payload
+        runtime = self._session_runtime(database_id, generation, session_generation)
         if runtime is None:
             return
         started = time.perf_counter()
         barrier = RemoteProjectionBarrier(
             database_id=database_id,
             runtime_generation=generation,
-            is_runtime_current=self.is_runtime_current,
+            is_runtime_current=lambda current_database_id, runtime_generation: (
+                self._is_session_current(
+                    current_database_id,
+                    runtime_generation,
+                    session_generation,
+                )
+            ),
             on_complete=lambda projection_success: self._finish_remote_batch(
                 database_id,
                 generation,
+                session_generation,
                 hydrated.batch.delivered_through_version,
                 started,
                 attempt.failure_kind,
@@ -2638,12 +2688,13 @@ class SqlCollaborationCoordinator:
         self,
         database_id: str,
         generation: int,
+        session_generation: int,
         delivered_through_version: int,
         started: float,
         failure_kind: ReconciliationFailureKind | None,
         applied: bool,
     ) -> None:
-        runtime = self._runtime(database_id, generation)
+        runtime = self._session_runtime(database_id, generation, session_generation)
         if runtime is None:
             return
         elapsed = time.perf_counter() - started
@@ -2732,6 +2783,16 @@ class SqlCollaborationCoordinator:
             reason=reason,
         )
 
+    def _on_session_reconciliation_required(self, payload) -> None:
+        database_id, generation, session_generation, reason = payload
+        if not self._is_session_current(
+            database_id,
+            generation,
+            session_generation,
+        ):
+            return
+        self._on_reconciliation_required((database_id, generation, reason))
+
     def _handle_worker_failure(
         self,
         runtime: _DatabaseRuntime,
@@ -2739,10 +2800,18 @@ class SqlCollaborationCoordinator:
         state: SynchronizationState = SynchronizationState.DISCONNECTED,
     ) -> None:
         self._reset_session(runtime)
+        with runtime.lock:
+            session_generation = runtime.session_generation
         runtime.ready_event.clear()
         self._dispatcher.dispatch(
             self._on_disconnected,
-            (runtime.database_id, runtime.generation, state, message),
+            (
+                runtime.database_id,
+                runtime.generation,
+                session_generation,
+                state,
+                message,
+            ),
         )
 
     def _reset_session(
@@ -2751,6 +2820,9 @@ class SqlCollaborationCoordinator:
         *,
         close_reason: str = "trust-lost",
     ) -> None:
+        with runtime.lock:
+            if runtime.session is not None:
+                runtime.session_generation += 1
         try:
             self._reject_pending_mutations(
                 runtime,
@@ -2850,14 +2922,22 @@ class SqlCollaborationCoordinator:
             )
 
     def _on_disconnected(self, payload) -> None:
-        database_id, generation, state, message = payload
-        if self._runtime(database_id, generation) is None:
+        database_id, generation, session_generation, state, message = payload
+        if not self._is_session_current(
+            database_id,
+            generation,
+            session_generation,
+        ):
             return
         self._set_state(database_id, state, message)
 
     def _publish_presence(self, payload) -> None:
-        database_id, generation, bid_uid, users = payload
-        if self._runtime(database_id, generation) is None:
+        database_id, generation, session_generation, bid_uid, users = payload
+        if not self._is_session_current(
+            database_id,
+            generation,
+            session_generation,
+        ):
             return
         self._event_bus.publish(
             AppEvents.PRESENCE_CHANGED,
@@ -2867,8 +2947,12 @@ class SqlCollaborationCoordinator:
         )
 
     def _publish_capability_change(self, payload) -> None:
-        database_id, generation, locked_resources = payload
-        if self._runtime(database_id, generation) is None:
+        database_id, generation, session_generation, locked_resources = payload
+        if not self._is_session_current(
+            database_id,
+            generation,
+            session_generation,
+        ):
             return
         current_status = self._capabilities.collaboration_status(database_id)
         if current_status.locked_resources == locked_resources:
@@ -2913,3 +2997,32 @@ class SqlCollaborationCoordinator:
         ):
             return None
         return runtime
+
+    def _session_runtime(
+        self,
+        database_id: str,
+        runtime_generation: int,
+        session_generation: int,
+    ) -> Optional[_DatabaseRuntime]:
+        runtime = self._runtime(database_id, runtime_generation)
+        if runtime is None:
+            return None
+        with runtime.lock:
+            if runtime.session_generation != session_generation:
+                return None
+        return runtime
+
+    def _is_session_current(
+        self,
+        database_id: str,
+        runtime_generation: int,
+        session_generation: int,
+    ) -> bool:
+        return (
+            self._session_runtime(
+                database_id,
+                runtime_generation,
+                session_generation,
+            )
+            is not None
+        )

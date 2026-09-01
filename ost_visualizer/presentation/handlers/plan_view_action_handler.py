@@ -8,6 +8,7 @@ from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.collaboration_dtos import (
     EditLeaseHandle,
+    EditLeaseLoss,
     MutationExecutionResult,
     MutationOutcomeStatus,
     PlanItemsPastePayload,
@@ -179,14 +180,17 @@ class PlanViewActionHandler:
         page_uids: tuple[str, ...],
         plan_uids: set[str],
     ) -> None:
-        if not plan_uids or self._ui_state.get_selected_bid_ref() != bid_ref:
+        if not plan_uids or not self._plan_context_is_current(bid_ref, page_uids):
             return
+        self._plan_view.set_selected_uids(set(plan_uids))
+
+    def _plan_context_is_current(self, bid_ref, page_uids: tuple[str, ...]) -> bool:
+        if self._ui_state.get_selected_bid_ref() != bid_ref:
+            return False
         current_page_uid = str(
             self._plan_view.current_page_uid or self._ui_state.active_page_uid or ""
         )
-        if page_uids and current_page_uid not in page_uids:
-            return
-        self._plan_view.set_selected_uids(set(plan_uids))
+        return not page_uids or current_page_uid in page_uids
 
     def connect_signals(self) -> None:
         pv = self._plan_view
@@ -229,6 +233,20 @@ class PlanViewActionHandler:
         self._plan_view.disable_geometry_edit_leasing()
         if handle is not None:
             self._write_svc.end_plan_edit_lease(handle)
+
+    def on_edit_lease_lost(self, loss: EditLeaseLoss) -> None:
+        handle = self._geometry_edit_lease_handle
+        if (
+            handle is None
+            or loss.database_id != handle.database_id
+            or loss.runtime_generation != handle.runtime_generation
+            or loss.draft_id != handle.draft_id
+        ):
+            return
+        self._geometry_edit_lease_handle = None
+        self._geometry_edit_lease_selection.clear()
+        self._geometry_edit_lease_request_id = ""
+        self._plan_view.disable_geometry_edit_leasing()
 
     def prepare_for_modal_mutation_error(self) -> None:
         self._release_geometry_edit_lease()
@@ -674,7 +692,8 @@ class PlanViewActionHandler:
                 False,
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                restore_preview(handler)
+                if handler._plan_context_is_current(bid_ref, page_uids):
+                    restore_preview(handler)
                 handler._restore_plan_selection_if_current(
                     bid_ref,
                     page_uids,
@@ -792,7 +811,9 @@ class PlanViewActionHandler:
                 False,
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if restore is not None:
+                if restore is not None and handler._plan_context_is_current(
+                    bid_ref, page_uids
+                ):
                     restore()
                 handler._restore_plan_selection_if_current(
                     bid_ref,
@@ -2991,11 +3012,17 @@ class PlanViewActionHandler:
                 False,
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                handler._plan_view.set_selected_uids(
-                    set(requested_selection_uids).union(skipped_selection_keys)
+                handler._restore_plan_selection_if_current(
+                    bid_ref,
+                    page_uids,
+                    set(requested_selection_uids).union(skipped_selection_keys),
                 )
                 return
-            handler._select_skipped_named_views(skipped_selection_keys)
+            handler._restore_plan_selection_if_current(
+                bid_ref,
+                page_uids,
+                skipped_selection_keys,
+            )
             handler._push_sql_delete_history(
                 bid_ref,
                 saved_takeoffs,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
+from ...utils.image_show_mode import SHOW_ORIGINAL, SHOW_OVERLAY
 
 PdfPageSize = Tuple[float, float, str]
 
@@ -25,10 +26,21 @@ class CoverSheetPageRow:
         if path == self.image_path:
             return
         self.image_path = path
+        if not path:
+            self.show_mode = SHOW_OVERLAY if self.overlay_path else SHOW_ORIGINAL
+        elif not self.overlay_path:
+            self.show_mode = SHOW_ORIGINAL
         self.revision += 1
         self.pdf_page_sizes = None
         self.metadata_signature = None
         self.pending_metadata_request = None
+
+    def replace_overlay_path(self, path: str) -> None:
+        self.overlay_path = path
+        if not path:
+            self.show_mode = SHOW_ORIGINAL
+        elif not self.image_path:
+            self.show_mode = SHOW_OVERLAY
 
     def apply_pdf_metadata(
         self,

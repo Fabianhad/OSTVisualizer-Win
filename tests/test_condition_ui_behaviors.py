@@ -13,11 +13,14 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
 from single_action import SingleCallRecorder
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    AuthoritativeMutationResult,
     EditLeaseHandle,
     EditLeaseResult,
     MutationOutcomeStatus,
     QueuedMutationResult,
+    ResourceRef,
 )
+from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
@@ -30,6 +33,7 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.components import (
     conditions_sidebar as conditions_sidebar_module,
 )
@@ -657,7 +661,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertFalse(sidebar._folder_items["f2"].isExpanded())
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c3"])
 
-    def test_duplicate_refreshes_plan_before_replacing_active_placement(self):
+    def test_duplicate_uses_condition_state_projected_before_active_placement(self):
         original_uid = "condition-original"
         duplicate_uid = "condition-duplicate"
         conditions = {
@@ -749,10 +753,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         coordinator = SimpleNamespace(
             placement=placement,
             _is_takeoff_2d_view_active=lambda: True,
-            refresh_conditions_ui=lambda: (
-                calls.append("refresh"),
-                plan_view.refresh_conditions(),
-            ),
             highlight_sidebar=lambda uids, reveal=True: calls.append(
                 ("highlight", set(uids), reveal)
             ),
@@ -765,8 +765,10 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             ui_state_manager=None,
             workspace_state_model=make_workspace_state_model(),
         )
+        plan_view.refresh_conditions()
+        calls.append("conditions_changed")
         handler._finish_condition_duplicate([duplicate_uid], sidebar=object())
-        self.assertEqual(calls[0], "refresh")
+        self.assertEqual(calls[0], "conditions_changed")
         self.assertEqual(plan_view._place_session_uid, duplicate_uid)
         self.assertEqual(ui_state.place_condition_uid, duplicate_uid)
         self.assertEqual(plan_view.active_preview_opacity(), 0.5)
@@ -951,7 +953,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(queued["condition_uids"], ["c3"])
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
-        operation_key = ("delete", "c3")
+        operation_key = ("database", "7", "delete", "c3")
         self.assertIn(operation_key, handler._pending_sql_operations)
         queued["callback"](
             QueuedMutationResult(
@@ -988,6 +990,187 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         self.assertNotIn(operation_key, handler._pending_sql_operations)
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+
+    def test_sql_condition_operations_with_same_uid_are_scoped_to_bid(self):
+        callbacks = {}
+        coordinator = SimpleNamespace(
+            present_queued_mutation_error=lambda *_args: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: None),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        first = BidRef("database-a", "7")
+        second = BidRef("database-b", "7")
+        self.assertTrue(
+            handler._submit_sql_condition_operation(
+                first,
+                ("rename_condition", "c1"),
+                "Rename Condition",
+                lambda callback: callbacks.__setitem__(first.file_path, callback),
+            )
+        )
+        self.assertTrue(
+            handler._submit_sql_condition_operation(
+                second,
+                ("rename_condition", "c1"),
+                "Rename Condition",
+                lambda callback: callbacks.__setitem__(second.file_path, callback),
+            )
+        )
+        self.assertEqual(set(callbacks), {"database-a", "database-b"})
+
+    def test_sql_condition_delete_completion_does_not_project_into_new_bid(self):
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(4)
+        sidebar.load_conditions(conditions, {}, "Project")
+        queued = {}
+        active_bid = [BidRef("database", "7")]
+        placement_exits = []
+
+        class Access:
+            @staticmethod
+            def is_allowed(feature):
+                return feature == Feature.DELETE_CONDITION
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_delete(database_id, bid_uid, condition_uids, callback):
+                queued.update(
+                    database_id=database_id,
+                    bid_uid=bid_uid,
+                    condition_uids=list(condition_uids),
+                    callback=callback,
+                )
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=sidebar,
+            placement=SimpleNamespace(
+                force_exit=lambda: placement_exits.append(True),
+            ),
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda uids, reveal=True: sidebar.highlight_conditions(
+                set(uids), reveal=reveal
+            ),
+            ensure_select_mode=lambda: None,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: active_bid[0]
+            ),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        original_confirm = condition_action_handler.confirm_delete_conditions
+        condition_action_handler.confirm_delete_conditions = lambda _parent, names: [
+            uid for uid, _name in names
+        ]
+        try:
+            handler.on_delete_requested(["c3"])
+        finally:
+            condition_action_handler.confirm_delete_conditions = original_confirm
+        active_bid[0] = BidRef("database", "8")
+        sidebar.load_conditions(
+            {"new-bid-condition": Condition(uid="new-bid-condition")},
+            {},
+            "Other Project",
+        )
+        sidebar.highlight_conditions({"new-bid-condition"})
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000105",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["new-bid-condition"])
+        self.assertEqual(placement_exits, [])
+
+    def test_sql_condition_duplicate_completion_does_not_place_in_new_bid(self):
+        queued = {}
+        active_bid = [BidRef("database", "7")]
+        placement_calls = []
+
+        class Access:
+            @staticmethod
+            def is_allowed(feature):
+                return feature == Feature.DUPLICATE_CONDITION
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_duplicate(
+                database_id,
+                bid_uid,
+                condition_uids,
+                callback,
+                **_options,
+            ):
+                queued.update(
+                    database_id=database_id,
+                    bid_uid=bid_uid,
+                    condition_uids=list(condition_uids),
+                    callback=callback,
+                )
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=None,
+            placement=SimpleNamespace(
+                enter=lambda *args: placement_calls.append(args),
+            ),
+            flush_deferred_for_file=lambda _file_path: True,
+            _is_takeoff_2d_view_active=lambda: True,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: active_bid[0]
+            ),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        handler.on_duplicate_requested(["c1"])
+        active_bid[0] = BidRef("database", "8")
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000106",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("c1-copy",),
+                ),
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(placement_calls, [])
 
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
         sidebar = ConditionsSidebar(None)
@@ -1635,7 +1818,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             ui_access_manager=Access(),
             conditions_sidebar=Sidebar(),
             main_window=SimpleNamespace(icon_provider=None),
-            event_bus=object(),
+            event_bus=EventBus(),
             refresh_conditions_ui=lambda: refreshes.append(True),
             highlight_sidebar=lambda uids, reveal=True: highlights.append(set(uids)),
             placement=SimpleNamespace(is_active=False),
@@ -1666,6 +1849,172 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             handler.on_edit_requested(["c1"])
         self.assertEqual(refreshes, [])
         self.assertEqual(highlights, [])
+
+    def test_sql_condition_editor_save_transfers_and_reacquires_its_lease(self):
+        conditions = {
+            "c1": Condition(uid="c1", name="Condition 1", ref_no=1),
+            "c2": Condition(uid="c2", name="Condition 2", ref_no=2),
+        }
+        lease_requests = []
+        ended_leases = []
+        queued = []
+        completions = []
+
+        class Access:
+            @staticmethod
+            def is_allowed(_feature):
+                return True
+
+            @staticmethod
+            def has_license():
+                return True
+
+        class Sidebar:
+            @staticmethod
+            def window():
+                return None
+
+            @staticmethod
+            def collect_ordered_condition_uids():
+                return ["c1", "c2"]
+
+        class ProjectData:
+            @staticmethod
+            def is_current_bid_locked():
+                return False
+
+            @staticmethod
+            def get_bid_conditions():
+                return conditions
+
+            @staticmethod
+            def get_all_takeoffs():
+                return []
+
+            @staticmethod
+            def get_current_bid():
+                return SimpleNamespace(measure_base=0)
+
+            @staticmethod
+            def get_cdn_types():
+                return {}
+
+            @staticmethod
+            def get_bid_layer_snapshot():
+                return []
+
+            @staticmethod
+            def get_layer_uids_in_use():
+                return set()
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_update(
+                database_id,
+                bid_uid,
+                condition_uids,
+                changes,
+                callback,
+                *,
+                edit_lease_handle,
+            ):
+                queued.append(
+                    (
+                        database_id,
+                        bid_uid,
+                        list(condition_uids),
+                        dict(changes),
+                        edit_lease_handle,
+                    )
+                )
+                callback(
+                    QueuedMutationResult(
+                        database_id=database_id,
+                        runtime_generation=1,
+                        operation_id="00000000-0000-0000-0000-000000000001",
+                        outcome_status=MutationOutcomeStatus.COMMITTED,
+                        commit_attempted=True,
+                    )
+                )
+                return 1
+
+        def request_collaboration_edit(
+            database_id,
+            resources,
+            callback,
+            *,
+            dependency_resources=(),
+            operation_id="",
+            owning_surface="desktop",
+        ):
+            lease_requests.append(tuple(resources))
+            callback(
+                EditLeaseResult(
+                    True,
+                    handle=EditLeaseHandle(
+                        database_id=database_id,
+                        draft_id=f"draft-{len(lease_requests)}",
+                        runtime_generation=1,
+                        operation_id=operation_id,
+                        owning_surface=owning_surface,
+                        resources=tuple(resources),
+                        dependency_resources=dependency_resources,
+                    ),
+                )
+            )
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=Sidebar(),
+            main_window=SimpleNamespace(icon_provider=None),
+            event_bus=EventBus(),
+            highlight_sidebar=lambda *_args, **_kwargs: None,
+            placement=SimpleNamespace(is_active=False),
+            _is_takeoff_2d_view_active=lambda: True,
+            flush_deferred_for_file=lambda _file_path: True,
+            request_collaboration_edit=request_collaboration_edit,
+            end_collaboration_edit=ended_leases.append,
+            present_queued_mutation_error=lambda *_args: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=FakeReadService(),
+            project_data=ProjectData(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("database", "7")
+            ),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def execute_dialog(dialog, _event_bus):
+            self.assertIsNotNone(dialog._layer_insert_async_fn)
+            self.assertIsNotNone(dialog._layer_delete_many_async_fn)
+            self.assertIsNotNone(dialog._layer_update_name_async_fn)
+            self.assertIsNotNone(dialog._layer_move_async_fn)
+            dto = UpdateConditionDto()
+            dto.set("name", "Renamed")
+            self.assertTrue(dialog._save_async_fn("c2", dto, completions.append))
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler.exec_with_ost_blocking",
+            execute_dialog,
+        ):
+            handler.on_edit_requested(["c1"])
+        expected_resources = (
+            ResourceRef("condition", "c1", 7),
+            ResourceRef("condition", "c2", 7),
+        )
+        self.assertEqual(lease_requests, [expected_resources, expected_resources])
+        self.assertEqual(queued[0][:4], ("database", "7", ["c2"], {"name": "Renamed"}))
+        self.assertEqual(queued[0][4].draft_id, "draft-1")
+        self.assertEqual([result.success for result in completions], [True])
+        self.assertEqual([handle.draft_id for handle in ended_leases], ["draft-2"])
 
     def test_count_attachment_advanced_properties_show_only_display_name(self):
         condition = Condition(

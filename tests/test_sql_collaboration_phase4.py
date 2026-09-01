@@ -814,15 +814,23 @@ class _ProjectData:
         self.database_settings.setdefault(database_id, {})["defaults"] = defaults
 
 
-def _change(database_id, resource, sequence=1, source="other-session"):
+def _change(
+    database_id,
+    resource,
+    sequence=1,
+    source="other-session",
+    changed_fields=(),
+    operation=ChangeOperation.UPDATE,
+):
     return DatabaseChange(
         sequence=sequence,
         commit_version=sequence,
         transaction_id="transaction-1",
         source_session_id=source,
         resource=resource,
-        operation=ChangeOperation.UPDATE,
+        operation=operation,
         resulting_version=ConcurrencyToken(sequence.to_bytes(8, "big")),
+        changed_fields=tuple(changed_fields),
     )
 
 
@@ -945,7 +953,9 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             "ost_visualizer.application.services.sql_collaboration_coordinator",
             level="ERROR",
         ) as captured:
-            coordinator._apply_local_mutation_result((results.append, result, object()))
+            coordinator._apply_local_mutation_result(
+                (results.append, result, object(), runtime.session_generation)
+            )
         self.assertIn(
             "SQL local-completion reconciliation failed",
             captured.output[0],
@@ -1445,6 +1455,71 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             [
                 ("session", "database", resource),
             ],
+        )
+
+    def test_condition_editor_lease_can_transfer_one_owned_navigable_condition(self):
+        edited = ResourceRef("condition", "42", 8)
+        navigable = ResourceRef("condition", "43", 8)
+        edited_lock = ResourceLock("database", edited, "edited-token")
+        navigable_lock = ResourceLock("database", navigable, "navigable-token")
+        drafts = LocalDraftRegistry()
+        draft = drafts.begin(
+            draft_type="conditions_editor",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="condition-sidebar",
+            affected_resources=(edited, navigable),
+            operation_id="edit-condition-dialog",
+        )
+        drafts.activate(
+            draft.draft_id,
+            (edited_lock, navigable_lock),
+            runtime_generation=4,
+        )
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id=draft.draft_id,
+            runtime_generation=4,
+            operation_id="edit-condition-dialog",
+            owning_surface="condition-sidebar",
+            resources=(edited, navigable),
+            locks=(edited_lock, navigable_lock),
+        )
+        runtime = _DatabaseRuntime("database", 4)
+        runtime.draft_ids[
+            frozenset((edited.lease_identity, navigable.lease_identity))
+        ] = draft.draft_id
+        runtime.owned_locks = {
+            edited.lease_identity: edited_lock,
+            navigable.lease_identity: navigable_lock,
+        }
+        request = QueuedMutationRequest(
+            database_id="database",
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.PROJECT_WRITE,
+            owning_surface="condition-sidebar",
+            resources=(edited,),
+            payload={"condition_uid": "42"},
+            edit_lease_handle=handle,
+        )
+        queued = _QueuedMutation(
+            database_id="database",
+            runtime_generation=4,
+            operation_id=request.operation_id,
+            owning_surface="condition-sidebar",
+            resources=request.resources,
+            dependency_resources=(),
+            operation=lambda: _committed_execution(),
+            callback=lambda _result: None,
+            typed_request=request,
+            edit_lease_handle=handle,
+        )
+        coordinator = SqlCollaborationCoordinator.__new__(SqlCollaborationCoordinator)
+        coordinator._local_drafts = drafts
+        self.assertIs(
+            coordinator._validated_mutation_edit_lease(runtime, queued, handle),
+            drafts.get(draft.draft_id),
         )
 
     def test_feed_uses_commit_version_when_earlier_identity_commits_last(self):
@@ -2511,7 +2586,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             1,
             2,
             (
-                _change(database_id, condition_resource, 1),
+                _change(
+                    database_id,
+                    condition_resource,
+                    1,
+                    changed_fields=("name", "z_value"),
+                ),
                 _change(database_id, area_resource, 2),
             ),
         )
@@ -2535,8 +2615,16 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(set(project_data.conditions), {"42"})
         self.assertEqual([area.uid for area in project_data.areas], ["6"])
         names = [event for event, _payload in events.published]
-        self.assertEqual(names.count(AppEvents.REMOTE_CONDITIONS_CHANGED), 1)
+        self.assertEqual(names.count(AppEvents.CONDITIONS_CHANGED), 1)
         self.assertEqual(names.count(AppEvents.REMOTE_AREAS_CHANGED), 1)
+        condition_event = next(
+            payload
+            for event, payload in events.published
+            if event is AppEvents.CONDITIONS_CHANGED
+        )
+        self.assertEqual(condition_event["changed_fields"], ["name", "z_value"])
+        self.assertEqual(condition_event["change_operations"], ["update"])
+        self.assertTrue(condition_event["invalidates_undo"])
 
     def test_remote_transaction_publishes_one_deferred_plan_projection(self):
         database_id = "database"
@@ -2557,6 +2645,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                         database_id,
                         ResourceRef("condition", "42", 8),
                         1,
+                        changed_fields=("name",),
                     ),
                     _change(database_id, ResourceRef("area", "6", 8), 2),
                 ),
@@ -2589,18 +2678,74 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         ]
         self.assertEqual(len(projected), 1)
         self.assertEqual(projected[0]["runtime_generation"], 5)
+        self.assertEqual(projected[0]["condition_uids"], ("42",))
+        self.assertEqual(projected[0]["condition_changed_fields"], ("name",))
+        self.assertTrue(projected[0]["areas_changed"])
         granular = [
             payload
             for event, payload in events.published
             if event
             in {
-                AppEvents.REMOTE_CONDITIONS_CHANGED,
+                AppEvents.CONDITIONS_CHANGED,
                 AppEvents.REMOTE_AREAS_CHANGED,
             }
         ]
         self.assertEqual(
             [payload["defer_plan_projection"] for payload in granular],
             [True, True],
+        )
+
+    def test_condition_folder_only_change_is_not_projected_as_condition_geometry(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("condition_folder", "5", 8),
+                        1,
+                        changed_fields=("name",),
+                    ),
+                    _change(
+                        database_id,
+                        ResourceRef("conditions_collection", "8", 8),
+                        2,
+                    ),
+                ),
+            ),
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Walls")}},
+            condition_folders_by_bid={8: {"5": object()}},
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        self.assertTrue(service.apply(hydrated, barrier).applied)
+        condition_event = next(
+            payload
+            for event, payload in events.published
+            if event is AppEvents.CONDITIONS_CHANGED
+        )
+        self.assertEqual(condition_event["condition_uids"], [])
+        self.assertEqual(condition_event["changed_fields"], ["condition_folder"])
+        self.assertEqual(condition_event["change_operations"], [])
+        self.assertFalse(
+            any(
+                event is AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED
+                for event, _payload in events.published
+            )
         )
 
     def test_valid_remote_takeoff_reconciles_and_requests_one_active_plan_update(self):
@@ -2816,6 +2961,67 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertIn(AppEvents.REMOTE_HIERARCHY_CHANGED, published)
         self.assertNotIn(AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED, published)
 
+    def test_condition_type_only_change_refreshes_conditions_without_view_rebuild(self):
+        database_id = "database"
+        events = _EventBus()
+        tokens, drafts = _token_service()
+
+        class _ConditionTypeProjectData(_ProjectData):
+            def replace_database_hierarchy(self, _file_entry, _cdn_types):
+                pass
+
+        service = RemoteChangeReconciliationService(
+            _ConditionTypeProjectData(database_id),
+            events,
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        hierarchy_file = HierarchyFileEntry(
+            file_path=database_id,
+            display_name="SQL",
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("condition_type", "5"),
+                        1,
+                        changed_fields=("name",),
+                    ),
+                    _change(
+                        database_id,
+                        ResourceRef("condition_types_collection", "database"),
+                        2,
+                    ),
+                ),
+            ),
+            hierarchy_file=hierarchy_file,
+            cdn_types={"5": CdnType(uid="5", name="Concrete")},
+            settings_defaults={"next_bid_no": 1},
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        self.assertTrue(service.apply(hydrated, barrier).applied)
+        condition_event = next(
+            payload
+            for event, payload in events.published
+            if event is AppEvents.CONDITIONS_CHANGED
+        )
+        self.assertEqual(condition_event["changed_fields"], ["condition_type_catalog"])
+        published = [event for event, _payload in events.published]
+        self.assertNotIn(AppEvents.REMOTE_HIERARCHY_CHANGED, published)
+        self.assertNotIn(AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED, published)
+
     def test_initial_sql_hierarchy_registration_includes_cdn_types(self):
         database_id = "sql-database"
         registered = []
@@ -2868,7 +3074,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         def switch_active_bid(**_payload):
             project_data.bid_ref = BidRef(database_id, "9")
 
-        events.subscribe(AppEvents.REMOTE_CONDITIONS_CHANGED, switch_active_bid)
+        events.subscribe(AppEvents.CONDITIONS_CHANGED, switch_active_bid)
         tokens, drafts = _token_service()
         service = RemoteChangeReconciliationService(
             project_data, events, tokens, drafts, ConflictResolutionService()
@@ -4188,6 +4394,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             (
                 descriptor.database_id,
                 runtime.generation,
+                runtime.session_generation,
                 HydratedDatabaseChangeBatch(
                     _batch(descriptor.database_id, "epoch", 0, 0)
                 ),
@@ -4248,7 +4455,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             level="ERROR",
         ):
             coordinator._on_remote_batch(
-                (descriptor.database_id, runtime.generation, hydrated)
+                (
+                    descriptor.database_id,
+                    runtime.generation,
+                    runtime.session_generation,
+                    hydrated,
+                )
             )
         self.assertEqual(runtime.acknowledged_version, 7)
         self.assertTrue(runtime.recovery_requested)
@@ -4420,6 +4632,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         coordinator._finish_remote_batch(
             descriptor.database_id,
             runtime.generation,
+            runtime.session_generation,
             8,
             time.perf_counter(),
             None,
@@ -4530,6 +4743,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         coordinator._finish_remote_batch(
             descriptor.database_id,
             runtime.generation,
+            runtime.session_generation,
             8,
             time.perf_counter(),
             None,
@@ -5375,6 +5589,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             (
                 descriptor.database_id,
                 runtime.generation,
+                runtime.session_generation,
                 HydratedDatabaseChangeBatch(
                     _batch(descriptor.database_id, "epoch", 0, 0)
                 ),
@@ -6409,7 +6624,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             )
         )
         coordinator._on_remote_batch(
-            (descriptor.database_id, runtime.generation, hydrated)
+            (
+                descriptor.database_id,
+                runtime.generation,
+                runtime.session_generation,
+                hydrated,
+            )
         )
         failure_payload = next(
             payload
@@ -6453,7 +6673,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             _batch(descriptor.database_id, "epoch", 1, 12)
         )
         coordinator._on_remote_batch(
-            (descriptor.database_id, runtime.generation, hydrated)
+            (
+                descriptor.database_id,
+                runtime.generation,
+                runtime.session_generation,
+                hydrated,
+            )
         )
         self.assertEqual(runtime.acknowledged_version, 7)
         self.assertTrue(runtime.pending_delivery)
@@ -6462,6 +6687,101 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertFalse(runtime.pending_delivery)
         reconciliation.token.complete(True)
         self.assertEqual(runtime.acknowledged_version, 12)
+        _shutdown_coordinator(coordinator)
+
+    def test_previous_session_projection_cannot_ack_reconnected_session(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        reconciliation = _DeferredProjectionReconciliation()
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            reconciliation,
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(descriptor.database_id, "session-before")
+        runtime.session_generation = 1
+        runtime.acknowledged_version = 7
+        runtime.pending_delivery = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator._on_remote_batch(
+            (
+                descriptor.database_id,
+                runtime.generation,
+                runtime.session_generation,
+                HydratedDatabaseChangeBatch(
+                    _batch(descriptor.database_id, "epoch", 1, 12)
+                ),
+            )
+        )
+        runtime.session = DatabaseSession(descriptor.database_id, "session-after")
+        runtime.session_generation = 3
+        runtime.acknowledged_version = 20
+        runtime.observed_high_water_version = 20
+        runtime.pending_delivery = False
+        runtime.healthy = True
+        reconciliation.token.complete(True)
+        self.assertEqual(runtime.acknowledged_version, 20)
+        self.assertFalse(runtime.pending_delivery)
+        self.assertTrue(runtime.healthy)
+        _shutdown_coordinator(coordinator)
+
+    def test_new_session_clears_previous_session_pending_delivery(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(descriptor.database_id, "session-before")
+        runtime.session_generation = 1
+        runtime.acknowledged_version = 7
+        runtime.observed_high_water_version = 12
+        runtime.feed_epoch = "old-epoch"
+        runtime.pending_delivery = True
+        runtime.healthy = True
+        session_generation = coordinator._install_session(
+            runtime,
+            DatabaseSession(
+                descriptor.database_id,
+                "session-after",
+                last_acknowledged_version=20,
+            ),
+        )
+        self.assertEqual(session_generation, 2)
+        self.assertEqual(runtime.acknowledged_version, 20)
+        self.assertEqual(runtime.observed_high_water_version, 20)
+        self.assertEqual(runtime.feed_epoch, "")
+        self.assertFalse(runtime.pending_delivery)
+        self.assertFalse(runtime.healthy)
         _shutdown_coordinator(coordinator)
 
     def test_failed_plan_projection_does_not_acknowledge_batch(self):
@@ -6496,6 +6816,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             (
                 descriptor.database_id,
                 runtime.generation,
+                runtime.session_generation,
                 HydratedDatabaseChangeBatch(
                     _batch(descriptor.database_id, "epoch", 1, 12)
                 ),
@@ -6544,6 +6865,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         coordinator._finish_remote_batch(
             descriptor.database_id,
             runtime.generation,
+            runtime.session_generation,
             12,
             0.0,
             None,

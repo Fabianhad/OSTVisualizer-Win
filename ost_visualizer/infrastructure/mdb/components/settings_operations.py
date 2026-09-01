@@ -170,6 +170,7 @@ class SettingsOperationsMixin:
                             page["height"],
                             page["scale_factor1"],
                             page["scale_factor2"],
+                            original_image_path=page.get("image_path") or "",
                         )
                         self._execute_insert_values(
                             cursor,
@@ -228,6 +229,7 @@ class SettingsOperationsMixin:
                                 page["height"],
                                 page["scale_factor1"],
                                 page["scale_factor2"],
+                                original_image_path=page.get("image_path") or "",
                             )
                         self._rescale_page_content_for_scale_change(
                             cursor,

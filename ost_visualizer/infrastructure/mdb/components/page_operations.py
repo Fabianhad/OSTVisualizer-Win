@@ -250,7 +250,7 @@ class PageOperationsMixin:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT [Width], [Height], [ScaleFactor1], [ScaleFactor2], "
-                    "[OverlayImagePath] FROM [BidPages] WHERE [UID]=?",
+                    "[OverlayImagePath], [ImagePath] FROM [BidPages] WHERE [UID]=?",
                     int(page_uid),
                 )
                 row = cursor.fetchone()
@@ -267,6 +267,7 @@ class PageOperationsMixin:
                     row.Height,
                     row.ScaleFactor1,
                     row.ScaleFactor2,
+                    original_image_path=row.ImagePath,
                 )
                 return self._execute_update_values(
                     cursor,

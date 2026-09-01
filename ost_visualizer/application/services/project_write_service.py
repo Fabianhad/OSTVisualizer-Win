@@ -2,11 +2,13 @@ from dataclasses import asdict, dataclass, field, replace
 import uuid
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 from ...domain.entities.file_state import normalize_path
+from ...domain.services.elevation import parse_elevation
 from ...domain.services.takeoff_domain_service import (
     takeoffs_can_reassign_to_condition,
 )
 from ...domain.entities.annotation import ANNOTATION_TYPE_NAMED_VIEW
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
+from ..dtos.collaboration_resource_catalog import CollaborationResourceType
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
     CollaborationMutationType,
@@ -30,6 +32,7 @@ from ..dtos.collaboration_dtos import (
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
 from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
+from ..events.app_events import AppEvents
 from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
 from ..interfaces.i_database_mutation_executor import IDatabaseMutationExecutor
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
@@ -661,7 +664,17 @@ class ProjectWriteService(DatabaseMutationWriteService):
             return success
 
         success = self._execute_database_mutation(db_path, (collection,), delete).value
-        return self._reload_after_success(db_path, success)
+        return bool(
+            success
+            and self.reload_conditions_and_notify(
+                db_path,
+                bid_uid,
+                condition_uids,
+                [],
+                [ChangeOperation.DELETE],
+                invalidates_undo=True,
+            )
+        )
 
     def create_condition_result(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec
@@ -694,7 +707,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
         return WriteReloadResult(
             new_uid,
             write_success=True,
-            reload_success=self.reload_and_notify(db_path),
+            reload_success=self.reload_conditions_and_notify(
+                db_path,
+                bid_uid,
+                [str(new_uid)],
+                [],
+                [ChangeOperation.CREATE],
+            ),
         )
 
     def create_condition_folder_result(
@@ -733,14 +752,22 @@ class ProjectWriteService(DatabaseMutationWriteService):
         return WriteReloadResult(
             new_uid,
             write_success=True,
-            reload_success=self.reload_and_notify(db_path),
+            reload_success=self.reload_conditions_and_notify(
+                db_path,
+                bid_uid,
+                [],
+                [CollaborationResourceType.CONDITION_FOLDER.value],
+                [],
+            ),
         )
 
     def rename_condition_folder(self, db_path: str, folder_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         bid_ref = self._project_data.get_current_bid_ref()
-        bid_uid = int(bid_ref.bid_uid) if bid_ref else None
+        if bid_ref is None:
+            return False
+        bid_uid = int(bid_ref.bid_uid)
         resource = ResourceRef("condition_folder", folder_uid, bid_uid)
 
         def rename(recorder):
@@ -750,7 +777,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
             return success
 
         success = self._execute_database_mutation(db_path, (resource,), rename).value
-        return self._reload_after_success(db_path, success)
+        return bool(
+            success
+            and self.reload_conditions_and_notify(
+                db_path,
+                bid_ref.bid_uid,
+                [],
+                [CollaborationResourceType.CONDITION_FOLDER.value],
+                [],
+            )
+        )
 
     def validate_condition_folder_delete(
         self, db_path: str, bid_uid: str, folder_uids: List[str]
@@ -804,7 +840,17 @@ class ProjectWriteService(DatabaseMutationWriteService):
         success = self._execute_database_mutation(
             db_path, (collection,), delete_folders
         ).value
-        reload_success = self.reload_and_notify(db_path) if success else False
+        reload_success = (
+            self.reload_conditions_and_notify(
+                db_path,
+                bid_uid,
+                [],
+                [CollaborationResourceType.CONDITION_FOLDER.value],
+                [],
+            )
+            if success
+            else False
+        )
         return WriteReloadResult(
             deletable_uids,
             write_success=success,
@@ -875,7 +921,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
         return WriteReloadResult(
             list(new_uids),
             write_success=True,
-            reload_success=self.reload_and_notify(db_path),
+            reload_success=self.reload_conditions_and_notify(
+                db_path,
+                bid_uid,
+                [str(uid) for uid in new_uids],
+                [],
+                [ChangeOperation.CREATE],
+            ),
         )
 
     def duplicate_conditions_to_bid(
@@ -918,10 +970,90 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if (
             uid_map
             and publish_database_refreshed_after_write
-            and not self.reload_and_notify(db_path)
+            and not self.reload_conditions_and_notify(
+                db_path,
+                destination_bid_uid,
+                [str(uid) for uid in uid_map.values()],
+                [],
+                [ChangeOperation.CREATE],
+            )
         ):
             return {}
         return uid_map
+
+    def reload_conditions_and_notify(
+        self,
+        file_path: str,
+        bid_uid: str,
+        condition_uids: list[str],
+        changed_fields: list[str],
+        change_operations: list[ChangeOperation],
+        *,
+        invalidates_undo: bool = False,
+    ) -> bool:
+        if not self.reload_database(file_path):
+            return False
+        self._publish_conditions_changed(
+            file_path,
+            bid_uid,
+            condition_uids,
+            changed_fields,
+            change_operations,
+            invalidates_undo=invalidates_undo,
+        )
+        return True
+
+    def _publish_conditions_changed(
+        self,
+        file_path: str,
+        bid_uid: str,
+        condition_uids: list[str],
+        changed_fields: list[str],
+        change_operations: list[ChangeOperation],
+        *,
+        invalidates_undo: bool = False,
+    ) -> None:
+        self._event_bus.publish(
+            AppEvents.CONDITIONS_CHANGED,
+            database_id=file_path,
+            bid_uid=str(bid_uid),
+            condition_uids=list(
+                dict.fromkeys(str(uid) for uid in condition_uids if uid)
+            ),
+            changed_fields=sorted({str(field) for field in changed_fields if field}),
+            change_operations=sorted(
+                {
+                    operation.value
+                    for operation in change_operations
+                    if isinstance(operation, ChangeOperation)
+                }
+            ),
+            invalidates_undo=invalidates_undo,
+        )
+
+    @staticmethod
+    def _condition_elevation_signature(name: str) -> tuple[int, str]:
+        parts = parse_elevation(str(name))
+        return parts.type, parts.value.strip()
+
+    def _condition_update_changed_fields(
+        self,
+        condition_uids: List[str],
+        changes: dict,
+    ) -> tuple[str, ...]:
+        fields = {str(field) for field in changes}
+        if "name" not in fields or {"z_value", "is_top"}.intersection(fields):
+            return tuple(sorted(fields))
+        conditions = self._project_data.get_bid_conditions()
+        new_elevation = self._condition_elevation_signature(changes["name"])
+        if any(
+            condition_uid not in conditions
+            or self._condition_elevation_signature(conditions[condition_uid].name)
+            != new_elevation
+            for condition_uid in condition_uids
+        ):
+            fields.update(("z_value", "is_top"))
+        return tuple(sorted(fields))
 
     def update_condition(
         self,
@@ -936,13 +1068,19 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 success=False, error="The active bid is locked"
             )
         resource = ResourceRef("condition", condition_uid, int(bid_uid))
+        changes = updates.get_changes()
+        changed_fields = self._condition_update_changed_fields([condition_uid], changes)
 
         def update(recorder):
             result = self._update_condition.execute(
                 db_path, bid_uid, condition_uid, updates
             )
             if result.success:
-                recorder.record(resource, ChangeOperation.UPDATE)
+                recorder.record(
+                    resource,
+                    ChangeOperation.UPDATE,
+                    changed_fields=changed_fields,
+                )
             return result
 
         mutation = self._execute_database_mutation(db_path, (resource,), update)
@@ -963,7 +1101,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if (
             result.success
             and publish_database_refreshed_after_write
-            and not self.reload_and_notify(db_path)
+            and not self.reload_conditions_and_notify(
+                db_path,
+                bid_uid,
+                [condition_uid],
+                list(changed_fields),
+                [ChangeOperation.UPDATE],
+            )
         ):
             result.success = False
             result.error = "Database reload failed after saving condition"
@@ -987,7 +1131,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
             return success
 
         success = self._execute_database_mutation(db_path, (collection,), reorder).value
-        return self._reload_after_success(db_path, success)
+        return bool(
+            success
+            and self.reload_conditions_and_notify(
+                db_path,
+                bid_uid,
+                ordered_condition_uids,
+                ["ref_no"],
+                [ChangeOperation.REORDER],
+            )
+        )
 
     def set_takeoff_curve(
         self,
@@ -2703,6 +2856,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         callback: Callable[[QueuedMutationResult], None],
         *,
         owning_surface: str = "main-plan",
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         bid_value = int(bid_uid)
         payload = PageSettingsPayload.from_updates(setting_kind, updates)
@@ -2722,15 +2876,21 @@ class ProjectWriteService(DatabaseMutationWriteService):
             resources = tuple(
                 ResourceRef("page", page_uid, bid_value) for page_uid in page_uids
             )
+        effective_owning_surface = (
+            edit_lease_handle.owning_surface
+            if edit_lease_handle is not None
+            else owning_surface
+        )
         request = QueuedMutationRequest(
             database_id=database_id,
             operation_id=str(uuid.uuid4()),
             mutation_type=CollaborationMutationType.PAGE_SETTINGS,
-            owning_surface=owning_surface,
+            owning_surface=effective_owning_surface,
             resources=resources,
             bid_uid=bid_value,
             page_uid=page_uids[0] if len(page_uids) == 1 else "",
             payload=payload,
+            edit_lease_handle=edit_lease_handle,
         )
 
         def execute() -> MutationExecutionResult:
@@ -2919,21 +3079,28 @@ class ProjectWriteService(DatabaseMutationWriteService):
         owning_surface: str = "desktop",
         block_bid_child_locks: bool = False,
         block_bid_active_editors: bool = False,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
         mutation_type: CollaborationMutationType = (
             CollaborationMutationType.PROJECT_WRITE
         ),
     ) -> int:
         bid_value = int(bid_uid) if bid_uid else None
+        effective_owning_surface = (
+            edit_lease_handle.owning_surface
+            if edit_lease_handle is not None
+            else owning_surface
+        )
         request = QueuedMutationRequest(
             database_id=database_id,
             operation_id=str(uuid.uuid4()),
             mutation_type=mutation_type,
-            owning_surface=owning_surface,
+            owning_surface=effective_owning_surface,
             resources=resources,
             dependency_resources=dependency_resources,
             bid_uid=bid_value,
             page_uid=page_uid,
             payload=payload,
+            edit_lease_handle=edit_lease_handle,
         )
 
         def execute() -> MutationExecutionResult:
@@ -3116,6 +3283,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         project_uid: Optional[str],
         updates: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         collection = ResourceRef("project_bids", project_uid or "orphan")
         default_layers = ResourceRef("default_layers_collection", "database")
@@ -3149,6 +3318,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             recorder.record(collection, ChangeOperation.UPDATE)
             return str(new_uid)
 
+        project_dependency = (
+            (ResourceRef("project", str(project_uid)),) if project_uid else ()
+        )
         return self._queue_project_write(
             database_id,
             None,
@@ -3161,8 +3333,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 created_uid_maps=(("bids", (("0", str(value)),)),),
                 affected_families=("hierarchy",),
             ),
-            dependency_resources=(default_layers, *master_dependencies),
+            dependency_resources=(
+                default_layers,
+                *project_dependency,
+                *master_dependencies,
+            ),
             owning_surface="new-project-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_project_rename(
@@ -3422,6 +3599,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_uid: str,
         job_status_uid: str,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         bid_value = int(bid_uid)
         resource = ResourceRef("bid", bid_uid, bid_value)
@@ -3454,6 +3633,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 affected_families=("hierarchy",),
             ),
             owning_surface="project-tree",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_bid_areas_save(
@@ -3462,6 +3642,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_uid: str,
         changes,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         bid_value = int(bid_uid)
         collection = ResourceRef("areas_collection", bid_uid, bid_value)
@@ -3525,6 +3707,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ),
             dependency_resources=(collection,),
             owning_surface="bid-areas-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_cover_sheet_save(
@@ -3533,6 +3716,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_uid: str,
         updates: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         bid_value = int(bid_uid)
         bid_resource = ResourceRef("bid", bid_uid, bid_value)
@@ -3622,6 +3807,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 *master_dependencies,
             ),
             owning_surface="cover-sheet-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_condition_types_save(
@@ -3629,6 +3815,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         database_id: str,
         changes: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         values = dict(changes or {})
         new_items = list(values.get("new") or ())
@@ -3714,6 +3902,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ),
             dependency_resources=(collection,),
             owning_surface="condition-types-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_default_layer_insert(
@@ -3722,6 +3911,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         name: str,
         after_sequence: int,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         collection = ResourceRef("default_layers_collection", "database")
         payload = ProjectWritePayload.from_values(
@@ -3751,6 +3942,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 affected_families=("default_layers",),
             ),
             owning_surface="default-layers-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_default_layers_delete(
@@ -3758,6 +3950,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         database_id: str,
         layer_uids: List[str],
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         valid_uids = self._unique_nonempty_uids(layer_uids)
         if not valid_uids:
@@ -3789,6 +3983,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 affected_families=("default_layers",),
             ),
             owning_surface="default-layers-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_default_layer_update(
@@ -3797,6 +3992,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         operation: str,
         values: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         if operation not in {"rename", "show", "show_all", "reorder"}:
             raise ValueError("Unsupported default-layer update")
@@ -3841,6 +4038,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 affected_families=("default_layers",),
             ),
             owning_surface="default-layers-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_job_statuses_save(
@@ -3848,6 +4046,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         database_id: str,
         changes: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         return self._queue_master_data_save(
             database_id,
@@ -3856,6 +4056,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             changes,
             self._save_job_statuses.execute,
             callback,
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_employees_save(
@@ -3863,6 +4064,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         database_id: str,
         changes: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         return self._queue_master_data_save(
             database_id,
@@ -3871,6 +4074,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             changes,
             self._save_employees.execute,
             callback,
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_pay_classes_save(
@@ -3878,6 +4082,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         database_id: str,
         changes: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         return self._queue_master_data_save(
             database_id,
@@ -3886,6 +4092,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             changes,
             self._save_pay_classes.execute,
             callback,
+            edit_lease_handle=edit_lease_handle,
         )
 
     def _queue_master_data_save(
@@ -3896,6 +4103,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         changes: dict,
         save_use_case,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         values = dict(changes or {})
         new_items = list(values.get("new") or ())
@@ -4016,6 +4225,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 if resource is not None
             ),
             owning_surface=f"{family}-dialog",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_pages_delete(
@@ -4268,6 +4478,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         condition_uids: List[str],
         changes: dict,
         callback: Callable[[QueuedMutationResult], None],
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
         valid_uids = self._unique_nonempty_uids(condition_uids)
         if not valid_uids or not changes:
@@ -4291,6 +4503,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 dependencies.append(
                     ResourceRef("condition_type", str(changes["cdn_type_uid"]))
                 )
+        changed_fields = self._condition_update_changed_fields(valid_uids, changes)
         payload = ProjectWritePayload.from_values(
             "update_conditions",
             {"condition_uids": valid_uids, "changes": changes},
@@ -4308,7 +4521,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     raise RuntimeError(
                         result.error or "The condition update was incomplete."
                     )
-            changed_fields = tuple(sorted(str(field) for field in changes))
             for resource in resources:
                 recorder.record(
                     resource,
@@ -4331,6 +4543,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ),
             dependency_resources=tuple(dependencies),
             owning_surface="condition-sidebar",
+            edit_lease_handle=edit_lease_handle,
         )
 
     def queue_conditions_renumber(
@@ -4358,7 +4571,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ):
                 raise RuntimeError("The condition reorder was incomplete.")
             for resource in resources:
-                recorder.record(resource, ChangeOperation.REORDER)
+                recorder.record(
+                    resource,
+                    ChangeOperation.REORDER,
+                    changed_fields=("ref_no",),
+                )
             recorder.record(collection, ChangeOperation.REORDER)
             return True
 
@@ -5477,11 +5694,22 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 failure_reason=validation.failure_reason,
                 blocked_uids=validation.blocked_uids,
             )
-        reload_success = (
-            self.reload_and_notify(db_path)
-            if has_changes and publish_database_refreshed_after_write
-            else True
-        )
+        reload_success = True
+        if has_changes and publish_database_refreshed_after_write:
+            reload_success = self.reload_database(db_path)
+            active_bid_ref = self._project_data.get_current_bid_ref()
+            if (
+                reload_success
+                and active_bid_ref is not None
+                and normalize_path(active_bid_ref.file_path) == normalize_path(db_path)
+            ):
+                self._publish_conditions_changed(
+                    db_path,
+                    active_bid_ref.bid_uid,
+                    [],
+                    ["condition_type_catalog"],
+                    [],
+                )
         return WriteReloadResult(
             result,
             write_success=True,

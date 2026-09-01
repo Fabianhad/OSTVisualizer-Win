@@ -79,6 +79,12 @@ Threading and events:
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
+- Condition persistence publishes one backend-neutral condition-change event
+  after authoritative projection. Changed fields and mutation operation determine
+  whether Plan or native-mesh regeneration is required; same-bid regeneration
+  keeps the matching accepted scene visible until its generation-guarded
+  replacement succeeds. Database-wide refresh remains the fallback only when
+  the affected resource is not known.
 - Render-quality contracts live in `application/render_quality.py`. The
   interactive PDF baseline, raster native-pixel scale, and constrained-render
   safety floor are distinct concepts; Plan View, overlay previews, prefetch,
@@ -154,6 +160,9 @@ Persistence:
   without PDF-, creator-, or record-format detection. Invalid or non-positive
   page calibration values produce no overlay geometry and must be rejected by
   overlay write paths rather than replaced with another coordinate basis.
+  Replacing an overlay resets its prior rectangle, offsets, rotation, deskew,
+  and resized state. Removing it clears that same complete overlay-owned state
+  and makes the original image the authoritative page display mode.
 
 Database backends:
 
@@ -198,6 +207,11 @@ Database backends:
   descriptors, uses server UTC, drains workers outside the Qt thread on
   unload/shutdown, and crosses `QtCallbackBridge` before EventBus publication or
   UI changes. Cleanup failure is explicit and must not be reported as closed.
+  Each connection instance advances a session generation within the database
+  runtime; session-derived callbacks and projection barriers must validate both
+  runtime and session generations. Trust loss invalidates the exact draft owners,
+  while database-wide interaction cancellation belongs to the collaboration-state
+  transition so delayed losses cannot cancel work acquired after reconnect.
 - SQL database/session bootstrap remains on the collaboration worker, while
   explicit bid/page navigation reads use `NavigationLoadService`: prepare an
   immutable result off the Qt thread, reject stale database/bid generations,
@@ -216,6 +230,18 @@ Database backends:
 - Long-lived SQL edit leases are requested and released through the coordinator's
   worker command queue; presentation code must not call the collaboration store
   or wait for SQL on the Qt thread. Access receives an immediate local grant.
+  A Condition editor owns every Condition exposed by its Previous/Next navigation,
+  collection editors own the records in their authoritative opening snapshot,
+  and Cover Sheet, New Project, and page-setting editors own every record their
+  nested dialogs or Apply-to-All/navigation controls can mutate. Each queued
+  modal save explicitly transfers that lease to the mutation and reacquires the
+  same ownership before the dialog becomes interactive again. A late modal lease
+  result is rejected when its original database or bid context has changed.
+- Delayed SQL hierarchy and Condition mutation completions may alter selection,
+  placement, or inline-edit state only while their exact captured database and
+  bid/project owner is still current. Pending-operation identities include that
+  owner, and temporary action blocking returns control to the canonical toolbar
+  projection instead of restoring a captured enabled state.
 - SQL mutations must use `DatabaseMutationRequest`: validate the active session,
   acquire sorted resource application locks, verify owned edit-lock tokens and
   expected entity versions, change core rows, advance `EntityVersions`, and add
@@ -307,6 +333,11 @@ State and identity:
   snapshots must retain hidden annotations so every open plan surface can
   reveal the existing scene items when the layer is enabled; do not filter
   hidden annotations out during viewer hydration.
+- Plan mutation completions may restore previews, selections, editor properties,
+  or placement tools only while their captured database, bid, and page still own
+  that surface. Main and detached Plan surfaces retain mutation history for a
+  committed operation, but a stale completion must not project old interaction
+  state into a newly navigated context.
 - Plan View scene bands live in `presentation/scene/plan_view_z_order.py`.
   Overlay-only imagery owns the primary page-image band, while Show Both may
   project its overlay into the foreground-image band. Base, overlay, composite,

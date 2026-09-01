@@ -7,6 +7,7 @@ from typing import Optional
 from PySide6.QtCore import QSignalBlocker
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ...application.dtos.collaboration_dtos import (
+    ChangeOperation,
     EditLeaseResult,
     MutationOutcomeStatus,
     QueuedMutationResult,
@@ -21,6 +22,7 @@ from ...domain.entities.layer import Layer
 from ...domain.entities.pattern import TRANSPARENT as PAT_TRANSPARENT
 from ..dialogs.edit_condition_dialog import TYPE_DEFAULTS, EditConditionDialog
 from ..managers.ui_access_manager import Feature
+from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..utils.messagebox import (
     DB_LOCKED_HINT,
     confirm,
@@ -76,7 +78,11 @@ class ConditionActionHandler:
         on_committed=None,
         on_failed=None,
     ) -> bool:
-        key = tuple(str(value) for value in operation_key)
+        key = (
+            str(bid_ref.file_path),
+            str(bid_ref.bid_uid),
+            *(str(value) for value in operation_key),
+        )
         if key in self._pending_sql_operations:
             return False
         self._pending_sql_operations.add(key)
@@ -115,6 +121,9 @@ class ConditionActionHandler:
             )
             return False
         return True
+
+    def _is_current_bid(self, bid_ref) -> bool:
+        return self._ui_state.get_selected_bid_ref() == bid_ref
 
     def _layer_dialog_callbacks(self, bid_ref, write_service) -> dict:
         uses_sql_queue = self._uses_sql_queue(bid_ref)
@@ -159,7 +168,7 @@ class ConditionActionHandler:
         if uses_sql_queue:
             callbacks.update(
                 {
-                    "insert_async_fn": lambda name, after_sequence, completed: (
+                    "layer_insert_async_fn": lambda name, after_sequence, completed: (
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("insert_layer", str(name)),
@@ -183,7 +192,7 @@ class ConditionActionHandler:
                             ),
                         )
                     ),
-                    "delete_many_async_fn": lambda layer_uids, completed: (
+                    "layer_delete_many_async_fn": lambda layer_uids, completed: (
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("delete_layers", *layer_uids),
@@ -197,7 +206,7 @@ class ConditionActionHandler:
                             completed,
                         )
                     ),
-                    "update_name_async_fn": lambda layer_uid, name, completed: (
+                    "layer_update_name_async_fn": lambda layer_uid, name, completed: (
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("rename_layer", str(layer_uid)),
@@ -212,7 +221,7 @@ class ConditionActionHandler:
                             completed,
                         )
                     ),
-                    "move_async_fn": lambda layer_uid, neighbor_uid, completed: (
+                    "layer_move_async_fn": lambda layer_uid, neighbor_uid, completed: (
                         self._submit_sql_layer_operation(
                             bid_ref,
                             ("move_layer", str(layer_uid)),
@@ -574,8 +583,6 @@ class ConditionActionHandler:
             exec_with_ost_blocking(dialog, self._coordinator.event_bus)
         finally:
             dialog.deleteLater()
-        if not self._uses_sql_queue(bid_ref):
-            self._coordinator.refresh_conditions_ui()
         if created_refresh_failed[0]:
             show_warning(
                 sidebar.window(),
@@ -607,10 +614,8 @@ class ConditionActionHandler:
                 new_uids = list(
                     authoritative.created_resource_ids if authoritative else ()
                 )
-                if new_uids:
-                    self._finish_condition_duplicate(
-                        new_uids, sidebar, refresh_conditions=False
-                    )
+                if new_uids and self._is_current_bid(bid_ref):
+                    self._finish_condition_duplicate(new_uids, sidebar)
 
             self._submit_sql_condition_operation(
                 bid_ref,
@@ -673,7 +678,7 @@ class ConditionActionHandler:
                     ),
                     lambda _result: (
                         self._coordinator.highlight_sidebar(set(condition_uids))
-                        if sidebar
+                        if sidebar and self._is_current_bid(bid_ref)
                         else None
                     ),
                 )
@@ -684,10 +689,8 @@ class ConditionActionHandler:
                 new_uids = list(
                     authoritative.created_resource_ids if authoritative else ()
                 )
-                if new_uids:
-                    self._finish_condition_duplicate(
-                        new_uids, sidebar, refresh_conditions=False
-                    )
+                if new_uids and self._is_current_bid(bid_ref):
+                    self._finish_condition_duplicate(new_uids, sidebar)
 
             self._submit_sql_condition_operation(
                 bid_ref,
@@ -740,7 +743,13 @@ class ConditionActionHandler:
             else:
                 target_applied = True
         if target_applied:
-            write_service.reload_and_notify(bid_ref.file_path)
+            write_service.reload_conditions_and_notify(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                new_uids,
+                ["folder_uid", "cdn_type_uid"],
+                [ChangeOperation.UPDATE],
+            )
         self._finish_condition_duplicate(new_uids, sidebar)
 
     def _move_conditions_to_target(
@@ -772,10 +781,18 @@ class ConditionActionHandler:
             )
         if not moved_uids:
             return
-        if not write_service.reload_and_notify(bid_ref.file_path):
+        changed_fields = ["folder_uid"]
+        if target_kind == "cdn_type":
+            changed_fields.append("cdn_type_uid")
+        if not write_service.reload_conditions_and_notify(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            moved_uids,
+            changed_fields,
+            [ChangeOperation.UPDATE],
+        ):
             self._warn_condition_refresh_failed("moved")
             return
-        self._coordinator.refresh_conditions_ui()
         if sidebar:
             self._coordinator.highlight_sidebar(set(moved_uids))
 
@@ -806,11 +823,7 @@ class ConditionActionHandler:
             "refreshed. Reopen the database to see the latest conditions.",
         )
 
-    def _finish_condition_duplicate(
-        self, new_uids: list, sidebar, *, refresh_conditions: bool = True
-    ) -> None:
-        if refresh_conditions:
-            self._coordinator.refresh_conditions_ui()
+    def _finish_condition_duplicate(self, new_uids: list, sidebar) -> None:
         if self._coordinator._is_takeoff_2d_view_active():
             self._coordinator.placement.enter(new_uids[-1], new_uids)
         if sidebar:
@@ -845,7 +858,10 @@ class ConditionActionHandler:
                     confirmed_uids,
                     callback,
                 ),
-                lambda _result: self._finish_queued_condition_delete(replacement_uid),
+                lambda _result: self._finish_queued_condition_delete(
+                    bid_ref,
+                    replacement_uid,
+                ),
             )
             return
         success = write_service.delete_conditions(
@@ -856,12 +872,17 @@ class ConditionActionHandler:
             return
         self._coordinator.placement.force_exit()
         self._coordinator.ensure_select_mode()
-        self._coordinator.refresh_conditions_ui()
         self._coordinator.highlight_sidebar(
             {replacement_uid} if replacement_uid else set(), reveal=False
         )
 
-    def _finish_queued_condition_delete(self, replacement_uid: Optional[str]) -> None:
+    def _finish_queued_condition_delete(
+        self,
+        bid_ref,
+        replacement_uid: Optional[str],
+    ) -> None:
+        if not self._is_current_bid(bid_ref):
+            return
         self._coordinator.placement.force_exit()
         self._coordinator.ensure_select_mode()
         self._coordinator.highlight_sidebar(
@@ -882,7 +903,6 @@ class ConditionActionHandler:
         sidebar = self._coordinator.conditions_sidebar
         if not bid_ref or not write_service or not sidebar:
             return
-        self._coordinator.refresh_conditions_ui()
         ordered_uids = sidebar.collect_ordered_condition_uids()
         if not ordered_uids:
             return
@@ -944,7 +964,11 @@ class ConditionActionHandler:
                     parent,
                     callback,
                 ),
-                lambda result: self._finish_queued_folder_create(result, sidebar),
+                lambda result: (
+                    self._finish_queued_folder_create(result, sidebar)
+                    if self._is_current_bid(bid_ref)
+                    else None
+                ),
             )
             return
         result = write_service.create_condition_folder_result(
@@ -1021,7 +1045,11 @@ class ConditionActionHandler:
                     {"name": new_name},
                     callback,
                 ),
-                lambda _result: self._coordinator.highlight_sidebar({condition_uid}),
+                lambda _result: (
+                    self._coordinator.highlight_sidebar({condition_uid})
+                    if self._is_current_bid(bid_ref)
+                    else None
+                ),
             )
             return
         result = write_service.update_condition(
@@ -1112,7 +1140,11 @@ class ConditionActionHandler:
                     {"folder_uid": folder_uid or None},
                     callback,
                 ),
-                lambda _result: self._coordinator.highlight_sidebar({condition_uid}),
+                lambda _result: (
+                    self._coordinator.highlight_sidebar({condition_uid})
+                    if self._is_current_bid(bid_ref)
+                    else None
+                ),
             )
             return
         result = write_service.update_condition(
@@ -1163,7 +1195,7 @@ class ConditionActionHandler:
                 ),
                 lambda _result: (
                     self._coordinator.highlight_sidebar(set(condition_uids))
-                    if sidebar
+                    if sidebar and self._is_current_bid(bid_ref)
                     else None
                 ),
             )
@@ -1189,10 +1221,15 @@ class ConditionActionHandler:
             )
         if not changed_uids:
             return
-        if not write_service.reload_and_notify(bid_ref.file_path):
+        if not write_service.reload_conditions_and_notify(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            changed_uids,
+            [field_name],
+            [ChangeOperation.UPDATE],
+        ):
             self._warn_condition_refresh_failed("updated")
             return
-        self._coordinator.refresh_conditions_ui()
         if sidebar:
             self._coordinator.highlight_sidebar(set(changed_uids))
 
@@ -1220,7 +1257,23 @@ class ConditionActionHandler:
         if not selected_conds:
             return
         ordered_uids = sidebar.collect_ordered_condition_uids()
+        bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
+        edit_resources = tuple(
+            ResourceRef("condition", uid, bid_uid) for uid in ordered_uids
+        )
         uses_sql_queue = self._uses_sql_queue(bid_ref)
+        lease_session = (
+            ModalEditLeaseSession(
+                self._coordinator,
+                bid_ref.file_path,
+                edit_resources,
+                "edit-condition-dialog",
+                event_bus=self._coordinator.event_bus,
+                owning_surface="condition-sidebar",
+            )
+            if uses_sql_queue
+            else None
+        )
         cdn_types = (
             self._project_data.get_cdn_types()
             if uses_sql_queue
@@ -1278,7 +1331,6 @@ class ConditionActionHandler:
                     dto,
                 )
                 if result.success:
-                    self._coordinator.refresh_conditions_ui()
                     dialog.refresh_condition_data(
                         self._project_data.get_bid_conditions()
                     )
@@ -1296,34 +1348,41 @@ class ConditionActionHandler:
                 )
                 return False
 
-            def committed(_result: QueuedMutationResult) -> None:
-                dialog.refresh_condition_data(self._project_data.get_bid_conditions())
-                self._coordinator.highlight_sidebar({cond_uid})
-                completed(UpdateConditionResultDto(success=True))
+            def submit(active_lease, lease_completed) -> bool:
+                return self._submit_sql_condition_operation(
+                    bid_ref,
+                    ("edit_condition", str(cond_uid)),
+                    "Save Condition",
+                    lambda callback: write_service.queue_conditions_update(
+                        bid_ref.file_path,
+                        bid_ref.bid_uid,
+                        [cond_uid],
+                        dto.get_changes(),
+                        callback,
+                        edit_lease_handle=active_lease,
+                    ),
+                    lambda _result: lease_completed(True),
+                    lambda result: lease_completed(
+                        False,
+                        result.message or "Failed to save condition.",
+                    ),
+                )
 
-            def failed(result: QueuedMutationResult) -> None:
+            def mutation_completed(success: bool, error=None) -> None:
+                if success:
+                    dialog.refresh_condition_data(
+                        self._project_data.get_bid_conditions()
+                    )
+                    self._coordinator.highlight_sidebar({cond_uid})
                 completed(
                     UpdateConditionResultDto(
-                        success=False,
-                        error=result.message or "Failed to save condition.",
-                        error_presented=True,
+                        success=success,
+                        error=str(error or "") if not success else "",
+                        error_presented=not success,
                     )
                 )
 
-            return self._submit_sql_condition_operation(
-                bid_ref,
-                ("edit_condition", str(cond_uid)),
-                "Save Condition",
-                lambda callback: write_service.queue_conditions_update(
-                    bid_ref.file_path,
-                    bid_ref.bid_uid,
-                    [cond_uid],
-                    dto.get_changes(),
-                    callback,
-                ),
-                committed,
-                failed,
-            )
+            return lease_session.submit_mutation(submit, mutation_completed)
 
         dialog = EditConditionDialog(
             icon_provider=self._coordinator.main_window.icon_provider,
@@ -1372,24 +1431,25 @@ class ConditionActionHandler:
                 self._coordinator.placement.enter(uid, [uid])
 
         dialog.condition_navigated.connect(_on_navigated)
-        bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
-        edit_resources = tuple(
-            ResourceRef("condition", uid, bid_uid) for uid in condition_uids
-        )
+        if lease_session is not None:
+            lease_session.bind_dialog(dialog)
 
         def resolved(result: EditLeaseResult) -> None:
             try:
                 if result.granted:
                     exec_with_ost_blocking(dialog, self._coordinator.event_bus)
             finally:
-                if result.handle is not None:
-                    self._coordinator.end_collaboration_edit(result.handle)
+                if lease_session is not None:
+                    lease_session.close()
                 dialog.deleteLater()
 
-        self._coordinator.request_collaboration_edit(
-            bid_ref.file_path,
-            edit_resources,
-            resolved,
-            operation_id="edit-condition-dialog",
-            owning_surface="condition-sidebar",
-        )
+        if lease_session is not None:
+            lease_session.request_initial(resolved)
+        else:
+            self._coordinator.request_collaboration_edit(
+                bid_ref.file_path,
+                edit_resources,
+                resolved,
+                operation_id="edit-condition-dialog",
+                owning_surface="condition-sidebar",
+            )

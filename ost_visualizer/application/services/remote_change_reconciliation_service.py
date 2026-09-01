@@ -2,6 +2,7 @@ from __future__ import annotations
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
 from ...domain.services.project_data_service import ProjectDataService
+from ..condition_change_impact import condition_changes_require_plan_refresh
 from ..dtos.collaboration_resource_catalog import (
     AREA_RESOURCE_TYPES,
     BID_CONTENT_ENTITY_RESOURCE_TYPES,
@@ -13,6 +14,7 @@ from ..dtos.collaboration_resource_catalog import (
     SUPPORTED_REMOTE_RESOURCE_TYPES,
 )
 from ..dtos.collaboration_dtos import (
+    ChangeOperation,
     HydratedDatabaseChangeBatch,
     ReconciliationFailureKind,
     ReconciliationResult,
@@ -76,6 +78,22 @@ class RemoteChangeReconciliationService:
                 failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD,
             )
         active_ref = self._project_data.get_current_bid_ref()
+        condition_type_resource_types = {
+            CollaborationResourceType.CONDITION_TYPE.value,
+            CollaborationResourceType.CONDITION_TYPES_COLLECTION.value,
+        }
+        hierarchy_change_types = {
+            change.resource.resource_type
+            for change in batch.changes
+            if change.resource.resource_type in HIERARCHY_RESOURCE_TYPES
+        }
+        condition_types_only = bool(hierarchy_change_types) and (
+            hierarchy_change_types.issubset(condition_type_resource_types)
+        )
+        condition_family_changed = any(
+            change.resource.resource_type in CONDITION_RESOURCE_TYPES
+            for change in batch.changes
+        )
         if not self._is_complete_for_active_bid(hydrated, active_ref):
             return ReconciliationResult(
                 applied=False,
@@ -92,7 +110,7 @@ class RemoteChangeReconciliationService:
             self._concurrency_tokens.apply_remote_changes(
                 batch.database_id, batch.changes
             )
-            if hydrated.hierarchy_file is not None:
+            if hydrated.hierarchy_file is not None and not condition_types_only:
                 self._event_bus.publish(
                     AppEvents.REMOTE_HIERARCHY_CHANGED,
                     database_id=batch.database_id,
@@ -147,19 +165,78 @@ class RemoteChangeReconciliationService:
         self._replace_database_settings(hydrated)
         self._concurrency_tokens.apply_remote_changes(batch.database_id, batch.changes)
         if hydrated.hierarchy_file is not None:
-            self._event_bus.publish(
-                AppEvents.REMOTE_HIERARCHY_CHANGED,
-                database_id=batch.database_id,
-                defer_plan_projection=projection_barrier is not None,
-            )
+            if condition_types_only and not condition_family_changed:
+                self._event_bus.publish(
+                    AppEvents.CONDITIONS_CHANGED,
+                    database_id=batch.database_id,
+                    bid_uid=str(bid_uid),
+                    condition_uids=[],
+                    changed_fields=["condition_type_catalog"],
+                    change_operations=[],
+                    defer_plan_projection=False,
+                    invalidates_undo=False,
+                )
+            elif not condition_types_only:
+                self._event_bus.publish(
+                    AppEvents.REMOTE_HIERARCHY_CHANGED,
+                    database_id=batch.database_id,
+                    defer_plan_projection=projection_barrier is not None,
+                )
         self._publish_database_settings_changed(hydrated)
+        condition_changes = tuple(
+            change
+            for change in active_changes
+            if change.resource.resource_type
+            == CollaborationResourceType.CONDITION.value
+        )
+        condition_collection_changes = tuple(
+            change
+            for change in active_changes
+            if change.resource.resource_type
+            == CollaborationResourceType.CONDITIONS_COLLECTION.value
+        )
+        condition_folder_changes = tuple(
+            change
+            for change in active_changes
+            if change.resource.resource_type
+            == CollaborationResourceType.CONDITION_FOLDER.value
+        )
+        condition_changed_fields = sorted(
+            {field for change in condition_changes for field in change.changed_fields}
+        )
+        if condition_types_only and condition_family_changed:
+            condition_changed_fields.append("condition_type_catalog")
+            condition_changed_fields.sort()
+        condition_change_operations = sorted(
+            {change.operation.value for change in condition_changes}
+        )
+        unclassified_condition_collection = bool(
+            condition_collection_changes
+            and not condition_changes
+            and not condition_folder_changes
+        )
+        condition_projection_changed = bool(
+            condition_changes or unclassified_condition_collection
+        )
         if conditions is not None and folders is not None:
             self._event_bus.publish(
-                AppEvents.REMOTE_CONDITIONS_CHANGED,
+                AppEvents.CONDITIONS_CHANGED,
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
-                condition_uids=sorted(conditions),
+                condition_uids=sorted(
+                    {change.resource.resource_id for change in condition_changes}
+                ),
+                changed_fields=(
+                    condition_changed_fields
+                    if condition_projection_changed
+                    else [CollaborationResourceType.CONDITION_FOLDER.value]
+                ),
+                change_operations=condition_change_operations,
                 defer_plan_projection=projection_barrier is not None,
+                invalidates_undo=(
+                    not local_completion
+                    or ChangeOperation.DELETE.value in condition_change_operations
+                ),
             )
         if areas is not None:
             self._event_bus.publish(
@@ -201,20 +278,37 @@ class RemoteChangeReconciliationService:
                 defer_plan_projection=projection_barrier is not None,
                 local_completion=local_completion,
             )
+        condition_projection_required = (
+            condition_projection_changed
+            and condition_changes_require_plan_refresh(
+                condition_changed_fields,
+                condition_change_operations,
+            )
+        )
         plan_projection_required = (
-            (conditions is not None and folders is not None)
-            or areas is not None
-            or bool(families)
+            condition_projection_required or areas is not None or bool(families)
         )
         if projection_barrier is not None and plan_projection_required:
             projected_families = tuple(sorted(families))
+            projected_condition_uids = tuple(
+                sorted({change.resource.resource_id for change in condition_changes})
+            )
+            if unclassified_condition_collection:
+                projected_condition_uids = tuple(sorted(conditions or ()))
             self._event_bus.publish(
                 AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
                 runtime_generation=projection_barrier.runtime_generation,
                 families=projected_families,
-                condition_uids=tuple(sorted(conditions or ())),
+                condition_uids=projected_condition_uids,
+                condition_changed_fields=(
+                    tuple(condition_changed_fields)
+                    if condition_projection_changed
+                    else None
+                ),
+                condition_change_operations=tuple(condition_change_operations),
+                areas_changed=areas is not None,
                 resource_uids_by_family={
                     family: tuple(resource_uids_by_family[family])
                     for family in projected_families

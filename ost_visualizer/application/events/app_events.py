@@ -21,11 +21,14 @@ class DatabaseCapabilitiesChangedEvent:
 
 
 @dataclass
-class RemoteConditionsChangedEvent:
+class ConditionsChangedEvent:
     database_id: str = ""
     bid_uid: str = ""
     condition_uids: list = field(default_factory=list)
+    changed_fields: list = field(default_factory=list)
+    change_operations: list = field(default_factory=list)
     defer_plan_projection: bool = False
+    invalidates_undo: bool = False
 
 
 @dataclass
@@ -65,6 +68,9 @@ class RemotePlanProjectionRequestedEvent:
     runtime_generation: int
     families: tuple[str, ...]
     condition_uids: tuple[str, ...]
+    condition_changed_fields: tuple[str, ...] | None
+    condition_change_operations: tuple[str, ...]
+    areas_changed: bool
     resource_uids_by_family: dict[str, tuple[str, ...]]
     barrier: RemoteProjectionBarrier
 
@@ -203,7 +209,7 @@ class AppEvents:
     FILE_OPENED = FileOpenedEvent
     DATABASE_REFRESHED = DatabaseRefreshedEvent
     DATABASE_CAPABILITIES_CHANGED = DatabaseCapabilitiesChangedEvent
-    REMOTE_CONDITIONS_CHANGED = RemoteConditionsChangedEvent
+    CONDITIONS_CHANGED = ConditionsChangedEvent
     REMOTE_AREAS_CHANGED = RemoteAreasChangedEvent
     REMOTE_BID_CONTENT_CHANGED = RemoteBidContentChangedEvent
     REMOTE_HIERARCHY_CHANGED = RemoteHierarchyChangedEvent

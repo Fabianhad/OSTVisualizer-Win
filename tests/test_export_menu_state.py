@@ -3,6 +3,10 @@ from types import SimpleNamespace
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.actions.action_ids import (
+    ACTION_SHOW_ORIGINAL_IMAGE,
+    ACTION_SHOW_OVERLAY_IMAGE,
+)
 from ost_visualizer.presentation.interfaces.i_workspace_shell import (
     CurrentAreaSelectionContext,
 )
@@ -112,6 +116,38 @@ def _controller(ui_state, project_data, csv_calls=None):
 
 
 class ExportMenuStateTests(unittest.TestCase):
+    def test_page_image_visibility_actions_follow_available_sources(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        ui_state = _UiState(bid_ref)
+        ui_state.active_page_uid = "page-1"
+        project_data = _ProjectData(bid_ref)
+        controller = _controller(ui_state, project_data)
+        controller.window = SimpleNamespace(
+            is_takeoff_tab_active=lambda: True,
+            is_summary_tab_active=lambda: False,
+            get_takeoff_plan_view=lambda: None,
+        )
+        controller._actions.update(
+            {
+                ACTION_SHOW_ORIGINAL_IMAGE: _Action(),
+                ACTION_SHOW_OVERLAY_IMAGE: _Action(),
+            }
+        )
+        project_data.page.image_path = ""
+        project_data.page.overlay_image_path = "overlay.pdf"
+        controller.update_menu_states()
+        self.assertFalse(controller._actions[ACTION_SHOW_ORIGINAL_IMAGE].isEnabled())
+        self.assertTrue(controller._actions[ACTION_SHOW_OVERLAY_IMAGE].isEnabled())
+        project_data.page.image_path = "original.pdf"
+        project_data.page.overlay_image_path = ""
+        controller.update_menu_states()
+        self.assertTrue(controller._actions[ACTION_SHOW_ORIGINAL_IMAGE].isEnabled())
+        self.assertFalse(controller._actions[ACTION_SHOW_OVERLAY_IMAGE].isEnabled())
+        project_data.page.overlay_image_path = "overlay.pdf"
+        controller.update_menu_states()
+        self.assertTrue(controller._actions[ACTION_SHOW_ORIGINAL_IMAGE].isEnabled())
+        self.assertTrue(controller._actions[ACTION_SHOW_OVERLAY_IMAGE].isEnabled())
+
     def test_import_menu_remains_enabled_when_switching_across_all_tabs(self):
         bid_ref = BidRef("db.mdb", "bid-1")
         controller = _controller(_UiState(bid_ref), _ProjectData(bid_ref))

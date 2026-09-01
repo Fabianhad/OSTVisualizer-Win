@@ -33,12 +33,17 @@ class SetScaleDialog(QtWidgets.QDialog):
         scale_factor1: float,
         scale_factor2: float,
         save_fn: Callable[[ScaleSettings], bool],
+        *,
+        save_async_fn=None,
     ) -> None:
         super().__init__(parent)
         self._icon_provider = icon_provider
         self._initial_sf1 = float(scale_factor1 or 1.0)
         self._initial_sf2 = float(scale_factor2 or 1.0)
         self._save_fn = save_fn
+        self._save_async_fn = save_async_fn
+        self._save_pending = False
+        self._accept_after_save = False
         self._building = False
         self._dirty = False
         self._interactive_enabled = True
@@ -265,6 +270,36 @@ class SetScaleDialog(QtWidgets.QDialog):
         settings = self._validate_and_build_settings()
         if settings is None:
             return False
+        if self._save_async_fn is not None:
+            self._save_pending = True
+            self.set_interactive(False)
+
+            def completed(success: bool) -> None:
+                self._save_pending = False
+                if success:
+                    self._saved_form_state = self._current_form_state()
+                    self._dirty = False
+                self.set_interactive(True)
+                if not success:
+                    self._accept_after_save = False
+                    show_warning(self, "Save Failed", "Failed to save page scale.")
+                    return
+                if self._accept_after_save:
+                    self._accept_after_save = False
+                    self.accept()
+
+            try:
+                started = self._save_async_fn(settings, completed)
+            except Exception:
+                self._save_pending = False
+                self._accept_after_save = False
+                self.set_interactive(True)
+                raise
+            if not started:
+                self._save_pending = False
+                self._accept_after_save = False
+                self.set_interactive(True)
+            return bool(started)
         if not self._save_fn(settings):
             show_warning(self, "Save Failed", "Failed to save page scale.")
             return False
@@ -274,7 +309,10 @@ class SetScaleDialog(QtWidgets.QDialog):
         return True
 
     def _on_ok(self) -> None:
-        if self._dirty and not self._apply_changes():
+        if self._dirty:
+            self._accept_after_save = True
+            if not self._apply_changes():
+                self._accept_after_save = False
             return
         self.accept()
 
@@ -282,7 +320,7 @@ class SetScaleDialog(QtWidgets.QDialog):
         self._apply_changes()
 
     def set_interactive(self, enabled: bool) -> None:
-        self._interactive_enabled = bool(enabled)
+        self._interactive_enabled = bool(enabled) and not self._save_pending
         for widget in (
             self._style_combo,
             self._predefined_radio,
@@ -293,6 +331,20 @@ class SetScaleDialog(QtWidgets.QDialog):
             widget.setEnabled(self._interactive_enabled)
         self._sync_scale_mode_controls()
         self._update_apply_button()
+
+    def done(self, result: int) -> None:
+        if self._save_pending:
+            return
+        super().done(result)
+
+    def closeEvent(self, event) -> None:
+        if self._save_pending:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def cleanup(self) -> None:
+        pass
 
     @staticmethod
     def _format_number(value: float) -> str:

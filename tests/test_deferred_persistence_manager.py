@@ -1446,6 +1446,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
+        coordinator._last_mesh_scene = None
         coordinator.visualization_service = SimpleNamespace(
             refresh_mesh_view=lambda page_uids: mesh_refresh_calls.append(
                 list(page_uids)
@@ -1590,6 +1591,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_overlay_display_mode_captures_current_camera_before_reload(self):
         coordinator, pages = self._make_view_state_coordinator()
         calls = []
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: calls.append("detached")
+        )
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
@@ -1617,7 +1621,30 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             coordinator._deferred_persistence.page_show_mode_calls,
             [("a.mdb", "p1", 2)],
         )
-        self.assertEqual(calls, [("sync", "p1", 2.5), ("update", "p1", 2.5), "export"])
+        self.assertEqual(
+            calls,
+            [("sync", "p1", 2.5), ("update", "p1", 2.5), "detached", "export"],
+        )
+
+    def test_overlay_visibility_cannot_select_or_hide_the_only_source(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        page = pages["p1"]
+        transitions = []
+        coordinator._on_overlay_display_mode_requested = (
+            lambda mode: transitions.append(mode)
+        )
+        coordinator._update_export_menu_state = lambda: None
+        page.image_path = ""
+        page.overlay_image_path = "overlay.pdf"
+        page.image_show_mode = 1
+        coordinator.show_original_image(True)
+        coordinator.show_overlay_image(False)
+        page.image_path = "original.pdf"
+        page.overlay_image_path = ""
+        page.image_show_mode = 0
+        coordinator.show_overlay_image(True)
+        coordinator.show_original_image(False)
+        self.assertEqual(transitions, [])
 
     def test_close_captures_latest_page_view_and_selected_page_writes(self):
         coordinator, _pages = self._make_view_state_coordinator()

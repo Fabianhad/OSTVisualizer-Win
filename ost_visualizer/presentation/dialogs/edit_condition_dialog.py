@@ -235,6 +235,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         layer_update_all_show_fn=None,
         layer_update_name_fn=None,
         layer_move_fn=None,
+        layer_insert_async_fn=None,
+        layer_delete_many_async_fn=None,
+        layer_update_name_async_fn=None,
+        layer_move_async_fn=None,
         read_service=None,
         read_only: bool = False,
         metric: bool = False,
@@ -281,6 +285,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._layer_update_all_show_fn = layer_update_all_show_fn
         self._layer_update_name_fn = layer_update_name_fn
         self._layer_move_fn = layer_move_fn
+        self._layer_insert_async_fn = layer_insert_async_fn
+        self._layer_delete_many_async_fn = layer_delete_many_async_fn
+        self._layer_update_name_async_fn = layer_update_name_async_fn
+        self._layer_move_async_fn = layer_move_async_fn
         self._read_only = read_only
         self._dirty = False
         self._building = False
@@ -1102,6 +1110,10 @@ class EditConditionDialog(QtWidgets.QDialog):
             update_all_show_fn=self._layer_update_all_show_fn,
             update_name_fn=self._layer_update_name_fn,
             move_fn=self._layer_move_fn,
+            insert_async_fn=self._layer_insert_async_fn,
+            delete_many_async_fn=self._layer_delete_many_async_fn,
+            update_name_async_fn=self._layer_update_name_async_fn,
+            move_async_fn=self._layer_move_async_fn,
             has_license=self._has_license,
             workspace_state_model=self._workspace_state_model,
         )

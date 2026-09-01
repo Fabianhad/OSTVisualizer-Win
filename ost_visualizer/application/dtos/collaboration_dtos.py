@@ -556,12 +556,10 @@ class QueuedMutationRequest:
             if (
                 handle.database_id != self.database_id
                 or handle.owning_surface != self.owning_surface
-                or handle.resources != tuple(sorted(set(self.resources)))
-                or handle.dependency_resources
-                != tuple(sorted(set(self.dependency_resources)))
+                or not set(self.resources).issubset(handle.resources)
             ):
                 raise ValueError(
-                    "A queued mutation's edit lease must own the same resources"
+                    "A queued mutation's edit lease must own its affected resources"
                 )
         if self.payload_format_version != 1:
             raise ValueError("Only mutation payload format version 1 is supported")

@@ -5,12 +5,18 @@ from typing import Callable, List, Optional, Tuple
 from PySide6 import QtWidgets
 from PySide6.QtCore import QByteArray, Qt
 from ...application.dtos.page_view_dto import PageViewDto
+from ...application.dtos.collaboration_resource_catalog import (
+    CollaborationResourceFamily,
+)
 from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ...application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
     RemoteProjectionToken,
 )
 from ...application.events.app_events import AppEvents
+from ...application.condition_change_impact import (
+    condition_changes_require_plan_refresh,
+)
 from ...application.interfaces.i_color_service import IColorService
 from ...application.interfaces.i_coordinate_transformer_factory import (
     ICoordinateTransformerFactory,
@@ -147,8 +153,8 @@ class DetachedPageViewManager(IShutdownAware):
             self._on_remote_bid_content_changed,
         )
         self.event_bus.subscribe(
-            AppEvents.REMOTE_CONDITIONS_CHANGED,
-            self._on_remote_conditions_changed,
+            AppEvents.CONDITIONS_CHANGED,
+            self._on_conditions_changed,
         )
         self.event_bus.subscribe(
             AppEvents.REMOTE_AREAS_CHANGED,
@@ -187,8 +193,8 @@ class DetachedPageViewManager(IShutdownAware):
                     self._on_remote_bid_content_changed,
                 ),
                 (
-                    AppEvents.REMOTE_CONDITIONS_CHANGED,
-                    self._on_remote_conditions_changed,
+                    AppEvents.CONDITIONS_CHANGED,
+                    self._on_conditions_changed,
                 ),
                 (AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed),
                 (AppEvents.REMOTE_HIERARCHY_CHANGED, self._on_remote_hierarchy_changed),
@@ -356,11 +362,14 @@ class DetachedPageViewManager(IShutdownAware):
         if not defer_plan_projection:
             self._refresh_signaler.request()
 
-    def _on_remote_conditions_changed(
+    def _on_conditions_changed(
         self,
         database_id: str = "",
         bid_uid: str = "",
+        changed_fields: Optional[List[str]] = None,
+        change_operations: Optional[List[str]] = None,
         defer_plan_projection: bool = False,
+        invalidates_undo: bool = False,
         **_event_data,
     ) -> None:
         view = self.repository.get_active_view()
@@ -371,9 +380,11 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref.bid_uid != bid_uid
         ):
             return
-        if self._window_undo_service is not None:
+        if self._window_undo_service is not None and invalidates_undo:
             self._window_undo_service.clear()
-        if not defer_plan_projection:
+        if not defer_plan_projection and condition_changes_require_plan_refresh(
+            changed_fields or (), change_operations or ()
+        ):
             self._refresh_signaler.request()
 
     def _on_remote_areas_changed(
@@ -383,8 +394,11 @@ class DetachedPageViewManager(IShutdownAware):
         defer_plan_projection: bool = False,
         **_event_data,
     ) -> None:
-        self._on_remote_conditions_changed(
-            database_id, bid_uid, defer_plan_projection=defer_plan_projection
+        self._on_conditions_changed(
+            database_id,
+            bid_uid,
+            defer_plan_projection=defer_plan_projection,
+            invalidates_undo=True,
         )
 
     def _on_remote_hierarchy_changed(
@@ -410,10 +424,31 @@ class DetachedPageViewManager(IShutdownAware):
         runtime_generation: int,
         families: tuple[str, ...],
         condition_uids: tuple[str, ...],
+        condition_changed_fields: tuple[str, ...] | None,
+        condition_change_operations: tuple[str, ...],
+        areas_changed: bool,
         resource_uids_by_family: dict[str, tuple[str, ...]],
         barrier: RemoteProjectionBarrier,
     ) -> None:
-        del families, condition_uids, resource_uids_by_family
+        del condition_uids, resource_uids_by_family
+        plan_families = {
+            CollaborationResourceFamily.ANNOTATIONS.value,
+            CollaborationResourceFamily.LAYERS.value,
+            CollaborationResourceFamily.PAGES.value,
+            CollaborationResourceFamily.TAKEOFFS.value,
+        }
+        condition_plan_refresh = (
+            condition_changed_fields is not None
+            and condition_changes_require_plan_refresh(
+                condition_changed_fields, condition_change_operations
+            )
+        )
+        if not (
+            areas_changed
+            or condition_plan_refresh
+            or bool(plan_families.intersection(families))
+        ):
+            return
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
@@ -427,6 +462,13 @@ class DetachedPageViewManager(IShutdownAware):
             or barrier.runtime_generation != runtime_generation
         ):
             return
+        if self.project_data.get_page(view.target_page_uid) is None:
+            if not self._retarget_missing_active_page(view):
+                return
+            if not view.target_page_uid:
+                self._update_window_navigation(view)
+                self._apply_window_page(view, self._get_page_data(view))
+                return
         self._remote_update_generation += 1
         identity = _DetachedPlanIdentity(
             database_id=database_id,

@@ -40,6 +40,7 @@ class FakeMeshScene:
         self.condition_uids = list(condition_uids or ["condition"] * len(takeoff_uids))
         self.selected = set()
         self.clear_calls = 0
+        self.scene_clear_calls = 0
         self.get_bounds_calls = 0
         self.bounds = SimpleNamespace(
             min=SimpleNamespace(x=0.0, y=0.0, z=0.0),
@@ -66,6 +67,7 @@ class FakeMeshScene:
             self.selected.discard(index)
 
     def clear(self):
+        self.scene_clear_calls += 1
         self.takeoff_uids = []
         self.condition_uids = []
         self.selected.clear()
@@ -233,6 +235,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._renderer = renderer
         viewer._ensure_renderer = lambda: True
         viewer._current_bid_ref = BidRef("a.mdb", "bid-1")
+        viewer._displayed_scene_page_uids = ("page-1",)
         viewer._loading_bid_ref = None
         viewer._accepted_scene_bid_ref = viewer._current_bid_ref
         viewer._requested_scene_page_uids = ("page-1",)
@@ -845,6 +848,43 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(requested_elevations, [{"page-a": 10.0}])
         self.assertEqual(len(renderer.camera.show_object_calls), 1)
         self.assertEqual(renderer.resume_calls, 1)
+
+    def test_failed_same_bid_refresh_keeps_last_accepted_scene_visible(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        renderer.scene.takeoff_uids = ["takeoff-existing"]
+        renderer.scene.condition_uids = ["condition-existing"]
+        bid_ref = viewer._current_bid_ref
+        camera_state = self._camera_state(viewer, renderer)
+        texture = viewer._current_plan_texture
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer.apply_scene_failure(
+            viewer,
+            self._scene_identity(bid_ref, 14, ("page-1",)),
+        )
+        self.assertEqual(renderer.scene.takeoff_uids, ["takeoff-existing"])
+        self.assertEqual(renderer.scene.scene_clear_calls, 0)
+        self.assertEqual(renderer.clear_plan_texture_calls, 0)
+        self.assertIs(viewer._current_plan_texture, texture)
+        self.assertEqual(viewer._page_floor_elevations, {"page-1": 0.0})
+        self.assertEqual(self._camera_state(viewer, renderer), camera_state)
+        self.assertFalse(viewer._render_suspended)
+        self.assertFalse(viewer._scene_refresh_pending)
+
+    def test_failed_different_page_refresh_does_not_retain_stale_page_scene(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        renderer.scene.takeoff_uids = ["takeoff-existing"]
+        renderer.scene.condition_uids = ["condition-existing"]
+        bid_ref = viewer._current_bid_ref
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-2"])
+        OpenGLViewer.apply_scene_failure(
+            viewer,
+            self._scene_identity(bid_ref, 14, ("page-2",)),
+        )
+        self.assertEqual(renderer.scene.takeoff_uids, [])
+        self.assertEqual(renderer.scene.scene_clear_calls, 1)
+        self.assertEqual(renderer.clear_plan_texture_calls, 1)
+        self.assertTrue(viewer._render_suspended)
+        self.assertTrue(viewer._scene_refresh_pending)
 
     def test_duplicate_scene_generation_is_not_published_to_renderer_twice(self):
         viewer, renderer = self._make_page_plane_viewer([])

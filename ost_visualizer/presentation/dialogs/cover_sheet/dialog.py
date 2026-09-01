@@ -24,7 +24,12 @@ from ...config import (
 from ...managers.icon_manager import IconId, IconManager
 from ...utils.button_policy import apply_no_highlight_button_policy
 from ...utils.dialog import save_result_refresh_failed
-from ...utils.image_show_mode import SHOW_LABELS
+from ...utils.image_show_mode import (
+    SHOW_BOTH,
+    SHOW_LABELS,
+    SHOW_ORIGINAL,
+    SHOW_OVERLAY,
+)
 from ...utils.messagebox import (
     confirm_delete_page_with_contents,
     confirm_not_found,
@@ -610,8 +615,15 @@ class CoverSheetDialog(QtWidgets.QDialog):
         row.scale_factor1, row.scale_factor2 = float(value[0]), float(value[1])
         self._refresh_page_row(page_uid)
 
-    def _show_options(self, _page_uid: str) -> List[ComboOption]:
-        return [(SHOW_LABELS[key], key, None) for key in sorted(SHOW_LABELS)]
+    def _show_options(self, page_uid: str) -> List[ComboOption]:
+        row = self._page_rows[page_uid]
+        if row.image_path and row.overlay_path:
+            modes = (SHOW_ORIGINAL, SHOW_OVERLAY, SHOW_BOTH)
+        elif row.overlay_path:
+            modes = (SHOW_OVERLAY,)
+        else:
+            modes = (SHOW_ORIGINAL,)
+        return [(SHOW_LABELS[mode], mode, None) for mode in modes]
 
     def _current_show_mode(self, page_uid: str) -> int:
         return self._page_rows[page_uid].show_mode
@@ -1927,7 +1939,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 else:
                     row.replace_image_path(path)
             else:
-                row.overlay_path = path
+                row.replace_overlay_path(path)
+                self._refresh_page_row(page_uid)
             self._set_path_editor_state(editor, path, path_key)
             self._on_page_image_changed(
                 page_uid,

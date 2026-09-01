@@ -392,13 +392,16 @@ class MenuController:
             ACTION_FLIP_IMAGE_HORIZONTAL,
             ACTION_FLIP_IMAGE_VERTICAL,
             ACTION_SELECT_OVERLAY_IMAGE,
-            ACTION_SHOW_ORIGINAL_IMAGE,
         ):
             action = self._actions.get(action_key)
             if action:
                 action.setEnabled(page_image_enabled)
         active_page = self._active_page()
+        page_has_original = bool(active_page and active_page.image_path)
         page_has_overlay = bool(active_page and active_page.overlay_image_path)
+        show_original_action = self._actions.get(ACTION_SHOW_ORIGINAL_IMAGE)
+        if show_original_action:
+            show_original_action.setEnabled(page_image_enabled and page_has_original)
         for action_key in (ACTION_REMOVE_OVERLAY_IMAGE, ACTION_SHOW_OVERLAY_IMAGE):
             action = self._actions.get(action_key)
             if action:
@@ -813,6 +816,13 @@ class MenuController:
             employees=employees,
             pay_classes=pay_classes,
         )
+        lease_session = (
+            self.handlers.cover_sheet.create_new_bid_lease_session(
+                file_path, target_project_uid, data
+            )
+            if uses_sql_queue
+            else None
+        )
         dialog = CoverSheetDialog(
             self.icon_provider,
             self.window,
@@ -825,15 +835,17 @@ class MenuController:
             ),
             save_job_statuses_async_fn=(
                 (
-                    lambda changes, completed: (
-                        self.handlers.cover_sheet.save_master_data_async(
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self.handlers.cover_sheet.save_master_data_async(
                             file_path,
                             "Job Statuses",
                             self._project_write_service.queue_job_statuses_save,
                             changes,
-                            completed,
+                            lease_completed,
                             "job_statuses",
-                        )
+                            edit_lease_handle=handle,
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -856,15 +868,17 @@ class MenuController:
             ),
             save_employees_async_fn=(
                 (
-                    lambda changes, completed: (
-                        self.handlers.cover_sheet.save_master_data_async(
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self.handlers.cover_sheet.save_master_data_async(
                             file_path,
                             "Employees",
                             self._project_write_service.queue_employees_save,
                             changes,
-                            completed,
+                            lease_completed,
                             "employees",
-                        )
+                            edit_lease_handle=handle,
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -872,15 +886,17 @@ class MenuController:
             ),
             save_pay_classes_async_fn=(
                 (
-                    lambda changes, completed: (
-                        self.handlers.cover_sheet.save_master_data_async(
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self.handlers.cover_sheet.save_master_data_async(
                             file_path,
                             "Payroll Classes",
                             self._project_write_service.queue_pay_classes_save,
                             changes,
-                            completed,
+                            lease_completed,
                             "pay_classes",
-                        )
+                            edit_lease_handle=handle,
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -900,13 +916,15 @@ class MenuController:
             ),
             save_cover_sheet_async_fn=(
                 (
-                    lambda updates, completed: (
-                        self.handlers.cover_sheet.create_bid_async(
+                    lambda updates, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self.handlers.cover_sheet.create_bid_async(
                             file_path,
                             target_project_uid,
                             updates,
-                            completed,
-                        )
+                            lambda success: lease_completed(success, None),
+                            edit_lease_handle=handle,
+                        ),
+                        lambda success, _value: completed(success),
                     )
                 )
                 if uses_sql_queue
@@ -916,39 +934,50 @@ class MenuController:
             create_mode=True,
             workspace_state_model=self._workspace_state_model,
         )
-        try:
-            result = exec_with_ost_blocking(dialog, self._event_bus)
-            if result != QtWidgets.QDialog.DialogCode.Accepted:
-                return
-            if uses_sql_queue:
-                return
-            if not self.ui_access_manager.can_create_project_tree_items(
-                file_path is not None
-            ):
-                return
-            updates = dialog.get_updates()
-            if not self._flush_deferred_for_file(file_path):
-                return
-            create_result = self._project_write_service.create_bid_result(
-                file_path, target_project_uid, updates
-            )
-            if create_result.refresh_failed:
-                show_warning(
-                    self.window,
-                    "Refresh Error",
-                    "The bid was created, but the project tree could not be refreshed. "
-                    "Reopen the database to see the created bid.",
+
+        def execute_dialog() -> None:
+            try:
+                result = exec_with_ost_blocking(dialog, self._event_bus)
+                if result != QtWidgets.QDialog.DialogCode.Accepted:
+                    return
+                if uses_sql_queue:
+                    return
+                if not self.ui_access_manager.can_create_project_tree_items(
+                    file_path is not None
+                ):
+                    return
+                updates = dialog.get_updates()
+                if not self._flush_deferred_for_file(file_path):
+                    return
+                create_result = self._project_write_service.create_bid_result(
+                    file_path, target_project_uid, updates
                 )
-                return
-            if not create_result:
-                show_critical(
-                    self.window,
-                    "New Project",
-                    "Failed to create bid.",
-                )
-                return
-        finally:
-            dialog.deleteLater()
+                if create_result.refresh_failed:
+                    show_warning(
+                        self.window,
+                        "Refresh Error",
+                        "The bid was created, but the project tree could not be "
+                        "refreshed. Reopen the database to see the created bid.",
+                    )
+                    return
+                if not create_result:
+                    show_critical(
+                        self.window,
+                        "New Project",
+                        "Failed to create bid.",
+                    )
+            finally:
+                if lease_session is not None:
+                    lease_session.close()
+                dialog.deleteLater()
+
+        if lease_session is None:
+            execute_dialog()
+            return
+        lease_session.bind_dialog(dialog)
+        lease_session.request_initial(
+            lambda result: execute_dialog() if result.granted else dialog.deleteLater()
+        )
 
     def _resolve_project_tree_file_path(self) -> Optional[str]:
         fp = self.ui_state_manager.selected_file_path

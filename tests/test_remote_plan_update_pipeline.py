@@ -719,6 +719,7 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = object()
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(get_page=lambda _page_uid: object())
         manager._remote_update_generation = 0
         manager._remote_surface_id = "detached:test"
         manager._capture_page_data = lambda _view, identity: ("snapshot", identity)
@@ -740,6 +741,9 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
             runtime_generation=2,
             families=("takeoffs",),
             condition_uids=(),
+            condition_changed_fields=None,
+            condition_change_operations=(),
+            areas_changed=False,
             resource_uids_by_family={"takeoffs": ("takeoff-1",)},
             barrier=mismatched_barrier,
         )
@@ -756,6 +760,9 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
             runtime_generation=2,
             families=("takeoffs",),
             condition_uids=(),
+            condition_changed_fields=None,
+            condition_change_operations=(),
+            areas_changed=False,
             resource_uids_by_family={"takeoffs": ("takeoff-1",)},
             barrier=barrier,
         )

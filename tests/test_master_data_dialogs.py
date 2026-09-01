@@ -1,5 +1,6 @@
 import os
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -7,8 +8,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    AuthoritativeMutationResult,
     EditLeaseHandle,
     EditLeaseResult,
+    MutationOutcomeStatus,
+    QueuedMutationResult,
 )
 from ost_visualizer.application.services.project_write_service import (
     BatchWriteResult,
@@ -21,6 +25,7 @@ from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
 from ost_visualizer.presentation.config import (
@@ -129,7 +134,7 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
     def setUp(self):
         self.bar = PageSettingsBar(
             FakeIconProvider(),
-            event_bus=object(),
+            event_bus=EventBus(),
             refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
         )
@@ -247,7 +252,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
     def test_page_settings_scale_activation_emits_one_request_per_commit(self):
         bar = PageSettingsBar(
             FakeIconProvider(),
-            event_bus=object(),
+            event_bus=EventBus(),
             refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
         )
@@ -1232,7 +1237,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
 
         bar = PageSettingsBar(
             FakeIconProvider(),
-            event_bus=object(),
+            event_bus=EventBus(),
             load_areas_fn=load_areas,
             save_areas_fn=save_areas,
             refresh_areas_fn=refresh_areas,
@@ -1305,7 +1310,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
 
         bar = PageSettingsBar(
             FakeIconProvider(),
-            event_bus=object(),
+            event_bus=EventBus(),
             load_areas_fn=lambda _file_path, _bid_uid: [],
             save_areas_fn=lambda *args, **kwargs: save_calls.append((args, kwargs)),
             refresh_areas_fn=refresh_calls.append,
@@ -1391,7 +1396,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         area = BidArea("area-2", "bid-1", "", "Area 2", 1)
         bar = PageSettingsBar(
             FakeIconProvider(),
-            event_bus=object(),
+            event_bus=EventBus(),
             load_areas_fn=lambda _file_path, _bid_uid: [area],
             save_areas_fn=lambda *args, **kwargs: sync_calls.append((args, kwargs)),
             save_areas_async_fn=save_async,
@@ -1445,7 +1450,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             ):
                 bar = PageSettingsBar(
                     FakeIconProvider(),
-                    event_bus=object(),
+                    event_bus=EventBus(),
                     load_areas_fn=lambda _file_path, bid_uid: [
                         BidArea("area-1", bid_uid, "", "Area 1", 1)
                     ],
@@ -1488,6 +1493,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
 
         class UiState:
             selected_area_uid = None
+            selected_file_path = bid_ref.file_path
 
             def get_selected_bid_ref(self):
                 return bid_ref
@@ -1574,7 +1580,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         )
         coordinator.main_window = None
         coordinator._workspace_state_model = make_workspace_state_model()
-        coordinator.event_bus = object()
+        coordinator.event_bus = EventBus()
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
 
         old_dialog = ui_event_coordinator.BidAreasDialog
@@ -1589,6 +1595,147 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             ui_event_coordinator.BidAreasDialog = old_dialog
             ui_event_coordinator.exec_with_ost_blocking = old_exec
         self.assertEqual(reload_calls, ["db.mdb"])
+
+    def test_sql_master_data_save_transfers_and_reacquires_modal_lease(self):
+        database_id = "sql-database"
+        lease_requests = []
+        queued_handles = []
+        released_handles = []
+        completions = []
+        access_allowed = [True]
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_file_path):
+                return True
+
+            @staticmethod
+            def queue_job_statuses_save(
+                file_path,
+                changes,
+                callback,
+                *,
+                edit_lease_handle,
+            ):
+                self.assertEqual(file_path, database_id)
+                self.assertTrue(changes["updated"])
+                queued_handles.append(edit_lease_handle)
+                callback(
+                    QueuedMutationResult(
+                        database_id=database_id,
+                        runtime_generation=1,
+                        operation_id=str(uuid.uuid4()),
+                        outcome_status=MutationOutcomeStatus.COMMITTED,
+                        authoritative_result=AuthoritativeMutationResult(
+                            affected_families=("job_statuses",)
+                        ),
+                    )
+                )
+                return 1
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = QtWidgets.QWidget()
+        coordinator._workspace_state_model = make_workspace_state_model()
+        coordinator._icon_provider = FakeIconProvider()
+        coordinator._editable_master_data_file_path = lambda: database_id
+        coordinator._project_write_service = WriteService()
+        coordinator._project_read_service = SimpleNamespace()
+        coordinator.project_data = SimpleNamespace(
+            get_job_status_snapshot=lambda _file_path: [
+                JobStatus(uid="status-1", name="Bidding", locked=False, sequence=1)
+            ],
+            get_used_job_status_uids=lambda _file_path: set(),
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=database_id,
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: access_allowed[0]
+        )
+        coordinator.event_bus = EventBus()
+
+        def request_local_edit(
+            file_path,
+            resources,
+            callback,
+            *,
+            dependency_resources=(),
+            operation_id="",
+            owning_surface="desktop",
+        ):
+            handle = EditLeaseHandle(
+                database_id=file_path,
+                draft_id=f"draft-{len(lease_requests) + 1}",
+                runtime_generation=1,
+                operation_id=operation_id,
+                owning_surface=owning_surface,
+                resources=resources,
+                dependency_resources=dependency_resources,
+            )
+            lease_requests.append(handle)
+            callback(EditLeaseResult(True, handle=handle))
+
+        coordinator._sql_collaboration = SimpleNamespace(
+            request_local_edit=request_local_edit,
+            end_edit_lease=released_handles.append,
+        )
+
+        def exercise_save(dialog, _event_bus):
+            started = dialog._save_async_fn(
+                {
+                    "new": [],
+                    "updated": [
+                        JobStatus(
+                            uid="status-1",
+                            name="Awarded",
+                            locked=False,
+                            sequence=1,
+                        )
+                    ],
+                    "deleted_uids": [],
+                },
+                lambda success, mapping: completions.append((success, mapping)),
+            )
+            self.assertTrue(started)
+            access_allowed[0] = False
+            self.assertFalse(
+                dialog._save_async_fn(
+                    {
+                        "new": [],
+                        "updated": [
+                            JobStatus(
+                                uid="status-1",
+                                name="Closed",
+                                locked=False,
+                                sequence=1,
+                            )
+                        ],
+                        "deleted_uids": [],
+                    },
+                    lambda success, mapping: completions.append((success, mapping)),
+                )
+            )
+
+        try:
+            with patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "exec_with_ost_blocking",
+                side_effect=exercise_save,
+            ):
+                coordinator.open_job_statuses_dialog()
+        finally:
+            coordinator.main_window.close()
+            coordinator.main_window.deleteLater()
+        self.assertEqual(len(lease_requests), 2)
+        self.assertEqual(queued_handles, [lease_requests[0]])
+        self.assertEqual(released_handles, [lease_requests[1]])
+        self.assertEqual(completions, [(True, {}), (False, None)])
+        self.assertEqual(
+            {resource.resource_type for resource in lease_requests[0].resources},
+            {"job_status", "job_statuses_collection"},
+        )
 
     def test_base_picker_does_not_accept_when_save_returns_false(self):
         dialog = self._payroll_class_dialog_with_save(lambda _changes: False)
@@ -2433,6 +2580,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator._is_cleaning_up = False
         coordinator.main_window = main_window
         coordinator._workspace_state_model = make_workspace_state_model()
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path="defaults.mdb",
+            get_selected_bid_ref=lambda: None,
+        )
         coordinator.ui_access_manager = access_manager
         coordinator.project_data = project_data
         coordinator._icon_provider = FakeIconProvider()
@@ -2456,7 +2607,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             ),
             end_edit_lease=lambda _handle: None,
         )
-        coordinator.event_bus = object()
+        coordinator.event_bus = EventBus()
 
         def capture_dialog(dialog, _event_bus):
             observed["button_text"] = dialog.btn_select.text()

@@ -5,10 +5,12 @@ from types import SimpleNamespace
 from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
+    EditLeaseHandle,
     MutationOutcomeStatus,
     PlanItemsPastePayload,
     ProjectWritePayload,
     QueuedMutationResult,
+    ResourceRef,
 )
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
@@ -25,6 +27,7 @@ from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
@@ -419,6 +422,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 SimpleNamespace(uid="annotation-1", annotation_type="rect")
             ],
             get_project_bid_uids=lambda _database_id, _project_uids: [],
+            get_bid_conditions=lambda: {},
         )
         service._create_project = _SequenceUseCase("project-new")
         service._create_bid = _SequenceUseCase("8")
@@ -742,6 +746,162 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 result = execute()
                 self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
                 self.assertEqual(len(use_case.calls), 1)
+
+    def test_sql_condition_update_records_name_encoded_elevation_fields(self):
+        service, provider = self._queued_project_service()
+        service._project_data.get_bid_conditions = lambda: {
+            "condition-1": Condition(uid="condition-1", name="Walls @T 10' - 0\"")
+        }
+        recorded_fields = []
+
+        class Recorder:
+            def record(self, _resource, _operation, *, changed_fields=(), **_kwargs):
+                recorded_fields.append(changed_fields)
+
+        service.queue_conditions_update(
+            "database",
+            "7",
+            ["condition-1"],
+            {"name": "Walls @B 8' - 0\""},
+            lambda _result: None,
+        )
+        _request, execute, _callback = provider.requests[0]
+        service._execute_database_mutation = (
+            lambda database_id, resources, operation, **options: DatabaseMutationResult(
+                operation_id=options["operation_id"],
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                value=operation(Recorder()),
+                commit_attempted=True,
+            )
+        )
+        result = execute()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(recorded_fields, [("is_top", "name", "z_value")])
+
+    def test_sql_condition_editor_update_transfers_its_owned_lease(self):
+        service, provider = self._queued_project_service()
+        edited = ResourceRef("condition", "condition-1", 7)
+        navigable = ResourceRef("condition", "condition-2", 7)
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="condition-editor",
+            runtime_generation=3,
+            operation_id="edit-condition-dialog",
+            owning_surface="condition-sidebar",
+            resources=(edited, navigable),
+        )
+        service.queue_conditions_update(
+            "database",
+            "7",
+            ["condition-1"],
+            {"name": "Renamed"},
+            lambda _result: None,
+            edit_lease_handle=handle,
+        )
+        request, _execute, _callback = provider.requests[0]
+        self.assertEqual(request.resources, (edited,))
+        self.assertIs(request.edit_lease_handle, handle)
+
+    def test_sql_master_data_update_transfers_collection_dialog_lease(self):
+        service, provider = self._queued_project_service()
+        collection = ResourceRef("job_statuses_collection", "database")
+        edited = ResourceRef("job_status", "status-1")
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="job-status-editor",
+            runtime_generation=3,
+            operation_id="job-status-dialog",
+            owning_surface="main-window-dialog",
+            resources=(collection, edited),
+        )
+        service.queue_job_statuses_save(
+            "database",
+            {
+                "new": [],
+                "updated": [{"uid": "status-1", "name": "Awarded"}],
+                "deleted_uids": [],
+            },
+            lambda _result: None,
+            edit_lease_handle=handle,
+        )
+        request, _execute, _callback = provider.requests[0]
+        self.assertEqual(request.resources, (edited,))
+        self.assertEqual(request.owning_surface, "main-window-dialog")
+        self.assertIs(request.edit_lease_handle, handle)
+
+    def test_sql_cover_sheet_save_transfers_aggregate_dialog_lease(self):
+        service, provider = self._queued_project_service()
+        cover_sheet = ResourceRef("cover_sheet", "7", 7)
+        bid = ResourceRef("bid", "7", 7)
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="cover-sheet-editor",
+            runtime_generation=3,
+            operation_id="cover-sheet-dialog",
+            owning_surface="main-window-dialog",
+            resources=(cover_sheet, bid),
+        )
+        service.queue_cover_sheet_save(
+            "database",
+            "7",
+            {"notes": "Updated"},
+            lambda _result: None,
+            edit_lease_handle=handle,
+        )
+        request, _execute, _callback = provider.requests[0]
+        self.assertEqual(request.resources, (cover_sheet,))
+        self.assertEqual(request.owning_surface, "main-window-dialog")
+        self.assertIs(request.edit_lease_handle, handle)
+
+    def test_sql_new_bid_transfers_cover_sheet_lease_and_tracks_target_project(self):
+        service, provider = self._queued_project_service()
+        target = ResourceRef("project_bids", "project-1")
+        master = ResourceRef("job_status", "status-1")
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="new-project-cover-sheet",
+            runtime_generation=3,
+            operation_id="new-project-cover-sheet-dialog",
+            owning_surface="main-window-dialog",
+            resources=(target, master),
+        )
+        service.queue_bid_create(
+            "database",
+            "project-1",
+            {"job_status_uid": "status-1", "pages": []},
+            lambda _result: None,
+            edit_lease_handle=handle,
+        )
+        request, _execute, _callback = provider.requests[0]
+        self.assertEqual(request.resources, (target,))
+        self.assertIn(ResourceRef("project", "project-1"), request.dependency_resources)
+        self.assertEqual(request.owning_surface, "main-window-dialog")
+        self.assertIs(request.edit_lease_handle, handle)
+
+    def test_sql_page_rename_transfers_navigable_page_dialog_lease(self):
+        service, provider = self._queued_project_service()
+        first = ResourceRef("page", "page-1", 7)
+        second = ResourceRef("page", "page-2", 7)
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="rename-page-editor",
+            runtime_generation=3,
+            operation_id="rename-page-dialog",
+            owning_surface="main-window-dialog",
+            resources=(first, second),
+        )
+        service.queue_page_settings(
+            "database",
+            "7",
+            "name",
+            [["page-2", "Renamed"]],
+            lambda _result: None,
+            edit_lease_handle=handle,
+        )
+        request, _execute, _callback = provider.requests[0]
+        self.assertEqual(request.resources, (second,))
+        self.assertEqual(request.owning_surface, "main-window-dialog")
+        self.assertIs(request.edit_lease_handle, handle)
 
     def test_empty_mdb_master_data_changes_skip_write_and_hierarchy_reload(self):
         service = ProjectWriteService.__new__(ProjectWriteService)

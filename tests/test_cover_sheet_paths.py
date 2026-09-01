@@ -16,10 +16,17 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
+from ost_visualizer.application.services.page_load_strategy_service import (
+    PageLoadStrategyService,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    AuthoritativeMutationResult,
     DatabaseMutationResult,
+    EditLeaseHandle,
+    EditLeaseResult,
     MutationOutcomeStatus,
     QueuedMutationResult,
+    ResourceRef,
 )
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from ost_visualizer.domain.entities.cover_sheet import (
@@ -29,6 +36,7 @@ from ost_visualizer.domain.entities.cover_sheet import (
 )
 from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.workspace_state import (
     HeaderLayoutState,
     WorkspaceState,
@@ -40,6 +48,7 @@ from ost_visualizer.infrastructure.mdb.components.constants import (
 from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
 )
@@ -52,6 +61,9 @@ from ost_visualizer.presentation.dialogs.cover_sheet.pdf_metadata_loader import 
 )
 from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
+from ost_visualizer.presentation.utils.overlay_context_menu import (
+    add_overlay_submenu_with_select,
+)
 from tests.workspace_state_test_support import (
     make_workspace_state_model,
     with_workspace_state,
@@ -273,6 +285,7 @@ class _OverlayRectCursor(_FakeCursor):
         scale_factor2=12.0,
         overlay_rect="-1.103146,0.000000,2686.161423,1919.474692",
         page_exists=True,
+        original_image_path=r"C:\Plans\original.pdf",
     ):
         super().__init__()
         self.current_overlay_path = current_overlay_path
@@ -280,12 +293,13 @@ class _OverlayRectCursor(_FakeCursor):
         self.scale_factor2 = scale_factor2
         self.overlay_rect = overlay_rect
         self.page_exists = page_exists
+        self.original_image_path = original_image_path
 
     def fetchone(self):
         if (
             self.last_query
             and "SELECT [Width], [Height], [ScaleFactor1], [ScaleFactor2], "
-            "[OverlayImagePath]" in self.last_query
+            in self.last_query
         ):
             return SimpleNamespace(
                 Width=42.0,
@@ -293,6 +307,7 @@ class _OverlayRectCursor(_FakeCursor):
                 ScaleFactor1=self.scale_factor1,
                 ScaleFactor2=self.scale_factor2,
                 OverlayImagePath=self.current_overlay_path,
+                ImagePath=self.original_image_path,
             )
         if (
             self.last_query
@@ -490,6 +505,7 @@ def _cover_sheet_data(
     scale_factor2=12.0,
     page_index=1,
     multi_page_count=0,
+    show_mode=0,
 ):
     return CoverSheetData(
         bid_uid="7",
@@ -512,7 +528,7 @@ def _cover_sheet_data(
                 image_path=image_path,
                 overlay_image_path=overlay_image_path,
                 index=page_index,
-                show_mode=0,
+                show_mode=show_mode,
                 multi_page_count=multi_page_count,
             )
         ],
@@ -2046,7 +2062,61 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
         self.assertEqual(page_update["values"]["OverlayOffsetX"], 0.0)
         self.assertEqual(page_update["values"]["OverlayOffsetY"], 0.0)
+        self.assertEqual(page_update["values"]["OverlayRotation"], 0.0)
+        self.assertEqual(page_update["values"]["OverlayResized"], 0)
+        self.assertEqual(page_update["values"]["DeskewRotationOverlay"], 0.0)
         self.assertEqual(page_update["values"]["SheetNo"], "S-100")
+
+    def test_cover_sheet_overlay_only_removal_restores_original_and_clears_metadata(
+        self,
+    ):
+        ops = _CoverSheetSettingsOps()
+        ops.conn.cursor_obj.current_overlay_path = r"C:\Plans\overlay.pdf"
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "pages": [
+                    {
+                        **_cover_sheet_page_update(
+                            image_path=r"C:\Plans\original.pdf",
+                            overlay_path="",
+                        ),
+                        "show_mode": 1,
+                    }
+                ],
+            },
+        )
+        self.assertTrue(success)
+        page_update = next(
+            update for update in ops.updates if update["table"] == "BidPages"
+        )
+        self.assertEqual(
+            {
+                key: page_update["values"][key]
+                for key in (
+                    "OverlayImagePath",
+                    "Show",
+                    "OverlayRect",
+                    "OverlayOffsetX",
+                    "OverlayOffsetY",
+                    "OverlayRotation",
+                    "OverlayResized",
+                    "DeskewRotationOverlay",
+                )
+            },
+            {
+                "OverlayImagePath": "",
+                "Show": 0,
+                "OverlayRect": "",
+                "OverlayOffsetX": 0.0,
+                "OverlayOffsetY": 0.0,
+                "OverlayRotation": 0.0,
+                "OverlayResized": 0,
+                "DeskewRotationOverlay": 0.0,
+            },
+        )
 
     def test_cover_sheet_page_scale_change_rescales_existing_page_positions(self):
         ops = _ScaleCoverSheetOps(old_sf1=0.125, old_sf2=12.0)
@@ -2289,6 +2359,37 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 "OverlayRect": "0.000000,0.000000,4032.000000,2880.000000",
                 "OverlayOffsetX": 0.0,
                 "OverlayOffsetY": 0.0,
+                "OverlayRotation": 0.0,
+                "OverlayResized": 0,
+                "DeskewRotationOverlay": 0.0,
+            },
+        )
+
+    def test_adding_overlay_without_original_selects_the_only_available_source(self):
+        ops = _PageOverlayOps(original_image_path="")
+        self.assertTrue(
+            ops.save_page_overlay_image(
+                "bid.mdb",
+                "11",
+                r"C:\OCS Documents\OST\overlay.pdf",
+            )
+        )
+        self.assertEqual(ops.updates[0]["values"]["Show"], 1)
+
+    def test_removing_page_overlay_image_clears_all_overlay_owned_storage(self):
+        ops = _PageOverlayOps(current_overlay_path=r"C:\Plans\overlay.pdf")
+        self.assertTrue(ops.save_page_overlay_image("bid.mdb", "11", ""))
+        self.assertEqual(
+            ops.updates[0]["values"],
+            {
+                "OverlayImagePath": "",
+                "OverlayRect": "",
+                "OverlayOffsetX": 0.0,
+                "OverlayOffsetY": 0.0,
+                "OverlayRotation": 0.0,
+                "OverlayResized": 0,
+                "DeskewRotationOverlay": 0.0,
+                "Show": 0,
             },
         )
 
@@ -3561,6 +3662,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
     def test_unlocked_sql_cover_sheet_invokes_async_save_instead_of_returning_it(self):
         queued = []
         callback_results = []
+        nested_results = []
+        requested_leases = []
+        released_leases = []
         data = _cover_sheet_data()
 
         class ProjectData:
@@ -3589,6 +3693,10 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 return set()
 
             @staticmethod
+            def get_bid_area_snapshot():
+                return []
+
+            @staticmethod
             def get_all_pages():
                 return []
 
@@ -3610,8 +3718,48 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 return True
 
             @staticmethod
-            def queue_cover_sheet_save(database_id, bid_uid, updates, callback):
-                queued.append((database_id, bid_uid, updates, callback))
+            def queue_cover_sheet_save(
+                database_id,
+                bid_uid,
+                updates,
+                callback,
+                *,
+                edit_lease_handle,
+            ):
+                queued.append(
+                    (database_id, bid_uid, updates, callback, edit_lease_handle)
+                )
+                callback(
+                    QueuedMutationResult(
+                        database_id=database_id,
+                        runtime_generation=1,
+                        operation_id="49350e91-a3b8-42fa-b6f4-9a30dd997516",
+                        outcome_status=MutationOutcomeStatus.COMMITTED,
+                        authoritative_result=AuthoritativeMutationResult(),
+                    )
+                )
+                return 1
+
+            @staticmethod
+            def queue_job_statuses_save(
+                database_id,
+                changes,
+                callback,
+                *,
+                edit_lease_handle,
+            ):
+                queued.append((database_id, None, changes, callback, edit_lease_handle))
+                callback(
+                    QueuedMutationResult(
+                        database_id=database_id,
+                        runtime_generation=1,
+                        operation_id="28ff5cd9-3cdb-4af0-9d6a-6ea5097ea887",
+                        outcome_status=MutationOutcomeStatus.COMMITTED,
+                        authoritative_result=AuthoritativeMutationResult(
+                            affected_families=("job_statuses",)
+                        ),
+                    )
+                )
                 return 1
 
         class FakeDialog(_FakeCoverSheetDialog):
@@ -3626,7 +3774,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             infrastructure_provider=SimpleNamespace(
                 get_pdf_page_sizes=lambda _path: []
             ),
-            event_bus=object(),
+            event_bus=EventBus(),
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: BidRef("sql-database", "7")
             ),
@@ -3637,9 +3785,49 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             deferred_persistence_manager=SimpleNamespace(),
             workspace_state_model=make_workspace_state_model(),
         )
+
+        class LeaseCoordinator:
+            @staticmethod
+            def request_collaboration_edit(
+                database_id,
+                resources,
+                callback,
+                *,
+                dependency_resources=(),
+                operation_id="",
+                owning_surface="desktop",
+            ):
+                handle = EditLeaseHandle(
+                    database_id=database_id,
+                    draft_id=f"draft-{len(requested_leases) + 1}",
+                    runtime_generation=1,
+                    operation_id=operation_id,
+                    owning_surface=owning_surface,
+                    resources=resources,
+                    dependency_resources=dependency_resources,
+                )
+                requested_leases.append(handle)
+                callback(EditLeaseResult(True, handle=handle))
+
+            @staticmethod
+            def end_collaboration_edit(handle):
+                released_leases.append(handle)
+
+        handler.set_ui_event_coordinator(LeaseCoordinator())
         from ost_visualizer.presentation.handlers import cover_sheet_handler as module
 
         def execute_dialog(dialog, _event_bus):
+            nested_save = dialog.async_save_functions["save_job_statuses_async_fn"]
+            callback_results.append(
+                nested_save(
+                    {
+                        "new": [],
+                        "updated": [],
+                        "deleted_uids": ["status-1"],
+                    },
+                    lambda success, mapping: nested_results.append((success, mapping)),
+                )
+            )
             callback_results.append(
                 dialog.save_async({"notes": "Updated"}, lambda _success: None)
             )
@@ -3652,9 +3840,86 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             ),
         ):
             handler.open_cover_sheet()
-        self.assertEqual(callback_results, [True])
-        self.assertEqual(len(queued), 1)
-        self.assertEqual(queued[0][:3], ("sql-database", "7", {"notes": "Updated"}))
+        self.assertEqual(callback_results, [True, True])
+        self.assertEqual(nested_results, [(True, {})])
+        self.assertEqual(len(queued), 2)
+        self.assertEqual(queued[1][:3], ("sql-database", "7", {"notes": "Updated"}))
+        self.assertEqual(len(requested_leases), 3)
+        self.assertIs(queued[0][4], requested_leases[0])
+        self.assertIs(queued[1][4], requested_leases[1])
+        self.assertEqual(released_leases, [requested_leases[2]])
+        self.assertIn(
+            "cover_sheet",
+            {resource.resource_type for resource in requested_leases[0].resources},
+        )
+
+    def test_new_project_cover_sheet_lease_owns_target_and_nested_master_data(self):
+        requested = []
+        released = []
+
+        class LeaseCoordinator:
+            @staticmethod
+            def request_collaboration_edit(
+                database_id,
+                resources,
+                callback,
+                *,
+                dependency_resources=(),
+                operation_id="",
+                owning_surface="desktop",
+            ):
+                handle = EditLeaseHandle(
+                    database_id=database_id,
+                    draft_id="new-project-dialog",
+                    runtime_generation=1,
+                    operation_id=operation_id,
+                    owning_surface=owning_surface,
+                    resources=resources,
+                    dependency_resources=dependency_resources,
+                )
+                requested.append(handle)
+                callback(EditLeaseResult(True, handle=handle))
+
+            @staticmethod
+            def end_collaboration_edit(handle):
+                released.append(handle)
+
+        handler = CoverSheetHandler.__new__(CoverSheetHandler)
+        handler._ui_event_coordinator = LeaseCoordinator()
+        handler._event_bus = EventBus()
+        data = _cover_sheet_data()
+        data.job_statuses = [SimpleNamespace(uid="status-1")]
+        data.employees = [SimpleNamespace(uid="employee-1")]
+        data.pay_classes = [SimpleNamespace(uid="pay-class-1")]
+        session = handler.create_new_bid_lease_session(
+            "sql-database", "project-1", data
+        )
+        session.request_initial(lambda result: self.assertTrue(result.granted))
+        session.close()
+        self.assertEqual(len(requested), 1)
+        resource_keys = {
+            (resource.resource_type, resource.resource_id)
+            for resource in requested[0].resources
+        }
+        self.assertTrue(
+            {
+                ("project_bids", "project-1"),
+                ("job_statuses_collection", "database"),
+                ("employees_collection", "database"),
+                ("pay_classes_collection", "database"),
+                ("job_status", "status-1"),
+                ("employee", "employee-1"),
+                ("pay_class", "pay-class-1"),
+            }.issubset(resource_keys)
+        )
+        self.assertEqual(
+            set(requested[0].dependency_resources),
+            {
+                ResourceRef("default_layers_collection", "database"),
+                ResourceRef("project", "project-1"),
+            },
+        )
+        self.assertEqual(released, requested)
 
     def test_cover_sheet_image_path_cell_accepts_pasted_file_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4024,6 +4289,120 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             finally:
                 dialog.close()
                 dialog.deleteLater()
+
+    def test_clearing_overlay_only_cover_sheet_row_immediately_owns_original_mode(
+        self,
+    ):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(
+                image_path=r"C:\Plans\original.pdf",
+                overlay_image_path=r"C:\Plans\overlay.pdf",
+                show_mode=1,
+            ),
+        )
+        try:
+            item = dialog.plan_tree.topLevelItem(0)
+            _overlay_browse, overlay_clear = _path_buttons(dialog, item, 5)
+            overlay_clear.click()
+            page_update = _first_page_update(dialog)
+            self.assertEqual(page_update["overlay_path"], "")
+            self.assertEqual(page_update["show_mode"], 0)
+            self.assertEqual(item.text(dialog._SHOW_COLUMN), "Original")
+            self.assertEqual(
+                dialog._show_options("p1"),
+                [("Original", 0, None)],
+            )
+            page = Page(
+                uid="p1",
+                name="Level 1",
+                image_path=page_update["image_path"],
+                overlay_image_path=None,
+                image_show_mode=page_update["show_mode"],
+                width_pts=3024.0,
+                height_pts=2160.0,
+            )
+            strategy = PageLoadStrategyService(
+                SimpleNamespace(get_page_size=lambda _path, _index: (3024.0, 2160.0))
+            ).determine_load_strategy(page)
+            self.assertTrue(strategy.load_main)
+            self.assertFalse(strategy.load_overlay)
+            self.assertFalse(strategy.load_composite)
+            menu = QtWidgets.QMenu(dialog)
+            _select_action, overlay_action, original_action = (
+                add_overlay_submenu_with_select(
+                    menu,
+                    page.image_show_mode,
+                    lambda: None,
+                    True,
+                    page.has_overlay,
+                )
+            )
+            self.assertFalse(overlay_action.isEnabled())
+            self.assertTrue(original_action.isChecked())
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_overlay_on_page_without_original_owns_overlay_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            overlay_path = str(Path(tmp) / "overlay.pdf")
+            Path(overlay_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=lambda _path: [(25.0, 37.0, "")],
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                overlay_browse, _overlay_clear = _path_buttons(dialog, item, 5)
+                with mock.patch.object(
+                    QtWidgets.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(overlay_path, ""),
+                ):
+                    overlay_browse.click()
+                page_update = _first_page_update(dialog)
+                self.assertEqual(page_update["image_path"], "")
+                self.assertEqual(page_update["overlay_path"], overlay_path)
+                self.assertEqual(page_update["show_mode"], 1)
+                self.assertEqual(item.text(dialog._SHOW_COLUMN), "Overlay")
+                self.assertEqual(
+                    dialog._show_options("p1"),
+                    [("Overlay", 1, None)],
+                )
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_clearing_original_from_show_both_row_owns_overlay_mode(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(
+                image_path=r"C:\Plans\original.pdf",
+                overlay_image_path=r"C:\Plans\overlay.pdf",
+                show_mode=2,
+            ),
+        )
+        try:
+            item = dialog.plan_tree.topLevelItem(0)
+            _image_browse, image_clear = _path_buttons(dialog, item, 4)
+            image_clear.click()
+            page_update = _first_page_update(dialog)
+            self.assertEqual(page_update["image_path"], "")
+            self.assertEqual(page_update["overlay_path"], r"C:\Plans\overlay.pdf")
+            self.assertEqual(page_update["show_mode"], 1)
+            self.assertEqual(item.text(dialog._SHOW_COLUMN), "Overlay")
+            self.assertEqual(
+                dialog._show_options("p1"),
+                [("Overlay", 1, None)],
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
 
     def test_cover_sheet_cancelled_browse_preserves_current_path(self):
         with tempfile.TemporaryDirectory() as tmp:

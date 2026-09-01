@@ -28,6 +28,10 @@ from ...application.dtos.collaboration_resource_catalog import (
 )
 from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
 from ...application.events.app_events import AppEvents
+from ...application.condition_change_impact import (
+    condition_changes_require_mesh_refresh,
+    condition_changes_require_plan_refresh,
+)
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
@@ -52,6 +56,7 @@ from ..dialogs.synchronization_conflict_dialog import SynchronizationConflictDia
 from ..handlers.condition_action_handler import ConditionActionHandler
 from ..managers.app_config_presentation_manager import AppConfigPresentationManager
 from ..managers.ui_access_manager import Feature, MAIN_PLAN_SURFACE_ID
+from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PLACE,
@@ -558,7 +563,8 @@ class UIEventCoordinator:
             self._sync_overlay_display_mode(self.ui_state_manager.active_page_uid)
             self._sync_mesh_window_action(True)
             window.show_initial_window()
-            if not self._mesh_scene_dirty and self._replay_mesh_if_current(window):
+            replayed_current_scene = self._replay_mesh_if_current(window)
+            if not self._mesh_scene_dirty and replayed_current_scene:
                 return
             bid_ref = self.ui_state_manager.get_selected_bid_ref()
             page_uids = normalize_scene_page_uids(
@@ -703,7 +709,17 @@ class UIEventCoordinator:
             ]
             if not affected_pages:
                 return
-        self._clear_mesh_replay_buffer()
+        cached_identity = (
+            self._last_mesh_scene.scene_identity
+            if self._last_mesh_scene is not None
+            else None
+        )
+        if not (
+            isinstance(cached_identity, MeshSceneIdentity)
+            and cached_identity.bid_ref == bid_ref
+            and cached_identity.page_uids == tuple(pages)
+        ):
+            self._clear_mesh_replay_buffer()
         for view in self._native_3d_views():
             view.prepare_scene_refresh(bid_ref, pages)
         if not pages:
@@ -1227,6 +1243,7 @@ class UIEventCoordinator:
     _SOURCE_2D = "2d"
     _SOURCE_3D = "3d_embedded"
     _SOURCE_3D_WINDOW = "3d_window"
+    _SOURCE_MODEL = "model"
 
     def _sync_selection(
         self,
@@ -1341,8 +1358,8 @@ class UIEventCoordinator:
             self._on_pending_plan_mutations_changed,
         )
         self._subscribe(
-            AppEvents.REMOTE_CONDITIONS_CHANGED,
-            self._on_remote_conditions_changed,
+            AppEvents.CONDITIONS_CHANGED,
+            self._on_conditions_changed,
         )
         self._subscribe(AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed)
         self._subscribe(
@@ -1420,6 +1437,18 @@ class UIEventCoordinator:
                     )
                 )
                 return
+            if not self._collaboration_edit_context_is_current(
+                database_id, resources, owning_surface
+            ):
+                if result.handle is not None:
+                    self._sql_collaboration.end_edit_lease(result.handle)
+                callback(
+                    EditLeaseResult(
+                        False,
+                        "The edit was cancelled because its original context changed.",
+                    )
+                )
+                return
             if not result.granted:
                 if owning_surface == "main-plan":
                     self._prepare_for_modal_mutation_error(database_id)
@@ -1439,6 +1468,36 @@ class UIEventCoordinator:
             owning_surface=owning_surface,
         )
 
+    def _collaboration_edit_context_is_current(
+        self,
+        database_id: str,
+        resources: tuple[ResourceRef, ...],
+        owning_surface: str,
+    ) -> bool:
+        if (
+            owning_surface == "condition-sidebar"
+            and self._tab_widget.currentIndex() != TAB_INDEX_TAKEOFF
+        ):
+            return False
+        if normalize_path(
+            self.ui_state_manager.selected_file_path or ""
+        ) != normalize_path(database_id):
+            return False
+        bid_uids = {
+            str(resource.bid_uid)
+            for resource in resources
+            if resource.bid_uid is not None
+        }
+        if not bid_uids:
+            return True
+        selected_bid = self.ui_state_manager.get_selected_bid_ref()
+        return bool(
+            len(bid_uids) == 1
+            and selected_bid is not None
+            and normalize_path(selected_bid.file_path) == normalize_path(database_id)
+            and str(selected_bid.bid_uid) in bid_uids
+        )
+
     def end_collaboration_edit(self, handle: EditLeaseHandle) -> None:
         self._sql_collaboration.end_edit_lease(handle)
 
@@ -1449,15 +1508,20 @@ class UIEventCoordinator:
         resources: tuple[ResourceRef, ...],
         cleanup: Callable[[], None],
         after_close: Optional[Callable[[bool], None]] = None,
+        lease_session: Optional[ModalEditLeaseSession] = None,
     ) -> None:
         def resolved(result: EditLeaseResult) -> None:
             executed = False
             try:
                 if result.granted:
+                    if lease_session is not None:
+                        lease_session.accept_initial_lease(result)
                     exec_with_ost_blocking(dialog, self.event_bus)
                     executed = True
             finally:
-                if result.handle is not None:
+                if lease_session is not None:
+                    lease_session.close()
+                elif result.handle is not None:
                     self.end_collaboration_edit(result.handle)
                 if after_close is not None:
                     after_close(executed)
@@ -1495,6 +1559,29 @@ class UIEventCoordinator:
             )
         )
         used_uids = self.project_data.get_area_uids_with_takeoff()
+        area_bid_uid = (
+            int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
+        )
+        area_resource = ResourceRef(
+            CollaborationResourceType.AREAS_COLLECTION.value,
+            bid_ref.bid_uid,
+            area_bid_uid,
+        )
+        area_resources = (
+            area_resource,
+            *(ResourceRef("area", str(area.uid), area_bid_uid) for area in areas),
+        )
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                bid_ref.file_path,
+                area_resources,
+                "BidAreasDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
+        )
 
         def save_fn(changes):
             return self._save_bid_areas_from_dialog(bid_ref, changes)
@@ -1506,9 +1593,13 @@ class UIEventCoordinator:
             save_fn=save_fn,
             save_async_fn=(
                 (
-                    lambda changes, completed: self._save_bid_areas_async(
-                        bid_ref,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_bid_areas_async(
+                            bid_ref,
+                            changes,
+                            lease_completed,
+                            edit_lease_handle=handle,
+                        ),
                         completed,
                     )
                 )
@@ -1520,14 +1611,8 @@ class UIEventCoordinator:
             bid_ref=bid_ref,
             workspace_state_model=self._workspace_state_model,
         )
-        area_bid_uid = (
-            int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
-        )
-        area_resource = ResourceRef(
-            CollaborationResourceType.AREAS_COLLECTION.value,
-            bid_ref.bid_uid,
-            area_bid_uid,
-        )
+        if lease_session is not None:
+            lease_session.bind_dialog(dialog)
 
         def after_close(executed: bool) -> None:
             if (
@@ -1546,9 +1631,10 @@ class UIEventCoordinator:
         self._exec_with_collaboration_lease(
             dialog,
             bid_ref.file_path,
-            (area_resource,),
+            area_resources,
             dialog.cleanup,
             after_close,
+            lease_session,
         )
 
     def _save_bid_areas_from_dialog(self, bid_ref, changes):
@@ -1571,7 +1657,14 @@ class UIEventCoordinator:
             )
         return result
 
-    def _save_bid_areas_async(self, bid_ref, changes, completed) -> bool:
+    def _save_bid_areas_async(
+        self,
+        bid_ref,
+        changes,
+        completed,
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
+    ) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             completed(False, None)
             return False
@@ -1595,12 +1688,18 @@ class UIEventCoordinator:
             completed(False, None)
 
         try:
-            self._project_write_service.queue_bid_areas_save(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                changes,
-                finish,
-            )
+            if edit_lease_handle is None:
+                self._project_write_service.queue_bid_areas_save(
+                    bid_ref.file_path, bid_ref.bid_uid, changes, finish
+                )
+            else:
+                self._project_write_service.queue_bid_areas_save(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    changes,
+                    finish,
+                    edit_lease_handle=edit_lease_handle,
+                )
         except (RuntimeError, ValueError) as exc:
             show_warning(self.main_window, "Bid Areas", str(exc))
             return False
@@ -1627,6 +1726,27 @@ class UIEventCoordinator:
             used_employee_uids = self._project_read_service.get_estimator_uids_in_use(
                 file_path
             )
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.EMPLOYEES_COLLECTION.value, "database"
+            ),
+            ResourceRef(
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value, "database"
+            ),
+            *(ResourceRef("employee", str(item.uid)) for item in employees),
+            *(ResourceRef("pay_class", str(item.uid)) for item in pay_classes),
+        )
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                file_path,
+                resources,
+                "EmployeesDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
+        )
         dialog = EmployeesDialog(
             self._icon_provider,
             parent=self.main_window,
@@ -1638,13 +1758,17 @@ class UIEventCoordinator:
             ),
             save_async_fn=(
                 (
-                    lambda changes, completed: self._save_master_data_async(
-                        file_path,
-                        "Employees",
-                        self._project_write_service.queue_employees_save,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_master_data_async(
+                            file_path,
+                            "Employees",
+                            self._project_write_service.queue_employees_save,
+                            changes,
+                            lease_completed,
+                            "employees",
+                            edit_lease_handle=handle,
+                        ),
                         completed,
-                        "employees",
                     )
                 )
                 if uses_sql_queue
@@ -1655,13 +1779,17 @@ class UIEventCoordinator:
             ),
             pay_classes_save_async_fn=(
                 (
-                    lambda changes, completed: self._save_master_data_async(
-                        file_path,
-                        "Payroll Classes",
-                        self._project_write_service.queue_pay_classes_save,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_master_data_async(
+                            file_path,
+                            "Payroll Classes",
+                            self._project_write_service.queue_pay_classes_save,
+                            changes,
+                            lease_completed,
+                            "pay_classes",
+                            edit_lease_handle=handle,
+                        ),
                         completed,
-                        "pay_classes",
                     )
                 )
                 if uses_sql_queue
@@ -1670,16 +1798,10 @@ class UIEventCoordinator:
             menu_mode=True,
             workspace_state_model=self._workspace_state_model,
         )
-        resources = (
-            ResourceRef(
-                CollaborationResourceType.EMPLOYEES_COLLECTION.value, "database"
-            ),
-            ResourceRef(
-                CollaborationResourceType.PAY_CLASSES_COLLECTION.value, "database"
-            ),
-        )
+        if lease_session is not None:
+            lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
-            dialog, file_path, resources, dialog.cleanup
+            dialog, file_path, resources, dialog.cleanup, lease_session=lease_session
         )
 
     def open_job_statuses_dialog(self) -> None:
@@ -1710,6 +1832,24 @@ class UIEventCoordinator:
             used_job_status_uids = (
                 data.used_job_status_uids if data is not None else set()
             )
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+                "database",
+            ),
+            *(ResourceRef("job_status", str(item.uid)) for item in job_statuses),
+        )
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                file_path,
+                resources,
+                "JobStatusesDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
+        )
         dialog = JobStatusesDialog(
             self._icon_provider,
             parent=self.main_window,
@@ -1718,13 +1858,17 @@ class UIEventCoordinator:
             save_fn=lambda changes: self._save_master_job_statuses(file_path, changes),
             save_async_fn=(
                 (
-                    lambda changes, completed: self._save_master_data_async(
-                        file_path,
-                        "Job Statuses",
-                        self._project_write_service.queue_job_statuses_save,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_master_data_async(
+                            file_path,
+                            "Job Statuses",
+                            self._project_write_service.queue_job_statuses_save,
+                            changes,
+                            lease_completed,
+                            "job_statuses",
+                            edit_lease_handle=handle,
+                        ),
                         completed,
-                        "job_statuses",
                     )
                 )
                 if uses_sql_queue
@@ -1733,16 +1877,14 @@ class UIEventCoordinator:
             menu_mode=True,
             workspace_state_model=self._workspace_state_model,
         )
+        if lease_session is not None:
+            lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
             dialog,
             file_path,
-            (
-                ResourceRef(
-                    CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
-                    "database",
-                ),
-            ),
+            resources,
             dialog.cleanup,
+            lease_session=lease_session,
         )
 
     def open_condition_types_dialog(self) -> None:
@@ -1752,27 +1894,53 @@ class UIEventCoordinator:
         uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
             file_path
         )
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.CONDITION_TYPES_COLLECTION.value,
+                "database",
+            ),
+        )
+        condition_types = list(
+            (
+                self.project_data.get_cdn_types()
+                if uses_sql_queue
+                else self._project_read_service.get_cdn_types(file_path)
+            ).values()
+        )
+        resources = (
+            *resources,
+            *(ResourceRef("condition_type", str(item.uid)) for item in condition_types),
+        )
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                file_path,
+                resources,
+                "ConditionTypesDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
+        )
         dialog = ConditionTypesDialog(
             self._icon_provider,
             parent=self.main_window,
-            condition_types=list(
-                (
-                    self.project_data.get_cdn_types()
-                    if uses_sql_queue
-                    else self._project_read_service.get_cdn_types(file_path)
-                ).values()
-            ),
+            condition_types=condition_types,
             save_fn=lambda changes: self._save_master_condition_types(
                 file_path, changes
             ),
             save_async_fn=(
                 (
-                    lambda changes, completed: (
-                        self._save_master_condition_types_async(
-                            file_path,
-                            changes,
-                            completed,
-                        )
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: (
+                            self._save_master_condition_types_async(
+                                file_path,
+                                changes,
+                                lease_completed,
+                                edit_lease_handle=handle,
+                            )
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -1800,16 +1968,14 @@ class UIEventCoordinator:
             menu_mode=True,
             workspace_state_model=self._workspace_state_model,
         )
+        if lease_session is not None:
+            lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
             dialog,
             file_path,
-            (
-                ResourceRef(
-                    CollaborationResourceType.CONDITION_TYPES_COLLECTION.value,
-                    "database",
-                ),
-            ),
+            resources,
             dialog.cleanup,
+            lease_session=lease_session,
         )
 
     def open_payroll_classes_dialog(self) -> None:
@@ -1831,6 +1997,24 @@ class UIEventCoordinator:
             for employee in employees
             if employee.pay_class_uid
         }
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+                "database",
+            ),
+            *(ResourceRef("pay_class", str(item.uid)) for item in pay_classes),
+        )
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                file_path,
+                resources,
+                "PayrollClassListDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
+        )
         dialog = PayrollClassListDialog(
             self._icon_provider,
             parent=self.main_window,
@@ -1839,13 +2023,17 @@ class UIEventCoordinator:
             save_fn=lambda changes: self._save_master_pay_classes(file_path, changes),
             save_async_fn=(
                 (
-                    lambda changes, completed: self._save_master_data_async(
-                        file_path,
-                        "Payroll Classes",
-                        self._project_write_service.queue_pay_classes_save,
-                        changes,
+                    lambda changes, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_master_data_async(
+                            file_path,
+                            "Payroll Classes",
+                            self._project_write_service.queue_pay_classes_save,
+                            changes,
+                            lease_completed,
+                            "pay_classes",
+                            edit_lease_handle=handle,
+                        ),
                         completed,
-                        "pay_classes",
                     )
                 )
                 if uses_sql_queue
@@ -1854,16 +2042,14 @@ class UIEventCoordinator:
             menu_mode=True,
             workspace_state_model=self._workspace_state_model,
         )
+        if lease_session is not None:
+            lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
             dialog,
             file_path,
-            (
-                ResourceRef(
-                    CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
-                    "database",
-                ),
-            ),
+            resources,
             dialog.cleanup,
+            lease_session=lease_session,
         )
 
     def open_default_layers_dialog(self) -> None:
@@ -1882,6 +2068,23 @@ class UIEventCoordinator:
             (lambda: self.project_data.get_default_layer_snapshot(file_path))
             if uses_sql_queue
             else (lambda: self._project_read_service.get_default_layers(file_path))
+        )
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value,
+                "database",
+            ),
+        )
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                file_path,
+                resources,
+                "LayersDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
         )
         dialog = LayersDialog(
             self._icon_provider,
@@ -1908,16 +2111,23 @@ class UIEventCoordinator:
             ),
             insert_async_fn=(
                 (
-                    lambda name, sequence, completed: self._save_default_layer_async(
-                        file_path,
-                        "New Default Layer",
-                        lambda callback: (
-                            self._project_write_service.queue_default_layer_insert(
-                                file_path, name, sequence, callback
-                            )
+                    lambda name, sequence, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_default_layer_async(
+                            file_path,
+                            "New Default Layer",
+                            lambda callback: (
+                                self._project_write_service.queue_default_layer_insert(
+                                    file_path,
+                                    name,
+                                    sequence,
+                                    callback,
+                                    edit_lease_handle=handle,
+                                )
+                            ),
+                            lease_completed,
+                            "default_layers",
                         ),
                         completed,
-                        "default_layers",
                     )
                 )
                 if uses_sql_queue
@@ -1925,13 +2135,19 @@ class UIEventCoordinator:
             ),
             delete_many_async_fn=(
                 (
-                    lambda uids, completed: self._save_default_layer_async(
-                        file_path,
-                        "Delete Default Layer",
-                        lambda callback: (
-                            self._project_write_service.queue_default_layers_delete(
-                                file_path, uids, callback
-                            )
+                    lambda uids, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_default_layer_async(
+                            file_path,
+                            "Delete Default Layer",
+                            lambda callback: (
+                                self._project_write_service.queue_default_layers_delete(
+                                    file_path,
+                                    uids,
+                                    callback,
+                                    edit_lease_handle=handle,
+                                )
+                            ),
+                            lease_completed,
                         ),
                         completed,
                     )
@@ -1941,8 +2157,15 @@ class UIEventCoordinator:
             ),
             update_name_async_fn=(
                 (
-                    lambda uid, name, completed: self._save_default_layer_update_async(
-                        file_path, "rename", {"layer_uid": uid, "name": name}, completed
+                    lambda uid, name, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_default_layer_update_async(
+                            file_path,
+                            "rename",
+                            {"layer_uid": uid, "name": name},
+                            lease_completed,
+                            edit_lease_handle=handle,
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -1950,13 +2173,15 @@ class UIEventCoordinator:
             ),
             move_async_fn=(
                 (
-                    lambda uid, neighbor, completed: (
-                        self._save_default_layer_update_async(
+                    lambda uid, neighbor, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_default_layer_update_async(
                             file_path,
                             "reorder",
                             {"layer_uid": uid, "neighbor_uid": neighbor},
-                            completed,
-                        )
+                            lease_completed,
+                            edit_lease_handle=handle,
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -1964,10 +2189,14 @@ class UIEventCoordinator:
             ),
             update_show_async_fn=(
                 (
-                    lambda uid, show, completed: self._save_default_layer_update_async(
-                        file_path,
-                        "show",
-                        {"layer_uid": uid, "show": show},
+                    lambda uid, show, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_default_layer_update_async(
+                            file_path,
+                            "show",
+                            {"layer_uid": uid, "show": show},
+                            lease_completed,
+                            edit_lease_handle=handle,
+                        ),
                         completed,
                     )
                 )
@@ -1976,8 +2205,15 @@ class UIEventCoordinator:
             ),
             update_all_show_async_fn=(
                 (
-                    lambda show, completed: self._save_default_layer_update_async(
-                        file_path, "show_all", {"show": show}, completed
+                    lambda show, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_default_layer_update_async(
+                            file_path,
+                            "show_all",
+                            {"show": show},
+                            lease_completed,
+                            edit_lease_handle=handle,
+                        ),
+                        completed,
                     )
                 )
                 if uses_sql_queue
@@ -1987,16 +2223,14 @@ class UIEventCoordinator:
             mode=LayersDialogMode.DEFAULT_LAYERS,
             workspace_state_model=self._workspace_state_model,
         )
+        if lease_session is not None:
+            lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
             dialog,
             file_path,
-            (
-                ResourceRef(
-                    CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value,
-                    "database",
-                ),
-            ),
+            resources,
             dialog.cleanup,
+            lease_session=lease_session,
         )
 
     def _save_master_data_async(
@@ -2007,6 +2241,8 @@ class UIEventCoordinator:
         changes,
         completed,
         result_family: str,
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
             completed(False, None)
@@ -2022,7 +2258,15 @@ class UIEventCoordinator:
             completed(False, None)
 
         try:
-            queue_fn(file_path, changes, finish)
+            if edit_lease_handle is None:
+                queue_fn(file_path, changes, finish)
+            else:
+                queue_fn(
+                    file_path,
+                    changes,
+                    finish,
+                    edit_lease_handle=edit_lease_handle,
+                )
         except (RuntimeError, ValueError) as exc:
             show_warning(self.main_window, title, str(exc))
             return False
@@ -2061,13 +2305,29 @@ class UIEventCoordinator:
         return True
 
     def _save_default_layer_update_async(
-        self, file_path: str, operation: str, values: dict, completed
+        self,
+        file_path: str,
+        operation: str,
+        values: dict,
+        completed,
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> bool:
         return self._save_default_layer_async(
             file_path,
             "Default Layers",
-            lambda callback: self._project_write_service.queue_default_layer_update(
-                file_path, operation, values, callback
+            lambda callback: (
+                self._project_write_service.queue_default_layer_update(
+                    file_path, operation, values, callback
+                )
+                if edit_lease_handle is None
+                else self._project_write_service.queue_default_layer_update(
+                    file_path,
+                    operation,
+                    values,
+                    callback,
+                    edit_lease_handle=edit_lease_handle,
+                )
             ),
             completed,
         )
@@ -2118,6 +2378,8 @@ class UIEventCoordinator:
         file_path: str,
         changes,
         completed,
+        *,
+        edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
             completed(False, None)
@@ -2137,11 +2399,17 @@ class UIEventCoordinator:
             completed(False, None)
 
         try:
-            self._project_write_service.queue_condition_types_save(
-                file_path,
-                changes,
-                finish,
-            )
+            if edit_lease_handle is None:
+                self._project_write_service.queue_condition_types_save(
+                    file_path, changes, finish
+                )
+            else:
+                self._project_write_service.queue_condition_types_save(
+                    file_path,
+                    changes,
+                    finish,
+                    edit_lease_handle=edit_lease_handle,
+                )
         except (RuntimeError, ValueError) as exc:
             show_warning(self.main_window, "Condition Types", str(exc))
             return False
@@ -2523,6 +2791,10 @@ class UIEventCoordinator:
         if self._undo_service and changed_families and not local_completion:
             self._undo_service.clear()
         if CollaborationResourceFamily.TAKEOFFS.value in changed_families:
+            if self._selected_takeoff_uids:
+                self._sync_selection(
+                    self._SOURCE_MODEL, list(self._selected_takeoff_uids)
+                )
             self._on_takeoffs_changed(
                 page_uid=self.ui_state_manager.active_page_uid,
                 takeoff_uids=(
@@ -2625,17 +2897,29 @@ class UIEventCoordinator:
             self._update_export_menu_state()
             self._restore_project_tree_bid_selection_if_needed()
 
-    def _on_remote_conditions_changed(
+    def _on_conditions_changed(
         self,
         database_id: str = "",
         bid_uid: str = "",
         condition_uids: Optional[List[str]] = None,
+        changed_fields: Optional[List[str]] = None,
+        change_operations: Optional[List[str]] = None,
         defer_plan_projection: bool = False,
+        invalidates_undo: bool = False,
     ) -> None:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
             return
-        if self._undo_service:
+        operations = set(change_operations or ())
+        if "delete" in operations and self.ui_state_manager.place_condition_uid:
+            current_conditions = self.project_data.get_bid_conditions()
+            placement_condition_uids = {
+                self.ui_state_manager.place_condition_uid,
+                *self.ui_state_manager.place_condition_uids,
+            }
+            if not placement_condition_uids.issubset(current_conditions):
+                self._reset_to_select_mode()
+        if self._undo_service and invalidates_undo:
             self._undo_service.clear()
         valid_highlights = self._validate_condition_uids(
             self.ui_state_manager.highlighted_condition_uids
@@ -2643,9 +2927,13 @@ class UIEventCoordinator:
         self.ui_state_manager.set_highlighted_conditions(valid_highlights)
         self._sidebar.refresh_conditions_from_memory()
         self._restore_sidebar_highlight(valid_highlights, reveal=False)
-        if not defer_plan_projection:
+        if not defer_plan_projection and condition_changes_require_plan_refresh(
+            changed_fields or (), operations
+        ):
             self._update_plan_view_for_active(condition_uids=condition_uids)
-        if not defer_plan_projection:
+        if not defer_plan_projection and condition_changes_require_mesh_refresh(
+            changed_fields or (), operations
+        ):
             self._request_or_defer_mesh_refresh(
                 self.project_data.get_selected_page_uids()
             )
@@ -2699,6 +2987,13 @@ class UIEventCoordinator:
             and self._plan_view_handler is not None
         ):
             self._plan_view_handler.hide_pending_takeoff_placement_previews()
+        if database_id and state not in {
+            SynchronizationState.HEALTHY.value,
+            SynchronizationState.CATCHING_UP.value,
+        }:
+            self._deferred_persistence.cancel_for_file(database_id)
+            if database_id == selected:
+                self._placement.force_exit()
         if self._status_panel and database_id == selected:
             self._status_panel.set_collaboration_state(state, message)
 
@@ -2729,11 +3024,8 @@ class UIEventCoordinator:
         self,
         loss: EditLeaseLoss,
     ) -> None:
-        database_id = loss.database_id
-        self._deferred_persistence.cancel_for_file(database_id)
-        if database_id != (self.ui_state_manager.selected_file_path or ""):
-            return
-        self._placement.force_exit()
+        if self._plan_view_handler is not None:
+            self._plan_view_handler.on_edit_lease_lost(loss)
 
     def _on_presence_changed(
         self,
@@ -2849,20 +3141,60 @@ class UIEventCoordinator:
         runtime_generation: int,
         families: tuple[str, ...],
         condition_uids: tuple[str, ...],
+        condition_changed_fields: tuple[str, ...] | None,
+        condition_change_operations: tuple[str, ...],
+        areas_changed: bool,
         resource_uids_by_family: dict[str, tuple[str, ...]],
         barrier: RemoteProjectionBarrier,
     ) -> None:
         selected_bid_ref = self.ui_state_manager.get_selected_bid_ref()
         requested_bid_ref = BidRef(database_id, bid_uid)
-        if not self._is_cleaning_up and selected_bid_ref == requested_bid_ref:
+        mesh_families = {
+            CollaborationResourceFamily.LAYERS.value,
+            CollaborationResourceFamily.PAGES.value,
+            CollaborationResourceFamily.TAKEOFFS.value,
+        }
+        condition_mesh_refresh = (
+            condition_changed_fields is not None
+            and condition_changes_require_mesh_refresh(
+                condition_changed_fields, condition_change_operations
+            )
+        )
+        if (
+            not self._is_cleaning_up
+            and selected_bid_ref == requested_bid_ref
+            and (
+                areas_changed
+                or condition_mesh_refresh
+                or bool(mesh_families.intersection(families))
+            )
+        ):
             self._request_or_defer_mesh_refresh(
                 self.project_data.get_selected_page_uids()
             )
+        plan_families = {
+            CollaborationResourceFamily.ANNOTATIONS.value,
+            CollaborationResourceFamily.LAYERS.value,
+            CollaborationResourceFamily.PAGES.value,
+            CollaborationResourceFamily.TAKEOFFS.value,
+        }
+        condition_plan_refresh = (
+            condition_changed_fields is not None
+            and condition_changes_require_plan_refresh(
+                condition_changed_fields, condition_change_operations
+            )
+        )
+        plan_projection_required = (
+            areas_changed
+            or condition_plan_refresh
+            or bool(plan_families.intersection(families))
+        )
         if (
             self._is_cleaning_up
             or selected_bid_ref != requested_bid_ref
             or not self.ui_state_manager.active_page_uid
             or self.plan_view is None
+            or not plan_projection_required
         ):
             return
         token = barrier.register("main-plan")
@@ -3280,7 +3612,13 @@ class UIEventCoordinator:
         ):
             return
         if scene_failed:
-            self._clear_mesh_replay_buffer()
+            cached_scene_matches = bool(
+                isinstance(cached_identity, MeshSceneIdentity)
+                and cached_identity.bid_ref == scene_identity.bid_ref
+                and cached_identity.page_uids == scene_identity.page_uids
+            )
+            if not cached_scene_matches:
+                self._clear_mesh_replay_buffer()
             self._pending_dirty_mesh_refresh = False
             self._mark_mesh_scene_dirty(list(scene_identity.page_uids))
             for surface, is_live in (
@@ -3922,6 +4260,21 @@ class UIEventCoordinator:
         page = self.project_data.get_page(page_uid)
         if not page:
             return
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
+        resources = self._page_dialog_resources(bid_ref, page_uid)
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                bid_ref.file_path,
+                resources,
+                "AdjustImagesDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
+        )
         dialog = AdjustImagesDialog(
             self._icon_provider,
             self.main_window,
@@ -3933,26 +4286,64 @@ class UIEventCoordinator:
             save_fn=lambda settings: self._save_image_adjustments(
                 bid_ref.file_path, page_uid, settings
             ),
+            save_async_fn=(
+                (
+                    lambda settings, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_image_adjustments_async(
+                            bid_ref,
+                            page_uid,
+                            settings,
+                            lambda success: lease_completed(success, None),
+                            edit_lease_handle=handle,
+                        ),
+                        lambda success, _value: completed(success),
+                    )
+                )
+                if uses_sql_queue
+                else None
+            ),
         )
-        try:
-            exec_with_ost_blocking(dialog, self.event_bus)
-        finally:
-            dialog.deleteLater()
+        if lease_session is None:
+            try:
+                exec_with_ost_blocking(dialog, self.event_bus)
+            finally:
+                dialog.deleteLater()
+            return
+        lease_session.bind_dialog(dialog)
+        self._exec_with_collaboration_lease(
+            dialog,
+            bid_ref.file_path,
+            resources,
+            dialog.cleanup,
+            lease_session=lease_session,
+        )
+
+    def _page_dialog_resources(
+        self, bid_ref: BidRef, current_page_uid: str
+    ) -> tuple[ResourceRef, ...]:
+        bid_value = int(bid_ref.bid_uid)
+        page_uids = [target.uid for target in self._rename_page_targets()]
+        if current_page_uid not in page_uids:
+            page_uids.append(current_page_uid)
+        return tuple(ResourceRef("page", uid, bid_value) for uid in page_uids)
+
+    def _page_setting_uids(self, page_uid: str, apply_to_all_pages: bool) -> List[str]:
+        if not apply_to_all_pages:
+            return [page_uid]
+        if not self.takeoff_sidebar:
+            return []
+        return [
+            uid
+            for uid in self.takeoff_sidebar.get_page_order()
+            if uid and self.project_data.get_page(uid)
+        ]
 
     def _save_image_adjustments(
         self, file_path: str, page_uid: str, settings: ImageAdjustmentSettings
     ) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return False
-        page_uids = [page_uid]
-        if settings.apply_to_all_pages:
-            if not self.takeoff_sidebar:
-                return False
-            page_uids = [
-                uid
-                for uid in self.takeoff_sidebar.get_page_order()
-                if uid and self.project_data.get_page(uid)
-            ]
+        page_uids = self._page_setting_uids(page_uid, settings.apply_to_all_pages)
         if not page_uids:
             return False
         if not self._flush_deferred_for_file(file_path):
@@ -3994,6 +4385,36 @@ class UIEventCoordinator:
             settings.bitonal,
         )
 
+    def _save_image_adjustments_async(
+        self,
+        bid_ref: BidRef,
+        page_uid: str,
+        settings: ImageAdjustmentSettings,
+        completed,
+        *,
+        edit_lease_handle: EditLeaseHandle,
+    ) -> bool:
+        page_uids = self._page_setting_uids(page_uid, settings.apply_to_all_pages)
+        updates = [
+            [
+                uid,
+                settings.rotation,
+                settings.flip_x,
+                settings.flip_y,
+                settings.invert,
+                settings.bitonal,
+            ]
+            for uid in page_uids
+        ]
+        return self._save_page_settings_async(
+            bid_ref,
+            "image_adjustments",
+            updates,
+            "Adjust Images",
+            completed,
+            edit_lease_handle,
+        )
+
     def open_set_scale_dialog(
         self, file_path: Optional[str] = None, page_uid: Optional[str] = None
     ) -> None:
@@ -4007,6 +4428,21 @@ class UIEventCoordinator:
         page = self.project_data.get_page(page_uid)
         if not page:
             return
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            file_path
+        )
+        resources = self._page_dialog_resources(bid_ref, page_uid) if bid_ref else ()
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                file_path,
+                resources,
+                "SetScaleDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue and bid_ref is not None
+            else None
+        )
         dialog = SetScaleDialog(
             self._icon_provider,
             self.main_window,
@@ -4015,26 +4451,44 @@ class UIEventCoordinator:
             save_fn=lambda settings: self._save_scale_settings(
                 file_path, page_uid, settings
             ),
+            save_async_fn=(
+                (
+                    lambda settings, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_scale_settings_async(
+                            bid_ref,
+                            page_uid,
+                            settings,
+                            lambda success: lease_completed(success, None),
+                            edit_lease_handle=handle,
+                        ),
+                        lambda success, _value: completed(success),
+                    )
+                )
+                if lease_session is not None
+                else None
+            ),
         )
-        try:
-            exec_with_ost_blocking(dialog, self.event_bus)
-        finally:
-            dialog.deleteLater()
+        if lease_session is None:
+            try:
+                exec_with_ost_blocking(dialog, self.event_bus)
+            finally:
+                dialog.deleteLater()
+            return
+        lease_session.bind_dialog(dialog)
+        self._exec_with_collaboration_lease(
+            dialog,
+            file_path,
+            resources,
+            dialog.cleanup,
+            lease_session=lease_session,
+        )
 
     def _save_scale_settings(
         self, file_path: str, page_uid: str, settings: ScaleSettings
     ) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return False
-        page_uids = [page_uid]
-        if settings.apply_to_all_pages:
-            if not self.takeoff_sidebar:
-                return False
-            page_uids = [
-                uid
-                for uid in self.takeoff_sidebar.get_page_order()
-                if uid and self.project_data.get_page(uid)
-            ]
+        page_uids = self._page_setting_uids(page_uid, settings.apply_to_all_pages)
         if not page_uids:
             return False
         if not self._flush_deferred_for_file(file_path):
@@ -4072,6 +4526,72 @@ class UIEventCoordinator:
             settings.scale_factor2,
         )
 
+    def _save_scale_settings_async(
+        self,
+        bid_ref: BidRef,
+        page_uid: str,
+        settings: ScaleSettings,
+        completed,
+        *,
+        edit_lease_handle: EditLeaseHandle,
+    ) -> bool:
+        page_uids = self._page_setting_uids(page_uid, settings.apply_to_all_pages)
+        updates = [
+            [uid, settings.scale_factor1, settings.scale_factor2] for uid in page_uids
+        ]
+        return self._save_page_settings_async(
+            bid_ref,
+            "scale",
+            updates,
+            "Set Scale",
+            completed,
+            edit_lease_handle,
+        )
+
+    def _save_page_settings_async(
+        self,
+        bid_ref: BidRef,
+        setting_kind: str,
+        updates: list,
+        title: str,
+        completed,
+        edit_lease_handle: EditLeaseHandle,
+    ) -> bool:
+        if not updates or not self.ui_access_manager.is_allowed(
+            Feature.EDIT_PAGE_SETTINGS
+        ):
+            completed(False)
+            return False
+        if not self._flush_deferred_for_file(bid_ref.file_path):
+            completed(False)
+            return False
+
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                completed(True)
+                return
+            self.present_queued_mutation_error(bid_ref.file_path, title, result)
+            completed(False)
+
+        try:
+            self._project_write_service.queue_page_settings(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                setting_kind,
+                updates,
+                finish,
+                edit_lease_handle=edit_lease_handle,
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_warning(self.main_window, title, str(exc))
+            return False
+        return True
+
     def open_rename_page_dialog(self) -> None:
         page_uid = self.ui_state_manager.active_page_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -4084,6 +4604,22 @@ class UIEventCoordinator:
             return
         if not any(page.uid == page_uid for page in pages):
             return
+        uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
+        )
+        bid_value = int(bid_ref.bid_uid) if uses_sql_queue else None
+        resources = tuple(ResourceRef("page", page.uid, bid_value) for page in pages)
+        lease_session = (
+            ModalEditLeaseSession(
+                self,
+                bid_ref.file_path,
+                resources,
+                "RenamePageDialog",
+                event_bus=self.event_bus,
+            )
+            if uses_sql_queue
+            else None
+        )
         dialog = RenamePageDialog(
             self._icon_provider,
             self.main_window,
@@ -4092,11 +4628,37 @@ class UIEventCoordinator:
             save_fn=lambda target_page_uid, new_name: self._save_page_name(
                 bid_ref.file_path, target_page_uid, new_name
             ),
+            save_async_fn=(
+                (
+                    lambda target_page_uid, new_name, completed: lease_session.submit_mutation(
+                        lambda handle, lease_completed: self._save_page_name_async(
+                            bid_ref,
+                            target_page_uid,
+                            new_name,
+                            lambda success: lease_completed(success, None),
+                            edit_lease_handle=handle,
+                        ),
+                        lambda success, _value: completed(success),
+                    )
+                )
+                if uses_sql_queue
+                else None
+            ),
         )
-        try:
-            exec_with_ost_blocking(dialog, self.event_bus)
-        finally:
-            dialog.deleteLater()
+        if lease_session is None:
+            try:
+                exec_with_ost_blocking(dialog, self.event_bus)
+            finally:
+                dialog.deleteLater()
+            return
+        lease_session.bind_dialog(dialog)
+        self._exec_with_collaboration_lease(
+            dialog,
+            bid_ref.file_path,
+            resources,
+            dialog.cleanup,
+            lease_session=lease_session,
+        )
 
     def _rename_page_targets(self) -> List[PageRenameTarget]:
         if not self.takeoff_sidebar:
@@ -4122,6 +4684,48 @@ class UIEventCoordinator:
         if queued is not None:
             return queued
         return self._project_write_service.save_page_name(file_path, page_uid, new_name)
+
+    def _save_page_name_async(
+        self,
+        bid_ref: BidRef,
+        page_uid: str,
+        new_name: str,
+        completed,
+        *,
+        edit_lease_handle: EditLeaseHandle,
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            completed(False)
+            return False
+        if not self._flush_deferred_for_file(bid_ref.file_path):
+            completed(False)
+            return False
+
+        def finish(result: QueuedMutationResult) -> None:
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                completed(True)
+                return
+            self.present_queued_mutation_error(bid_ref.file_path, "Rename Page", result)
+            completed(False)
+
+        try:
+            self._project_write_service.queue_page_settings(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                "name",
+                [[page_uid, new_name]],
+                finish,
+                edit_lease_handle=edit_lease_handle,
+            )
+        except (RuntimeError, ValueError) as exc:
+            show_warning(self.main_window, "Rename Page", str(exc))
+            return False
+        return True
 
     def can_delete_current_page(self) -> bool:
         if not self.main_window.is_takeoff_tab_active():
@@ -4281,9 +4885,15 @@ class UIEventCoordinator:
         if not page:
             self._update_export_menu_state()
             return
-        if not page.overlay_image_path and (
-            target == "overlay" or (target == "original" and not checked)
-        ):
+        has_original = bool(page.image_path)
+        has_overlay = bool(page.overlay_image_path)
+        source_unavailable = (target == "original" and not has_original) or (
+            target == "overlay" and not has_overlay
+        )
+        hides_only_source = (
+            target == "original" and not checked and not has_overlay
+        ) or (target == "overlay" and not checked and not has_original)
+        if source_unavailable or hides_only_source:
             self._update_export_menu_state()
             return
         show_mode = resolve_overlay_visibility_mode(
@@ -4347,6 +4957,7 @@ class UIEventCoordinator:
         self._sync_overlay_display_mode(page_uid)
         if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(page_uid)
+        self.main_window.refresh_detached_plan_views()
         self._update_export_menu_state()
 
     def toggle_page_invert(self, invert: bool) -> None:

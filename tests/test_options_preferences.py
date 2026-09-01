@@ -2152,6 +2152,134 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertIsNone(captured["save_pay_classes_async_fn"])
         self.assertIsNone(captured["save_cover_sheet_async_fn"])
 
+    def test_sql_new_project_nested_and_outer_saves_transfer_dialog_ownership(self):
+        captured = {}
+        transferred = []
+
+        class FakeDialog:
+            def __init__(self, *_args, **kwargs):
+                captured.update(kwargs)
+
+            def deleteLater(self):
+                pass
+
+        class FakeLeaseSession:
+            def __init__(self):
+                self.next_handle = 1
+                self.closed = False
+
+            def bind_dialog(self, _dialog):
+                pass
+
+            def request_initial(self, completed):
+                completed(SimpleNamespace(granted=True))
+
+            def submit_mutation(self, submit, completed):
+                handle = f"handle-{self.next_handle}"
+                self.next_handle += 1
+                return submit(handle, completed)
+
+            def close(self):
+                self.closed = True
+
+        lease_session = FakeLeaseSession()
+
+        class FakeCoverSheetHandler:
+            @staticmethod
+            def create_new_bid_lease_session(_file_path, _project_uid, _data):
+                return lease_session
+
+            @staticmethod
+            def save_master_data_async(
+                _file_path,
+                _title,
+                _queue_fn,
+                _changes,
+                completed,
+                _result_family,
+                *,
+                edit_lease_handle,
+            ):
+                transferred.append(("master", edit_lease_handle))
+                completed(True, {})
+                return True
+
+            @staticmethod
+            def create_bid_async(
+                _file_path,
+                _project_uid,
+                _updates,
+                completed,
+                *,
+                edit_lease_handle,
+            ):
+                transferred.append(("bid", edit_lease_handle))
+                completed(True)
+                return True
+
+        controller = MenuController.__new__(MenuController)
+        controller._resolve_project_tree_file_path = lambda: "sql-database"
+        controller._resolve_target_project_uid = lambda: "project-1"
+        controller.ui_access_manager = SimpleNamespace(
+            can_create_project_tree_items=lambda _has_file: True,
+            has_license=lambda: True,
+            is_allowed=lambda _feature: True,
+        )
+        controller._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: True,
+            queue_job_statuses_save=object(),
+            queue_employees_save=object(),
+            queue_pay_classes_save=object(),
+        )
+        controller.project_data = SimpleNamespace(
+            get_settings_defaults_snapshot=lambda _file_path: {},
+            get_job_status_snapshot=lambda _file_path: [],
+            get_employee_snapshot=lambda _file_path: [],
+            get_pay_class_snapshot=lambda _file_path: [],
+        )
+        controller.handlers = SimpleNamespace(
+            cover_sheet=FakeCoverSheetHandler(),
+        )
+        controller.icon_provider = object()
+        controller.window = object()
+        controller._infrastructure_provider = SimpleNamespace(
+            get_pdf_page_sizes=lambda _path: []
+        )
+        controller._workspace_state_model = make_workspace_state_model()
+        controller._event_bus = object()
+
+        def execute(dialog, _event_bus):
+            self.assertTrue(
+                dialog is not None
+                and captured["save_job_statuses_async_fn"](
+                    {"updated": []}, lambda _success, _mapping: None
+                )
+            )
+            self.assertTrue(
+                captured["save_cover_sheet_async_fn"](
+                    {"job_name": "New"}, lambda _success: None
+                )
+            )
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with (
+            mock.patch(
+                "ost_visualizer.presentation.controllers.menu_controller.CoverSheetDialog",
+                FakeDialog,
+            ),
+            mock.patch(
+                "ost_visualizer.presentation.controllers.menu_controller."
+                "exec_with_ost_blocking",
+                side_effect=execute,
+            ),
+        ):
+            controller._new_project()
+        self.assertEqual(
+            transferred,
+            [("master", "handle-1"), ("bid", "handle-2")],
+        )
+        self.assertTrue(lease_session.closed)
+
     def test_grayscale_noop_does_not_publish(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
@@ -5661,6 +5789,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
+        coordinator._last_mesh_scene = None
         coordinator.visualization_service = SimpleNamespace(
             refresh_mesh_view=lambda page_uids: calls.append(("viewers", page_uids))
         )
