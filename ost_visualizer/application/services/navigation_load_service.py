@@ -112,6 +112,8 @@ class NavigationLoadService:
 
     def cancel(self, database_id: str = "") -> None:
         with self._lock:
+            if self._closed:
+                return
             if database_id and database_id != self._active_database_id:
                 return
             self._generation += 1

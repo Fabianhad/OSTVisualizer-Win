@@ -6,7 +6,9 @@ from typing import Any, Callable, List
 class LicenseThreadManager:
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
+        self._lock = threading.RLock()
         self._active_threads: List[threading.Thread] = []
+        self._closed = False
 
     def spawn_with_bridge(
         self,
@@ -25,32 +27,58 @@ class LicenseThreadManager:
             finally:
 
                 def wrapped_callback(s: bool, m: str) -> None:
-                    on_main_thread(s, m, extra_data)
+                    with self._lock:
+                        if self._closed:
+                            return
+                        on_main_thread(s, m, extra_data)
 
                 try:
-                    callback_bridge.request_callback(wrapped_callback, success, message)
+                    with self._lock:
+                        if not self._closed:
+                            callback_bridge.request_callback(
+                                wrapped_callback, success, message
+                            )
                 except Exception as exc:
                     self._logger.exception("Error dispatching thread callback: %s", exc)
                 finally:
                     self._remove_thread(thread)
 
         thread = threading.Thread(target=run_operation, daemon=True)
-        self._active_threads.append(thread)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("License operations have stopped")
+            self._active_threads.append(thread)
         thread.start()
         return thread
 
     def cleanup(self, timeout: float = 2.0) -> None:
-        for thread in self._active_threads[:]:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            active_threads = list(self._active_threads)
+        errors = []
+        for thread in active_threads:
             if thread.is_alive():
-                thread.join(timeout=timeout)
+                try:
+                    thread.join(timeout=timeout)
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
                 if thread.is_alive():
                     self._logger.warning(
                         "Thread %s did not stop within %ss",
                         thread.name,
                         timeout,
                     )
-        self._active_threads.clear()
+        with self._lock:
+            self._active_threads.clear()
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("License worker cleanup failed", errors)
 
     def _remove_thread(self, thread: threading.Thread) -> None:
-        if thread in self._active_threads:
-            self._active_threads.remove(thread)
+        with self._lock:
+            if thread in self._active_threads:
+                self._active_threads.remove(thread)

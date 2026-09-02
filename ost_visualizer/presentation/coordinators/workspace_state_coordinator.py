@@ -190,6 +190,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._shell.set_left_splitter_sizes(sizes)
 
     def restore_deferred_state(self) -> None:
+        if self._cleaned_up:
+            return
         self._pending_mesh_restore = bool(self._state.detached_windows.mesh_view.open)
         self._pending_annotation_restore = bool(
             self._state.detached_windows.annotation_view.open

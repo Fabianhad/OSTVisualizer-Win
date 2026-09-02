@@ -1167,10 +1167,163 @@ class FakeCloseEvent:
 
 
 class DeferredPersistenceShutdownTests(unittest.TestCase):
+    def test_update_check_completion_before_shutdown_emits(self):
+        emitted = []
+        window = SimpleNamespace(
+            _update_service=SimpleNamespace(
+                check_for_updates=lambda: (True, {"version": "2.0"})
+            ),
+            _collaboration_shutdown_pending=False,
+            _collaboration_shutdown_complete=False,
+            _application_shutdown_finalized=False,
+            _shutdown_deferred_callbacks={},
+            update_dialog_requested=SimpleNamespace(emit=emitted.append),
+        )
+        window._application_shutdown_terminal = lambda: (
+            MainWindow._application_shutdown_terminal(window)
+        )
+        window._defer_during_application_shutdown = lambda key, callback: (
+            MainWindow._defer_during_application_shutdown(window, key, callback)
+        )
+        window._check_for_updates = lambda: MainWindow._check_for_updates(window)
+        window._application_shutdown_active = lambda: (
+            MainWindow._application_shutdown_active(window)
+        )
+        thread = SimpleNamespace(start=lambda: None)
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread",
+            return_value=thread,
+        ) as thread_factory:
+            MainWindow._check_for_updates(window)
+        thread_factory.call_args.kwargs["target"]()
+
+        self.assertEqual(emitted, [{"version": "2.0"}])
+
+    def test_update_check_completion_after_shutdown_does_not_emit(self):
+        emitted = []
+        window = SimpleNamespace(
+            _update_service=SimpleNamespace(
+                check_for_updates=lambda: (True, {"version": "2.0"})
+            ),
+            _collaboration_shutdown_pending=False,
+            _collaboration_shutdown_complete=False,
+            _application_shutdown_finalized=False,
+            _shutdown_deferred_callbacks={},
+            update_dialog_requested=SimpleNamespace(emit=emitted.append),
+        )
+        window._application_shutdown_terminal = lambda: (
+            MainWindow._application_shutdown_terminal(window)
+        )
+        window._defer_during_application_shutdown = lambda key, callback: (
+            MainWindow._defer_during_application_shutdown(window, key, callback)
+        )
+        window._check_for_updates = lambda: MainWindow._check_for_updates(window)
+        window._application_shutdown_active = lambda: (
+            MainWindow._application_shutdown_active(window)
+        )
+        thread = SimpleNamespace(start=lambda: None)
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread",
+            return_value=thread,
+        ) as thread_factory:
+            MainWindow._check_for_updates(window)
+        check_updates = thread_factory.call_args.kwargs["target"]
+
+        window._collaboration_shutdown_complete = True
+        check_updates()
+
+        self.assertEqual(emitted, [])
+
+    def test_queued_update_dialog_is_ignored_after_shutdown_starts(self):
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = True
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+        window._shutdown_deferred_callbacks = {}
+        window._visualization_service = SimpleNamespace(
+            set_update_dialog_active=lambda _active: self.fail(
+                "A queued update dialog must not alter shutdown state"
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.main_window.UpdateDialog",
+            side_effect=AssertionError("A queued update dialog must not open"),
+        ):
+            MainWindow._show_update_dialog(window, object())
+
+    def test_queued_update_dialog_replays_when_shutdown_is_aborted(self):
+        active_states = []
+        calls = []
+        shown = []
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = True
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window._application_shutdown_finalized = False
+        window._shutdown_deferred_callbacks = {}
+        window._visualization_service = SimpleNamespace(
+            set_update_dialog_active=active_states.append
+        )
+        window.icon_provider = object()
+        window.show = lambda: shown.append(True)
+        dialog = SimpleNamespace(
+            show_dialog=lambda: calls.append("show"),
+            deleteLater=lambda: calls.append("delete"),
+        )
+        scheduled = []
+        with patch(
+            "ost_visualizer.presentation.main_window.UpdateDialog",
+            return_value=dialog,
+        ), patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, callback: scheduled.append(callback),
+        ), patch(
+            "ost_visualizer.presentation.main_window.show_critical"
+        ):
+            MainWindow._show_update_dialog(window, {"version": "2.0"})
+            self.assertEqual(calls, [])
+            MainWindow._on_shutdown_mutation_drain_complete(
+                window, False, "shutdown aborted"
+            )
+            for callback in list(scheduled):
+                callback()
+
+        self.assertEqual(shown, [True])
+        self.assertEqual(calls, ["show", "delete"])
+        self.assertEqual(active_states, [True, False])
+
+    def test_update_dialog_completes_normally_before_shutdown(self):
+        active_states = []
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+        window._visualization_service = SimpleNamespace(
+            set_update_dialog_active=active_states.append
+        )
+        window.icon_provider = object()
+        dialog = SimpleNamespace(
+            show_dialog=lambda: calls.append("show"),
+            deleteLater=lambda: calls.append("delete"),
+        )
+        with patch(
+            "ost_visualizer.presentation.main_window.UpdateDialog",
+            return_value=dialog,
+        ):
+            MainWindow._show_update_dialog(window, {"version": "2.0"})
+
+        self.assertEqual(calls, ["show", "delete"])
+        self.assertEqual(active_states, [True, False])
+
     def test_update_dialog_failure_always_clears_monitor_state(self):
         active_states = []
         deleted = []
         window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
         window._visualization_service = SimpleNamespace(
             set_update_dialog_active=lambda active: active_states.append(active)
         )
@@ -1194,6 +1347,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
     def test_update_dialog_constructor_failure_always_clears_monitor_state(self):
         active_states = []
         window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
         window._visualization_service = SimpleNamespace(
             set_update_dialog_active=lambda active: active_states.append(active)
         )
@@ -1280,6 +1436,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
+        window._shutdown_deferred_callbacks = {}
         window.hide = lambda: None
         window.show = lambda: None
         window._flush_deferred_persistence_before_close = lambda: False
@@ -1379,6 +1536,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
         window._collaboration_shutdown_failed = False
+        window._shutdown_deferred_callbacks = {}
         window._workspace_state_coordinator = SimpleNamespace(
             flush=lambda: calls.append("workspace_flush"),
             cleanup=lambda: calls.append("workspace_cleanup"),
@@ -1440,6 +1598,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
         window._collaboration_shutdown_failed = False
+        window._shutdown_deferred_callbacks = {}
         window._workspace_state_coordinator = SimpleNamespace(
             flush=lambda: calls.append("workspace_flush"),
             cleanup=lambda: calls.append("workspace_cleanup"),
@@ -1507,6 +1666,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = True
         window._collaboration_shutdown_failed = False
+        window._shutdown_deferred_callbacks = {}
         window._workspace_state_coordinator = SimpleNamespace(
             flush=cleanup("workspace_flush", fail=True),
             cleanup=cleanup("workspace_cleanup"),
@@ -1596,6 +1756,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = True
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
+        window._shutdown_deferred_callbacks = {}
         window.show = lambda: enabled_states.append(True)
         window.close = lambda: close_calls.append(True)
         from ost_visualizer.presentation import main_window

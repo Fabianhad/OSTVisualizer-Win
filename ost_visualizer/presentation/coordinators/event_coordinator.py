@@ -21,8 +21,18 @@ class EventCoordinator:
             self.register(event_type, callback)
 
     def cleanup(self) -> None:
-        if self.event_bus is not None:
-            for event_type, callback in self._subscriptions:
-                self.event_bus.unsubscribe(event_type, callback)
+        event_bus = self.event_bus
+        subscriptions = tuple(self._subscriptions)
         self._subscriptions.clear()
         self.event_bus = None
+        errors = []
+        if event_bus is not None:
+            for event_type, callback in subscriptions:
+                try:
+                    event_bus.unsubscribe(event_type, callback)
+                except Exception as exc:
+                    errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("EventBus subscription cleanup failed", errors)

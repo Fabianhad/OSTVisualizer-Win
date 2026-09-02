@@ -200,6 +200,61 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertIsNone(coordinator.event_bus)
         self.assertEqual(coordinator._subscriptions, [])
 
+    def test_event_coordinator_cleanup_continues_after_unsubscribe_failure(self):
+        class FailingEventBus(FakeEventBus):
+            def unsubscribe(self, event_type, callback):
+                super().unsubscribe(event_type, callback)
+                if len(self.unsubscriptions) == 1:
+                    raise RuntimeError("unsubscribe failed")
+
+        event_bus = FailingEventBus()
+        coordinator = EventCoordinator(event_bus)
+        first = lambda **_: None
+        second = lambda **_: None
+        coordinator.register(AppEvents.LICENSE_STATUS_CHANGED, first)
+        coordinator.register(AppEvents.FILE_OPENED, second)
+
+        with self.assertRaisesRegex(RuntimeError, "unsubscribe failed"):
+            coordinator.cleanup()
+
+        self.assertEqual(
+            event_bus.unsubscriptions,
+            [
+                (AppEvents.LICENSE_STATUS_CHANGED, first),
+                (AppEvents.FILE_OPENED, second),
+            ],
+        )
+        self.assertIsNone(coordinator.event_bus)
+        self.assertEqual(coordinator._subscriptions, [])
+
+    def test_event_coordinator_cleanup_reports_every_unsubscribe_failure(self):
+        class FailingEventBus(FakeEventBus):
+            def unsubscribe(self, event_type, callback):
+                super().unsubscribe(event_type, callback)
+                raise RuntimeError(f"failed: {event_type.__name__}")
+
+        event_bus = FailingEventBus()
+        coordinator = EventCoordinator(event_bus)
+        first = lambda **_: None
+        second = lambda **_: None
+        coordinator.register(AppEvents.LICENSE_STATUS_CHANGED, first)
+        coordinator.register(AppEvents.FILE_OPENED, second)
+
+        with self.assertRaises(ExceptionGroup) as captured:
+            coordinator.cleanup()
+
+        self.assertEqual(
+            [str(error) for error in captured.exception.exceptions],
+            [
+                "failed: LicenseStatusChangedEvent",
+                "failed: FileOpenedEvent",
+            ],
+        )
+        self.assertEqual(len(event_bus.unsubscriptions), 2)
+        self.assertIsNone(coordinator.event_bus)
+        self.assertEqual(coordinator._subscriptions, [])
+        coordinator.cleanup()
+
     def test_progress_dialog_cleanup_releases_worker_callback_references(self):
         dialog = ProgressDialog.__new__(ProgressDialog)
         retained = object()

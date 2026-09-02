@@ -29,7 +29,13 @@
   their loaded database, authoritative page/layer refreshes invalidate older
   visual-setting callbacks, local completions preserve newer pending visual
   values across Main and detached Plan projections, and cleared undo history
-  ignores late completions.
+  ignores late completions. Tentative application shutdown now holds queued
+  startup loading, project imports, database prompts, and update checks until
+  shutdown either succeeds or aborts; aborted closes replay valid work, while
+  terminal shutdown invalidates it along with stale license callbacks and
+  detached-workspace restoration. Cleanup attempts every owned subscription and
+  license worker even when an earlier teardown step fails, and late navigation
+  cancellation preserves the worker stop request.
 - Fixed structural Condition and layer changes leaving multi-Condition placement
   active after a primary or secondary Condition became hidden, unavailable, or
   incompatible with the active placement geometry.

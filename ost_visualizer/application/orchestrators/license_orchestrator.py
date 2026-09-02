@@ -40,6 +40,7 @@ class LicenseOrchestrator:
         self._current_license_status: Optional[LicenseStatus] = None
         self._status_message: Optional[str] = None
         self._operation_in_progress: bool = False
+        self._closed = False
 
     def initialize(self) -> None:
         if self._scheduler.is_running():
@@ -63,13 +64,28 @@ class LicenseOrchestrator:
         self._scheduler.start()
 
     def cleanup(self) -> None:
-        self._scheduler.stop()
-        self._scheduler.clear_task()
-        self._thread_manager.cleanup()
+        if self._closed:
+            return
+        self._closed = True
+        errors = []
+        cleanup_steps = (
+            self._scheduler.stop,
+            self._scheduler.clear_task,
+            self._thread_manager.cleanup,
+        )
+        for cleanup in cleanup_steps:
+            try:
+                cleanup()
+            except Exception as exc:
+                errors.append(exc)
         self._callback_bridge = None
         self._event_publisher = None
         self._scheduler = None
         self._thread_manager = None
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("License orchestrator cleanup failed", errors)
 
     def activate_license_async(
         self, license_key: str, callback: Callable[[bool, str], None]
@@ -203,6 +219,8 @@ class LicenseOrchestrator:
         self._model.ensure_hwid()
 
     def _perform_periodic_validation(self) -> Optional[LicenseOperationResultDto]:
+        if self._closed:
+            return None
         if not self._model.has_license():
             return None
         try:
@@ -236,6 +254,8 @@ class LicenseOrchestrator:
     def _publish_periodic_validation_outcome(
         self, outcome: tuple[bool, str, Optional[LicenseStatus]]
     ) -> None:
+        if self._closed:
+            return
         success, message, license_status = outcome
         self._publish_validation_outcome(success, message, license_status)
 
@@ -245,6 +265,8 @@ class LicenseOrchestrator:
         message: str,
         license_status: Optional[LicenseStatus],
     ) -> None:
+        if self._closed:
+            return
         if success or (
             license_status == LicenseStatus.NETWORK_ERROR and self.has_valid_license()
         ):

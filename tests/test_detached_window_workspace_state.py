@@ -1686,6 +1686,31 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._restore_detached_page_windows_when_ready()
         self.assertTrue(coordinator._takeoff_workspace_ready_restore_scheduled)
 
+    def test_late_initial_detached_restore_after_cleanup_is_ignored(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = True
+        coordinator._state = None
+        coordinator._shell = None
+        coordinator.restore_deferred_state()
+
+    def test_initial_detached_restore_still_runs_before_cleanup(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = False
+        coordinator._state = WorkspaceState()
+        coordinator._state.detached_windows.mesh_view.open = True
+        coordinator._state.detached_windows.annotation_view.open = True
+        coordinator._state.detached_windows.view_window.open = True
+        calls = []
+        coordinator._try_restore_mesh_window = lambda: calls.append("mesh")
+        coordinator._try_restore_detached_page_windows = lambda: calls.append("pages")
+
+        coordinator.restore_deferred_state()
+
+        self.assertTrue(coordinator._pending_mesh_restore)
+        self.assertTrue(coordinator._pending_annotation_restore)
+        self.assertTrue(coordinator._pending_view_restore)
+        self.assertEqual(calls, ["mesh", "pages"])
+
     def test_late_detached_tracking_after_cleanup_is_ignored(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
         coordinator._cleaned_up = True

@@ -147,6 +147,14 @@ class ImmediateCallbackBridge:
         callback(payload)
 
 
+class QueuedCallbackBridge:
+    def __init__(self):
+        self.callbacks = []
+
+    def dispatch(self, callback, payload):
+        self.callbacks.append((callback, payload))
+
+
 class FakeApiClient:
     def __init__(self, deactivate_response):
         self.deactivate_response = deactivate_response
@@ -484,6 +492,70 @@ class LicenseActivationContractTests(unittest.TestCase):
             [(True, "valid", LicenseStatus.VALID)],
         )
         self.assertEqual(publisher.activated_calls, 1)
+
+    def test_periodic_callback_queued_before_cleanup_is_invalidated(self):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "invalid",
+        )
+        publisher = FakeEventPublisher()
+        bridge = QueuedCallbackBridge()
+        orchestrator = self._build_orchestrator(
+            FakeUseCase(invalid),
+            FakeUseCase(invalid),
+            publisher,
+            callback_bridge=bridge,
+        )
+
+        orchestrator._perform_periodic_validation()
+        self.assertEqual(len(bridge.callbacks), 1)
+        orchestrator.cleanup()
+        callback, payload = bridge.callbacks.pop()
+        callback(payload)
+
+        self.assertEqual(publisher.invalidated, [])
+
+    def test_cleanup_continues_after_scheduler_stop_failure(self):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "invalid",
+        )
+        orchestrator = self._build_orchestrator(
+            FakeUseCase(invalid),
+            FakeUseCase(invalid),
+            FakeEventPublisher(),
+        )
+        calls = []
+
+        class FailingScheduler(FakeScheduler):
+            def stop(self):
+                calls.append("stop")
+                raise RuntimeError("scheduler stop failed")
+
+            def clear_task(self):
+                calls.append("clear_task")
+                super().clear_task()
+
+        class RecordingThreadManager(ImmediateThreadManager):
+            def cleanup(self):
+                calls.append("thread_cleanup")
+
+        orchestrator._scheduler = FailingScheduler()
+        orchestrator._thread_manager = RecordingThreadManager()
+
+        with self.assertRaisesRegex(RuntimeError, "scheduler stop failed"):
+            orchestrator.cleanup()
+
+        self.assertEqual(calls, ["stop", "clear_task", "thread_cleanup"])
+        self.assertIsNone(orchestrator._scheduler)
+        self.assertIsNone(orchestrator._thread_manager)
+        self.assertIsNone(orchestrator._callback_bridge)
+        self.assertIsNone(orchestrator._event_publisher)
+        orchestrator.cleanup()
 
     def test_startup_hwid_failure_is_explicit_and_skips_server_validation(self):
         invalid = self._result(

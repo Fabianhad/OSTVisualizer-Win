@@ -2,7 +2,7 @@ import logging
 import threading
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Optional
+from typing import Callable, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from shiboken6 import isValid
@@ -137,6 +137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._project_file_import_scheduled = False
         self._project_file_import_running = False
         self._pending_project_file_args = []
+        self._shutdown_deferred_callbacks: dict[str, Callable[[], None]] = {}
         self._collaboration_shutdown_pending = False
         self._collaboration_shutdown_complete = False
         self._collaboration_shutdown_failed = False
@@ -607,6 +608,10 @@ class MainWindow(QtWidgets.QMainWindow):
             rebuild_all_icons()
 
     def _show_main_window(self) -> None:
+        if self._defer_during_application_shutdown(
+            "show_main_window", self._show_main_window
+        ):
+            return
         self._workspace_state_coordinator.show_main_window()
         self.raise_()
         self.activateWindow()
@@ -741,6 +746,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return handlers
 
     def _load_files_from_config(self) -> None:
+        if self._defer_during_application_shutdown(
+            "load_files_from_config", self._load_files_from_config
+        ):
+            return
         loaded_files = self.app_controller.load_files_from_config()
         if loaded_files:
             self.handlers.ui_event.sync_after_startup_load()
@@ -759,6 +768,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._schedule_pending_project_file_imports()
 
     def _schedule_pending_project_file_imports(self) -> None:
+        if self._defer_during_application_shutdown(
+            "schedule_project_file_imports",
+            self._schedule_pending_project_file_imports,
+        ):
+            return
         if not self._pending_project_file_args:
             return
         if not self._startup_load_complete or not self._main_window_ready:
@@ -770,6 +784,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _run_pending_project_file_imports(self) -> None:
         self._project_file_import_scheduled = False
+        if self._defer_during_application_shutdown(
+            "run_project_file_imports", self._run_pending_project_file_imports
+        ):
+            return
         if not self._pending_project_file_args:
             return
         if self._project_file_import_running:
@@ -859,6 +877,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self, result: ProjectFileImportBatchResult
     ) -> None:
         if not isValid(self):
+            return
+        if self._defer_during_application_shutdown(
+            "complete_project_file_imports",
+            lambda: self._complete_async_project_file_imports(result),
+        ):
+            self._project_file_import_running = False
             return
         try:
             self._select_project_file_import_result(result)
@@ -999,6 +1023,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return f"Successfully imported '{result.source_path}' into the database."
 
     def _prompt_create_database(self) -> None:
+        if self._defer_during_application_shutdown(
+            "prompt_create_database", self._prompt_create_database
+        ):
+            return
         if not self.ui_access_manager.is_allowed(Feature.CREATE_DATABASE):
             return
         dialog = CreateDatabaseDialog(self.icon_provider, self)
@@ -1007,6 +1035,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
         finally:
             dialog.deleteLater()
+        self._complete_create_database_prompt()
+
+    def _complete_create_database_prompt(self) -> None:
+        if self._defer_during_application_shutdown(
+            "create_database_after_prompt", self._complete_create_database_prompt
+        ):
+            return
         db_path = self._create_database_with_progress()
         if not db_path:
             show_warning(
@@ -1056,7 +1091,42 @@ class MainWindow(QtWidgets.QMainWindow):
         except KeyError:
             return None
 
+    def _application_shutdown_active(self) -> bool:
+        return bool(
+            self._collaboration_shutdown_pending
+            or self._application_shutdown_terminal()
+        )
+
+    def _application_shutdown_terminal(self) -> bool:
+        return bool(
+            self._collaboration_shutdown_complete
+            or self._application_shutdown_finalized
+        )
+
+    def _defer_during_application_shutdown(
+        self, key: str, callback: Callable[[], None]
+    ) -> bool:
+        if self._application_shutdown_terminal():
+            return True
+        if not self._collaboration_shutdown_pending:
+            return False
+        self._shutdown_deferred_callbacks[key] = callback
+        return True
+
+    def _resume_shutdown_deferred_callbacks(self) -> None:
+        callbacks = tuple(self._shutdown_deferred_callbacks.values())
+        self._shutdown_deferred_callbacks.clear()
+        for callback in callbacks:
+            QtCore.QTimer.singleShot(0, callback)
+
+    def _discard_shutdown_deferred_callbacks(self) -> None:
+        self._shutdown_deferred_callbacks.clear()
+
     def _check_for_updates(self) -> None:
+        if self._defer_during_application_shutdown(
+            "check_for_updates", self._check_for_updates
+        ):
+            return
         if not self._update_service:
             return
 
@@ -1065,7 +1135,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 update_available, version_info = (
                     self._update_service.check_for_updates()
                 )
-                if update_available and version_info:
+                if (
+                    update_available
+                    and version_info
+                    and not self._application_shutdown_terminal()
+                ):
                     self.update_dialog_requested.emit(version_info)
             except Exception as exc:
                 logger.exception("Error checking for updates: %s", exc)
@@ -1073,6 +1147,10 @@ class MainWindow(QtWidgets.QMainWindow):
         threading.Thread(target=check_updates, daemon=True).start()
 
     def _show_update_dialog(self, version_info) -> None:
+        if self._defer_during_application_shutdown(
+            "show_update_dialog", lambda: self._show_update_dialog(version_info)
+        ):
+            return
         self._visualization_service.set_update_dialog_active(True)
         dialog = None
         try:
@@ -2156,6 +2234,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, self._begin_application_shutdown)
             return
         self._application_shutdown_finalized = True
+        self._discard_shutdown_deferred_callbacks()
         cleanup_steps = (
             ("flush workspace state", self._workspace_state_coordinator.flush),
             ("clean up workspace state", self._workspace_state_coordinator.cleanup),
@@ -2191,6 +2270,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._flush_deferred_persistence_before_close():
             self._collaboration_shutdown_pending = False
             self.show()
+            self._resume_shutdown_deferred_callbacks()
             return
         collaboration = self.app_controller.get_service("sql_collaboration_coordinator")
         collaboration.drain_all_mutations_async(
@@ -2209,6 +2289,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 message
                 or "A critical database setting could not be saved before shutdown.",
             )
+            self._resume_shutdown_deferred_callbacks()
             return
         collaboration = self.app_controller.get_service("sql_collaboration_coordinator")
         if collaboration.shutdown_state == CollaborationShutdownState.CLOSED:
@@ -2226,8 +2307,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Shutdown Incomplete",
                 message or "SQL collaboration resources could not be closed safely.",
             )
+            self._resume_shutdown_deferred_callbacks()
             return
         self._collaboration_shutdown_complete = True
+        self._discard_shutdown_deferred_callbacks()
         QtCore.QTimer.singleShot(0, self.close)
 
     def _flush_deferred_persistence_before_close(self) -> bool:
