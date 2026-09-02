@@ -2802,6 +2802,42 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             [True, True],
         )
 
+    def test_local_area_completion_is_identified_on_granular_event(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (_change(database_id, ResourceRef("area", "6", 8), 2),),
+            ),
+            areas_by_bid={
+                8: (
+                    BidArea(
+                        uid="6",
+                        bid_uid="8",
+                        parent_uid="0",
+                        name="Local Area",
+                        sequence=1,
+                    ),
+                )
+            },
+        )
+        self.assertTrue(service.apply(hydrated, local_completion=True).applied)
+        area_event = next(
+            payload
+            for event, payload in events.published
+            if event is AppEvents.REMOTE_AREAS_CHANGED
+        )
+        self.assertTrue(area_event["local_completion"])
+
     def test_condition_folder_only_change_is_not_projected_as_condition_geometry(self):
         database_id = "database"
         events = _EventBus()

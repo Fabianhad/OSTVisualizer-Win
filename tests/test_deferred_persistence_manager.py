@@ -378,6 +378,20 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertEqual(projections, [])
 
+    def test_remote_layer_reconciliation_cancels_unflushed_stale_visual_write(self):
+        self.service.queue_sql_settings = True
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            False,
+            restore_authoritative=lambda: None,
+            project_value=lambda: None,
+        )
+        self.manager.invalidate_layer_visual_revisions("sql-db", ["layer-1"])
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(self.service.queued_settings, [])
+
     def test_remote_page_reconciliation_invalidates_pending_visual_restore(self):
         self.service.queue_sql_settings = True
         projections = []

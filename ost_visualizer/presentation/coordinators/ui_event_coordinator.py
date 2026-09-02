@@ -2638,6 +2638,7 @@ class UIEventCoordinator:
         self._sync_collaboration_status("", reset_mutation=True)
         self._invalidate_mesh_scene_request()
         if self._plan_view_handler is not None:
+            self._plan_view_handler.prepare_for_authoritative_refresh()
             self._plan_view_handler.invalidate_pending_takeoff_placements()
         if self._view_stack:
             try:
@@ -3062,17 +3063,19 @@ class UIEventCoordinator:
         bid_uid: str = "",
         area_uids: Optional[List[str]] = None,
         defer_plan_projection: bool = False,
+        local_completion: bool = False,
     ) -> None:
         del area_uids
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
             return
         if (
-            self.plan_view is not None
+            not local_completion
+            and self.plan_view is not None
             and self.plan_view.has_active_remote_projection_blocker()
         ):
             self._prepare_plan_for_authoritative_refresh()
-        if self._undo_service:
+        if self._undo_service and not local_completion:
             self._undo_service.clear()
         if self._page_settings_bar:
             selected_area_uid = self._page_settings_bar.get_selected_area_uid()
@@ -3650,8 +3653,15 @@ class UIEventCoordinator:
         is_database_root: bool = False,
     ) -> None:
         self.project_operations.cancel_navigation_load()
-        self._prepare_plan_for_authoritative_refresh()
+        previous_bid_ref = self.ui_state_manager.get_selected_bid_ref()
         self._save_current_page_view_state()
+        if previous_bid_ref is not None and not self._flush_deferred_for_file(
+            previous_bid_ref.file_path
+        ):
+            self._restore_project_tree_bid_selection_if_needed()
+            self._sync_page_info_status()
+            return
+        self._prepare_plan_for_authoritative_refresh()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
         self.ui_state_manager.set_database_selected(is_database_root, file_path)
@@ -3825,6 +3835,14 @@ class UIEventCoordinator:
         ):
             return
         self._save_current_page_view_state()
+        if (
+            prev_bid_ref is not None
+            and bid_ref != prev_bid_ref
+            and not self._flush_deferred_for_file(prev_bid_ref.file_path)
+        ):
+            self._restore_project_tree_bid_selection_if_needed()
+            self._sync_page_info_status()
+            return
         if not bid_ref:
             self.project_operations.cancel_navigation_load()
             if prev_bid_ref:

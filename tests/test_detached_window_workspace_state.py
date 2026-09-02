@@ -4690,6 +4690,30 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(calls[-1], "refresh")
         self.assertEqual(calls.count("refresh"), 4)
 
+    def test_local_area_completion_preserves_detached_interaction_and_undo(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            plan_view=SimpleNamespace(
+                has_active_remote_projection_blocker=lambda: True
+            ),
+            prepare_for_authoritative_refresh=lambda: calls.append("cancel"),
+        )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
+        manager._refresh_signaler = SimpleNamespace(
+            request=lambda: calls.append("refresh")
+        )
+        manager._on_remote_areas_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            local_completion=True,
+        )
+        self.assertEqual(calls, ["refresh"])
+
     def test_detached_page_navigation_cancels_interaction_before_retarget(self):
         calls = []
 

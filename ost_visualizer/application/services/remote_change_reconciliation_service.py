@@ -258,6 +258,7 @@ class RemoteChangeReconciliationService:
                 bid_uid=str(bid_uid),
                 area_uids=sorted(str(area.uid) for area in areas),
                 defer_plan_projection=projection_barrier is not None,
+                local_completion=local_completion,
             )
         if families:
             resource_uids_by_family = {

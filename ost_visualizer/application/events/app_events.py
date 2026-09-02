@@ -38,6 +38,7 @@ class RemoteAreasChangedEvent:
     bid_uid: str = ""
     area_uids: list = field(default_factory=list)
     defer_plan_projection: bool = False
+    local_completion: bool = False
 
 
 @dataclass

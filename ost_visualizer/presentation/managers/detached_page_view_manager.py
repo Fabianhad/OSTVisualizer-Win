@@ -438,16 +438,21 @@ class DetachedPageViewManager(IShutdownAware):
         database_id: str = "",
         bid_uid: str = "",
         defer_plan_projection: bool = False,
+        local_completion: bool = False,
         **_event_data,
     ) -> None:
         view = self.repository.get_active_view()
-        if view is not None and view.bid_ref == BidRef(database_id, bid_uid):
+        if (
+            not local_completion
+            and view is not None
+            and view.bid_ref == BidRef(database_id, bid_uid)
+        ):
             self._prepare_window_for_authoritative_change_if_blocked()
         self._on_conditions_changed(
             database_id,
             bid_uid,
             defer_plan_projection=defer_plan_projection,
-            invalidates_undo=True,
+            invalidates_undo=not local_completion,
         )
 
     def _prepare_window_for_authoritative_change_if_blocked(self) -> bool:

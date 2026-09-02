@@ -894,6 +894,7 @@ def navigation_status_coordinator(tab_index=TAB_INDEX_PROJECTS):
     coordinator._nav = FakeNav()
     coordinator.ui_access_manager = FakeAccess()
     coordinator._save_current_page_view_state = lambda: None
+    coordinator._flush_deferred_for_file = lambda _file_path: True
     coordinator._sync_undo_bid = lambda: None
     coordinator._clear_mesh_views_for_scene_update = lambda **_options: None
     coordinator._reset_takeoff_workspace_state = lambda: None
@@ -1420,6 +1421,41 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "")
         self.assertEqual(interaction_cancellations, ["cancel"])
+
+    def test_local_area_completion_preserves_interaction_and_undo_history(self):
+        bid_ref = BidRef("sql-database", "bid-1")
+        interaction_cancellations = []
+        undo_clears = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = SimpleNamespace(
+            has_active_remote_projection_blocker=lambda: True
+        )
+        coordinator._plan_view_handler = SimpleNamespace(
+            prepare_for_authoritative_refresh=lambda: interaction_cancellations.append(
+                "cancel"
+            )
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            selected_area_uid="area-1",
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["page-1"]
+        )
+        coordinator._undo_service = SimpleNamespace(
+            clear=lambda: undo_clears.append("clear")
+        )
+        coordinator._page_settings_bar = None
+        coordinator._request_or_defer_mesh_refresh = lambda _pages: None
+        coordinator._tab_widget = None
+        coordinator._on_remote_areas_changed(
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            local_completion=True,
+        )
+        self.assertEqual(interaction_cancellations, [])
+        self.assertEqual(undo_clears, [])
 
     def test_async_restored_sql_bid_runs_canonical_selection_projection(self):
         bid_ref = BidRef("sql-database", "bid-1")
@@ -5395,6 +5431,62 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(status_panel.states[-1], ("stopped", ""))
         self.assertIsNone(coordinator._status_panel)
 
+    def test_cleanup_releases_active_plan_interaction_before_view_cleanup(self):
+        sequence = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.visualization_service = FakeVisualization()
+        coordinator._last_mesh_scene = None
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator._plan_view_handler = SimpleNamespace(
+            invalidate_pending_takeoff_placements=lambda: sequence.append(
+                "invalidate-placement"
+            ),
+            prepare_for_authoritative_refresh=lambda: sequence.append(
+                "release-interaction"
+            ),
+        )
+        coordinator._view_stack = None
+        coordinator._tab_widget = None
+        coordinator._undo_service = None
+        coordinator._subscriptions = []
+        coordinator.event_bus = None
+        coordinator._plan_view_signaler = None
+        coordinator._menu_state_signaler = None
+        coordinator._bid_data_cache = {}
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator._placement = None
+        coordinator.opengl_viewer = None
+        coordinator.takeoff_sidebar = None
+        coordinator.plan_view = SimpleNamespace(
+            cleanup=lambda: sequence.append("plan-cleanup")
+        )
+        coordinator._sidebar = None
+        coordinator._viewer = None
+        coordinator._toolbar = None
+        coordinator.main_window = None
+        coordinator.ui_state_manager = None
+        coordinator.ui_access_manager = None
+        coordinator.project_data = None
+        coordinator.project_operations = ImmediateNavigationOperations()
+        coordinator._color_service = None
+        coordinator._icon_provider = None
+        coordinator._project_write_service = None
+        coordinator._project_read_service = None
+        coordinator.conditions_sidebar = None
+        coordinator.condition_summary_tab = None
+        coordinator._condition_handler = None
+        coordinator._deferred_persistence = None
+        coordinator._status_panel = None
+        coordinator.cleanup()
+        self.assertEqual(
+            sequence,
+            ["release-interaction", "invalidate-placement", "plan-cleanup"],
+        )
+
     def test_clearing_takeoff_selection_keeps_placement_owned_highlight(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
 
@@ -5517,6 +5609,48 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             )
             coordinator.project_operations.complete(True)
         self.assertEqual(coordinator._nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
+
+    def test_bid_switch_flushes_deferred_writes_under_originating_bid(self):
+        coordinator = navigation_status_coordinator()
+        old_ref = BidRef("sql-database", "old-bid")
+        new_ref = BidRef("sql-database", "new-bid")
+        coordinator.ui_state_manager.bid_ref = old_ref
+        sequence = []
+        coordinator._save_current_page_view_state = lambda: sequence.append(
+            ("save", coordinator.ui_state_manager.get_selected_bid_ref())
+        )
+        coordinator._flush_deferred_for_file = (
+            lambda file_path: sequence.append(
+                (
+                    "flush",
+                    file_path,
+                    coordinator.ui_state_manager.get_selected_bid_ref(),
+                )
+            )
+            or True
+        )
+        coordinator.project_operations.request_load_bid = (
+            lambda bid_ref, _completion: sequence.append(("load", bid_ref)) or True
+        )
+        coordinator.handle_bid_selection(new_ref)
+        self.assertEqual(
+            sequence,
+            [
+                ("save", old_ref),
+                ("flush", old_ref.file_path, old_ref),
+                ("load", new_ref),
+            ],
+        )
+
+    def test_failed_deferred_flush_keeps_originating_bid_active(self):
+        coordinator = navigation_status_coordinator()
+        old_ref = BidRef("sql-database", "old-bid")
+        new_ref = BidRef("sql-database", "new-bid")
+        coordinator.ui_state_manager.bid_ref = old_ref
+        coordinator._flush_deferred_for_file = lambda _file_path: False
+        coordinator.handle_bid_selection(new_ref)
+        self.assertEqual(coordinator.ui_state_manager.get_selected_bid_ref(), old_ref)
+        self.assertFalse(coordinator.project_operations.navigation_load_in_progress())
 
     def test_mdb_bid_load_from_no_file_projects_bid_base_without_warning(self):
         coordinator = navigation_status_coordinator()
@@ -5645,6 +5779,25 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertFalse(coordinator.project_operations.navigation_load_in_progress())
         self.assertEqual(coordinator._status_panel.page_info, "")
 
+    def test_file_selection_flush_failure_keeps_current_bid_context(self):
+        coordinator = navigation_status_coordinator()
+        old_ref = BidRef("sql-database", "old-bid")
+        coordinator.ui_state_manager.bid_ref = old_ref
+        sequence = []
+        coordinator._save_current_page_view_state = lambda: sequence.append("save")
+        coordinator._flush_deferred_for_file = (
+            lambda file_path: sequence.append(("flush", file_path)) or False
+        )
+        coordinator._prepare_plan_for_authoritative_refresh = lambda: sequence.append(
+            "cancel"
+        )
+        coordinator._on_file_selected(
+            file_path="other-sql-database",
+            is_database_root=True,
+        )
+        self.assertEqual(sequence, ["save", ("flush", old_ref.file_path)])
+        self.assertEqual(coordinator.ui_state_manager.get_selected_bid_ref(), old_ref)
+
     def test_failed_bid_switch_preserves_old_selection_and_undo_owner(self):
         old_ref = type("BidRefLike", (), {})()
         old_ref.file_path = "old.mdb"
@@ -5722,6 +5875,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.ui_access_manager = FakeAccess()
         coordinator._update_export_menu_state = lambda: None
         coordinator._save_current_page_view_state = lambda: None
+        coordinator._flush_deferred_for_file = lambda _file_path: True
         coordinator._clear_mesh_views_for_scene_update = lambda **_call_options: None
         coordinator.handle_bid_selection(new_ref)
         self.assertIs(coordinator.ui_state_manager.get_selected_bid_ref(), old_ref)
@@ -5802,6 +5956,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._nav = FakeNav()
         coordinator._update_export_menu_state = lambda: None
         coordinator._save_current_page_view_state = lambda: None
+        coordinator._flush_deferred_for_file = lambda _file_path: True
         coordinator._clear_mesh_views_for_scene_update = lambda **_call_options: None
         coordinator._reset_takeoff_workspace_state = lambda: None
         coordinator._set_takeoff_tab_visible = lambda _visible: None
@@ -5855,6 +6010,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._nav = FakeNav()
         coordinator._update_export_menu_state = lambda: None
         coordinator._save_current_page_view_state = lambda: None
+        coordinator._flush_deferred_for_file = lambda _file_path: True
         coordinator._clear_mesh_views_for_scene_update = lambda **_call_options: None
         coordinator._reset_takeoff_workspace_state = lambda: None
         coordinator._set_takeoff_tab_visible = lambda _visible: None

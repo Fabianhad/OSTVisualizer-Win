@@ -592,6 +592,10 @@ class DeferredPersistenceManager(QtCore.QObject):
             ):
                 continue
             self._visual_states.pop(key, None)
+            pending = self._pending.get(key)
+            if pending is not None and pending.visual_revision:
+                self._pending.pop(key, None)
+        self._stop_timer_if_idle()
 
     def _complete_visual_revision(
         self,
