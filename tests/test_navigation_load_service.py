@@ -181,19 +181,16 @@ class NavigationLoadServiceTests(unittest.TestCase):
             lambda _result: None,
         )
         self.assertTrue(started.wait(1.0))
-
         self.service.cleanup()
         self.service.cancel()
         release.set()
         self.service._thread.join(1.0)
-
         self.assertFalse(self.service._thread.is_alive())
 
     def test_repeated_cleanup_stops_idle_worker_once(self):
         self.service.cleanup()
         self.service.cleanup()
         self.service._thread.join(1.0)
-
         self.assertFalse(self.service._thread.is_alive())
         self.assertEqual(self.service.state().state, NavigationLoadState.CANCELLED)
 

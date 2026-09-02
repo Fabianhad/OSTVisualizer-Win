@@ -508,13 +508,11 @@ class LicenseActivationContractTests(unittest.TestCase):
             publisher,
             callback_bridge=bridge,
         )
-
         orchestrator._perform_periodic_validation()
         self.assertEqual(len(bridge.callbacks), 1)
         orchestrator.cleanup()
         callback, payload = bridge.callbacks.pop()
         callback(payload)
-
         self.assertEqual(publisher.invalidated, [])
 
     def test_cleanup_continues_after_scheduler_stop_failure(self):
@@ -546,10 +544,8 @@ class LicenseActivationContractTests(unittest.TestCase):
 
         orchestrator._scheduler = FailingScheduler()
         orchestrator._thread_manager = RecordingThreadManager()
-
         with self.assertRaisesRegex(RuntimeError, "scheduler stop failed"):
             orchestrator.cleanup()
-
         self.assertEqual(calls, ["stop", "clear_task", "thread_cleanup"])
         self.assertIsNone(orchestrator._scheduler)
         self.assertIsNone(orchestrator._thread_manager)

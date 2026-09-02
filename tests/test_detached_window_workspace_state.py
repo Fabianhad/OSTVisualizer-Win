@@ -1703,9 +1703,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         calls = []
         coordinator._try_restore_mesh_window = lambda: calls.append("mesh")
         coordinator._try_restore_detached_page_windows = lambda: calls.append("pages")
-
         coordinator.restore_deferred_state()
-
         self.assertTrue(coordinator._pending_mesh_restore)
         self.assertTrue(coordinator._pending_annotation_restore)
         self.assertTrue(coordinator._pending_view_restore)

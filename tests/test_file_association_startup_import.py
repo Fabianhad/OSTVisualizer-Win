@@ -585,9 +585,7 @@ class FileAssociationStartupImportTests(unittest.TestCase):
                 "Startup database loading must not begin during shutdown"
             )
         )
-
         MainWindow._load_files_from_config(window)
-
         self.assertFalse(window._startup_load_complete)
 
     def test_queued_startup_load_replays_when_shutdown_is_aborted(self):
@@ -615,7 +613,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             main_window_module.show_critical = lambda *_args: None
             MainWindow._load_files_from_config(window)
             self.assertEqual(loads, [])
-
             MainWindow._on_shutdown_mutation_drain_complete(
                 window, False, "shutdown aborted"
             )
@@ -624,7 +621,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
         finally:
             main_window_module.QtCore.QTimer.singleShot = original_single_shot
             main_window_module.show_critical = original_show_critical
-
         self.assertEqual(shown, [True])
         self.assertEqual(loads, [True])
         self.assertEqual(restores, [True])
@@ -638,7 +634,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
                 "A queued startup callback must not reshow the closing window"
             )
         )
-
         MainWindow._show_main_window(window)
 
     def test_normal_main_window_show_schedules_update_and_database_prompt(self):
@@ -658,7 +653,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             MainWindow._show_main_window(window)
         finally:
             main_window_module.QtCore.QTimer.singleShot = original_single_shot
-
         self.assertEqual(calls, ["show", "raise", "activate"])
         self.assertEqual(
             timer.callbacks,
@@ -674,7 +668,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
                 "A queued database prompt must not inspect access during shutdown"
             )
         )
-
         MainWindow._prompt_create_database(window)
 
     def test_create_database_prompt_does_not_continue_when_shutdown_starts_in_dialog(
@@ -738,7 +731,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             MainWindow._prompt_create_database(window)
         finally:
             main_window_module.CreateDatabaseDialog = original_dialog
-
         self.assertTrue(AcceptedDialog.deleted)
         self.assertEqual(
             published,
@@ -751,9 +743,7 @@ class FileAssociationStartupImportTests(unittest.TestCase):
         window._create_database_with_progress = lambda: self.fail(
             "Deferred database creation must revalidate shutdown ownership"
         )
-
         MainWindow._complete_create_database_prompt(window)
-
         self.assertIn(
             "create_database_after_prompt", window._shutdown_deferred_callbacks
         )
@@ -840,7 +830,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
         finally:
             main_window_module.isValid = original_is_valid
             main_window_module.QtCore.QTimer.singleShot = original_single_shot
-
         self.assertTrue(window._collaboration_shutdown_complete)
         self.assertEqual(window._shutdown_deferred_callbacks, {})
 
@@ -854,8 +843,8 @@ class FileAssociationStartupImportTests(unittest.TestCase):
         shown = []
         window._select_project_file_import_result = selections.append
         window._show_project_file_import_result = summaries.append
-        window._schedule_pending_project_file_imports = lambda: scheduled_imports.append(
-            True
+        window._schedule_pending_project_file_imports = (
+            lambda: scheduled_imports.append(True)
         )
         window.show = lambda: shown.append(True)
         result = import_args_use_case.ProjectFileImportBatchResult(
@@ -872,7 +861,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             MainWindow._complete_async_project_file_imports(window, result)
             self.assertEqual(selections, [])
             self.assertFalse(window._project_file_import_running)
-
             MainWindow._on_shutdown_mutation_drain_complete(
                 window, False, "shutdown aborted"
             )
@@ -882,7 +870,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             main_window_module.isValid = original_is_valid
             main_window_module.QtCore.QTimer.singleShot = original_single_shot
             main_window_module.show_critical = original_show_critical
-
         self.assertEqual(shown, [True])
         self.assertEqual(selections, [result])
         self.assertEqual(summaries, [result])

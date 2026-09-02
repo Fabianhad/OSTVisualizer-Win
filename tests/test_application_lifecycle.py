@@ -619,7 +619,6 @@ class ApplicationLifecycleTests(unittest.TestCase):
         thread.join(timeout=1.0)
         callback, success, message = queued.pop()
         callback(success, message)
-
         self.assertEqual(completed, [(True, "ok", "license-result")])
         self.assertEqual(manager._active_threads, [])
         manager.cleanup()
@@ -646,12 +645,10 @@ class ApplicationLifecycleTests(unittest.TestCase):
             on_main_thread=lambda *args: callbacks.append(args),
         )
         self.assertTrue(started.wait(1.0))
-
         with self.assertLogs("test", level="WARNING"):
             manager.cleanup(timeout=0.0)
         release.set()
         thread.join(timeout=1.0)
-
         self.assertFalse(thread.is_alive())
         self.assertEqual(callbacks, [])
 
@@ -671,11 +668,9 @@ class ApplicationLifecycleTests(unittest.TestCase):
         )
         thread.join(timeout=1.0)
         self.assertEqual(len(queued), 1)
-
         manager.cleanup()
         callback, success, message = queued.pop()
         callback(success, message)
-
         self.assertEqual(completed, [])
 
     def test_license_thread_manager_cleanup_continues_after_join_failure(self):
@@ -705,10 +700,8 @@ class ApplicationLifecycleTests(unittest.TestCase):
         manager = LicenseThreadManager(logging.getLogger("test"))
         recording = RecordingThread()
         manager._active_threads = [FailingThread(), recording]
-
         with self.assertRaisesRegex(RuntimeError, "join failed"):
             manager.cleanup(timeout=0.25)
-
         self.assertEqual(recording.join_calls, [0.25])
         self.assertEqual(manager._active_threads, [])
         manager.cleanup(timeout=0.25)

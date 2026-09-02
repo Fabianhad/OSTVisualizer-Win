@@ -1196,7 +1196,6 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         ) as thread_factory:
             MainWindow._check_for_updates(window)
         thread_factory.call_args.kwargs["target"]()
-
         self.assertEqual(emitted, [{"version": "2.0"}])
 
     def test_update_check_completion_after_shutdown_does_not_emit(self):
@@ -1228,10 +1227,8 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         ) as thread_factory:
             MainWindow._check_for_updates(window)
         check_updates = thread_factory.call_args.kwargs["target"]
-
         window._collaboration_shutdown_complete = True
         check_updates()
-
         self.assertEqual(emitted, [])
 
     def test_queued_update_dialog_is_ignored_after_shutdown_starts(self):
@@ -1288,7 +1285,6 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             )
             for callback in list(scheduled):
                 callback()
-
         self.assertEqual(shown, [True])
         self.assertEqual(calls, ["show", "delete"])
         self.assertEqual(active_states, [True, False])
@@ -1313,7 +1309,6 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             return_value=dialog,
         ):
             MainWindow._show_update_dialog(window, {"version": "2.0"})
-
         self.assertEqual(calls, ["show", "delete"])
         self.assertEqual(active_states, [True, False])
 

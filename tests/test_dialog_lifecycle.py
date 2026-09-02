@@ -213,10 +213,8 @@ class DialogLifecycleTests(unittest.TestCase):
         second = lambda **_: None
         coordinator.register(AppEvents.LICENSE_STATUS_CHANGED, first)
         coordinator.register(AppEvents.FILE_OPENED, second)
-
         with self.assertRaisesRegex(RuntimeError, "unsubscribe failed"):
             coordinator.cleanup()
-
         self.assertEqual(
             event_bus.unsubscriptions,
             [
@@ -239,10 +237,8 @@ class DialogLifecycleTests(unittest.TestCase):
         second = lambda **_: None
         coordinator.register(AppEvents.LICENSE_STATUS_CHANGED, first)
         coordinator.register(AppEvents.FILE_OPENED, second)
-
         with self.assertRaises(ExceptionGroup) as captured:
             coordinator.cleanup()
-
         self.assertEqual(
             [str(error) for error in captured.exception.exceptions],
             [
