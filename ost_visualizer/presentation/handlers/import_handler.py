@@ -52,6 +52,18 @@ class ImportHandler:
                 "No database is loaded. Please open a database file before importing.",
             )
             return
+        target_project_uid = self._resolve_target_project_uid()
+        target_identity = self._resolve_target_identity(
+            target_db, target_project_uid
+        )
+        if target_identity is None:
+            show_warning(
+                self.window,
+                "Import Cancelled",
+                "The selected import destination is no longer available. "
+                "Select the database or project again.",
+            )
+            return
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
             self.window,
             f"Import {format_name} File",
@@ -60,9 +72,20 @@ class ImportHandler:
         )
         if not filename:
             return
+        if not isValid(self.window):
+            return
+        if not self._target_identity_is_current(
+            target_db, target_project_uid, target_identity
+        ):
+            show_warning(
+                self.window,
+                "Import Cancelled",
+                "The selected database or project changed while the file dialog "
+                "was open. Select the destination again before importing.",
+            )
+            return
         if not self._deferred_persistence.flush_for_file(target_db):
             return
-        target_project_uid = self._resolve_target_project_uid()
         if self._import_service.uses_sql_collaboration_import(target_db):
             try:
                 self._import_service.queue_project_import(
@@ -172,6 +195,34 @@ class ImportHandler:
         if bid_ref:
             return self.project_data.find_project_uid_for_bid(bid_ref)
         return None
+
+    def _resolve_target_identity(
+        self, target_db: str, target_project_uid: Optional[str]
+    ):
+        hierarchy = self.project_data.get_hierarchy()
+        for file_entry in hierarchy.loaded_files:
+            if file_entry.file_path != target_db:
+                continue
+            if target_project_uid is None:
+                return file_entry, None
+            project = file_entry.bid_projects.get(target_project_uid)
+            if project is not None:
+                return file_entry, project
+            return None
+        return None
+
+    def _target_identity_is_current(
+        self,
+        target_db: str,
+        target_project_uid: Optional[str],
+        expected_identity,
+    ) -> bool:
+        current = self._resolve_target_identity(target_db, target_project_uid)
+        return bool(
+            current is not None
+            and current[0] is expected_identity[0]
+            and current[1] is expected_identity[1]
+        )
 
     def _resolve_target_db(self) -> Optional[str]:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()

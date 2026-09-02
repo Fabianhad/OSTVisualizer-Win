@@ -309,4 +309,5 @@ class VisualizationService:
         self.event_bus.publish(
             AppEvents.DATABASE_REFRESHED,
             file_path=file_path,
+            external_change=True,
         )

@@ -2526,36 +2526,14 @@ class UIEventCoordinator:
         condition = self.project_data.get_bid_conditions().get(condition_uid)
         return bool(condition and condition.layer_visible)
 
-    def _reconcile_active_condition_placement(
-        self,
-        *,
-        changed_condition_uids: Optional[List[str]] = None,
-        condition_type_changed: bool = False,
-    ) -> None:
-        primary_uid = self.ui_state_manager.place_condition_uid
-        if not primary_uid:
-            return
-        placement_uids = {
-            str(primary_uid),
-            *(str(uid) for uid in self.ui_state_manager.place_condition_uids if uid),
-        }
-        conditions = self.project_data.get_bid_conditions()
-        if any(
-            uid not in conditions or not conditions[uid].layer_visible
-            for uid in placement_uids
-        ):
-            self._reset_to_select_mode()
-            return
-        changed_uids = {
-            str(uid) for uid in (changed_condition_uids or ()) if uid
-        }
-        if condition_type_changed and (
-            not changed_uids or not placement_uids.isdisjoint(changed_uids)
-        ):
-            self._reset_to_select_mode()
-
     def _reset_to_select_mode(self) -> None:
         self._placement.force_exit()
+        self._set_plan_select_mode()
+        self._toolbar.refresh()
+
+    def _reconcile_active_placement(self) -> None:
+        if self._placement.reconcile_authoritative_conditions():
+            return
         self._set_plan_select_mode()
         self._toolbar.refresh()
 
@@ -2713,9 +2691,18 @@ class UIEventCoordinator:
         self._update_export_menu_state()
         self.main_window.set_database_window_title(file_path)
 
-    def _on_database_refreshed(self, file_path: str = "") -> None:
-        if file_path and not self._flush_deferred_for_file(file_path):
-            return
+    def _on_database_refreshed(
+        self,
+        file_path: str = "",
+        external_change: bool = False,
+    ) -> None:
+        if file_path:
+            if external_change:
+                self._deferred_persistence.cancel_for_file(file_path)
+                if self._undo_service:
+                    self._undo_service.clear()
+            elif not self._flush_deferred_for_file(file_path):
+                return
         if not self._nav.start_refresh(
             self.ui_state_manager,
             self._placement,
@@ -2843,6 +2830,15 @@ class UIEventCoordinator:
             )
         if self._undo_service and changed_families and not local_completion:
             self._undo_service.clear()
+        if pages_changed and not local_completion:
+            changed_page_uids = changed_uids.get(
+                CollaborationResourceFamily.PAGES.value
+            )
+            self._deferred_persistence.cancel_pages(
+                database_id,
+                bid_uid,
+                list(changed_page_uids) if changed_page_uids else None,
+            )
         if CollaborationResourceFamily.TAKEOFFS.value in changed_families:
             if self._selected_takeoff_uids:
                 self._sync_selection(
@@ -2910,7 +2906,7 @@ class UIEventCoordinator:
             )
             self._sidebar.refresh_conditions_from_memory()
         if layers_changed:
-            self._reconcile_active_condition_placement()
+            self._reconcile_active_placement()
         if layers_changed and not pages_changed and not defer_plan_projection:
             self._update_plan_view_for_active()
         if (
@@ -2966,11 +2962,7 @@ class UIEventCoordinator:
         if selected != BidRef(database_id, bid_uid):
             return
         operations = set(change_operations or ())
-        fields = set(changed_fields or ())
-        self._reconcile_active_condition_placement(
-            changed_condition_uids=condition_uids,
-            condition_type_changed="condition_type" in fields,
-        )
+        self._reconcile_active_placement()
         if self._undo_service and invalidates_undo:
             self._undo_service.clear()
         valid_highlights = self._validate_condition_uids(
@@ -4924,6 +4916,20 @@ class UIEventCoordinator:
             self.main_window, page.overlay_image_path or ""
         )
         if not path:
+            return
+        if self._is_cleaning_up:
+            return
+        if (
+            self.ui_state_manager.get_selected_bid_ref() != bid_ref
+            or self.ui_state_manager.active_page_uid != page_uid
+            or self.project_data.get_page(page_uid) is not page
+        ):
+            show_warning(
+                self.main_window,
+                "Overlay Selection Cancelled",
+                "The selected page changed while the file dialog was open. "
+                "Please choose the overlay again.",
+            )
             return
         self._save_page_overlay_image(bid_ref.file_path, page_uid, path)
 

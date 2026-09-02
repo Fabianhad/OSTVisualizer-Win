@@ -69,14 +69,29 @@ class SqlCollaborationStore(ICollaborationStore):
             committed = False
             try:
                 with lease.cursor() as cursor:
-                    self._cleanup(cursor)
                     cursor.execute(
                         "SELECT [DatabaseGuid] FROM [ostv].[DatabaseMetadata]"
                     )
                     guid_row = cursor.fetchone()
-                    if guid_row is None:
+                    if guid_row is None or guid_row[0] is None:
                         raise _session_error("SQL collaboration metadata is missing.")
-                    database_guid = str(guid_row[0])
+                    database_guid = _canonical_uuid_text(guid_row[0])
+                    try:
+                        expected_database_guid = _canonical_uuid_text(
+                            request.location.database_guid
+                        )
+                    except (AttributeError, TypeError, ValueError):
+                        raise _database_identity_error(
+                            "The saved SQL connection has no valid database identity. "
+                            "Remove it from Open Files and add it again."
+                        ) from None
+                    if database_guid != expected_database_guid:
+                        raise _database_identity_error(
+                            "The SQL database was replaced since this connection was "
+                            "saved. Remove it from Open Files and add the replacement "
+                            "database explicitly."
+                        )
+                    self._cleanup(cursor)
                     cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
                     initial_version = int(cursor.fetchone()[0] or 0)
                     cursor.execute(
@@ -821,6 +836,12 @@ def _change_from_row(row) -> DatabaseChange:
 def _session_error(message: str) -> SqlInfrastructureError:
     return SqlInfrastructureError(
         SqlErrorDetails(SqlErrorCode.SESSION_EXPIRED, message)
+    )
+
+
+def _database_identity_error(message: str) -> SqlInfrastructureError:
+    return SqlInfrastructureError(
+        SqlErrorDetails(SqlErrorCode.SCHEMA_MISMATCH, message)
     )
 
 

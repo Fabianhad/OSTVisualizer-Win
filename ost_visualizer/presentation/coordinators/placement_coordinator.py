@@ -22,6 +22,7 @@ class PlacementCoordinator:
         self._state = PlacementState.IDLE
         self._nav = None
         self._area_placement_in_progress = False
+        self._condition_type: Optional[int] = None
 
     def set_nav(self, nav) -> None:
         self._nav = nav
@@ -71,6 +72,8 @@ class PlacementCoordinator:
             self._ui_state.clear_place_condition()
             return False
         self._ui_state.place_condition_uid = condition_uid
+        condition = self._project_data.get_bid_conditions().get(condition_uid)
+        self._condition_type = condition.condition_type if condition else None
         self._state = PlacementState.READY
         if self._nav:
             self._nav.transition_to(NavState.PLACE_MODE)
@@ -108,6 +111,7 @@ class PlacementCoordinator:
         if self._state == PlacementState.IDLE:
             return
         self._state = PlacementState.IDLE
+        self._condition_type = None
         self._ui_state.clear_place_condition()
         if self._area_placement_in_progress:
             self._on_area_placement_changed(False)
@@ -139,6 +143,30 @@ class PlacementCoordinator:
             ordered.append(uid)
             seen.add(uid)
         return ordered
+
+    def reconcile_authoritative_conditions(self) -> bool:
+        if self._state == PlacementState.IDLE:
+            return True
+        conditions = self._project_data.get_bid_conditions()
+        active_uid = self._ui_state.place_condition_uid
+        active = conditions.get(active_uid) if active_uid else None
+        if (
+            active is None
+            or not active.layer_visible
+            or active.condition_type != self._condition_type
+        ):
+            self.force_exit()
+            return False
+        for uid in self._ui_state.place_condition_uids:
+            condition = conditions.get(uid)
+            if (
+                condition is None
+                or not condition.layer_visible
+                or condition.condition_type != self._condition_type
+            ):
+                self.force_exit()
+                return False
+        return True
 
     def _ensure_color_map_includes(self, condition_uids: list) -> None:
         conditions = self._project_data.get_bid_conditions()

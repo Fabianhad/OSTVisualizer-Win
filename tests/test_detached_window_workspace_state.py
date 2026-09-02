@@ -3657,6 +3657,34 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._on_database_refreshed(file_path="file.mdb")
         self.assertEqual(calls, ["refresh"])
 
+    def test_external_access_refresh_clears_matching_detached_undo_history(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p1",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = object()
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
+        manager._refresh_signaler = SimpleNamespace(
+            request=lambda: calls.append("refresh")
+        )
+        manager._on_database_refreshed(
+            file_path="other.mdb",
+            external_change=True,
+        )
+        manager._on_database_refreshed(file_path="file.mdb")
+        manager._on_database_refreshed(
+            file_path="file.mdb",
+            external_change=True,
+        )
+        self.assertEqual(calls, ["refresh", "undo", "refresh"])
+
     def test_capability_change_updates_access_without_page_refresh(self):
         calls = []
         view = AnnotationView(
@@ -4329,12 +4357,33 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(get_bid=lambda _bid_ref: object())
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
         manager._refresh_signaler = SimpleNamespace(
             request=lambda: calls.append("refresh")
         )
         manager._on_remote_hierarchy_changed(database_id="other-db")
         manager._on_remote_hierarchy_changed(database_id="sql-db")
         self.assertEqual(calls, ["refresh"])
+
+    def test_remote_bid_removal_clears_detached_undo_before_refresh(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "deleted-bid"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(get_bid=lambda _bid_ref: None)
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
+        manager._refresh_signaler = SimpleNamespace(
+            request=lambda: calls.append("refresh")
+        )
+
+        manager._on_remote_hierarchy_changed(database_id="sql-db")
+
+        self.assertEqual(calls, ["undo", "refresh"])
 
     def test_remote_condition_and_area_changes_refresh_matching_detached_view(self):
         calls = []

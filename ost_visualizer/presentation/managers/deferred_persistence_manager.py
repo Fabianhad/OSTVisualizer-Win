@@ -22,6 +22,13 @@ PAGE_VISUAL_SETTING_KINDS = frozenset(
 )
 NON_RETRYABLE_UI_STATE_KINDS = {BID_SELECTED_PAGE_KIND, PAGE_VIEW_STATE_KIND}
 SILENT_BEST_EFFORT_UI_STATE_KINDS = {PAGE_VIEW_STATE_KIND}
+PAGE_SETTING_KINDS = {
+    "page_show_mode",
+    "page_area_selection",
+    "page_invert",
+    "page_bitonal",
+    "page_overlay_rect",
+}
 
 
 @dataclass
@@ -205,6 +212,46 @@ class DeferredPersistenceManager(QtCore.QObject):
                 and len(key) > 1
                 and str(key[1]) == str(db_path)
             ):
+                self._pending.pop(key, None)
+        self._stop_timer_if_idle()
+
+    def cancel_pages(
+        self,
+        db_path: str,
+        bid_uid: str,
+        page_uids: Optional[list[str]] = None,
+    ) -> None:
+        if not db_path or not bid_uid:
+            return
+        affected_page_uids = (
+            {str(page_uid) for page_uid in page_uids if page_uid}
+            if page_uids is not None
+            else None
+        )
+        for key, item in list(self._pending.items()):
+            if len(key) <= 1 or str(key[1]) != str(db_path):
+                continue
+            cancel = False
+            if item.kind == BID_SELECTED_PAGE_KIND:
+                cancel = len(key) > 2 and str(key[2]) == str(bid_uid)
+            elif item.kind == PAGE_VIEW_STATE_KIND:
+                cancel = (
+                    len(key) > 3
+                    and str(key[2]) == str(bid_uid)
+                    and (
+                        affected_page_uids is None
+                        or str(key[3]) in affected_page_uids
+                    )
+                )
+            elif item.kind in PAGE_SETTING_KINDS:
+                cancel = (
+                    len(key) > 2
+                    and (
+                        affected_page_uids is None
+                        or str(key[2]) in affected_page_uids
+                    )
+                )
+            if cancel:
                 self._pending.pop(key, None)
         self._stop_timer_if_idle()
 

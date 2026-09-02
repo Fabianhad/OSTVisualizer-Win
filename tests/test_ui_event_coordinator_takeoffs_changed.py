@@ -571,6 +571,7 @@ class FakePlacement:
         self.enter_calls = []
         self.is_active = False
         self.condition_uid = None
+        self.reconciliation_calls = 0
 
     def force_exit(self):
         self.force_exit_count += 1
@@ -580,6 +581,10 @@ class FakePlacement:
         self.enter_calls.append((condition_uid, list(condition_uids)))
         self.condition_uid = condition_uid
         self.is_active = True
+        return True
+
+    def reconcile_authoritative_conditions(self):
+        self.reconciliation_calls += 1
         return True
 
 
@@ -982,6 +987,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         ui_state.set_highlighted_conditions({"c1", "deleted"})
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = ui_state
+        coordinator._placement = FakePlacement()
         mesh_refreshes = []
         coordinator.project_data = SimpleNamespace(
             get_bid_conditions=lambda: {"c1": object()},
@@ -1087,6 +1093,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     def test_condition_change_rebuilds_summary_once_through_sidebar_projection(self):
         bid_ref = BidRef("sql-database", "bid-1")
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._placement = FakePlacement()
         coordinator.ui_state_manager = SimpleNamespace(
             highlighted_condition_uids=set(),
             place_condition_uid=None,
@@ -1150,9 +1157,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._update_export_menu_state = lambda: None
 
         class ClearingPlacement(FakePlacement):
-            def force_exit(self):
-                super().force_exit()
+            def reconcile_authoritative_conditions(self):
+                super().reconcile_authoritative_conditions()
+                self.force_exit()
                 ui_state.clear_place_condition()
+                return False
 
         coordinator._placement = ClearingPlacement()
         select_mode_calls = []
@@ -1203,6 +1212,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._update_export_menu_state = lambda: None
 
         class ClearingPlacement(FakePlacement):
+            def reconcile_authoritative_conditions(self):
+                super().reconcile_authoritative_conditions()
+                self.force_exit()
+                return False
+
             def force_exit(self):
                 super().force_exit()
                 ui_state.clear_place_condition()
@@ -1253,6 +1267,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._update_export_menu_state = lambda: None
 
         class ClearingPlacement(FakePlacement):
+            def reconcile_authoritative_conditions(self):
+                super().reconcile_authoritative_conditions()
+                self.force_exit()
+                return False
+
             def force_exit(self):
                 super().force_exit()
                 ui_state.clear_place_condition()
@@ -2464,6 +2483,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.project_data.get_bid_conditions = lambda: {
             "condition-1": Condition(uid="condition-1")
         }
+        coordinator._placement = FakePlacement()
         coordinator._sidebar.refresh_conditions_from_memory = lambda: None
         coordinator._restore_sidebar_highlight = lambda _uids, reveal=False: None
         coordinator._update_plan_view_for_active = lambda **_options: None
@@ -2879,6 +2899,76 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.opengl_viewer.selections, [[]])
         self.assertEqual(coordinator._mesh_window.selections, [[]])
 
+    def test_remote_partial_takeoff_deletion_preserves_only_surviving_selection(self):
+        bid_ref = BidRef("sql-db", "bid-1")
+        ui_state = UIStateManager(
+            SimpleNamespace(
+                display_modes_synced=False,
+                display_mode_3d="condition",
+                display_mode_2d="condition",
+                grayscale_enabled=False,
+            )
+        )
+        ui_state.set_bid_selection(bid_ref)
+        ui_state.active_page_uid = "page-1"
+        ui_state.set_page_selection(["page-1"])
+        ui_state.set_highlighted_conditions({"condition-1"})
+
+        class SelectionSurface:
+            def __init__(self):
+                self.selections = []
+
+            def set_selected_takeoffs(self, uids):
+                self.selections.append(list(uids))
+
+        survivor = Takeoff(
+            uid="survivor",
+            condition_uid="condition-1",
+            page_uid="page-1",
+        )
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = ui_state
+        coordinator.project_data = SimpleNamespace(
+            get_all_takeoffs=lambda: [survivor],
+            get_bid_conditions=lambda: {"condition-1": object()},
+            get_selected_page_uids=lambda: ["page-1"],
+        )
+        coordinator._selected_takeoff_uids = ("deleted", "survivor")
+        coordinator._selection_projected_condition_uids = {"condition-1"}
+        coordinator._placement = FakePlacement()
+        coordinator._nav = FakeNav()
+        coordinator.conditions_sidebar = SimpleNamespace(
+            get_selected_condition_uids=lambda: ["condition-1"]
+        )
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = SelectionSurface()
+        coordinator._mesh_window = SelectionSurface()
+        coordinator._tab_widget = None
+        coordinator._undo_service = None
+        coordinator._refresh_takeoff_dependent_page_controls = lambda _uid: None
+        coordinator._is_summary_tab_active = lambda: False
+        coordinator._sidebar = SimpleNamespace(
+            update_conditions_quantities=lambda **_kwargs: None,
+            bid_layers_sidebar=None,
+        )
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+
+        coordinator._on_remote_bid_content_changed(
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            families=[CollaborationResourceFamily.TAKEOFFS.value],
+            resource_uids_by_family={
+                CollaborationResourceFamily.TAKEOFFS.value: ["deleted"]
+            },
+            defer_plan_projection=True,
+        )
+
+        self.assertEqual(coordinator._selected_takeoff_uids, ("survivor",))
+        self.assertEqual(ui_state.highlighted_condition_uids, {"condition-1"})
+        self.assertEqual(coordinator.opengl_viewer.selections, [["survivor"]])
+        self.assertEqual(coordinator._mesh_window.selections, [["survivor"]])
+
     def test_remote_layer_reconciliation_derives_takeoff_layer_from_condition(self):
         database_id = "sql-db"
         bid_uid = "bid-1"
@@ -2922,6 +3012,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._deferred_persistence = SimpleNamespace(
             invalidate_layer_visual_revisions=lambda *_args: None
         )
+        coordinator._placement = FakePlacement()
         coordinator._undo_service = None
         coordinator._sidebar = sidebar
         mesh_refreshes = []
@@ -2941,11 +3032,13 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual([layer.uid for layer in loaded[0][0]], ["25"])
         self.assertEqual(loaded[0][1], {"25"})
         self.assertEqual(mesh_refreshes, [[]])
+        self.assertEqual(coordinator._placement.reconciliation_calls, 1)
 
     def test_combined_remote_annotation_and_layer_update_projects_main_once(self):
         bid_ref = BidRef("sql-db", "bid-1")
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = FakeUiState(bid_ref)
+        coordinator._placement = FakePlacement()
         coordinator.project_data = SimpleNamespace(
             get_bid_layer_snapshot=lambda: [],
             get_layer_uids_in_use=lambda: set(),
@@ -2983,6 +3076,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         bid_ref = BidRef("sql-db", "bid-1")
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = FakeUiState(bid_ref)
+        coordinator._placement = FakePlacement()
         coordinator.project_data = SimpleNamespace(
             get_selected_page_uids=lambda: ["page-1"]
         )
@@ -3044,6 +3138,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
 
         class ClearingPlacement(FakePlacement):
+            def reconcile_authoritative_conditions(self):
+                super().reconcile_authoritative_conditions()
+                self.force_exit()
+                return False
+
             def force_exit(self):
                 super().force_exit()
                 ui_state.clear_place_condition()
@@ -3062,6 +3161,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     def test_combined_remote_page_and_annotation_update_projects_main_once(self):
         bid_ref = BidRef("sql-db", "bid-1")
         page = Page(uid="page-1", name="Page 1", sequence=1)
+        cancelled_pages = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
@@ -3076,7 +3176,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             select_pages=lambda pages: list(pages),
         )
         coordinator._deferred_persistence = SimpleNamespace(
-            invalidate_page_visual_revisions=lambda *_args: None
+            invalidate_page_visual_revisions=lambda *_args: None,
+            cancel_pages=lambda database_id, bid_uid, page_uids: cancelled_pages.append(
+                (database_id, bid_uid, page_uids)
+            ),
         )
         coordinator._undo_service = None
         coordinator._pending_hotlink_page_uid = None
@@ -3105,6 +3208,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             ],
         )
         self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
+        self.assertEqual(cancelled_pages, [("sql-db", "bid-1", None)])
 
     def test_remote_page_removal_republishes_scene_for_remaining_checked_pages(self):
         bid_ref = BidRef("sql-db", "bid-1")
@@ -3127,7 +3231,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             select_pages=lambda pages: list(pages),
         )
         coordinator._deferred_persistence = SimpleNamespace(
-            invalidate_page_visual_revisions=lambda *_args: None
+            invalidate_page_visual_revisions=lambda *_args: None,
+            cancel_pages=lambda *_args: None,
         )
         coordinator._undo_service = None
         coordinator._sidebar = SimpleNamespace(
@@ -3188,7 +3293,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             select_pages=lambda selected: list(selected),
         )
         coordinator._deferred_persistence = SimpleNamespace(
-            invalidate_page_visual_revisions=lambda *_args: None
+            invalidate_page_visual_revisions=lambda *_args: None,
+            cancel_pages=lambda *_args: None,
         )
         coordinator._undo_service = None
         coordinator._sidebar = SimpleNamespace(
@@ -3240,7 +3346,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             select_pages=lambda pages: list(pages),
         )
         coordinator._deferred_persistence = SimpleNamespace(
-            invalidate_page_visual_revisions=lambda *_args: None
+            invalidate_page_visual_revisions=lambda *_args: None,
+            cancel_pages=lambda *_args: None,
         )
         coordinator._undo_service = None
         coordinator._sidebar = SimpleNamespace(
@@ -4860,6 +4967,127 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(completed, [(True, {"new_0": "area-2"})])
         self.assertEqual(errors, [])
+
+    def test_overlay_file_dialog_cannot_write_to_a_recreated_page_identity(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("sql-database", "8")
+        original_page = Page(uid="page-1", name="Original")
+        replacement_page = Page(uid="page-1", name="Replacement")
+        current_page = [original_page]
+        saved = []
+        coordinator._is_cleaning_up = False
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda _page_uid: current_page[0]
+        )
+        coordinator.main_window = object()
+        coordinator._save_page_overlay_image = (
+            lambda database_id, page_uid, path: saved.append(
+                (database_id, page_uid, path)
+            )
+        )
+
+        def replace_page_while_dialog_is_open(_parent, _current_path):
+            current_page[0] = replacement_page
+            return "replacement-overlay.pdf"
+
+        with (
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "select_overlay_image_path",
+                side_effect=replace_page_while_dialog_is_open,
+            ),
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "show_warning"
+            ) as warning,
+        ):
+            coordinator.select_overlay_image()
+
+        self.assertEqual(saved, [])
+        warning.assert_called_once()
+
+    def test_overlay_file_dialog_cannot_write_after_bid_switch(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        original_bid_ref = BidRef("sql-database", "8")
+        selected_bid_ref = [original_bid_ref]
+        page = Page(uid="page-1", name="Original")
+        saved = []
+        coordinator._is_cleaning_up = False
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            get_selected_bid_ref=lambda: selected_bid_ref[0],
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda _page_uid: page)
+        coordinator.main_window = object()
+        coordinator._save_page_overlay_image = (
+            lambda database_id, page_uid, path: saved.append(
+                (database_id, page_uid, path)
+            )
+        )
+
+        def switch_bid_while_dialog_is_open(_parent, _current_path):
+            selected_bid_ref[0] = BidRef("sql-database", "9")
+            return "replacement-overlay.pdf"
+
+        with (
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "select_overlay_image_path",
+                side_effect=switch_bid_while_dialog_is_open,
+            ),
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "show_warning"
+            ) as warning,
+        ):
+            coordinator.select_overlay_image()
+
+        self.assertEqual(saved, [])
+        warning.assert_called_once()
+
+    def test_overlay_file_dialog_return_after_cleanup_is_ignored(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("sql-database", "8")
+        page = Page(uid="page-1", name="Original")
+        saved = []
+        coordinator._is_cleaning_up = False
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda _page_uid: page)
+        coordinator.main_window = object()
+        coordinator._save_page_overlay_image = (
+            lambda database_id, page_uid, path: saved.append(
+                (database_id, page_uid, path)
+            )
+        )
+
+        def finish_cleanup_while_dialog_is_open(_parent, _current_path):
+            coordinator._is_cleaning_up = True
+            return "replacement-overlay.pdf"
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "select_overlay_image_path",
+            side_effect=finish_cleanup_while_dialog_is_open,
+        ):
+            coordinator.select_overlay_image()
+
+        self.assertEqual(saved, [])
 
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

@@ -296,7 +296,11 @@ class DetachedPageViewManager(IShutdownAware):
             return
         self._apply_window_page(view, self._get_page_data(view))
 
-    def _on_database_refreshed(self, file_path: str = "") -> None:
+    def _on_database_refreshed(
+        self,
+        file_path: str = "",
+        external_change: bool = False,
+    ) -> None:
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
@@ -305,6 +309,8 @@ class DetachedPageViewManager(IShutdownAware):
         bid_ref = view.bid_ref
         if bid_ref and file_path and bid_ref.file_path != file_path:
             return
+        if external_change and self._window_undo_service is not None:
+            self._window_undo_service.clear()
         self._refresh_signaler.request()
 
     def _on_layer_visibility_changed(
@@ -418,6 +424,11 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref.file_path != database_id
         ):
             return
+        if (
+            self._window_undo_service is not None
+            and self._get_bid_for_view(view) is None
+        ):
+            self._window_undo_service.clear()
         if not defer_plan_projection:
             self._refresh_signaler.request()
 

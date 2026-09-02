@@ -33,6 +33,16 @@
   incompatible with the active placement geometry.
 - Fixed PDF, 3D-format, and Summary CSV exports continuing with a different bid
   when navigation changed while the native destination dialog was open.
+- Fixed concurrent deletion of one member of a queued bulk move or reassignment
+  being reported as a partial success.
+- Fixed native overlay/import/export dialog continuations writing after their
+  page, bid, or owning window changed; authoritative page replacement now drops
+  matching deferred page settings without discarding unrelated writes. Detached
+  Plan also clears stale undo history when its bid is removed remotely.
+- Fixed restart/reconnect accepting a SQL database recreated under the same
+  server/name as the saved database, and fixed import/export continuations
+  accepting replacement projects or bids that reused the captured UID while a
+  native file dialog was open.
 
 ## 1.2.6.1 - 2026-08-19
 

@@ -1922,6 +1922,23 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def execute() -> MutationExecutionResult:
             def save(recorder):
+                self._mutation_executor.verify_plan_items_exist(
+                    database_id,
+                    tuple(
+                        dict.fromkeys(
+                            [
+                                *(uid for uid, _position in payload.takeoff_positions),
+                                *(uid for uid, _rotation in payload.takeoff_rotations),
+                            ]
+                        )
+                    ),
+                    tuple(
+                        (uid, annotation_type)
+                        for uid, annotation_type, _position in (
+                            payload.annotation_positions
+                        )
+                    ),
+                )
                 if (
                     payload.takeoff_positions
                     and not self._save_takeoff_positions.execute(
@@ -2100,6 +2117,24 @@ class ProjectWriteService(DatabaseMutationWriteService):
         def execute() -> MutationExecutionResult:
             def save(recorder):
                 decoded = payload.decoded_updates()
+                takeoff_uids = (
+                    tuple(str(update[0]) for update in decoded)
+                    if not is_annotation
+                    else ()
+                )
+                annotations = (
+                    tuple(
+                        (str(update[0]), str(update[1]))
+                        for update in decoded
+                    )
+                    if is_annotation
+                    else ()
+                )
+                self._mutation_executor.verify_plan_items_exist(
+                    database_id,
+                    takeoff_uids,
+                    annotations,
+                )
                 if property_kind == "takeoff_text":
                     success = self._save_takeoff_text_properties.execute(
                         database_id,

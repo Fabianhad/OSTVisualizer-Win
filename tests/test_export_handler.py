@@ -41,6 +41,9 @@ class _FakeProjectData:
             )
             for index, name in enumerate(page_names, start=1)
         }
+        self._current_bid = SimpleNamespace(
+            name="25-051 Marriott Element, Capel Hill, NC"
+        )
 
     def get_bid_conditions(self):
         return {}
@@ -52,7 +55,7 @@ class _FakeProjectData:
         return []
 
     def get_current_bid(self):
-        return SimpleNamespace(name="25-051 Marriott Element, Capel Hill, NC")
+        return self._current_bid
 
     def get_current_bid_ref(self):
         return self._bid_ref
@@ -75,17 +78,21 @@ class _FakeDeferredPersistence:
 
 
 def _make_export_handler(**overrides):
+    default_bid = SimpleNamespace(name="Bid")
     constructor_options = {
         "window": None,
         "config_model": SimpleNamespace(),
         "export_service": SimpleNamespace(),
         "summary_csv_export_service": SimpleNamespace(),
-        "project_data_service": SimpleNamespace(),
         "pdf_exporter": SimpleNamespace(),
         "ost_exporter": SimpleNamespace(),
         "osp_exporter": SimpleNamespace(),
         "database_reader": SimpleNamespace(),
         "deferred_persistence_manager": _FakeDeferredPersistence(),
+        "project_data_service": SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
+            get_current_bid=lambda: default_bid,
+        ),
     }
     constructor_options.update(overrides)
     return ExportHandler(**constructor_options)
@@ -117,6 +124,7 @@ def _capture_pdf_default_filename(page_names):
 class ExportHandlerPdfFilenameTests(unittest.TestCase):
     def test_bid_file_export_reads_through_backend_neutral_reader(self):
         calls = []
+        bid = SimpleNamespace(name="Bid")
         database_reader = SimpleNamespace(
             get_raw_bid_data=lambda locator, bid_uid: calls.append((locator, bid_uid))
             or RawBidData()
@@ -127,7 +135,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 get_current_bid_ref=lambda: SimpleNamespace(
                     file_path="sql-database-id", bid_uid="42"
                 ),
-                get_current_bid=lambda: SimpleNamespace(name="Bid"),
+                get_current_bid=lambda: bid,
             ),
         )
 
@@ -401,22 +409,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertEqual(captured_modes, list(transitions))
         self.assertEqual(selected_page_uids, ["page-1", "page-2"])
 
-    def test_pdf_export_cancels_when_bid_changes_in_native_save_dialog(self):
-        project_data = _FakeProjectData(["A1"])
+    def test_pdf_export_cancels_when_bid_changes_inside_native_save_dialog(self):
+        project_data = _FakeProjectData(["Original Page"])
+        current_bid_ref = [BidRef("first.mdb", "bid-1")]
+        project_data.get_current_bid_ref = lambda: current_bid_ref[0]
         exports = []
-
-        def choose_output(_window, _title, _default_filename, _filter):
-            project_data._bid_ref = BidRef("database-1", "bid-2")
-            return r"C:\tmp\stale-context.pdf", ""
-
-        handler = _make_export_handler(
-            config_model=SimpleNamespace(snapshot=Config),
-            project_data_service=project_data,
-            pdf_exporter=SimpleNamespace(
-                export=lambda *_args, **_kwargs: exports.append(True)
-                or ExportResultDto(success=True, format_name="PDF", page_count=1)
-            ),
-        )
+        warnings = []
 
         class _ProgressDialog:
             def __init__(self, _filename, run, parent=None, reporter=None):
@@ -432,6 +430,25 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             def deleteLater(self):
                 pass
 
+        def choose_output(_window, _title, _default_filename, _filter):
+            current_bid_ref[0] = BidRef("second.mdb", "bid-2")
+            project_data._pages["page-1"] = Page(
+                uid="page-1",
+                name="Colliding Page",
+                width_pts=612.0,
+                height_pts=792.0,
+            )
+            return r"C:\tmp\out.pdf", ""
+
+        def export(*_args, **_kwargs):
+            exports.append(True)
+            return ExportResultDto(success=True, format_name="PDF", page_count=1)
+
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            project_data_service=project_data,
+            pdf_exporter=SimpleNamespace(export=export),
+        )
         with patch.object(
             export_handler_module.QtWidgets.QFileDialog,
             "getSaveFileName",
@@ -439,10 +456,99 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         ), patch.object(
             export_handler_module, "ProgressDialog", _ProgressDialog
         ), patch.object(
-            export_handler_module, "show_info"
+            export_handler_module,
+            "show_warning",
+            side_effect=lambda _window, title, message: warnings.append(
+                (title, message)
+            ),
+        ), patch.object(export_handler_module, "show_info"):
+            handler.export_as_pdf(["page-1"])
+
+        self.assertEqual(exports, [])
+        self.assertEqual(warnings[0][0], "Export Cancelled")
+
+    def test_pdf_export_cancels_when_same_uid_bid_is_replaced_inside_save_dialog(
+        self,
+    ):
+        project_data = _FakeProjectData(["Original Page"])
+        original_bid_ref = project_data.get_current_bid_ref()
+        exports = []
+        warnings = []
+
+        def choose_output(_window, _title, _default_filename, _filter):
+            project_data._current_bid = SimpleNamespace(
+                name="Replacement with reused UID"
+            )
+            self.assertEqual(project_data.get_current_bid_ref(), original_bid_ref)
+            return r"C:\tmp\out.pdf", ""
+
+        class _ProgressDialog:
+            def __init__(self, _filename, run, parent=None, reporter=None):
+                self.result = run()
+                self.error = None
+
+            def exec(self):
+                return export_handler_module.QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            project_data_service=project_data,
+            pdf_exporter=SimpleNamespace(
+                export=lambda *_args, **_kwargs: exports.append(True)
+            ),
+        )
+        with patch.object(
+            export_handler_module.QtWidgets.QFileDialog,
+            "getSaveFileName",
+            side_effect=choose_output,
+        ), patch.object(
+            export_handler_module, "ProgressDialog", _ProgressDialog
+        ), patch.object(
+            export_handler_module,
+            "show_warning",
+            side_effect=lambda _window, title, message: warnings.append(
+                (title, message)
+            ),
+        ), patch.object(
+            export_handler_module, "show_critical"
         ):
             handler.export_as_pdf(["page-1"])
+
         self.assertEqual(exports, [])
+        self.assertEqual(warnings[0][0], "Export Cancelled")
+
+    def test_pdf_export_stops_if_window_closes_inside_native_save_dialog(self):
+        project_data = _FakeProjectData(["Original Page"])
+        exports = []
+
+        handler = _make_export_handler(
+            window=object(),
+            config_model=SimpleNamespace(snapshot=Config),
+            project_data_service=project_data,
+            pdf_exporter=SimpleNamespace(),
+        )
+        handler._build_pdf_export_snapshot = (
+            lambda _page_uids: exports.append("snapshot") or []
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=(r"C:\tmp\out.pdf", ""),
+            ),
+            patch.object(export_handler_module, "isValid", return_value=False, create=True),
+            patch.object(export_handler_module, "show_warning") as warning,
+        ):
+            handler.export_as_pdf(["page-1"])
+
+        self.assertEqual(exports, [])
+        warning.assert_not_called()
 
     def test_pdf_export_rejects_case_variant_of_source_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -455,12 +561,13 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 width_pts=612.0,
                 height_pts=792.0,
             )
+            bid = SimpleNamespace(name="Bid")
             project_data = SimpleNamespace(
                 get_bid_conditions=lambda: {},
                 get_page=lambda _uid: page,
                 get_page_takeoffs=lambda _uid: [],
-                get_current_bid=lambda: SimpleNamespace(name="Bid"),
-                get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                get_current_bid=lambda: bid,
+                get_current_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
             )
 
             def unexpected_pdf_export(
@@ -524,12 +631,13 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 width_pts=612.0,
                 height_pts=792.0,
             )
+            bid = SimpleNamespace(name="Bid")
             project_data = SimpleNamespace(
                 get_bid_conditions=lambda: {},
                 get_page=lambda _uid: page,
                 get_page_takeoffs=lambda _uid: [],
-                get_current_bid=lambda: SimpleNamespace(name="Bid"),
-                get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                get_current_bid=lambda: bid,
+                get_current_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
             )
 
             def unexpected_pdf_export(
@@ -596,6 +704,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
 
     def test_general_export_cancels_when_bid_changes_in_native_save_dialog(self):
         current_bid = [BidRef("database-1", "bid-1")]
+        bid = SimpleNamespace(name="Bid")
         export_calls = []
         service = SimpleNamespace(
             get_export_dialog_info=lambda _pages, _format: SimpleNamespace(
@@ -612,7 +721,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             config_model=SimpleNamespace(snapshot=Config),
             export_service=service,
             project_data_service=SimpleNamespace(
-                get_current_bid_ref=lambda: current_bid[0]
+                get_current_bid_ref=lambda: current_bid[0],
+                get_current_bid=lambda: bid,
             ),
         )
 
@@ -621,11 +731,13 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             return "out.html"
 
         handler._show_save_dialog = switch_bid
-        handler.export_format("html", ["page-1"])
+        with patch.object(export_handler_module, "show_warning"):
+            handler.export_format("html", ["page-1"])
         self.assertEqual(export_calls, [])
 
     def test_summary_csv_export_uses_current_grouping_and_appends_extension(self):
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
+        bid = SimpleNamespace(name="Bid")
         calls = []
         infos = []
         original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
@@ -654,7 +766,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             handler = _make_export_handler(
                 window=SimpleNamespace(get_summary_grouping=lambda: grouping),
                 project_data_service=SimpleNamespace(
-                    get_current_bid_ref=lambda: BidRef("database-1", "bid-1")
+                    get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                    get_current_bid=lambda: bid,
                 ),
                 summary_csv_export_service=service,
             )
@@ -669,6 +782,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
 
     def test_summary_csv_export_reports_empty_data_as_warning(self):
         warnings = []
+        bid = SimpleNamespace(name="Bid")
         original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
         original_show_warning = export_handler_module.show_warning
         export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
@@ -695,7 +809,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     get_summary_grouping=lambda: ConditionSummaryGrouping()
                 ),
                 project_data_service=SimpleNamespace(
-                    get_current_bid_ref=lambda: BidRef("database-1", "bid-1")
+                    get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                    get_current_bid=lambda: bid,
                 ),
                 summary_csv_export_service=service,
             )
@@ -712,6 +827,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
 
     def test_summary_csv_export_cancels_when_bid_changes_in_native_save_dialog(self):
         current_bid = [BidRef("database-1", "bid-1")]
+        bid = SimpleNamespace(name="Bid")
         calls = []
 
         def choose_output(_window, _title, _default_filename, _filter):
@@ -723,7 +839,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 get_summary_grouping=lambda: ConditionSummaryGrouping()
             ),
             project_data_service=SimpleNamespace(
-                get_current_bid_ref=lambda: current_bid[0]
+                get_current_bid_ref=lambda: current_bid[0],
+                get_current_bid=lambda: bid,
             ),
             summary_csv_export_service=SimpleNamespace(
                 default_filename=lambda: "Bid Summary.csv",
@@ -735,7 +852,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             export_handler_module.QtWidgets.QFileDialog,
             "getSaveFileName",
             side_effect=choose_output,
-        ):
+        ), patch.object(export_handler_module, "show_warning"):
             handler.export_summary_csv()
         self.assertEqual(calls, [])
 

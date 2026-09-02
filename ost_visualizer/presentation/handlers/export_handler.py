@@ -3,6 +3,7 @@ import os
 from copy import deepcopy
 from typing import Any, Callable, List, Optional
 from PySide6 import QtWidgets
+from shiboken6 import isValid
 from ...application.dtos.export_dto import (
     ExportErrorCode,
     ExportProgressCallback,
@@ -70,6 +71,26 @@ class ExportHandler:
     def _flush_deferred_persistence(self) -> bool:
         return bool(self._deferred_persistence.flush())
 
+    def _current_bid_context(self):
+        return self.project_data.get_current_bid_ref()
+
+    def _export_context_is_current(self, bid_ref, bid) -> bool:
+        if not isValid(self.window):
+            return False
+        if (
+            bid_ref
+            and self._current_bid_context() == bid_ref
+            and self.project_data.get_current_bid() is bid
+        ):
+            return True
+        show_warning(
+            self.window,
+            "Export Cancelled",
+            "The selected bid changed while the save dialog was open. "
+            "Please start the export again.",
+        )
+        return False
+
     def export_format(
         self,
         format_key: str,
@@ -80,8 +101,9 @@ class ExportHandler:
             return
         if not page_uids:
             return
-        bid_ref = self.project_data.get_current_bid_ref()
-        if not bid_ref:
+        bid_ref = self._current_bid_context()
+        bid = self.project_data.get_current_bid()
+        if not bid_ref or bid is None:
             return
         dialog_info = self.export_service.get_export_dialog_info(page_uids, format_key)
         if not dialog_info.success:
@@ -90,7 +112,7 @@ class ExportHandler:
         filename = self._show_save_dialog(dialog_info)
         if not filename:
             return
-        if self.project_data.get_current_bid_ref() != bid_ref:
+        if not self._export_context_is_current(bid_ref, bid):
             return
         request = ExportRequestDto(
             page_uids=page_uids,
@@ -105,8 +127,9 @@ class ExportHandler:
             return
         if not page_uids:
             return
-        bid_ref = self.project_data.get_current_bid_ref()
-        if not bid_ref:
+        bid_ref = self._current_bid_context()
+        bid = self.project_data.get_current_bid()
+        if not bid_ref or bid is None:
             return
         valid_pages = []
         first_page_name = ""
@@ -122,8 +145,7 @@ class ExportHandler:
                 self.window, "No Valid Pages", "No valid pages selected for export."
             )
             return
-        bid = self.project_data.get_current_bid()
-        bid_name = bid.name if bid else "Bid"
+        bid_name = bid.name
         if len(valid_pages) == 1:
             default_filename = f"{bid_name} - {first_page_name}"
             if not is_pdf_suffix(default_filename):
@@ -140,7 +162,7 @@ class ExportHandler:
         )
         if not filename:
             return
-        if self.project_data.get_current_bid_ref() != bid_ref:
+        if not self._export_context_is_current(bid_ref, bid):
             return
         pages_data = self._build_pdf_export_snapshot(page_uids)
         if not pages_data:
@@ -245,8 +267,9 @@ class ExportHandler:
     def export_summary_csv(self) -> None:
         if not self._flush_deferred_persistence():
             return
-        bid_ref = self.project_data.get_current_bid_ref()
-        if not bid_ref:
+        bid_ref = self._current_bid_context()
+        bid = self.project_data.get_current_bid()
+        if not bid_ref or bid is None:
             return
         default_filename = self.summary_csv_export_service.default_filename()
         if not is_csv_suffix(default_filename):
@@ -259,7 +282,7 @@ class ExportHandler:
         )
         if not filename:
             return
-        if self.project_data.get_current_bid_ref() != bid_ref:
+        if not self._export_context_is_current(bid_ref, bid):
             return
         if not is_csv_suffix(filename):
             filename = f"{filename}{CSV_EXTENSION}"
@@ -341,7 +364,14 @@ class ExportHandler:
             )
             return
         bid = self.project_data.get_current_bid()
-        bid_name = bid.name if bid else "Bid"
+        if bid is None:
+            show_warning(
+                self.window,
+                "No Bid Selected",
+                "Please load a database and select a bid before exporting.",
+            )
+            return
+        bid_name = bid.name
         default_filename = f"{bid_name}.{extension}"
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
@@ -350,6 +380,8 @@ class ExportHandler:
             f"{format_name} Files (*.{extension});;All Files (*.*)",
         )
         if not filename:
+            return
+        if not self._export_context_is_current(bid_ref, bid):
             return
         try:
             raw_data = self._database_reader.get_raw_bid_data(

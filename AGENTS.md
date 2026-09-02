@@ -76,6 +76,11 @@ Threading and events:
 - Worker threads must marshal back through existing Qt bridges before UI updates or EventBus publication.
 - Do not publish EventBus events from worker threads.
 - Subscribe in constructors/init paths and unsubscribe in `cleanup()`.
+- Native file dialogs run nested event loops. Capture the complete database/bid/
+  page target before opening them, then reject the continuation if that context
+  changed, the authoritative hierarchy entity was replaced even with the same
+  UID, or the owning window was cleaned up or destroyed while the dialog was
+  open.
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
@@ -166,6 +171,11 @@ Persistence:
 
 Database backends:
 
+- A saved SQL descriptor's `DatabaseGuid` is the logical database identity.
+  Collaboration startup must compare it with live `DatabaseMetadata` before
+  cleanup, journal recovery, hydration, or session creation; a database recreated
+  under the same server/name is a replacement and requires an explicit re-add.
+
 - Backend selection occurs at the descriptor/adapter registry boundary. Shared
   application and domain workflows use stable database IDs and neutral ports.
 - Microsoft Access implementation remains under `infrastructure/mdb`; Microsoft
@@ -225,8 +235,10 @@ Database backends:
   restore only through an accepted navigation generation, coalesce with latest
   state winning, and bound best-effort shutdown flushes. MDB retains synchronous
   database persistence. This noncritical UI state must never prevent closing or
-  own or clear live UID-based page navigation. Other deferred project settings
-  retain strict failure handling.
+  own or clear live UID-based page navigation. Authoritative remote page changes
+  cancel matching deferred page settings and workspace writes before a deleted
+  and recreated UID can receive stale state; unrelated page and layer writes are
+  retained. Other deferred project settings retain strict failure handling.
 - Long-lived SQL edit leases are requested and released through the coordinator's
   worker command queue; presentation code must not call the collaboration store
   or wait for SQL on the Qt thread. Access receives an immediate local grant.
@@ -271,7 +283,10 @@ Database backends:
   cannot resurrect the item. Provisional takeoff identities are transient,
   non-selectable pending resources; local reconciliation projects the provisional
   and authoritative UIDs as one targeted replacement and preserves other queued
-  previews during unrelated remote refreshes. A committed projection failure
+  previews during unrelated remote refreshes. Queued plan geometry and property
+  mutations verify every requested takeoff and annotation row inside the mutation
+  transaction before any bulk write, so a concurrently deleted selection member
+  rejects the whole local operation. A committed projection failure
   enters one idempotent controlled-recovery request; presentation callbacks must
   wait for the recovered completion instead of showing a premature failure or
   compensating committed data. Recovered authoritative results may project while
@@ -337,7 +352,9 @@ State and identity:
   or placement tools only while their captured database, bid, and page still own
   that surface. Main and detached Plan surfaces retain mutation history for a
   committed operation, but a stale completion must not project old interaction
-  state into a newly navigated context.
+  state into a newly navigated context. If authoritative hierarchy refresh removes
+  the detached surface's bid, clear its undo history before refreshing or
+  retargeting the window.
 - Plan View scene bands live in `presentation/scene/plan_view_z_order.py`.
   Overlay-only imagery owns the primary page-image band, while Show Both may
   project its overlay into the foreground-image band. Base, overlay, composite,

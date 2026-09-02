@@ -29,6 +29,7 @@ class _LoadedFileCache:
     parsed_hierarchy: HierarchyFileEntry
     cdn_types: Dict[str, CdnType] = field(default_factory=dict)
     pages: Dict[str, Page] = field(default_factory=dict)
+    reload_generation: int = 0
 
 
 class MdbFileParser(IFileParser):
@@ -296,8 +297,11 @@ class FileProjectRepository(IProjectRepository):
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
         with self._state_lock:
-            loaded = file_path in self._loaded_files
-        if not loaded:
+            loaded_cache = self._loaded_files.get(file_path)
+            if loaded_cache is not None:
+                loaded_cache.reload_generation += 1
+                reload_generation = loaded_cache.reload_generation
+        if loaded_cache is None:
             error_message = f"File not found in loaded files: {file_path}"
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
@@ -311,16 +315,19 @@ class FileProjectRepository(IProjectRepository):
             return FileLoadResult(success=False, error_message=error_message)
         if result.success:
             with self._state_lock:
-                if file_path not in self._loaded_files:
+                if (
+                    self._loaded_files.get(file_path) is not loaded_cache
+                    or loaded_cache.reload_generation != reload_generation
+                ):
                     return FileLoadResult(
                         success=False,
                         error_message=(
-                            "The navigation database was unloaded while refreshing."
+                            "The navigation database was unloaded, reopened, or "
+                            "refreshed again while refreshing."
                         ),
                     )
-                cache = self._loaded_files[file_path]
-                cache.parsed_hierarchy = result.parsed_hierarchy
-                cache.cdn_types = dict(result.cdn_types)
+                loaded_cache.parsed_hierarchy = result.parsed_hierarchy
+                loaded_cache.cdn_types = dict(result.cdn_types)
                 self._rebuild_merged_hierarchy()
                 result.hierarchy = self._current_hierarchy.data
         return result

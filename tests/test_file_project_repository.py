@@ -1,3 +1,4 @@
+import threading
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -43,6 +44,110 @@ class FakeLifecycleParser:
 
 
 class MdbFileParserTests(unittest.TestCase):
+    def test_stale_reload_cannot_overwrite_same_path_reopen(self):
+        reload_started = threading.Event()
+        release_reload = threading.Event()
+
+        class BlockingParser(FakeLifecycleParser):
+            def __init__(self):
+                super().__init__()
+                self._parse_lock = threading.Lock()
+                self._parse_count = 0
+
+            def parse(self, file_path):
+                with self._parse_lock:
+                    self._parse_count += 1
+                    parse_count = self._parse_count
+                if parse_count == 2:
+                    reload_started.set()
+                    if not release_reload.wait(2.0):
+                        raise TimeoutError("test did not release the blocked reload")
+                    display_name = "Stale reload"
+                elif parse_count == 3:
+                    display_name = "Replacement"
+                else:
+                    display_name = "Original"
+                return FileLoadResult(
+                    success=True,
+                    parsed_hierarchy=HierarchyFileEntry(
+                        file_path=file_path,
+                        display_name=display_name,
+                    ),
+                )
+
+        parser = BlockingParser()
+        repository = FileProjectRepository(parser)
+        self.assertTrue(repository.load_file("same-path.mdb").success)
+        reload_results = []
+        worker = threading.Thread(
+            target=lambda: reload_results.append(
+                repository.reload_database("same-path.mdb")
+            )
+        )
+        worker.start()
+        self.assertTrue(reload_started.wait(2.0))
+        self.assertTrue(repository.unload_file("same-path.mdb"))
+        self.assertTrue(repository.load_file("same-path.mdb").success)
+        release_reload.set()
+        worker.join(timeout=2.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(reload_results), 1)
+        self.assertFalse(reload_results[0].success)
+        hierarchy = repository.current_hierarchy_data
+        self.assertEqual(len(hierarchy.loaded_files), 1)
+        self.assertEqual(hierarchy.loaded_files[0].display_name, "Replacement")
+
+    def test_older_reload_cannot_overwrite_newer_same_runtime_reload(self):
+        older_reload_started = threading.Event()
+        release_older_reload = threading.Event()
+
+        class OutOfOrderParser(FakeLifecycleParser):
+            def __init__(self):
+                super().__init__()
+                self._parse_lock = threading.Lock()
+                self._parse_count = 0
+
+            def parse(self, file_path):
+                with self._parse_lock:
+                    self._parse_count += 1
+                    parse_count = self._parse_count
+                if parse_count == 2:
+                    older_reload_started.set()
+                    if not release_older_reload.wait(2.0):
+                        raise TimeoutError("test did not release the older reload")
+                    display_name = "Older refresh"
+                elif parse_count == 3:
+                    display_name = "Newer refresh"
+                else:
+                    display_name = "Original"
+                return FileLoadResult(
+                    success=True,
+                    parsed_hierarchy=HierarchyFileEntry(
+                        file_path=file_path,
+                        display_name=display_name,
+                    ),
+                )
+
+        repository = FileProjectRepository(OutOfOrderParser())
+        self.assertTrue(repository.load_file("active.mdb").success)
+        older_results = []
+        older_worker = threading.Thread(
+            target=lambda: older_results.append(
+                repository.reload_database("active.mdb")
+            )
+        )
+        older_worker.start()
+        self.assertTrue(older_reload_started.wait(2.0))
+        newer_result = repository.reload_database("active.mdb")
+        self.assertTrue(newer_result.success)
+        release_older_reload.set()
+        older_worker.join(timeout=2.0)
+        self.assertFalse(older_worker.is_alive())
+        self.assertEqual(len(older_results), 1)
+        self.assertFalse(older_results[0].success)
+        hierarchy = repository.current_hierarchy_data
+        self.assertEqual(hierarchy.loaded_files[0].display_name, "Newer refresh")
+
     def test_sql_bid_read_hydrates_cover_sheet_snapshots_in_navigation_result(self):
         cover_sheet = object()
         connection = object()
@@ -222,7 +327,13 @@ class MdbFileParserTests(unittest.TestCase):
     def test_reload_refreshes_read_connection_without_closing_write_connection(self):
         parser = FakeLifecycleParser()
         repository = FileProjectRepository(parser)
-        repository._loaded_files["active.mdb"] = SimpleNamespace()
+        repository._loaded_files["active.mdb"] = (
+            file_project_repository._LoadedFileCache(
+                file_path="active.mdb",
+                created_at=0.0,
+                parsed_hierarchy=HierarchyFileEntry(file_path="active.mdb"),
+            )
+        )
         result = repository.reload_database("active.mdb")
         self.assertFalse(result.success)
         self.assertEqual(parser.refreshed, ["active.mdb"])

@@ -13,6 +13,7 @@ class FileOpenedEvent:
 @dataclass
 class DatabaseRefreshedEvent:
     file_path: str = ""
+    external_change: bool = False
 
 
 @dataclass

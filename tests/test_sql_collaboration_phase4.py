@@ -858,6 +858,98 @@ def _batch(
 
 
 class SqlCollaborationPhase4Tests(unittest.TestCase):
+    def test_session_rejects_database_recreated_with_saved_connection_identity(self):
+        expected_guid = "00000000-0000-0000-0000-000000000123"
+        replacement_guid = "00000000-0000-0000-0000-000000000456"
+        inserted_sessions = []
+        statements = []
+
+        class _Requests:
+            @staticmethod
+            def request(_database_id, *, read_only):
+                self.assertFalse(read_only)
+                return SimpleNamespace(
+                    location=SqlServerDatabaseLocation(
+                        server="localhost",
+                        database="TEST",
+                        database_guid=expected_guid,
+                    )
+                )
+
+        class _Cursor:
+            def __init__(self):
+                self.last_sql = ""
+
+            def execute(self, sql, *parameters):
+                self.last_sql = sql
+                statements.append(sql)
+                if "INSERT INTO [ostv].[Sessions]" in sql:
+                    inserted_sessions.append(parameters)
+                return self
+
+            def fetchone(self):
+                if "SELECT [DatabaseGuid]" in self.last_sql:
+                    return (replacement_guid,)
+                if "CHANGE_TRACKING_CURRENT_VERSION" in self.last_sql:
+                    return (8,)
+                raise AssertionError(self.last_sql)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        class _Lease:
+            def __init__(self):
+                self.commits = 0
+                self.rollbacks = 0
+
+            def cursor(self):
+                return _Cursor()
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        lease = _Lease()
+
+        class _Connections:
+            @contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.assertFalse(autocommit)
+                yield lease
+
+            def assertFalse(self, value):
+                self_test.assertFalse(value)
+
+        self_test = self
+        store = SqlCollaborationStore.__new__(SqlCollaborationStore)
+        store._requests = _Requests()
+        store._connections = _Connections()
+        with self.assertRaisesRegex(
+            SqlInfrastructureError,
+            "replaced since this connection was saved",
+        ) as raised:
+            store.start_session(
+                "saved-database-id",
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+                "test-user",
+                "test-machine",
+                "test-version",
+            )
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
+        self.assertEqual(inserted_sessions, [])
+        self.assertEqual(
+            statements,
+            ["SELECT [DatabaseGuid] FROM [ostv].[DatabaseMetadata]"],
+        )
+        self.assertEqual(lease.commits, 0)
+        self.assertEqual(lease.rollbacks, 1)
+
     def test_successful_placement_and_deletion_emit_no_timing_info_log(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -4978,6 +5070,138 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             request.dependency_resources,
         )
         self.assertFalse(insert_calls[0]["publish_conflict_event"])
+
+    def test_queued_takeoff_reassign_rejects_missing_member_before_bulk_update(self):
+        queued = []
+
+        class MutationQueue:
+            def queue_request(self, *args, **kwargs):
+                queued.append((args, kwargs))
+                return 9
+
+        class MutationExecutor:
+            def __init__(self):
+                self.verifications = []
+
+            def verify_plan_items_exist(
+                self, database_id, takeoff_uids, annotations
+            ):
+                self.verifications.append(
+                    (database_id, tuple(takeoff_uids), tuple(annotations))
+                )
+                raise RuntimeError("selected takeoff was deleted")
+
+        executor = MutationExecutor()
+        save_calls = []
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._sql_collaboration_provider = lambda: MutationQueue()
+        service._mutation_executor = executor
+        service._save_takeoffs_condition = SimpleNamespace(
+            execute=lambda *_args: save_calls.append(_args) or True
+        )
+
+        def execute_mutation(
+            _database_id,
+            _resources,
+            operation,
+            **_kwargs,
+        ):
+            value = operation(SimpleNamespace(record=lambda *_args, **_kwargs: None))
+            return DatabaseMutationResult(
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                value=value,
+            )
+
+        service._execute_database_mutation = execute_mutation
+        service.queue_plan_properties(
+            "database",
+            "8",
+            "takeoff_condition",
+            [("101", "20"), ("102", "20")],
+            lambda _result: None,
+            page_uids=("30",),
+            dependency_resources=(ResourceRef("condition", "20", 8),),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "selected takeoff was deleted"):
+            queued[0][0][1]()
+
+        self.assertEqual(
+            executor.verifications,
+            [("database", ("101", "102"), ())],
+        )
+        self.assertEqual(save_calls, [])
+
+    def test_queued_bulk_move_rejects_missing_member_before_geometry_update(self):
+        queued = []
+
+        class MutationQueue:
+            def queue_request(self, *args, **kwargs):
+                queued.append((args, kwargs))
+                return 10
+
+        class MutationExecutor:
+            def __init__(self):
+                self.verifications = []
+
+            def verify_plan_items_exist(
+                self, database_id, takeoff_uids, annotations
+            ):
+                self.verifications.append(
+                    (database_id, tuple(takeoff_uids), tuple(annotations))
+                )
+                raise RuntimeError("selected plan item was deleted")
+
+        executor = MutationExecutor()
+        save_calls = []
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._sql_collaboration_provider = lambda: MutationQueue()
+        service._mutation_executor = executor
+        service._save_takeoff_positions = SimpleNamespace(
+            execute=lambda *_args: save_calls.append(_args) or True
+        )
+        service._save_takeoff_rotations = SimpleNamespace(
+            execute=lambda *_args: save_calls.append(_args) or True
+        )
+        service._save_annotation_positions = SimpleNamespace(
+            execute=lambda *_args: save_calls.append(_args) or True
+        )
+
+        def execute_mutation(
+            _database_id,
+            _resources,
+            operation,
+            **_kwargs,
+        ):
+            value = operation(SimpleNamespace(record=lambda *_args, **_kwargs: None))
+            return DatabaseMutationResult(
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                value=value,
+            )
+
+        service._execute_database_mutation = execute_mutation
+        service.queue_plan_geometry(
+            "database",
+            "8",
+            lambda _result: None,
+            takeoff_positions=[
+                ("101", [1.0, 2.0]),
+                ("102", [3.0, 4.0]),
+            ],
+            annotation_positions=[("201", "line", [5.0, 6.0, 7.0, 8.0])],
+            page_uids=("30",),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "selected plan item was deleted"):
+            queued[0][0][1]()
+
+        self.assertEqual(
+            executor.verifications,
+            [("database", ("101", "102"), (("201", "line"),))],
+        )
+        self.assertEqual(save_calls, [])
 
     def test_takeoff_insert_rejects_incomplete_identities_before_commit(self):
         service = ProjectWriteService.__new__(ProjectWriteService)

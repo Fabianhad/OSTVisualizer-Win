@@ -284,6 +284,27 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertEqual(self.manager.pending_count, 0)
 
+    def test_remote_page_replacement_discards_only_stale_page_writes(self):
+        self.manager.schedule_page_view_state(
+            "a.mdb", "b1", "p1", 2.0, 10.0, 20.0
+        )
+        self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
+        self.manager.schedule_page_invert("a.mdb", "p1", True)
+        self.manager.schedule_page_bitonal("a.mdb", "p2", True)
+        self.manager.schedule_layer_show("a.mdb", "l1", False)
+
+        self.manager.cancel_pages("a.mdb", "b1", ["p1"])
+
+        self.assertEqual(self.manager.pending_count, 2)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("page_bitonal", "a.mdb", "p2", True),
+                ("layer_show", "a.mdb", "l1", False, False),
+            ],
+        )
+
     def test_sql_selected_page_uses_workspace_service_while_layer_is_mutation(self):
         self.service.queue_sql_settings = True
         self.manager.schedule_bid_selected_page("sql-db", "7", "p2")
@@ -2506,6 +2527,46 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._finish_refresh = lambda: calls.append("finish")
         coordinator._on_database_refreshed(file_path="a.mdb")
         self.assertEqual(calls, [("flush", "a.mdb"), "start", "refresh", "finish"])
+
+    def test_external_access_refresh_discards_old_runtime_state_before_projection(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda file_path: calls.append(("flush", file_path)) or True,
+            cancel_for_file=lambda file_path: calls.append(("cancel", file_path)),
+        )
+        coordinator._undo_service = SimpleNamespace(
+            clear=lambda: calls.append("clear-undo")
+        )
+        coordinator._nav = SimpleNamespace(
+            start_refresh=lambda _ui_state, _placement, selected_area_uid="": calls.append(
+                "start"
+            )
+            or True
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_area_uid="",
+            selected_page_uids=[],
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._mesh_scene_dirty = False
+        coordinator._placement = SimpleNamespace()
+        coordinator._do_file_refresh = lambda: calls.append("refresh")
+        coordinator._finish_refresh = lambda: calls.append("finish")
+        coordinator._on_database_refreshed(
+            file_path="a.mdb",
+            external_change=True,
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("cancel", "a.mdb"),
+                "clear-undo",
+                "start",
+                "refresh",
+                "finish",
+            ],
+        )
 
     def test_database_refresh_stops_when_deferred_flush_fails(self):
         calls = []

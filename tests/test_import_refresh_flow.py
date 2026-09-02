@@ -6,13 +6,18 @@ import unittest
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
+from unittest.mock import patch
 from PySide6 import QtWidgets
 from ost_visualizer.application.services.import_service import ImportService
 from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
 )
-from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+    HierarchyProjectInfo,
+)
 from ost_visualizer.infrastructure.mdb.importers import (
     osp_importer as osp_importer_module,
 )
@@ -134,8 +139,17 @@ class FakeImportService:
 
 
 class FakeProjectData:
+    def __init__(self):
+        self.file_entry = HierarchyFileEntry(
+            file_path="target.mdb",
+            bid_projects={"original-project": HierarchyProjectInfo("Original")},
+        )
+
     def get_current_file_path(self):
         return "target.mdb"
+
+    def get_hierarchy(self):
+        return HierarchyData([self.file_entry])
 
 
 class FakeUiState:
@@ -952,6 +966,110 @@ class ImportRefreshFlowTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_import_handler_keeps_project_target_that_opened_native_file_dialog(self):
+        service = FakeImportService()
+        ui_state = FakeUiState()
+        ui_state.selected_project_uid = "original-project"
+        handler = ImportHandler(
+            window=None,
+            project_data_service=FakeProjectData(),
+            import_service=service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
+        )
+
+        def select_source_file(_parent, _caption, _directory, _filter):
+            ui_state.selected_project_uid = "other-database-project"
+            return "source.ost", ""
+
+        with patch.object(
+            import_handler_module.QtWidgets.QFileDialog,
+            "getOpenFileName",
+            side_effect=select_source_file,
+        ), patch.object(
+            import_handler_module, "ProgressDialog", FakeProgressDialog
+        ), patch.object(import_handler_module, "show_info"):
+            handler.import_ost()
+
+        self.assertEqual(
+            service.import_calls,
+            [("source.ost", "target.mdb", "original-project", False)],
+        )
+
+    def test_import_handler_cancels_when_target_project_is_replaced_with_same_uid(
+        self,
+    ):
+        service = FakeImportService()
+        ui_state = FakeUiState()
+        ui_state.selected_project_uid = "original-project"
+        project_data = FakeProjectData()
+        warnings = []
+        handler = ImportHandler(
+            window=None,
+            project_data_service=project_data,
+            import_service=service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
+        )
+
+        def select_source_file(_parent, _caption, _directory, _filter):
+            project_data.file_entry.bid_projects["original-project"] = (
+                HierarchyProjectInfo("Replacement with reused UID")
+            )
+            return "source.ost", ""
+
+        with patch.object(
+            import_handler_module.QtWidgets.QFileDialog,
+            "getOpenFileName",
+            side_effect=select_source_file,
+        ), patch.object(
+            import_handler_module,
+            "show_warning",
+            side_effect=lambda _parent, title, message: warnings.append(
+                (title, message)
+            ),
+        ), patch.object(
+            import_handler_module, "ProgressDialog", FakeProgressDialog
+        ), patch.object(
+            import_handler_module, "show_info"
+        ):
+            handler.import_ost()
+
+        self.assertEqual(service.import_calls, [])
+        self.assertEqual(service.queued_imports, [])
+        self.assertEqual(warnings[0][0], "Import Cancelled")
+
+    def test_import_handler_stops_if_window_closes_inside_native_file_dialog(self):
+        service = FakeImportService()
+        deferred = FakeDeferredPersistence()
+        handler = ImportHandler(
+            window=object(),
+            project_data_service=FakeProjectData(),
+            import_service=service,
+            ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=deferred,
+            ui_access_manager=FakeAccess(),
+        )
+
+        with (
+            patch.object(
+                import_handler_module.QtWidgets.QFileDialog,
+                "getOpenFileName",
+                return_value=("source.ost", ""),
+            ),
+            patch.object(import_handler_module, "isValid", return_value=False),
+            patch.object(import_handler_module, "ProgressDialog", FakeProgressDialog),
+            patch.object(import_handler_module, "show_info"),
+            patch.object(import_handler_module, "show_critical"),
+        ):
+            handler.import_ost()
+
+        self.assertEqual(deferred.flush_calls, [])
+        self.assertEqual(service.import_calls, [])
+        self.assertEqual(service.queued_imports, [])
 
     def test_sql_import_handler_queues_without_modal_or_ui_thread_reload(self):
         service = FakeImportService()

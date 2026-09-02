@@ -526,6 +526,36 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         self.assertEqual(operations.reloads, [locator])
         self.assertEqual(notifier.refreshes, [locator])
 
+    def test_access_monitor_marks_completed_refresh_as_external(self):
+        published = []
+        service = VisualizationService.__new__(VisualizationService)
+        service.event_bus = SimpleNamespace(
+            publish=lambda event, **payload: published.append((event, payload))
+        )
+        service._on_full_refresh_ready("same-path.mdb")
+        self.assertEqual(
+            published,
+            [
+                (
+                    AppEvents.DATABASE_REFRESHED,
+                    {"file_path": "same-path.mdb", "external_change": True},
+                )
+            ],
+        )
+
+    def test_queued_access_callback_cannot_reach_same_path_reopen(self):
+        locator = "C:/projects/same-path.mdb"
+        service, monitor, _data, operations, notifier = _service(
+            locator, DatabaseBackend.ACCESS
+        )
+        service.start_database_monitoring()
+        monitor.callback()
+        service.stop_database_monitoring()
+        service.start_database_monitoring()
+        service._callback_bridge.run_pending()
+        self.assertEqual(operations.reloads, [])
+        self.assertEqual(notifier.refreshes, [])
+
     def test_sql_database_never_starts_access_companion_monitor(self):
         locator = "sql-database-id"
         service, monitor, _data, operations, notifier = _service(
