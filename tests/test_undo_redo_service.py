@@ -91,6 +91,38 @@ class UndoRedoServiceTests(unittest.TestCase):
         self.assertFalse(self.service.can_undo())
         self.assertTrue(self.service.can_redo())
 
+    def test_late_cleared_history_callback_cannot_thaw_new_uncertain_history(self):
+        stale_completions = []
+        current_completions = []
+        self.service.push(
+            lambda complete: stale_completions.append(complete),
+            lambda _complete: None,
+        )
+        self.service.undo()
+
+        self.service.clear()
+        self.service.push(
+            lambda complete: current_completions.append(complete),
+            lambda _complete: None,
+        )
+        self.service.undo()
+        current_complete = current_completions.pop()
+        current_complete(
+            self._mutation_result(MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN)
+        )
+        self.service.push(
+            lambda _complete: None,
+            lambda _complete: None,
+        )
+
+        stale_completions.pop()(
+            self._mutation_result(MutationOutcomeStatus.REJECTED)
+        )
+
+        self.assertFalse(self.service.can_undo())
+        current_complete(self._mutation_result(MutationOutcomeStatus.COMMITTED))
+        self.assertTrue(self.service.can_undo())
+
 
 if __name__ == "__main__":
     unittest.main()

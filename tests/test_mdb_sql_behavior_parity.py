@@ -174,6 +174,46 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         self.assertEqual(read_calls, [("local.mdb", "Locked")])
         self.assertEqual(locked_values, [True])
 
+    def test_main_sql_scale_failure_restores_only_its_current_page(self):
+        callbacks = []
+        refreshes = []
+
+        def queue_page_setting(*_args, **kwargs):
+            callbacks.append(kwargs["callback"])
+            return True
+
+        state = SimpleNamespace(
+            active_page_uid="page-1",
+            get_selected_bid_ref=lambda: BidRef("sql-database", "bid-1"),
+        )
+        coordinator = SimpleNamespace(
+            _flush_deferred_for_file=lambda _database_id: True,
+            _project_write_service=SimpleNamespace(
+                queue_page_setting_if_sql=queue_page_setting,
+                save_page_scale=lambda *_args: self.fail(
+                    "SQL scale changes must not use the synchronous write path"
+                ),
+            ),
+            ui_state_manager=state,
+            _update_page_settings_bar=refreshes.append,
+        )
+
+        UIEventCoordinator._on_page_scale_changed(
+            coordinator, "sql-database", "page-1", 0.25, 12.0
+        )
+        callbacks[0](
+            self._result(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED)
+        )
+        self.assertEqual(refreshes, [])
+
+        state.active_page_uid = "page-2"
+        callbacks[0](self._result(MutationOutcomeStatus.CONFLICT))
+        self.assertEqual(refreshes, [])
+
+        state.active_page_uid = "page-1"
+        callbacks[0](self._result(MutationOutcomeStatus.CONFLICT))
+        self.assertEqual(refreshes, ["page-1"])
+
     def test_failed_history_operation_stays_undoable_for_mdb_and_sql(self):
         for backend in ("mdb", "sql"):
             with self.subTest(backend=backend):

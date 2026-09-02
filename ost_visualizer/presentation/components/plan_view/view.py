@@ -4282,6 +4282,22 @@ class TakeoffPlanView(
         self._overlay_move_drag_start_rect = None
         self._overlay_move_dragging = False
 
+    def project_overlay_rect(
+        self,
+        page_uid: str,
+        overlay_rect: Optional[Tuple[float, float, float, float]],
+    ) -> bool:
+        if self._current_page is None or self._current_page.uid != page_uid:
+            return False
+        if overlay_rect is None:
+            self._current_page.overlay_rect = None
+            self._current_render_identity = self._build_render_identity(
+                self._current_page, self._current_bid_ref
+            )
+        else:
+            self._accept_overlay_move_preview_rect(overlay_rect)
+        return self._force_reload_current_page_visuals()
+
     def _outlined_icon_pixmap(self, icon_name: str, hex_color: str) -> QPixmap:
         svg_path = resource_path("resources", "icons", icon_name)
         svg_data = recolor_svg(svg_path, hex_color)

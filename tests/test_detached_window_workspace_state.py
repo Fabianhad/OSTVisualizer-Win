@@ -4409,6 +4409,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
     def test_detached_sql_scale_uses_queued_page_setting_path(self):
         calls = []
+        callbacks = []
         bid_ref = BidRef("sql-database", "bid-1")
         view = SimpleNamespace(
             file_path="sql-database",
@@ -4417,6 +4418,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
 
         def queue_page_setting(*args, **kwargs):
+            callbacks.append(kwargs.pop("callback"))
             calls.append(("queue", args, kwargs))
             return True
 
@@ -4449,6 +4451,25 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 )
             ],
         )
+        callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-database",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                commit_attempted=True,
+            )
+        )
+        self.assertNotIn(("refresh",), calls)
+        callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-database",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(calls[-1], ("refresh",))
 
     def test_deferred_remote_page_deletion_retargets_before_projection(self):
         view = AnnotationView(

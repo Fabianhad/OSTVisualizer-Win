@@ -20,7 +20,19 @@
   reconnects also invalidate old modal and Plan leases and reject projections,
   presence, locks, or status callbacks from the previous SQL session. Delayed
   hierarchy and Condition completions likewise preserve newer navigation,
-  selection, placement, and toolbar state.
+  selection, placement, and toolbar state. Recovered mutation completions now
+  remain bound to the exact replacement session, and startup imports, modal
+  saves, Plan scale controls, and debounced page display settings wait for the
+  final recovered outcome instead of treating queue acceptance or an
+  intermediate recovery state as completion. Failed visual settings restore
+  only their still-current page or bid, stale workspace selections fall back to
+  their loaded database, authoritative page/layer refreshes invalidate older
+  visual-setting callbacks, and cleared undo history ignores late completions.
+- Fixed structural Condition and layer changes leaving multi-Condition placement
+  active after a primary or secondary Condition became hidden, unavailable, or
+  incompatible with the active placement geometry.
+- Fixed PDF, 3D-format, and Summary CSV exports continuing with a different bid
+  when navigation changed while the native destination dialog was open.
 
 ## 1.2.6.1 - 2026-08-19
 

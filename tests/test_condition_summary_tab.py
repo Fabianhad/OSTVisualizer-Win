@@ -1038,15 +1038,22 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             "c1": Condition(uid="c1", name="A", layer_uid="layer-a"),
             "c2": Condition(uid="c2", name="B", layer_uid="layer-b"),
         }
+        layers = [SimpleNamespace(uid="layer-a", show=True)]
 
         class FakeProjectData:
             def get_bid_conditions(self):
                 return conditions
 
+            def get_bid_layer_snapshot(self):
+                return list(layers)
+
             def is_image_layer_uid(self, _layer_uid):
                 return False
 
             def update_layer_visibility(self, layer_uid, show):
+                for layer in layers:
+                    if str(layer.uid) == str(layer_uid):
+                        layer.show = bool(show)
                 for condition in conditions.values():
                     if str(condition.layer_uid or "") == str(layer_uid):
                         condition.layer_visible = bool(show)
@@ -1101,7 +1108,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             publish=lambda *_args, **_call_options: None
         )
         coordinator._deferred_persistence = SimpleNamespace(
-            schedule_layer_show=lambda _db_path, _layer_uid, _show: None
+            schedule_layer_show=lambda _db_path, _layer_uid, _show, **_callbacks: None
         )
         coordinator.plan_view = None
         coordinator.opengl_viewer = None

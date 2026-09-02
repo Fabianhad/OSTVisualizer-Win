@@ -202,6 +202,7 @@ class FakePlanView:
         self.pending_mutation_uids = set()
         self.geometry_lease_pending = set()
         self.geometry_lease_granted = set()
+        self.projected_overlay_rects = []
         self.clipboard_changed = SimpleNamespace(emit=lambda: None)
 
     def set_selected_uids(self, uids):
@@ -264,6 +265,10 @@ class FakePlanView:
 
     def mark_intelligent_paste_drag_pending(self, pasted_uids, source_anchor_ost):
         self.intelligent_paste_calls.append((list(pasted_uids), source_anchor_ost))
+        return True
+
+    def project_overlay_rect(self, page_uid, overlay_rect):
+        self.projected_overlay_rects.append((page_uid, overlay_rect))
         return True
 
     def get_coordinate_system(self):
@@ -1061,6 +1066,7 @@ class FakeWriteService:
 class FakeDeferredPersistence:
     def __init__(self, accepts_writes=True):
         self.overlay_rect_calls = []
+        self.overlay_rect_callbacks = []
         self.accepts_writes = accepts_writes
 
     def schedule_page_overlay_rect(
@@ -1068,8 +1074,10 @@ class FakeDeferredPersistence:
         db_path: str,
         page_uid: str,
         overlay_rect: tuple[float, float, float, float],
+        **callbacks,
     ) -> bool:
         self.overlay_rect_calls.append((db_path, page_uid, overlay_rect))
+        self.overlay_rect_callbacks.append(callbacks)
         return self.accepts_writes
 
 
@@ -1461,6 +1469,31 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         accepted = handler.save_current_page_overlay_rect((1, 2.5, 3, 4.25))
         self.assertFalse(accepted)
         self.assertEqual(data.get_page("p1").overlay_rect, original_rect)
+
+    def test_overlay_rect_terminal_failure_restores_current_plan_only(self):
+        data = FakeProjectData()
+        data.get_page("p1").overlay_rect = (0.0, 0.0, 10.0, 10.0)
+        deferred = FakeDeferredPersistence()
+        handler = self._overlay_handler(data, deferred)
+        self.assertTrue(handler.save_current_page_overlay_rect((1, 2, 3, 4)))
+
+        deferred.overlay_rect_callbacks[0]["restore_authoritative"]()
+        self.assertEqual(
+            data.get_page("p1").overlay_rect,
+            (0.0, 0.0, 10.0, 10.0),
+        )
+        self.assertEqual(
+            handler._plan_view.projected_overlay_rects,
+            [("p1", (0.0, 0.0, 10.0, 10.0))],
+        )
+
+        handler._ui_state.active_page_uid = "p2"
+        handler._plan_view.current_page_uid = "p2"
+        deferred.overlay_rect_callbacks[0]["project_value"]()
+        self.assertEqual(
+            data.get_page("p1").overlay_rect,
+            (0.0, 0.0, 10.0, 10.0),
+        )
 
     def test_overlay_rect_permission_denial_returns_rejected_without_scheduling(self):
         data = FakeProjectData()

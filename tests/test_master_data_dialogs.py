@@ -1600,6 +1600,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         database_id = "sql-database"
         lease_requests = []
         queued_handles = []
+        queued_callbacks = []
         released_handles = []
         completions = []
         access_allowed = [True]
@@ -1620,17 +1621,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 self.assertEqual(file_path, database_id)
                 self.assertTrue(changes["updated"])
                 queued_handles.append(edit_lease_handle)
-                callback(
-                    QueuedMutationResult(
-                        database_id=database_id,
-                        runtime_generation=1,
-                        operation_id=str(uuid.uuid4()),
-                        outcome_status=MutationOutcomeStatus.COMMITTED,
-                        authoritative_result=AuthoritativeMutationResult(
-                            affected_families=("job_statuses",)
-                        ),
-                    )
-                )
+                queued_callbacks.append(callback)
                 return 1
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -1699,6 +1690,30 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 lambda success, mapping: completions.append((success, mapping)),
             )
             self.assertTrue(started)
+            operation_id = str(uuid.uuid4())
+            queued_callbacks[0](
+                QueuedMutationResult(
+                    database_id=database_id,
+                    runtime_generation=1,
+                    operation_id=operation_id,
+                    outcome_status=(
+                        MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                    ),
+                )
+            )
+            self.assertEqual(completions, [])
+            self.assertEqual(len(lease_requests), 1)
+            queued_callbacks[0](
+                QueuedMutationResult(
+                    database_id=database_id,
+                    runtime_generation=1,
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                    authoritative_result=AuthoritativeMutationResult(
+                        affected_families=("job_statuses",)
+                    ),
+                )
+            )
             access_allowed[0] = False
             self.assertFalse(
                 dialog._save_async_fn(

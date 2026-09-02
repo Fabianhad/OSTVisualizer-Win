@@ -2,10 +2,24 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, Hashable, Optional, Tuple
 from PySide6 import QtCore
+from ...application.dtos.collaboration_dtos import (
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+)
 
 DeferredPersistenceKey = Tuple[Hashable, ...]
 BID_SELECTED_PAGE_KIND = "bid_selected_page"
 PAGE_VIEW_STATE_KIND = "page_view_state"
+LAYER_SHOW_KIND = "layer_show"
+PAGE_VISUAL_SETTING_KINDS = frozenset(
+    {
+        "page_show_mode",
+        "page_area_selection",
+        "page_invert",
+        "page_bitonal",
+        "page_overlay_rect",
+    }
+)
 NON_RETRYABLE_UI_STATE_KINDS = {BID_SELECTED_PAGE_KIND, PAGE_VIEW_STATE_KIND}
 SILENT_BEST_EFFORT_UI_STATE_KINDS = {PAGE_VIEW_STATE_KIND}
 
@@ -19,6 +33,19 @@ class DeferredPersistenceItem:
     skippable_when_blocked: bool = False
     blocks_shutdown: bool = True
     sql_workspace: bool = False
+    visual_revision: int = 0
+
+
+@dataclass
+class _DeferredVisualRevision:
+    project_value: Callable[[], None]
+    terminal_success: Optional[bool] = None
+
+
+@dataclass
+class _DeferredVisualState:
+    restore_authoritative: Callable[[], None]
+    revisions: Dict[int, _DeferredVisualRevision]
 
 
 class DeferredPersistenceManager(QtCore.QObject):
@@ -39,6 +66,8 @@ class DeferredPersistenceManager(QtCore.QObject):
         self._flushing = False
         self._cleaned_up = False
         self._shutdown_started = False
+        self._next_visual_revision = 0
+        self._visual_states: Dict[DeferredPersistenceKey, _DeferredVisualState] = {}
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(self.DEBOUNCE_MS)
@@ -57,6 +86,7 @@ class DeferredPersistenceManager(QtCore.QObject):
         skippable_when_blocked: bool = False,
         blocks_shutdown: bool = True,
         sql_workspace: bool = False,
+        visual_revision: int = 0,
     ) -> bool:
         if self._cleaned_up or self._shutdown_started:
             return False
@@ -68,6 +98,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             skippable_when_blocked,
             blocks_shutdown,
             sql_workspace,
+            visual_revision,
         )
         self._timer.start()
         return True
@@ -187,100 +218,131 @@ class DeferredPersistenceManager(QtCore.QObject):
         if not self._pending:
             self._timer.stop()
 
-    def schedule_layer_show(self, db_path: str, layer_uid: str, show: bool) -> None:
-        self.schedule(
-            "layer_show",
-            ("layer_show", db_path, layer_uid),
+    def schedule_layer_show(
+        self,
+        db_path: str,
+        layer_uid: str,
+        show: bool,
+        *,
+        restore_authoritative: Optional[Callable[[], None]] = None,
+        project_value: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._schedule_visual_setting(
+            LAYER_SHOW_KIND,
+            (LAYER_SHOW_KIND, db_path, layer_uid),
             f"layer visibility for layer {layer_uid}",
-            lambda: self._save_or_queue_page_setting(
+            db_path,
+            layer_uid,
+            "layer_show",
+            [show],
+            lambda: self._write_service.update_layer_show(
                 db_path,
                 layer_uid,
-                "layer_show",
-                [show],
-                lambda: self._write_service.update_layer_show(
-                    db_path,
-                    layer_uid,
-                    show,
-                    publish_database_refreshed_after_write=False,
-                ),
+                show,
+                publish_database_refreshed_after_write=False,
             ),
-            skippable_when_blocked=True,
+            restore_authoritative=restore_authoritative,
+            project_value=project_value,
         )
 
     def schedule_page_show_mode(
-        self, db_path: str, page_uid: str, show_mode: int
+        self,
+        db_path: str,
+        page_uid: str,
+        show_mode: int,
+        *,
+        restore_authoritative: Optional[Callable[[], None]] = None,
+        project_value: Optional[Callable[[], None]] = None,
     ) -> None:
-        self.schedule(
+        self._schedule_visual_setting(
             "page_show_mode",
             ("page_show_mode", db_path, page_uid),
             f"page display mode for page {page_uid}",
-            lambda: self._save_or_queue_page_setting(
+            db_path,
+            page_uid,
+            "show_mode",
+            [show_mode],
+            lambda: self._write_service.save_page_show_mode(
                 db_path,
                 page_uid,
-                "show_mode",
-                [show_mode],
-                lambda: self._write_service.save_page_show_mode(
-                    db_path,
-                    page_uid,
-                    show_mode,
-                    publish_database_refreshed_after_write=False,
-                ),
+                show_mode,
+                publish_database_refreshed_after_write=False,
             ),
-            skippable_when_blocked=True,
+            restore_authoritative=restore_authoritative,
+            project_value=project_value,
         )
 
     def schedule_page_area_selection(
-        self, db_path: str, page_uid: str, area_uid: str
+        self,
+        db_path: str,
+        page_uid: str,
+        area_uid: str,
+        *,
+        restore_authoritative: Optional[Callable[[], None]] = None,
+        project_value: Optional[Callable[[], None]] = None,
     ) -> None:
-        self.schedule(
+        self._schedule_visual_setting(
             "page_area_selection",
             ("page_area_selection", db_path, page_uid),
             f"selected area for page {page_uid}",
-            lambda: self._save_or_queue_page_setting(
+            db_path,
+            page_uid,
+            "area",
+            [area_uid],
+            lambda: self._write_service.save_page_area(
                 db_path,
                 page_uid,
-                "area",
-                [area_uid],
-                lambda: self._write_service.save_page_area(
-                    db_path,
-                    page_uid,
-                    area_uid,
-                    publish_database_refreshed_after_write=False,
-                ),
+                area_uid,
+                publish_database_refreshed_after_write=False,
             ),
-            skippable_when_blocked=True,
+            restore_authoritative=restore_authoritative,
+            project_value=project_value,
         )
 
-    def schedule_page_invert(self, db_path: str, page_uid: str, invert: bool) -> None:
-        self.schedule(
+    def schedule_page_invert(
+        self,
+        db_path: str,
+        page_uid: str,
+        invert: bool,
+        *,
+        restore_authoritative: Optional[Callable[[], None]] = None,
+        project_value: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._schedule_visual_setting(
             "page_invert",
             ("page_invert", db_path, page_uid),
             f"page invert state for page {page_uid}",
-            lambda: self._save_or_queue_page_setting(
-                db_path,
-                page_uid,
-                "invert",
-                [invert],
-                lambda: self._write_service.save_page_invert(db_path, page_uid, invert),
-            ),
-            skippable_when_blocked=True,
+            db_path,
+            page_uid,
+            "invert",
+            [invert],
+            lambda: self._write_service.save_page_invert(db_path, page_uid, invert),
+            restore_authoritative=restore_authoritative,
+            project_value=project_value,
         )
 
-    def schedule_page_bitonal(self, db_path: str, page_uid: str, bitonal: bool) -> None:
-        self.schedule(
+    def schedule_page_bitonal(
+        self,
+        db_path: str,
+        page_uid: str,
+        bitonal: bool,
+        *,
+        restore_authoritative: Optional[Callable[[], None]] = None,
+        project_value: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._schedule_visual_setting(
             "page_bitonal",
             ("page_bitonal", db_path, page_uid),
             f"page bitonal state for page {page_uid}",
-            lambda: self._save_or_queue_page_setting(
-                db_path,
-                page_uid,
-                "bitonal",
-                [bitonal],
-                lambda: self._write_service.save_page_bitonal(
-                    db_path, page_uid, bitonal
-                ),
+            db_path,
+            page_uid,
+            "bitonal",
+            [bitonal],
+            lambda: self._write_service.save_page_bitonal(
+                db_path, page_uid, bitonal
             ),
-            skippable_when_blocked=True,
+            restore_authoritative=restore_authoritative,
+            project_value=project_value,
         )
 
     def schedule_page_overlay_rect(
@@ -288,46 +350,201 @@ class DeferredPersistenceManager(QtCore.QObject):
         db_path: str,
         page_uid: str,
         overlay_rect: Tuple[float, float, float, float],
+        *,
+        restore_authoritative: Optional[Callable[[], None]] = None,
+        project_value: Optional[Callable[[], None]] = None,
     ) -> bool:
         rect = tuple(float(value) for value in overlay_rect)
-        return self.schedule(
+        return self._schedule_visual_setting(
             "page_overlay_rect",
             ("page_overlay_rect", db_path, page_uid),
             f"overlay rectangle for page {page_uid}",
+            db_path,
+            page_uid,
+            "overlay_rect",
+            [list(rect)],
+            lambda: bool(
+                self._write_service.save_page_overlay_rect_result(
+                    db_path,
+                    page_uid,
+                    rect,
+                    publish_database_refreshed_after_write=False,
+                ).write_success
+            ),
+            restore_authoritative=restore_authoritative,
+            project_value=project_value,
+        )
+
+    def _schedule_visual_setting(
+        self,
+        kind: str,
+        key: DeferredPersistenceKey,
+        description: str,
+        db_path: str,
+        resource_uid: str,
+        setting_kind: str,
+        values: list,
+        fallback: Callable[[], bool],
+        *,
+        restore_authoritative: Optional[Callable[[], None]],
+        project_value: Optional[Callable[[], None]],
+    ) -> bool:
+        if self._cleaned_up or self._shutdown_started:
+            return False
+        self._next_visual_revision += 1
+        revision = self._next_visual_revision
+        state = self._visual_states.get(key)
+        if state is None:
+            state = _DeferredVisualState(
+                restore_authoritative=restore_authoritative or (lambda: None),
+                revisions={},
+            )
+            self._visual_states[key] = state
+        previous_item = self._pending.get(key)
+        if previous_item is not None and previous_item.visual_revision:
+            state.revisions.pop(previous_item.visual_revision, None)
+        state.revisions[revision] = _DeferredVisualRevision(
+            project_value=project_value or (lambda: None)
+        )
+        return self.schedule(
+            kind,
+            key,
+            description,
             lambda: self._save_or_queue_page_setting(
+                key,
+                revision,
                 db_path,
-                page_uid,
-                "overlay_rect",
-                [list(rect)],
-                lambda: bool(
-                    self._write_service.save_page_overlay_rect_result(
-                        db_path,
-                        page_uid,
-                        rect,
-                        publish_database_refreshed_after_write=False,
-                    ).write_success
-                ),
+                resource_uid,
+                setting_kind,
+                values,
+                fallback,
             ),
             skippable_when_blocked=True,
+            visual_revision=revision,
         )
 
     def _save_or_queue_page_setting(
         self,
+        key: DeferredPersistenceKey,
+        revision: int,
         db_path: str,
         page_uid: str,
         setting_kind: str,
         values: list,
         fallback: Callable[[], bool],
     ) -> bool:
+        terminal_received = False
+
+        def complete(result: QueuedMutationResult) -> None:
+            nonlocal terminal_received
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            terminal_received = True
+            self._complete_visual_revision(
+                key,
+                revision,
+                result.outcome_status == MutationOutcomeStatus.COMMITTED,
+            )
+
         queued = self._write_service.queue_page_setting_if_sql(
             db_path,
             page_uid,
             setting_kind,
             values,
+            callback=complete,
         )
         if queued is not None:
-            return bool(queued)
+            if queued:
+                return True
+            if not terminal_received:
+                self._complete_visual_revision(key, revision, False)
+            return True
+        self._visual_states.pop(key, None)
         return bool(fallback())
+
+    def invalidate_layer_visual_revisions(
+        self,
+        db_path: str,
+        layer_uids: Optional[list[str]] = None,
+    ) -> None:
+        self._invalidate_visual_revisions(
+            db_path,
+            {LAYER_SHOW_KIND},
+            layer_uids,
+        )
+
+    def invalidate_page_visual_revisions(
+        self,
+        db_path: str,
+        page_uids: Optional[list[str]] = None,
+    ) -> None:
+        self._invalidate_visual_revisions(
+            db_path,
+            PAGE_VISUAL_SETTING_KINDS,
+            page_uids,
+        )
+
+    def _invalidate_visual_revisions(
+        self,
+        db_path: str,
+        setting_kinds: set[str] | frozenset[str],
+        resource_uids: Optional[list[str]],
+    ) -> None:
+        target_uids = (
+            {str(resource_uid) for resource_uid in resource_uids if resource_uid}
+            if resource_uids
+            else None
+        )
+        for key in list(self._visual_states):
+            if (
+                len(key) < 3
+                or key[0] not in setting_kinds
+                or str(key[1]) != str(db_path)
+                or (target_uids is not None and str(key[2]) not in target_uids)
+            ):
+                continue
+            self._visual_states.pop(key, None)
+
+    def _complete_visual_revision(
+        self,
+        key: DeferredPersistenceKey,
+        revision: int,
+        success: bool,
+    ) -> None:
+        state = self._visual_states.get(key)
+        if state is None:
+            return
+        completed = state.revisions.get(revision)
+        if completed is None or completed.terminal_success is not None:
+            return
+        completed.terminal_success = success
+        unresolved = any(
+            item.terminal_success is None for item in state.revisions.values()
+        )
+        if unresolved:
+            viable = [
+                current_revision
+                for current_revision, item in state.revisions.items()
+                if item.terminal_success is not False
+            ]
+            if viable:
+                state.revisions[max(viable)].project_value()
+            else:
+                state.restore_authoritative()
+            return
+        successful = [
+            current_revision
+            for current_revision, item in state.revisions.items()
+            if item.terminal_success
+        ]
+        if successful:
+            state.revisions[max(successful)].project_value()
+        else:
+            state.restore_authoritative()
+        self._visual_states.pop(key, None)
 
     def flush(self) -> bool:
         if self._flushing:
@@ -443,6 +660,9 @@ class DeferredPersistenceManager(QtCore.QObject):
         for key in list(self._pending):
             if len(key) > 1 and str(key[1]) == str(db_path):
                 self._pending.pop(key, None)
+        for key in list(self._visual_states):
+            if len(key) > 1 and str(key[1]) == str(db_path):
+                self._visual_states.pop(key, None)
         self._stop_timer_if_idle()
 
     def begin_shutdown(self) -> None:
@@ -481,6 +701,7 @@ class DeferredPersistenceManager(QtCore.QObject):
                 self._timer.start()
             return False
         self._timer.stop()
+        self._visual_states.clear()
         self._write_service = None
         self._sql_workspace = None
         self._cleaned_up = True

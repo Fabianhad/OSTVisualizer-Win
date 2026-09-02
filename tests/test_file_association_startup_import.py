@@ -328,6 +328,63 @@ class FileAssociationStartupImportTests(unittest.TestCase):
                 [MutationOutcomeStatus.COMMITTED, MutationOutcomeStatus.CONFLICT],
             )
 
+    def test_sql_startup_import_waits_for_uncertain_commit_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.ost"
+            source.write_text("ost")
+            service = FakeImportService()
+            service.sql_collaboration = True
+            target = import_args_use_case.ProjectImportTarget("sql-database")
+            use_case = import_args_use_case.ImportProjectFilesFromArgsUseCase(
+                service,
+                FakeProjectData("sql-database"),
+                SimpleNamespace(file_entries=[]),
+                SimpleNamespace(),
+            )
+            completed = []
+            use_case.queue_imports(
+                _project_file_args(source), target, completed.append
+            )
+            queued_callback = service.queued_imports[0][4]
+            operation_id = str(uuid.uuid4())
+
+            queued_callback(
+                QueuedMutationResult(
+                    database_id="sql-database",
+                    runtime_generation=1,
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                )
+            )
+            self.assertEqual(completed, [])
+
+            queued_callback(
+                QueuedMutationResult(
+                    database_id="sql-database",
+                    runtime_generation=1,
+                    operation_id=operation_id,
+                    outcome_status=(
+                        MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
+                    ),
+                )
+            )
+            self.assertEqual(completed, [])
+
+            queued_callback(
+                QueuedMutationResult(
+                    database_id="sql-database",
+                    runtime_generation=1,
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                )
+            )
+            self.assertEqual(len(completed), 1)
+            self.assertEqual(completed[0].succeeded, 1)
+            self.assertEqual(
+                completed[0].results[0].outcome_status,
+                MutationOutcomeStatus.COMMITTED,
+            )
+
     def test_current_project_import_target_uses_selected_database_for_duplicate_uid(
         self,
     ):

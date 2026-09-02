@@ -409,7 +409,7 @@ class ProjectView(QtWidgets.QWidget):
             self.top_tree.addTopLevelItem(file_root)
             self._build_file_content(file_root, loaded_file)
         self._restore_expanded_nodes()
-        self._restore_selected_node_state()
+        self._restore_selected_node_state(fallback_to_file=True)
 
     def _build_file_content(
         self,
@@ -1018,10 +1018,14 @@ class ProjectView(QtWidgets.QWidget):
             "project_uid": project_uid if kind == "project" else None,
         }
 
-    def _restore_selected_node_state(self) -> None:
+    def _restore_selected_node_state(self, *, fallback_to_file: bool = False) -> None:
         if not self._selected_node_state:
             return
         item = self._find_item_for_selected_node_state(self._selected_node_state)
+        if item is None and fallback_to_file:
+            file_path = self._selected_node_state.get("file_path")
+            if file_path:
+                item = self._find_file_item(file_path)
         if item is None:
             return
         self._select_item(item)

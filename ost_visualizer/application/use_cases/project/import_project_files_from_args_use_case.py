@@ -219,27 +219,16 @@ class ImportProjectFilesFromArgsUseCase:
                 result_index: int = index,
                 source_path: str = item.path,
             ) -> None:
-                committed = queued.outcome_status in {
-                    MutationOutcomeStatus.COMMITTED,
+                if queued.outcome_status in {
+                    MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
                     MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-                }
+                }:
+                    return
+                committed = (
+                    queued.outcome_status == MutationOutcomeStatus.COMMITTED
+                )
                 if queued.outcome_status == MutationOutcomeStatus.COMMITTED:
                     message = "Imported successfully."
-                elif (
-                    queued.outcome_status
-                    == MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
-                ):
-                    message = (
-                        "Imported successfully, but authoritative projection is "
-                        "being recovered."
-                    )
-                elif (
-                    queued.outcome_status == MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN
-                ):
-                    message = (
-                        "The import commit status is unknown. Do not retry until "
-                        "recovery completes."
-                    )
                 else:
                     message = queued.message or "The file could not be imported."
                 complete(

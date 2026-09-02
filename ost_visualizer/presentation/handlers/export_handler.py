@@ -80,12 +80,17 @@ class ExportHandler:
             return
         if not page_uids:
             return
+        bid_ref = self.project_data.get_current_bid_ref()
+        if not bid_ref:
+            return
         dialog_info = self.export_service.get_export_dialog_info(page_uids, format_key)
         if not dialog_info.success:
             self._on_export_preparation_error(dialog_info)
             return
         filename = self._show_save_dialog(dialog_info)
         if not filename:
+            return
+        if self.project_data.get_current_bid_ref() != bid_ref:
             return
         request = ExportRequestDto(
             page_uids=page_uids,
@@ -99,6 +104,9 @@ class ExportHandler:
         if not self._flush_deferred_persistence():
             return
         if not page_uids:
+            return
+        bid_ref = self.project_data.get_current_bid_ref()
+        if not bid_ref:
             return
         valid_pages = []
         first_page_name = ""
@@ -131,6 +139,8 @@ class ExportHandler:
             "PDF Files (*.pdf);;All Files (*.*)",
         )
         if not filename:
+            return
+        if self.project_data.get_current_bid_ref() != bid_ref:
             return
         pages_data = self._build_pdf_export_snapshot(page_uids)
         if not pages_data:
@@ -235,6 +245,9 @@ class ExportHandler:
     def export_summary_csv(self) -> None:
         if not self._flush_deferred_persistence():
             return
+        bid_ref = self.project_data.get_current_bid_ref()
+        if not bid_ref:
+            return
         default_filename = self.summary_csv_export_service.default_filename()
         if not is_csv_suffix(default_filename):
             default_filename = f"{default_filename}{CSV_EXTENSION}"
@@ -245,6 +258,8 @@ class ExportHandler:
             "CSV Files (*.csv);;All Files (*.*)",
         )
         if not filename:
+            return
+        if self.project_data.get_current_bid_ref() != bid_ref:
             return
         if not is_csv_suffix(filename):
             filename = f"{filename}{CSV_EXTENSION}"

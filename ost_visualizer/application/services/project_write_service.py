@@ -4908,6 +4908,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         values: list,
         *,
         owning_surface: str = "main-plan",
+        callback: Optional[Callable[[QueuedMutationResult], None]] = None,
     ) -> Optional[bool]:
         if not self.uses_sql_collaboration_mutations(database_id):
             return None
@@ -4931,6 +4932,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     page_uid,
                     result.message,
                 )
+            if callback is not None:
+                callback(result)
 
         sequence = self.queue_page_settings(
             database_id,

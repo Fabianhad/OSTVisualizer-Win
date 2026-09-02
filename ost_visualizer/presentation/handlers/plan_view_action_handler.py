@@ -395,14 +395,42 @@ class PlanViewActionHandler:
         if not bid_ref or not page_uid:
             return False
         rect = tuple(float(value) for value in overlay_rect)
+        page = self._data_svc.get_page(page_uid)
+        if page is None:
+            return False
+        original_rect = page.overlay_rect
         accepted = self._deferred_persistence.schedule_page_overlay_rect(
-            bid_ref.file_path, page_uid, rect
+            bid_ref.file_path,
+            page_uid,
+            rect,
+            restore_authoritative=lambda: self._project_overlay_rect_if_current(
+                bid_ref,
+                page_uid,
+                original_rect,
+            ),
+            project_value=lambda: self._project_overlay_rect_if_current(
+                bid_ref,
+                page_uid,
+                rect,
+            ),
         )
         if accepted:
-            page = self._data_svc.get_page(page_uid)
-            if page is not None:
-                page.overlay_rect = rect
+            page.overlay_rect = rect
         return accepted
+
+    def _project_overlay_rect_if_current(
+        self,
+        bid_ref,
+        page_uid: str,
+        overlay_rect,
+    ) -> None:
+        if not self._plan_context_is_current(bid_ref, (page_uid,)):
+            return
+        page = self._data_svc.get_page(page_uid)
+        if page is None:
+            return
+        page.overlay_rect = overlay_rect
+        self._plan_view.project_overlay_rect(page_uid, overlay_rect)
 
     def can_paste_to_current_bid(self) -> bool:
         bid_ref = self._ui_state.get_selected_bid_ref()

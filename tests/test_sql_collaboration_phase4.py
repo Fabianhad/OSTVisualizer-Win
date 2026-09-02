@@ -383,7 +383,10 @@ class _DelayedMutationDispatcher:
         self.pending = []
 
     def dispatch(self, callback, payload=()):
-        if callback.__name__ == "_complete_mutation_request":
+        if callback.__name__ in {
+            "_complete_mutation_request",
+            "_complete_recovered_mutation_request",
+        }:
             self.pending.append((callback, payload))
             return
         callback(payload)
@@ -5606,6 +5609,117 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(pending.for_database(descriptor.database_id), ())
         self.assertEqual(journal.records, {})
         self.assertNotIn(request.operation_id, coordinator._uncertain_callbacks)
+        _shutdown_coordinator(coordinator)
+
+    def test_recovered_completion_waits_for_its_exact_session(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        pending = PendingMutationRegistry()
+        journal = _PendingOperationJournal()
+        store = _RecoverableProjectionStore()
+        dispatcher = _DelayedMutationDispatcher()
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            dispatcher,
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+            pending_mutations=pending,
+            operation_journal=journal,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        first_session_generation = coordinator._install_session(
+            runtime,
+            DatabaseSession(descriptor.database_id, "session-1"),
+        )
+        coordinator._runtimes[descriptor.database_id] = runtime
+        request = QueuedMutationRequest(
+            database_id=descriptor.database_id,
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.TAKEOFF_PLACEMENT,
+            owning_surface="main-plan",
+            resources=(ResourceRef("takeoffs_collection", "8", 8),),
+            payload={"test_operation": "session-scoped-recovery"},
+        )
+        pending.begin(request, runtime_generation=runtime.generation)
+        pending.transition(request.operation_id, PendingMutationState.RECOVERING)
+        journal.save(
+            PendingSqlOperationRecord.from_request(
+                request,
+                PendingMutationState.RECOVERING,
+            )
+        )
+        results = []
+        coordinator._uncertain_callbacks[request.operation_id] = (
+            request,
+            results.append,
+        )
+        store.durable_results[request.operation_id] = DurableOperationResult(
+            database_id=descriptor.database_id,
+            operation_id=request.operation_id,
+            found=True,
+            mutation_type=request.mutation_type.value,
+            request_hash=request.request_hash,
+            result_format_version=1,
+            result_payload=json.dumps(
+                {"value": ["501"], "value_available": True},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(descriptor.database_id, "epoch", 0, 0)
+        )
+
+        coordinator._recover_journaled_operations(runtime)
+        coordinator._on_session_started(
+            (
+                descriptor.database_id,
+                runtime.generation,
+                first_session_generation,
+                hydrated,
+            )
+        )
+        second_session_generation = coordinator._install_session(
+            runtime,
+            DatabaseSession(descriptor.database_id, "session-2"),
+        )
+        dispatcher.deliver_pending()
+
+        self.assertEqual(results, [])
+        self.assertIsNotNone(pending.get(request.operation_id))
+        self.assertIn(request.operation_id, coordinator._uncertain_callbacks)
+        self.assertIn(request.operation_id, journal.records)
+
+        coordinator._recover_journaled_operations(runtime)
+        coordinator._on_session_started(
+            (
+                descriptor.database_id,
+                runtime.generation,
+                second_session_generation,
+                hydrated,
+            )
+        )
+        dispatcher.deliver_pending()
+
+        self.assertEqual(
+            [result.outcome_status for result in results],
+            [MutationOutcomeStatus.COMMITTED],
+        )
+        self.assertIsNone(pending.get(request.operation_id))
+        self.assertNotIn(request.operation_id, coordinator._uncertain_callbacks)
+        self.assertNotIn(request.operation_id, journal.records)
         _shutdown_coordinator(coordinator)
 
     def test_recovered_operation_rejects_non_authoritative_identity_sets(self):

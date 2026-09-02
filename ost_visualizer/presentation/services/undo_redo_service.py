@@ -37,6 +37,7 @@ class UndoRedoService:
         self._is_write_allowed: Optional[Callable[[], bool]] = None
         self._on_change: Optional[Callable[[], None]] = None
         self._history_transition_pending = False
+        self._history_generation = 0
         self.logger = logger or logging.getLogger(__name__)
 
     def set_write_guard(self, guard: Callable[[], bool]) -> None:
@@ -172,9 +173,12 @@ class UndoRedoService:
             return
         entry.state = pending_state
         self._history_transition_pending = True
+        history_generation = self._history_generation
         self._notify_change()
 
         def complete(outcome: QueuedMutationResult) -> None:
+            if history_generation != self._history_generation:
+                return
             status = outcome.outcome_status
             if status in {
                 MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
@@ -205,6 +209,7 @@ class UndoRedoService:
 
     def clear(self) -> None:
         had_history = bool(self._undo_stack or self._redo_stack)
+        self._history_generation += 1
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._history_transition_pending = False

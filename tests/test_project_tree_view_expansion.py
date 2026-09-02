@@ -223,6 +223,28 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         source_project = self._find_item("project-1")
         self.assertTrue(source_project.isExpanded())
 
+    def test_missing_saved_bid_selection_falls_back_to_its_database(self):
+        self.view.set_selected_node_state(
+            {
+                "kind": "bid",
+                "file_path": "C:/jobs/test.mdb",
+                "bid_uid": "remotely-deleted",
+                "project_uid": None,
+            }
+        )
+
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+
+        self.assertEqual(
+            self.view.get_selected_node_state(),
+            {
+                "kind": "database",
+                "file_path": "C:/jobs/test.mdb",
+                "bid_uid": None,
+                "project_uid": None,
+            },
+        )
+
     def test_rebuild_preserves_orphan_bid_selection_by_file_and_uid(self):
         selected_state = {
             "kind": "bid",

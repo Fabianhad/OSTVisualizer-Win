@@ -2384,16 +2384,14 @@ class SqlCollaborationCoordinator:
             )
             if not durable.found:
                 with self._lock:
-                    callback_entry = self._uncertain_callbacks.pop(
-                        record.operation_id, None
-                    )
+                    callback_entry = self._uncertain_callbacks.get(record.operation_id)
                 if callback_entry is None:
                     self._remove_operation_record(record.operation_id)
                     self._pending_mutations.finish(record.operation_id)
                 else:
-                    _request, callback = callback_entry
-                    self._dispatch_mutation_result(
-                        callback,
+                    request, _callback = callback_entry
+                    self._dispatch_recovered_mutation_result(
+                        request,
                         QueuedMutationResult(
                             database_id=record.database_id,
                             runtime_generation=runtime.generation,
@@ -2404,6 +2402,7 @@ class SqlCollaborationCoordinator:
                                 "connection was lost."
                             ),
                         ),
+                        runtime.session_generation,
                     )
                 continue
             if (
@@ -2452,19 +2451,19 @@ class SqlCollaborationCoordinator:
             runtime.recovered_operation_results.clear()
         for operation_id in recovered_operation_ids:
             with self._lock:
-                callback_entry = self._uncertain_callbacks.pop(operation_id, None)
+                callback_entry = self._uncertain_callbacks.get(operation_id)
             if callback_entry is None:
                 self._pending_mutations.finish(operation_id)
                 self._remove_operation_record(operation_id)
                 continue
-            request, callback = callback_entry
+            request, _callback = callback_entry
             recovered_result = self._recovered_authoritative_result(
                 request,
                 recovered_results[operation_id],
             )
             if recovered_result is None:
-                self._dispatch_mutation_result(
-                    callback,
+                self._dispatch_recovered_mutation_result(
+                    request,
                     QueuedMutationResult(
                         database_id=database_id,
                         runtime_generation=generation,
@@ -2478,6 +2477,7 @@ class SqlCollaborationCoordinator:
                         ),
                         commit_attempted=True,
                     ),
+                    session_generation,
                 )
                 self._on_reconciliation_required(
                     (
@@ -2499,8 +2499,8 @@ class SqlCollaborationCoordinator:
                 request,
                 PendingMutationState.PROJECTING,
             )
-            self._dispatch_mutation_result(
-                callback,
+            self._dispatch_recovered_mutation_result(
+                request,
                 QueuedMutationResult(
                     database_id=database_id,
                     runtime_generation=generation,
@@ -2510,6 +2510,7 @@ class SqlCollaborationCoordinator:
                     authoritative_result=recovered_result,
                     commit_attempted=True,
                 ),
+                session_generation,
             )
         with runtime.lock:
             runtime.healthy = False
@@ -2518,6 +2519,34 @@ class SqlCollaborationCoordinator:
             SynchronizationState.CATCHING_UP,
         )
         runtime.ready_event.set()
+
+    def _dispatch_recovered_mutation_result(
+        self,
+        request: QueuedMutationRequest,
+        result: QueuedMutationResult,
+        session_generation: int,
+    ) -> None:
+        self._dispatcher.dispatch(
+            self._complete_recovered_mutation_request,
+            (request, result, session_generation),
+        )
+
+    def _complete_recovered_mutation_request(self, payload) -> None:
+        request, result, session_generation = payload
+        if not self._is_session_current(
+            result.database_id,
+            result.runtime_generation,
+            session_generation,
+        ):
+            return
+        with self._lock:
+            callback_entry = self._uncertain_callbacks.get(result.operation_id)
+            if callback_entry is None or callback_entry[0] != request:
+                return
+            _stored_request, callback = self._uncertain_callbacks.pop(
+                result.operation_id
+            )
+        self._complete_mutation_request((callback, result))
 
     @staticmethod
     def _recovered_authoritative_result(

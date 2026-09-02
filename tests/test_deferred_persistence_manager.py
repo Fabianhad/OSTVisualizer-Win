@@ -1,6 +1,7 @@
 import logging
 import os
 import unittest
+import uuid
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from ost_visualizer.application.services.project_write_service import (
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     MutationOutcomeStatus,
+    QueuedMutationResult,
 )
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
@@ -59,13 +61,23 @@ class FakeProjectWriteService:
         self.expected_deferred_write_blocked = False
         self.queue_sql_settings = False
         self.queued_settings = []
+        self.queued_setting_callbacks = []
 
-    def queue_page_setting_if_sql(self, db_path, resource_uid, setting_kind, values):
+    def queue_page_setting_if_sql(
+        self,
+        db_path,
+        resource_uid,
+        setting_kind,
+        values,
+        *,
+        callback=None,
+    ):
         if not self.queue_sql_settings:
             return None
         if setting_kind == "bid_selected_page":
             return True
         self.queued_settings.append((db_path, resource_uid, setting_kind, list(values)))
+        self.queued_setting_callbacks.append(callback)
         return True
 
     def is_expected_deferred_write_blocked(self, db_path):
@@ -286,6 +298,249 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 ("sql-db", "layer-1", "layer_show", [False]),
             ],
         )
+
+    def test_sql_visual_failure_waits_for_terminal_result_before_restoring(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            2,
+            restore_authoritative=lambda: projections.append("original"),
+            project_value=lambda: projections.append("optimistic"),
+        )
+        self.assertTrue(self.manager.flush())
+        callback = self.service.queued_setting_callbacks[0]
+
+        callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            )
+        )
+        callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(projections, [])
+
+        callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(projections, ["original"])
+
+    def test_remote_layer_reconciliation_invalidates_pending_visual_restore(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            False,
+            restore_authoritative=lambda: projections.append("stale-original"),
+            project_value=lambda: projections.append("optimistic"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.invalidate_layer_visual_revisions("sql-db", ["layer-1"])
+        self.service.queued_setting_callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(projections, [])
+
+    def test_remote_page_reconciliation_invalidates_pending_visual_restore(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_page_invert(
+            "sql-db",
+            "page-1",
+            True,
+            restore_authoritative=lambda: projections.append("stale-original"),
+            project_value=lambda: projections.append("optimistic"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.invalidate_page_visual_revisions("sql-db", ["page-1"])
+        self.service.queued_setting_callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(projections, [])
+
+    def test_sql_visual_coalescing_preserves_first_authoritative_value(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            1,
+            restore_authoritative=lambda: projections.append("original"),
+            project_value=lambda: projections.append("B"),
+        )
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            2,
+            restore_authoritative=lambda: projections.append("B"),
+            project_value=lambda: projections.append("C"),
+        )
+
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.queued_settings,
+            [("sql-db", "page-1", "show_mode", [2])],
+        )
+        self.service.queued_setting_callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(projections, ["original"])
+
+    def test_sql_visual_out_of_order_completion_keeps_newest_success(self):
+        self.service.queue_sql_settings = True
+        projections = []
+
+        def schedule(value: int, previous: str) -> None:
+            self.manager.schedule_page_show_mode(
+                "sql-db",
+                "page-1",
+                value,
+                restore_authoritative=lambda previous=previous: projections.append(
+                    previous
+                ),
+                project_value=lambda value=value: projections.append(str(value)),
+            )
+            self.assertTrue(self.manager.flush())
+
+        schedule(1, "original")
+        schedule(2, "1")
+        schedule(3, "2")
+        callbacks = list(self.service.queued_setting_callbacks)
+
+        callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        callbacks[2](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        callbacks[1](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+
+        self.assertEqual(projections, ["3", "3", "3"])
+
+    def test_newest_rejection_reprojects_prior_pending_visual_value(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        for value, previous in ((1, "original"), (2, "1"), (3, "2")):
+            self.manager.schedule_page_show_mode(
+                "sql-db",
+                "page-1",
+                value,
+                restore_authoritative=lambda previous=previous: projections.append(
+                    previous
+                ),
+                project_value=lambda value=value: projections.append(str(value)),
+            )
+            self.assertTrue(self.manager.flush())
+
+        self.service.queued_setting_callbacks[2](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+
+        self.assertEqual(projections, ["2"])
+
+    def test_cancel_for_file_invalidates_queued_visual_callbacks(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            2,
+            restore_authoritative=lambda: projections.append("original"),
+            project_value=lambda: projections.append("optimistic"),
+        )
+        self.assertTrue(self.manager.flush())
+        callback = self.service.queued_setting_callbacks[0]
+
+        self.manager.cancel_for_file("sql-db")
+        callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+
+        self.assertEqual(projections, [])
+
+    def test_cleanup_invalidates_queued_visual_callbacks(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            2,
+            restore_authoritative=lambda: projections.append("original"),
+            project_value=lambda: projections.append("optimistic"),
+        )
+        self.assertTrue(self.manager.cleanup())
+        callback = self.service.queued_setting_callbacks[0]
+
+        callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+
+        self.assertEqual(projections, [])
 
     def test_failed_write_remains_pending_for_retry(self):
         self.service.fail_methods.add("save_page_bitonal")
@@ -738,15 +993,23 @@ class RecordingDeferredPersistence:
         self.page_view_calls = []
         self.selected_page_calls = []
         self.page_area_calls = []
+        self.page_area_callbacks = []
         self.page_show_mode_calls = []
+        self.page_show_mode_callbacks = []
+        self.page_invert_calls = []
+        self.page_invert_callbacks = []
+        self.page_bitonal_calls = []
+        self.page_bitonal_callbacks = []
+        self.layer_callbacks = []
         self.flush_calls = []
         self.cancel_calls = []
         self.cancel_bid_selected_pages_calls = []
         self.shutdown_calls = 0
         self.flush_result = True
 
-    def schedule_layer_show(self, db_path, layer_uid, show):
+    def schedule_layer_show(self, db_path, layer_uid, show, **callbacks):
         self.layer_calls.append((db_path, layer_uid, show))
+        self.layer_callbacks.append(callbacks)
 
     def schedule_page_view_state(
         self, db_path, bid_uid, page_uid, zoom_fac, current_x, current_y
@@ -758,11 +1021,25 @@ class RecordingDeferredPersistence:
     def schedule_bid_selected_page(self, db_path, bid_uid, page_uid):
         self.selected_page_calls.append((db_path, bid_uid, page_uid))
 
-    def schedule_page_area_selection(self, db_path, page_uid, area_uid):
+    def schedule_page_area_selection(
+        self, db_path, page_uid, area_uid, **callbacks
+    ):
         self.page_area_calls.append((db_path, page_uid, area_uid))
+        self.page_area_callbacks.append(callbacks)
 
-    def schedule_page_show_mode(self, db_path, page_uid, show_mode):
+    def schedule_page_show_mode(
+        self, db_path, page_uid, show_mode, **callbacks
+    ):
         self.page_show_mode_calls.append((db_path, page_uid, show_mode))
+        self.page_show_mode_callbacks.append(callbacks)
+
+    def schedule_page_invert(self, db_path, page_uid, invert, **callbacks):
+        self.page_invert_calls.append((db_path, page_uid, invert))
+        self.page_invert_callbacks.append(callbacks)
+
+    def schedule_page_bitonal(self, db_path, page_uid, bitonal, **callbacks):
+        self.page_bitonal_calls.append((db_path, page_uid, bitonal))
+        self.page_bitonal_callbacks.append(callbacks)
 
     def flush_for_file(self, db_path):
         self.flush_calls.append(db_path)
@@ -1626,6 +1903,50 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("sync", "p1", 2.5), ("update", "p1", 2.5), "detached", "export"],
         )
 
+    def test_overlay_display_failure_restores_only_originating_page(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        pages["p1"].image_show_mode = 0
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: None
+        )
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._update_export_menu_state = lambda: None
+
+        coordinator._on_overlay_display_mode_requested(2)
+        callbacks = coordinator._deferred_persistence.page_show_mode_callbacks[0]
+        callbacks["restore_authoritative"]()
+        self.assertEqual(pages["p1"].image_show_mode, 0)
+
+        coordinator.ui_state_manager.active_page_uid = "p2"
+        callbacks["project_value"]()
+        self.assertEqual(pages["p1"].image_show_mode, 0)
+
+    def test_page_image_flag_failure_restores_main_and_detached_views(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        page = pages["p1"]
+        page.invert = False
+        updates = []
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: updates.append("detached")
+        )
+        coordinator._update_plan_view = lambda page_uid: updates.append(page_uid)
+        coordinator._update_export_menu_state = lambda: updates.append("export")
+
+        coordinator.toggle_page_invert(True)
+        callbacks = coordinator._deferred_persistence.page_invert_callbacks[0]
+        callbacks["restore_authoritative"]()
+
+        self.assertFalse(page.invert)
+        self.assertEqual(
+            updates,
+            ["p1", "detached", "export", "p1", "detached", "export"],
+        )
+
+        coordinator.ui_state_manager.active_page_uid = "p2"
+        callbacks["project_value"]()
+        self.assertFalse(page.invert)
+
     def test_overlay_visibility_cannot_select_or_hide_the_only_source(self):
         coordinator, pages = self._make_view_state_coordinator()
         page = pages["p1"]
@@ -1709,6 +2030,11 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         conditions = {
             "c1": Condition(uid="c1", name="C1", layer_uid=condition_layer_uid),
         }
+        layers = [
+            SimpleNamespace(uid="l1", name=layer_name, show=True),
+            SimpleNamespace(uid="other", name="Other", show=True),
+            SimpleNamespace(uid="annotation-layer", name="Annotation", show=True),
+        ]
         annotation_layer_uid = "annotation-layer"
         coordinator.quantity_update_calls = []
         quantity_calls = coordinator.quantity_update_calls
@@ -1717,6 +2043,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             return page_layer_uid is not None and str(layer_uid) == str(page_layer_uid)
 
         def update_layer_visibility(layer_uid, show):
+            for layer in layers:
+                if str(layer.uid) == str(layer_uid):
+                    layer.show = bool(show)
             if not is_page_layer_uid(layer_uid):
                 return []
             for page in pages.values():
@@ -1738,18 +2067,17 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_selected_page_uids=lambda: list(selected_page_uids),
             get_bid=lambda _bid_ref: None,
             get_page=lambda page_uid: pages.get(page_uid),
+            get_bid_layer_snapshot=lambda: list(layers),
             get_bid_conditions=lambda: conditions,
             get_annotation_layer_uid=lambda: annotation_layer_uid,
         )
         coordinator._project_read_service = SimpleNamespace(
-            get_merged_bid_layers=lambda _db_path, _bid_uid: [
-                SimpleNamespace(uid="l1", name=layer_name)
-            ]
+            get_merged_bid_layers=lambda _db_path, _bid_uid: list(layers)
         )
         coordinator._sidebar = SimpleNamespace(
             bid_layers_sidebar=SimpleNamespace(
-                get_layer=lambda _uid: SimpleNamespace(uid="l1", name=layer_name),
-                get_layers=lambda: [SimpleNamespace(uid="l1", name=layer_name)],
+                get_layer=lambda _uid: layers[0],
+                get_layers=lambda: list(layers),
                 set_layer_visible=lambda _layer_uid, _show: None,
                 set_all_layers_visible=lambda _show: None,
             ),
@@ -1792,6 +2120,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._suspended_layer_tool = None
         coordinator.plan_view = RecordingPlanView()
         coordinator._deferred_persistence = RecordingDeferredPersistence()
+        coordinator._visibility_test_layers = layers
         self._install_hidden_2d_mesh_state(coordinator)
         return coordinator
 
@@ -1835,8 +2164,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator._project_read_service = SimpleNamespace(
             get_merged_bid_layers=lambda _db_path, _bid_uid: [
-                SimpleNamespace(uid="l1"),
-                SimpleNamespace(uid="l2"),
+                SimpleNamespace(uid="l1", show=True),
+                SimpleNamespace(uid="l2", show=True),
             ]
         )
         quantity_calls = []
@@ -1892,8 +2221,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             uses_sql_collaboration_mutations=lambda _file_path: True
         )
         coordinator.project_data.get_bid_layer_snapshot = lambda: [
-            SimpleNamespace(uid="l1", name="Layer 1"),
-            SimpleNamespace(uid="l2", name="Layer 2"),
+            SimpleNamespace(uid="l1", name="Layer 1", show=True),
+            SimpleNamespace(uid="l2", name="Layer 2", show=True),
         ]
         coordinator._project_read_service.get_merged_bid_layers = (
             lambda _db_path, _bid_uid: self.fail(
@@ -2027,6 +2356,33 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.mesh_refresh_calls, [])
         self.assertTrue(coordinator._mesh_scene_dirty)
         self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
+
+    def test_layer_visibility_failure_restores_only_originating_bid(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        callbacks = coordinator._deferred_persistence.layer_callbacks[0]
+        callbacks["restore_authoritative"]()
+        self.assertTrue(coordinator.project_data.get_bid_layer_snapshot()[0].show)
+
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: BidRef(
+            "a.mdb", "bid-2"
+        )
+        callbacks["project_value"]()
+        self.assertTrue(coordinator.project_data.get_bid_layer_snapshot()[0].show)
+
+    def test_layer_visibility_failure_does_not_restore_deleted_layer(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        callbacks = coordinator._deferred_persistence.layer_callbacks[0]
+        event_count = len(coordinator.layer_events)
+        coordinator._visibility_test_layers[:] = [
+            layer
+            for layer in coordinator._visibility_test_layers
+            if layer.uid != "l1"
+        ]
+
+        self.assertFalse(callbacks["restore_authoritative"]())
+        self.assertEqual(len(coordinator.layer_events), event_count)
 
     def test_hiding_annotation_layer_temporarily_selects_then_restores_tool(self):
         coordinator = self._make_visibility_coordinator(
@@ -2237,6 +2593,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.project_data = SimpleNamespace(
             get_page_area_selections=lambda: area_selections,
             get_selected_page_uids=selected_page_uids,
+            get_page=lambda page_uid: object() if page_uid == "p1" else None,
         )
         coordinator.ui_state_manager = SimpleNamespace(
             active_page_uid="p1",
@@ -2259,6 +2616,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             update_plan_view=lambda page_uid: plan_updates.append(page_uid),
             update_viewers=lambda _page_uids: None,
         )
+        detached_updates = []
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: detached_updates.append("refresh")
+        )
         hotlink_updates = []
         coordinator._apply_pending_hotlink_named_view_focus = (
             lambda require_stable: hotlink_updates.append(require_stable)
@@ -2274,6 +2635,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("a.mdb", "p1", "2")],
         )
         self.assertEqual(plan_updates, ["p1"])
+        self.assertEqual(detached_updates, ["refresh"])
         self.assertEqual(coordinator.mesh_refresh_calls, [])
         self.assertTrue(coordinator._mesh_scene_dirty)
         self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
@@ -2290,6 +2652,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.project_data = SimpleNamespace(
             get_page_area_selections=lambda: area_selections,
             get_selected_page_uids=lambda: ["p1"],
+            get_page=lambda page_uid: object() if page_uid == "p1" else None,
         )
         coordinator.ui_state_manager = SimpleNamespace(
             active_page_uid="p1",
@@ -2300,6 +2663,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._viewer = SimpleNamespace(
             update_plan_view=lambda _page_uid: None,
             update_viewers=lambda _page_uids: None,
+        )
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: None
         )
         coordinator._apply_pending_hotlink_named_view_focus = (
             lambda require_stable: None
@@ -2315,6 +2681,41 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.mesh_refresh_calls, [])
         self.assertTrue(coordinator._mesh_scene_dirty)
         self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
+
+    def test_page_area_failure_restores_only_originating_page(self):
+        area_selections = {"p1": "area-1", "p2": "area-2"}
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page_area_selections=lambda: area_selections,
+            get_selected_page_uids=lambda: ["p1"],
+            get_page=lambda page_uid: object() if page_uid in area_selections else None,
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="p1",
+            selected_area_uid="area-1",
+            get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
+        )
+        coordinator._deferred_persistence = RecordingDeferredPersistence()
+        coordinator._viewer = SimpleNamespace(update_plan_view=lambda _page_uid: None)
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: None
+        )
+        coordinator._request_or_defer_mesh_refresh = lambda _page_uids: None
+        coordinator._apply_pending_hotlink_named_view_focus = (
+            lambda require_stable: None
+        )
+
+        coordinator._on_page_area_changed("a.mdb", "p1", "area-3")
+        callbacks = coordinator._deferred_persistence.page_area_callbacks[0]
+        callbacks["restore_authoritative"]()
+        self.assertEqual(area_selections["p1"], "area-1")
+
+        coordinator.ui_state_manager.active_page_uid = "p2"
+        callbacks["project_value"]()
+        self.assertEqual(area_selections["p1"], "area-1")
 
 
 class DeferredPersistenceBoundaryTests(unittest.TestCase):

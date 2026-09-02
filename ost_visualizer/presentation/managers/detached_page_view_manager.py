@@ -8,6 +8,10 @@ from ...application.dtos.page_view_dto import PageViewDto
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
 )
+from ...application.dtos.collaboration_dtos import (
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+)
 from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ...application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
@@ -815,6 +819,23 @@ class DetachedPageViewManager(IShutdownAware):
         db_path = view.file_path
         if not db_path:
             return
+
+        def complete(result: QueuedMutationResult) -> None:
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMITTED,
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            current_view = self.repository.get_active_view()
+            if (
+                self._window is not None
+                and current_view is not None
+                and current_view.file_path == db_path
+                and str(current_view.target_page_uid or "") == str(page_uid)
+            ):
+                self._refresh_window()
+
         try:
             saved = self._write_service.queue_page_setting_if_sql(
                 db_path,
@@ -822,6 +843,7 @@ class DetachedPageViewManager(IShutdownAware):
                 "scale",
                 [sf1, sf2],
                 owning_surface="detached-plan",
+                callback=complete,
             )
             if saved is None:
                 saved = self._write_service.save_page_scale(db_path, page_uid, sf1, sf2)
