@@ -46,6 +46,7 @@ class RemoteBidContentChangedEvent:
     bid_uid: str = ""
     families: list = field(default_factory=list)
     resource_uids_by_family: dict = field(default_factory=dict)
+    affected_page_uids_by_family: dict = field(default_factory=dict)
     defer_plan_projection: bool = False
     local_completion: bool = False
 
@@ -74,6 +75,9 @@ class RemotePlanProjectionRequestedEvent:
     areas_changed: bool
     resource_uids_by_family: dict[str, tuple[str, ...]]
     barrier: RemoteProjectionBarrier
+    affected_page_uids_by_family: dict[str, tuple[str, ...]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass

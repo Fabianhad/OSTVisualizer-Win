@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 import hashlib
 from types import MappingProxyType
-from typing import Optional
+from typing import Collection, Iterable, Mapping, Optional
 
 
 class CollaborationResourceType(str, Enum):
@@ -275,6 +275,23 @@ def parse_annotation_resource_id(resource_id: str) -> tuple[str, str]:
     if not separator or not annotation_type or not annotation_uid:
         raise ValueError("Invalid annotation collaboration resource identity")
     return annotation_type, annotation_uid
+
+
+def resource_families_affect_page(
+    families: Iterable[str],
+    affected_page_uids_by_family: Mapping[str, Collection[str]],
+    page_uid: str,
+) -> bool:
+    normalized_page_uid = str(page_uid or "")
+    for family in families:
+        affected_page_uids = affected_page_uids_by_family.get(family)
+        if affected_page_uids is None:
+            return True
+        if normalized_page_uid in {
+            str(affected_page_uid) for affected_page_uid in affected_page_uids
+        }:
+            return True
+    return False
 
 
 SUPPORTED_REMOTE_RESOURCE_TYPES = frozenset(

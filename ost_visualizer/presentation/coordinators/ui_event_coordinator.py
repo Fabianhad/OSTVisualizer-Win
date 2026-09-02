@@ -25,6 +25,7 @@ from ...application.dtos.collaboration_dtos import (
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
     CollaborationResourceType,
+    resource_families_affect_page,
 )
 from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
 from ...application.events.app_events import AppEvents
@@ -1073,6 +1074,14 @@ class UIEventCoordinator:
             if current_page_uid:
                 self._clear_pending_hotlink_named_view_focus()
             return False
+        authoritative_named_view = self._resolve_hotlink_named_view(
+            page_uid, named_view.uid
+        )
+        if authoritative_named_view is None:
+            self._clear_pending_hotlink_named_view_focus()
+            return False
+        named_view = authoritative_named_view
+        self._pending_hotlink_named_view = named_view
         if require_stable and not self.plan_view.is_view_state_stable:
             return False
         if not self.plan_view.isVisible():
@@ -2531,20 +2540,47 @@ class UIEventCoordinator:
         self._set_plan_select_mode()
         self._toolbar.refresh()
 
-    def _reconcile_active_placement(self) -> None:
+    def _reconcile_active_placement(self) -> bool:
         if self._placement.reconcile_authoritative_conditions():
-            return
+            return True
         self._set_plan_select_mode()
         self._toolbar.refresh()
+        return False
 
     def _prepare_for_modal_mutation_error(self, database_id: str) -> None:
         if database_id != self.project_data.get_current_file_path():
             return
         self._reset_to_select_mode()
+        self._prepare_plan_for_authoritative_refresh()
+        if self._plan_view_handler is None and self.plan_view is not None:
+            self.plan_view.prepare_for_authoritative_refresh()
+
+    def _prepare_plan_for_authoritative_refresh(self) -> None:
         if self._plan_view_handler is not None:
-            self._plan_view_handler.prepare_for_modal_mutation_error()
-        elif self.plan_view is not None:
-            self.plan_view.prepare_for_modal_mutation_error()
+            self._plan_view_handler.prepare_for_authoritative_refresh()
+
+    def _remote_bid_change_invalidates_plan_interaction(
+        self,
+        changed_families: set[str],
+        affected_page_uids_by_family: Mapping[str, Tuple[str, ...]],
+    ) -> bool:
+        if (
+            self.plan_view is None
+            or not self.plan_view.has_active_remote_projection_blocker()
+        ):
+            return False
+        projected_families = {
+            CollaborationResourceFamily.ANNOTATIONS.value,
+            CollaborationResourceFamily.LAYERS.value,
+            CollaborationResourceFamily.PAGES.value,
+            CollaborationResourceFamily.TAKEOFFS.value,
+        }
+        changed_projected_families = projected_families.intersection(changed_families)
+        return resource_families_affect_page(
+            changed_projected_families,
+            affected_page_uids_by_family,
+            self.ui_state_manager.active_page_uid,
+        )
 
     def present_queued_mutation_error(
         self,
@@ -2677,6 +2713,7 @@ class UIEventCoordinator:
         self._save_current_page_view_state()
 
     def _on_file_opened(self, file_path: str = "") -> None:
+        self._prepare_plan_for_authoritative_refresh()
         self._save_current_page_view_state()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
@@ -2699,8 +2736,12 @@ class UIEventCoordinator:
         if file_path:
             if external_change:
                 self._deferred_persistence.cancel_for_file(file_path)
-                if self._undo_service:
-                    self._undo_service.clear()
+                if file_path == self.project_data.get_current_file_path():
+                    if self._undo_service:
+                        self._undo_service.clear()
+                    self._prepare_for_modal_mutation_error(file_path)
+                    if self._selected_takeoff_uids:
+                        self._sync_selection(self._SOURCE_MODEL, [])
             elif not self._flush_deferred_for_file(file_path):
                 return
         if not self._nav.start_refresh(
@@ -2805,6 +2846,7 @@ class UIEventCoordinator:
         bid_uid: str = "",
         families: Optional[List[str]] = None,
         resource_uids_by_family: Optional[Dict[str, List[str]]] = None,
+        affected_page_uids_by_family: Optional[Dict[str, List[str]]] = None,
         defer_plan_projection: bool = False,
         local_completion: bool = False,
     ) -> None:
@@ -2813,17 +2855,36 @@ class UIEventCoordinator:
             return
         changed_families = set(families or [])
         changed_uids = resource_uids_by_family or {}
+        affected_pages = affected_page_uids_by_family or {}
         annotations_changed = (
             CollaborationResourceFamily.ANNOTATIONS.value in changed_families
         )
         layers_changed = CollaborationResourceFamily.LAYERS.value in changed_families
         pages_changed = CollaborationResourceFamily.PAGES.value in changed_families
-        if layers_changed:
+        if (
+            not local_completion
+            and self._remote_bid_change_invalidates_plan_interaction(
+                changed_families,
+                affected_pages,
+            )
+        ):
+            self._prepare_plan_for_authoritative_refresh()
+        if layers_changed and local_completion:
+            self._deferred_persistence.reproject_newer_layer_visual_revisions(
+                database_id,
+                changed_uids.get(CollaborationResourceFamily.LAYERS.value) or None,
+            )
+        if pages_changed and local_completion:
+            self._deferred_persistence.reproject_newer_page_visual_revisions(
+                database_id,
+                changed_uids.get(CollaborationResourceFamily.PAGES.value) or None,
+            )
+        if layers_changed and not local_completion:
             self._deferred_persistence.invalidate_layer_visual_revisions(
                 database_id,
                 changed_uids.get(CollaborationResourceFamily.LAYERS.value) or None,
             )
-        if pages_changed:
+        if pages_changed and not local_completion:
             self._deferred_persistence.invalidate_page_visual_revisions(
                 database_id,
                 changed_uids.get(CollaborationResourceFamily.PAGES.value) or None,
@@ -2853,7 +2914,11 @@ class UIEventCoordinator:
                 update_plan=not defer_plan_projection,
                 update_mesh=not defer_plan_projection,
             )
-        if annotations_changed:
+        if annotations_changed and resource_families_affect_page(
+            (CollaborationResourceFamily.ANNOTATIONS.value,),
+            affected_pages,
+            self.ui_state_manager.active_page_uid,
+        ):
             self._on_annotations_changed(
                 page_uid=self.ui_state_manager.active_page_uid,
                 annotation_uids=(
@@ -2962,6 +3027,16 @@ class UIEventCoordinator:
         if selected != BidRef(database_id, bid_uid):
             return
         operations = set(change_operations or ())
+        plan_refresh_required = condition_changes_require_plan_refresh(
+            changed_fields or (), operations
+        )
+        if (
+            invalidates_undo
+            and plan_refresh_required
+            and self.plan_view is not None
+            and self.plan_view.has_active_remote_projection_blocker()
+        ):
+            self._prepare_plan_for_authoritative_refresh()
         self._reconcile_active_placement()
         if self._undo_service and invalidates_undo:
             self._undo_service.clear()
@@ -2971,9 +3046,7 @@ class UIEventCoordinator:
         self.ui_state_manager.set_highlighted_conditions(valid_highlights)
         self._sidebar.refresh_conditions_from_memory()
         self._restore_sidebar_highlight(valid_highlights, reveal=False)
-        if not defer_plan_projection and condition_changes_require_plan_refresh(
-            changed_fields or (), operations
-        ):
+        if not defer_plan_projection and plan_refresh_required:
             self._update_plan_view_for_active(condition_uids=condition_uids)
         if not defer_plan_projection and condition_changes_require_mesh_refresh(
             changed_fields or (), operations
@@ -2994,6 +3067,11 @@ class UIEventCoordinator:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
             return
+        if (
+            self.plan_view is not None
+            and self.plan_view.has_active_remote_projection_blocker()
+        ):
+            self._prepare_plan_for_authoritative_refresh()
         if self._undo_service:
             self._undo_service.clear()
         if self._page_settings_bar:
@@ -3003,6 +3081,9 @@ class UIEventCoordinator:
                 areas=self.project_data.get_bid_area_snapshot(),
                 areas_with_takeoff=self.project_data.get_area_uids_with_takeoff(),
                 selected_uid=selected_area_uid,
+            )
+            self.ui_state_manager.selected_area_uid = (
+                self._page_settings_bar.get_selected_area_uid() or ""
             )
             self._refresh_takeoff_dependent_page_controls(
                 self.ui_state_manager.active_page_uid
@@ -3190,6 +3271,7 @@ class UIEventCoordinator:
         areas_changed: bool,
         resource_uids_by_family: dict[str, tuple[str, ...]],
         barrier: RemoteProjectionBarrier,
+        affected_page_uids_by_family: Optional[Dict[str, tuple[str, ...]]] = None,
     ) -> None:
         selected_bid_ref = self.ui_state_manager.get_selected_bid_ref()
         requested_bid_ref = BidRef(database_id, bid_uid)
@@ -3228,10 +3310,14 @@ class UIEventCoordinator:
                 condition_changed_fields, condition_change_operations
             )
         )
+        changed_plan_families = plan_families.intersection(families)
+        family_plan_refresh = resource_families_affect_page(
+            changed_plan_families,
+            affected_page_uids_by_family or {},
+            self.ui_state_manager.active_page_uid,
+        )
         plan_projection_required = (
-            areas_changed
-            or condition_plan_refresh
-            or bool(plan_families.intersection(families))
+            areas_changed or condition_plan_refresh or family_plan_refresh
         )
         if (
             self._is_cleaning_up
@@ -3411,12 +3497,23 @@ class UIEventCoordinator:
                 snap.highlighted_condition_uids
             )
             self.ui_state_manager.set_highlighted_conditions(valid_highlighted)
+            placement_is_current = True
+            if snap.place_condition_uid:
+                placement_is_current = bool(
+                    self._placement.is_active and self._reconcile_active_placement()
+                )
             can_restore_placement = bool(
                 snap.place_condition_uid
+                and placement_is_current
+                and self._placement.is_active
                 and snap.place_condition_uid in self.project_data.get_bid_conditions()
                 and self._is_condition_placeable(snap.place_condition_uid)
             )
-            if snap.place_condition_uid and not can_restore_placement:
+            if (
+                snap.place_condition_uid
+                and placement_is_current
+                and not can_restore_placement
+            ):
                 self._reset_to_select_mode()
             self._stage_takeoff_restore(
                 page_uids=snap.page_uids,
@@ -3515,6 +3612,7 @@ class UIEventCoordinator:
             self.ui_access_manager.refresh()
             self._update_menu_state()
             return
+        self._prepare_plan_for_authoritative_refresh()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
         self.ui_state_manager.set_database_selected(False)
@@ -3552,6 +3650,7 @@ class UIEventCoordinator:
         is_database_root: bool = False,
     ) -> None:
         self.project_operations.cancel_navigation_load()
+        self._prepare_plan_for_authoritative_refresh()
         self._save_current_page_view_state()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
@@ -3734,6 +3833,7 @@ class UIEventCoordinator:
                 )
             if self._plan_view_handler is not None:
                 self._plan_view_handler.hide_pending_takeoff_placement_previews()
+            self._prepare_plan_for_authoritative_refresh()
             self._placement.force_exit()
             self.ui_state_manager.set_bid_selection(None)
             self.ui_state_manager.set_database_selected(False)
@@ -3820,6 +3920,7 @@ class UIEventCoordinator:
             return
         if prev_bid_ref and bid_ref.file_path != prev_bid_ref.file_path:
             self._sql_collaboration.update_presence(prev_bid_ref.file_path, None, None)
+        self._prepare_plan_for_authoritative_refresh()
         if self._plan_view_handler is not None:
             self._plan_view_handler.hide_pending_takeoff_placement_previews()
         self._placement.force_exit()
@@ -3862,6 +3963,7 @@ class UIEventCoordinator:
     def handle_active_page_changed(self, active_uid: Optional[str]) -> None:
         if self._nav.is_refreshing:
             return
+        self._prepare_plan_for_authoritative_refresh()
         self._save_current_page_view_state(selected_page_override=active_uid)
         self.ui_state_manager.active_page_uid = active_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()

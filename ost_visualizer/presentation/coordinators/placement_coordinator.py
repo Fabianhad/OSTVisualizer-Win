@@ -135,10 +135,20 @@ class PlacementCoordinator:
     def _normalize_place_condition_uids(
         self, active_uid: str, condition_uids: list
     ) -> list:
+        conditions = self._project_data.get_bid_conditions()
+        active = conditions.get(active_uid)
+        active_type = active.condition_type if active is not None else None
         ordered = []
         seen = set()
         for uid in list(condition_uids or []) + [active_uid]:
-            if not uid or uid in seen or not self._is_condition_placeable(uid):
+            condition = conditions.get(uid) if uid else None
+            if (
+                not uid
+                or uid in seen
+                or condition is None
+                or not condition.layer_visible
+                or condition.condition_type != active_type
+            ):
                 continue
             ordered.append(uid)
             seen.add(uid)

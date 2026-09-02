@@ -55,6 +55,7 @@ from ost_visualizer.presentation.services.selection_commands import (
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
 )
+from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
 from ost_visualizer.presentation.utils.annotation_defaults import (
     apply_config_owned_annotation_defaults,
     build_placed_annotation_spec,
@@ -1163,6 +1164,9 @@ class FakeUndoService:
         self.undo = lambda: undo_submit(lambda _success: None)
         self.redo = lambda: redo_submit(lambda _success: None)
 
+    def push_for_bid(self, _bid_ref, undo_submit, redo_submit):
+        self.push(undo_submit, redo_submit)
+
 
 class FakeClipboard:
     def __init__(
@@ -1854,6 +1858,114 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         payload = write.queued_pastes[0][1]
         self.assertEqual(len(payload.annotation_specs), 1)
         self.assertEqual(payload.annotation_specs[0].annotation_type, "rect")
+
+    def test_sql_text_annotation_completion_does_not_reactivate_tool_on_new_page(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_text_annotation_created(
+            [1.0, 2.0, 5.0, 6.0],
+            "p1",
+            {"Text": "Delayed"},
+        )
+        payload = write.queued_pastes[0][1]
+        callback = write.queued_pastes[0][3]
+        source_uid = payload.annotation_source_uids[0]
+        plan_view.current_page_uid = "p2"
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("annotation-1",),
+                    created_uid_maps=(
+                        ("annotations", ((source_uid, "annotation-1"),)),
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(plan_view.activated_annotations, [])
+
+    def test_sql_text_annotation_completion_does_not_reactivate_after_access_loss(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_text_annotation_created(
+            [1.0, 2.0, 5.0, 6.0],
+            "p1",
+            {"Text": "Delayed"},
+        )
+        payload = write.queued_pastes[0][1]
+        callback = write.queued_pastes[0][3]
+        source_uid = payload.annotation_source_uids[0]
+        handler._ui_access_manager.allowed_features.discard(Feature.PLACE_ANNOTATIONS)
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("annotation-1",),
+                    created_uid_maps=(
+                        ("annotations", ((source_uid, "annotation-1"),)),
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(plan_view.activated_annotations, [])
+
+    def test_sql_annotation_completion_after_bid_switch_does_not_create_wrong_bid_undo(
+        self,
+    ):
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        selected_bid = [BidRef("bid.mdb", "7")]
+        ui_state = FakeUiState()
+        ui_state.get_selected_bid_ref = lambda: selected_bid[0]
+        undo = UndoRedoService()
+        undo.set_active_bid(selected_bid[0])
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=ui_state,
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
+        payload = write.queued_pastes[0][1]
+        callback = write.queued_pastes[0][3]
+        source_uid = payload.annotation_source_uids[0]
+        selected_bid[0] = BidRef("other.mdb", "9")
+        undo.set_active_bid(selected_bid[0])
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("annotation-1",),
+                    created_uid_maps=(
+                        ("annotations", ((source_uid, "annotation-1"),)),
+                    ),
+                ),
+            )
+        )
+        self.assertFalse(undo.can_undo())
 
     def test_in_memory_annotation_add_replaces_existing_uid(self):
         service = PageSelectionService()
@@ -3970,6 +4082,84 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         lease_callback(EditLeaseResult(True, handle=handle))
         handler.on_plan_item_selection_changed([])
         self.assertEqual(write.ended_edit_leases, [handle])
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+
+    def test_sql_geometry_lease_late_grant_is_released_after_access_loss(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        access = FakeAccess(set(Feature))
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=access,
+        )
+        handler.on_geometry_edit_lease_requested(["t1"])
+        database_id, resources, dependencies, options, lease_callback = (
+            write.edit_lease_requests[0]
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-late",
+            runtime_generation=3,
+            operation_id=options["operation_id"],
+            owning_surface="main-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+            locks=tuple(
+                ResourceLock(database_id, resource, f"lock-{index}")
+                for index, resource in enumerate(resources)
+            ),
+        )
+        access.allowed_features.remove(Feature.EDIT_PLAN_ITEMS)
+        lease_callback(EditLeaseResult(True, handle=handle))
+        self.assertEqual(write.ended_edit_leases, [handle])
+        self.assertIsNone(handler._geometry_edit_lease_handle)
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+
+    def test_sql_geometry_lease_late_grant_is_released_after_page_switch(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_geometry_edit_lease_requested(["t1"])
+        database_id, resources, dependencies, options, lease_callback = (
+            write.edit_lease_requests[0]
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-late",
+            runtime_generation=3,
+            operation_id=options["operation_id"],
+            owning_surface="main-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+            locks=tuple(
+                ResourceLock(database_id, resource, f"lock-{index}")
+                for index, resource in enumerate(resources)
+            ),
+        )
+        plan_view.current_page_uid = "p2"
+        lease_callback(EditLeaseResult(True, handle=handle))
+        self.assertEqual(write.ended_edit_leases, [handle])
+        self.assertIsNone(handler._geometry_edit_lease_handle)
         self.assertEqual(plan_view.geometry_lease_granted, set())
 
     def test_sql_geometry_lease_loss_requires_a_fresh_lease_for_same_selection(self):

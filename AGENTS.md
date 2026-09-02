@@ -313,8 +313,13 @@ Database backends:
 - Remote application merges are targeted by entity family. Do not publish
   EventBus events from polling workers, add remote commands to local undo
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread
-  reconciliation succeeds. External writers that bypass OST Visualizer are not
-  represented in this change feed.
+  reconciliation succeeds. Annotation entity reconciliation carries the exact
+  union of its previous and authoritative page ownership so Main and detached
+  Plan surfaces cancel and project only affected pages; collection-level or
+  unresolved annotation changes remain conservatively bid-wide, while detached
+  named-view navigation still follows the authoritative bid annotation set.
+  External writers that bypass OST Visualizer are not represented in this change
+  feed.
 - Takeoffs inherit bid-layer membership through their condition; `Takeoff` does
   not own a layer UID. SQL and Access share the canonical takeoff hydrator, and
   remote takeoff graphs must be validated before main-thread projection.
@@ -350,11 +355,15 @@ State and identity:
   hidden annotations out during viewer hydration.
 - Plan mutation completions may restore previews, selections, editor properties,
   or placement tools only while their captured database, bid, and page still own
-  that surface. Main and detached Plan surfaces retain mutation history for a
-  committed operation, but a stale completion must not project old interaction
-  state into a newly navigated context. If authoritative hierarchy refresh removes
-  the detached surface's bid, clear its undo history before refreshing or
-  retargeting the window.
+  that surface. Pending or granted geometry edit leases are released when the
+  surface loses edit access, and a delayed grant must revalidate both access and
+  page ownership. Main and detached Plan surfaces retain mutation history for a
+  committed operation only while its captured bid remains the active history
+  owner; a stale completion must not project old interaction state or attach an
+  old-bid command to a newly navigated context. If authoritative hierarchy
+  refresh removes the detached surface's bid, clear its undo history before
+  refreshing or retargeting the window. Exact remote annotation ownership on an
+  unrelated page must not clear that detached page's local undo history.
 - Plan View scene bands live in `presentation/scene/plan_view_z_order.py`.
   Overlay-only imagery owns the primary page-image band, while Show Both may
   project its overlay into the foreground-image band. Base, overlay, composite,

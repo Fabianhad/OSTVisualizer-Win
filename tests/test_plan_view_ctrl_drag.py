@@ -105,6 +105,7 @@ class RemoteProjectionBlockerTests(unittest.TestCase):
     def _plan_state(**overrides):
         state = {
             "_editing_annotation_uids": lambda: set(),
+            "_has_active_drag_interaction": lambda: False,
             "_drag_plan_item_uid": None,
             "_rotation_drag_active": False,
             "_overlay_move_dragging": False,
@@ -129,6 +130,10 @@ class RemoteProjectionBlockerTests(unittest.TestCase):
             _place_preview_items=[object()],
             _place_linear_dragging=True,
         )
+        self.assertTrue(TakeoffPlanView.has_active_remote_projection_blocker(view))
+
+    def test_active_selection_box_blocks_projection(self):
+        view = self._plan_state(_has_active_drag_interaction=lambda: True)
         self.assertTrue(TakeoffPlanView.has_active_remote_projection_blocker(view))
 
 
@@ -2900,19 +2905,60 @@ class CtrlDragTests(unittest.TestCase):
         cursor = view._resolve_select_cursor(QtCore.QPoint(5, 5))
         self.assertEqual(cursor, Qt.CursorShape.SizeAllCursor)
 
-    def test_modal_mutation_error_clears_stale_move_cursor_without_override(self):
-        view = self._make_selected_path_takeoff_view()
+    def test_authoritative_refresh_cancels_all_transient_interaction_state(self):
+        view = self._make_view()
         viewport = FakeCursorViewport()
         view.viewport = lambda: viewport
-        view._last_mouse_vp_pos = QtCore.QPoint(5, 5)
+        view._update_cursor = lambda: viewport.setCursor(view._resolve_cursor(None))
         viewport.setCursor(Qt.CursorShape.SizeAllCursor)
-        view.prepare_for_modal_mutation_error()
-        self.assertIsNone(view._last_mouse_vp_pos)
-        self.assertEqual(viewport.cursor, Qt.CursorShape.ArrowCursor)
-        self.assertIsNone(QApplication.overrideCursor())
-        viewport.setCursor(Qt.CursorShape.SizeAllCursor)
-        view._last_mouse_vp_pos = QtCore.QPoint(5, 5)
-        view.prepare_for_modal_mutation_error()
+        view._editing_text_annotation_uid = "annotation-1"
+        view._draft_text_annotation_uid = None
+        view._draft_named_view_uid = None
+        view._drag_plan_item_uid = "t1"
+        view._select_band_active = True
+        view._rotation_drag_active = True
+        view._overlay_move_dragging = True
+        view._annotation_place_dragging = True
+        view._annotation_area_rect_dragging = True
+        view._place_linear_dragging = True
+        view._place_area_rect_dragging = True
+        view._paste_backout_preview_items = [object()]
+        view._dirty_positions = {"t1": [20.0, 0.0, 30.0, 0.0]}
+        view._position_before_edit = {"t1": [0.0, 0.0, 10.0, 0.0]}
+        view._dirty_rotations = {}
+        view._rotation_before_edit = {}
+        view._place_session_uid = "condition-1"
+        view._annotation_place_type = "dimension"
+        view._annotation_place_points = [(1.0, 1.0)]
+        view._panning = False
+        view._last_mouse_vp_pos = QtCore.QPoint(4, 5)
+        view.cancel_overlay_move_mode = lambda restore_preview=True: setattr(
+            view, "_overlay_move_dragging", False
+        )
+        view._cancel_rotation_drag_interaction = lambda: setattr(
+            view, "_rotation_drag_active", False
+        )
+        view._discard_unflushed_geometry_edits = lambda: (
+            TakeoffPlanView._discard_unflushed_geometry_edits(view)
+        )
+        view.finish_intelligent_paste_placement = lambda: None
+        view.cancel_paste_backout = lambda: view._paste_backout_preview_items.clear()
+        view.clear_place_preview = lambda: None
+        view._reset_place_session_state = lambda: (
+            setattr(view, "_place_linear_dragging", False),
+            setattr(view, "_place_area_rect_dragging", False),
+        )
+        view._set_area_placement_in_progress = lambda _active: None
+        view._rebuild_current_overlays_from_model = lambda: None
+        view._editing_annotation_uids = lambda: (
+            TakeoffPlanView._editing_annotation_uids(view)
+        )
+        TakeoffPlanView.prepare_for_authoritative_refresh(view)
+        self.assertFalse(TakeoffPlanView.has_active_remote_projection_blocker(view))
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [0.0, 0.0, 10.0, 0.0],
+        )
         self.assertIsNone(view._last_mouse_vp_pos)
         self.assertEqual(viewport.cursor, Qt.CursorShape.ArrowCursor)
         self.assertIsNone(QApplication.overrideCursor())

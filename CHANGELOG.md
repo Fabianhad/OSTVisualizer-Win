@@ -27,7 +27,9 @@
   intermediate recovery state as completion. Failed visual settings restore
   only their still-current page or bid, stale workspace selections fall back to
   their loaded database, authoritative page/layer refreshes invalidate older
-  visual-setting callbacks, and cleared undo history ignores late completions.
+  visual-setting callbacks, local completions preserve newer pending visual
+  values across Main and detached Plan projections, and cleared undo history
+  ignores late completions.
 - Fixed structural Condition and layer changes leaving multi-Condition placement
   active after a primary or secondary Condition became hidden, unavailable, or
   incompatible with the active placement geometry.
@@ -38,7 +40,20 @@
 - Fixed native overlay/import/export dialog continuations writing after their
   page, bid, or owning window changed; authoritative page replacement now drops
   matching deferred page settings without discarding unrelated writes. Detached
-  Plan also clears stale undo history when its bid is removed remotely.
+  Plan now preserves local undo history while clearing it for remote structural
+  changes, and external Access refreshes cancel stale Plan interactions,
+  selection, and undo state only in the refreshed active database. Main and
+  detached Plan navigation and authoritative structural projections now cancel
+  active gestures, selection boxes, previews, and geometry leases before stale
+  interaction state can cross contexts, and remotely deleted area selections
+  are cleared immediately. Edit-access loss also releases pending or granted
+  geometry leases, including grants that arrive after a Main or detached page
+  retarget. Remote annotation updates now cancel and refresh only their affected
+  pages when page ownership is authoritative and preserve unrelated detached-page
+  undo history; deleted or replaced named views cannot retain stale navigation
+  targets, and late SQL annotation completions cannot reactivate tools after the
+  page or edit access changes or attach old-bid undo commands to the newly active
+  bid.
 - Fixed restart/reconnect accepting a SQL database recreated under the same
   server/name as the saved database, and fixed import/export continuations
   accepting replacement projects or bids that reused the captured UID while a

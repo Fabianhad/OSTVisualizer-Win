@@ -22,13 +22,6 @@ PAGE_VISUAL_SETTING_KINDS = frozenset(
 )
 NON_RETRYABLE_UI_STATE_KINDS = {BID_SELECTED_PAGE_KIND, PAGE_VIEW_STATE_KIND}
 SILENT_BEST_EFFORT_UI_STATE_KINDS = {PAGE_VIEW_STATE_KIND}
-PAGE_SETTING_KINDS = {
-    "page_show_mode",
-    "page_area_selection",
-    "page_invert",
-    "page_bitonal",
-    "page_overlay_rect",
-}
 
 
 @dataclass
@@ -242,7 +235,7 @@ class DeferredPersistenceManager(QtCore.QObject):
                         affected_page_uids is None or str(key[3]) in affected_page_uids
                     )
                 )
-            elif item.kind in PAGE_SETTING_KINDS:
+            elif item.kind in PAGE_VISUAL_SETTING_KINDS:
                 cancel = len(key) > 2 and (
                     affected_page_uids is None or str(key[2]) in affected_page_uids
                 )
@@ -526,6 +519,58 @@ class DeferredPersistenceManager(QtCore.QObject):
             PAGE_VISUAL_SETTING_KINDS,
             page_uids,
         )
+
+    def reproject_newer_layer_visual_revisions(
+        self,
+        db_path: str,
+        layer_uids: Optional[list[str]] = None,
+    ) -> None:
+        self._reproject_newer_visual_revisions(
+            db_path,
+            {LAYER_SHOW_KIND},
+            layer_uids,
+        )
+
+    def reproject_newer_page_visual_revisions(
+        self,
+        db_path: str,
+        page_uids: Optional[list[str]] = None,
+    ) -> None:
+        self._reproject_newer_visual_revisions(
+            db_path,
+            PAGE_VISUAL_SETTING_KINDS,
+            page_uids,
+        )
+
+    def _reproject_newer_visual_revisions(
+        self,
+        db_path: str,
+        setting_kinds: set[str] | frozenset[str],
+        resource_uids: Optional[list[str]],
+    ) -> None:
+        target_uids = (
+            {str(resource_uid) for resource_uid in resource_uids if resource_uid}
+            if resource_uids
+            else None
+        )
+        for key, state in list(self._visual_states.items()):
+            if (
+                len(key) < 3
+                or key[0] not in setting_kinds
+                or str(key[1]) != str(db_path)
+                or (target_uids is not None and str(key[2]) not in target_uids)
+                or len(state.revisions) < 2
+            ):
+                continue
+            viable = [
+                (revision, item)
+                for revision, item in state.revisions.items()
+                if item.terminal_success is not False
+            ]
+            if viable:
+                max(viable, key=lambda revision_item: revision_item[0])[
+                    1
+                ].project_value()
 
     def _invalidate_visual_revisions(
         self,

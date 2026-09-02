@@ -460,6 +460,11 @@ class NavigationStateMachineTests(unittest.TestCase):
             "c2": Condition(
                 uid="c2", layer_visible=True, condition_type=Condition.TYPE_AREA
             ),
+            "linear": Condition(
+                uid="linear",
+                layer_visible=True,
+                condition_type=Condition.TYPE_LINEAR,
+            ),
             "hidden": Condition(
                 uid="hidden", layer_visible=False, condition_type=Condition.TYPE_AREA
             ),
@@ -477,11 +482,12 @@ class NavigationStateMachineTests(unittest.TestCase):
             ),
         )
         placement._plan_view = plan_view
-        self.assertTrue(placement.enter("c2", ["c1", "c1", "hidden"]))
+        self.assertTrue(placement.enter("c2", ["c1", "c1", "hidden", "linear"]))
         self.assertEqual(ui_state.place_condition_uids, ["c1", "c2"])
         self.assertEqual(plan_view.place_calls, [("c2", ["c1", "c2"])])
         self.assertEqual(color_map_requests, [{"c1", "c2"}])
         self.assertEqual(ui_state.place_condition_uid, "c2")
+        self.assertTrue(placement.reconcile_authoritative_conditions())
 
     def test_placement_reconciliation_exits_when_primary_condition_is_retyped(self):
         class UiState:

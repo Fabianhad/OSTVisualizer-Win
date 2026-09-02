@@ -75,6 +75,24 @@ class UndoRedoService:
         bid_ref = self._active_bid_ref
         if not bid_ref:
             return
+        self._push_entry(bid_ref, undo_submit, redo_submit)
+
+    def push_for_bid(
+        self,
+        bid_ref: BidRef,
+        undo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
+        redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
+    ) -> None:
+        if bid_ref != self._active_bid_ref:
+            return
+        self._push_entry(bid_ref, undo_submit, redo_submit)
+
+    def _push_entry(
+        self,
+        bid_ref: BidRef,
+        undo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
+        redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
+    ) -> None:
         self._undo_stack.append(
             MutationHistoryEntry(
                 bid_ref,

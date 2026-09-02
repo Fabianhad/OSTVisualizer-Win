@@ -383,6 +383,8 @@ class ToolbarStateCoordinator:
         select_allowed = plan_access.can_select_plan_items
         edit_allowed = plan_access.can_edit_plan_items
         inline_edit_allowed = plan_access.can_edit_annotation_text
+        if self.plan_view_handler:
+            self.plan_view_handler.reconcile_geometry_edit_access(edit_allowed)
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
             inline_edit_active = self.plan_view.is_text_annotation_inline_edit_active()

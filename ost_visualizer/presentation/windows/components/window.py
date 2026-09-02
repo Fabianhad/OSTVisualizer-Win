@@ -1087,6 +1087,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def set_access_state(self, access_state: PlanSurfaceAccessState) -> None:
         self._access_state = access_state
+        if not access_state.can_edit_plan_items:
+            self._release_geometry_edit_lease()
         if self._scale_combo is not None:
             self._scale_combo.setEnabled(access_state.can_edit_page_settings)
         self._refresh_annotation_tool_access()
@@ -1224,6 +1226,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             and self._project_write_svc.uses_sql_collaboration_mutations(db_path)
         )
 
+    def prepare_for_authoritative_refresh(self) -> None:
+        self._release_geometry_edit_lease()
+        if self.plan_view is not None:
+            self.plan_view.prepare_for_authoritative_refresh()
+
     def _release_geometry_edit_lease(self) -> None:
         handle = self._geometry_edit_lease_handle
         self._geometry_edit_lease_handle = None
@@ -1303,7 +1310,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _on_geometry_edit_lease_requested(self, selected_uids: list) -> None:
         selection = {str(uid) for uid in selected_uids if uid}
         bid_ref = self.view.bid_ref if self.view else None
-        if not selection or bid_ref is None or not self._uses_sql_mutation_queue():
+        if (
+            not selection
+            or bid_ref is None
+            or not self._editing_enabled()
+            or not self._uses_sql_mutation_queue()
+        ):
             self._release_geometry_edit_lease()
             return
         resources, dependencies = self._annotation_edit_resources(
@@ -1332,6 +1344,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._geometry_edit_lease_request_id = request_id
         self._geometry_edit_lease_selection = selection
         self.plan_view.set_geometry_edit_lease_pending(selection)
+        page_uids = tuple(
+            resource.resource_id
+            for resource in dependencies
+            if resource.resource_type == "page"
+        )
         window_ref = weakref.ref(self)
         write_service = self._project_write_svc
 
@@ -1349,6 +1366,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             if (
                 not result.granted
                 or set(window.plan_view.get_selected_uids()) != selection
+                or not window._editing_enabled()
+                or not window._annotation_context_is_current(bid_ref, page_uids)
             ):
                 if result.handle is not None:
                     window._project_write_svc.end_plan_edit_lease(result.handle)
@@ -1515,7 +1534,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 owning_surface="detached-plan",
             )
 
-        self._undo_svc.push(
+        self._undo_svc.push_for_bid(
+            bid_ref,
             lambda done: submit(done, old_changes),
             lambda done: submit(done, new_changes),
         )
@@ -1605,7 +1625,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 owning_surface="detached-plan",
             )
 
-        self._undo_svc.push(
+        self._undo_svc.push_for_bid(
+            bid_ref,
             lambda done: submit(done, old_updates),
             lambda done: submit(done, new_updates),
         )
@@ -1742,7 +1763,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 owning_surface="detached-plan",
             )
 
-        self._undo_svc.push(undo_submit, redo_submit)
+        self._undo_svc.push_for_bid(bid_ref, undo_submit, redo_submit)
 
     def _queue_sql_annotation_delete(
         self,
@@ -1852,7 +1873,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 owning_surface="detached-plan",
             )
 
-        self._undo_svc.push(undo_submit, redo_submit)
+        self._undo_svc.push_for_bid(bid_ref, undo_submit, redo_submit)
 
     def _on_positions_flushed(self, _takeoff_changes: list, ann_changes: list) -> None:
         if not self._editing_enabled():

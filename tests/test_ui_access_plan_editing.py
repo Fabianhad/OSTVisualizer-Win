@@ -92,6 +92,9 @@ class UIAccessPlanEditingTests(unittest.TestCase):
             cancellations.append(("rotation-drag", True))
             return False
 
+        def discard_unflushed_geometry_edits():
+            TakeoffPlanView._discard_unflushed_geometry_edits(view)
+
         view = SimpleNamespace(
             _editing_enabled=True,
             _rotation_drag_active=False,
@@ -107,6 +110,7 @@ class UIAccessPlanEditingTests(unittest.TestCase):
                 ("drag", restore_preview)
             ),
             _cancel_rotation_drag_interaction=cancel_rotation_drag,
+            _discard_unflushed_geometry_edits=discard_unflushed_geometry_edits,
             cancel_overlay_move_mode=lambda restore_preview: cancellations.append(
                 ("overlay", restore_preview)
             ),

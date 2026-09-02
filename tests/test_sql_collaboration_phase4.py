@@ -89,6 +89,10 @@ from ost_visualizer.application.services.sql_collaboration_coordinator import (
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.domain.entities.employee import Employee, PayClass
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 
 _COORDINATOR_TYPE = SqlCollaborationCoordinator
 
@@ -758,6 +762,7 @@ class _ProjectData:
         self.cover_sheets = {}
         self.page_delete_content = {}
         self.removed_transient_takeoff_uids = []
+        self.annotations = []
 
     def get_current_bid_ref(self):
         return self.bid_ref
@@ -781,7 +786,14 @@ class _ProjectData:
         raise AssertionError("No hierarchy change was requested")
 
     def replace_remote_bid_families(self, bid_ref, bid_data, families):
+        if bid_ref != self.bid_ref:
+            return False
+        if CollaborationResourceFamily.ANNOTATIONS.value in families:
+            self.annotations = list(bid_data.bid_annotations)
         return True
+
+    def get_all_annotations(self):
+        return list(self.annotations)
 
     def remove_transient_takeoffs(self, takeoff_uids):
         self.removed_transient_takeoff_uids.extend(takeoff_uids)
@@ -2890,6 +2902,68 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(len(content_events), 1)
         self.assertEqual(content_events[0]["families"], ["takeoffs"])
         self.assertEqual(len(projection_events), 1)
+
+    def test_remote_annotation_projection_carries_old_and_new_page_ownership(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        project_data.annotations = [
+            BidAnnotation(
+                uid="annotation-1",
+                annotation_type=ANNOTATION_TYPE_TEXT,
+                page_uid="page-1",
+            )
+        ]
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        moved_annotation = BidAnnotation(
+            uid="annotation-1",
+            annotation_type=ANNOTATION_TYPE_TEXT,
+            page_uid="page-2",
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("annotation", "text/annotation-1", 8),
+                        2,
+                    ),
+                ),
+            ),
+            bid_data_by_bid={8: BidLoadResult(bid_annotations=[moved_annotation])},
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        self.assertTrue(service.apply(hydrated, barrier).applied)
+        content = next(
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_BID_CONTENT_CHANGED
+        )
+        projection = next(
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED
+        )
+        self.assertEqual(
+            content["affected_page_uids_by_family"],
+            {"annotations": ("page-1", "page-2")},
+        )
+        self.assertEqual(
+            projection["affected_page_uids_by_family"],
+            {"annotations": ("page-1", "page-2")},
+        )
 
     def test_local_takeoff_projection_replaces_transient_identity_as_one_change(self):
         database_id = "database"

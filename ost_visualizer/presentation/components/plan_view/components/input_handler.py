@@ -305,15 +305,6 @@ class InputHandlerMixin:
         self._clear_drag_tracking(restore_preview=restore_preview)
         return True
 
-    def prepare_for_modal_mutation_error(self) -> None:
-        self._cancel_active_drag_interaction(restore_preview=True)
-        self._cancel_rotation_drag_interaction()
-        if self._panning:
-            self._finish_pan_interaction()
-        self.reset_ctrl_held()
-        self._last_mouse_vp_pos = None
-        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
-
     def _clear_stale_drag_tracking_if_mouse_released(self, event: QMouseEvent) -> None:
         if event.buttons() & Qt.MouseButton.LeftButton:
             return

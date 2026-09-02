@@ -400,6 +400,57 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertEqual(projections, [])
 
+    def test_remote_replacement_rejects_old_callbacks_for_recreated_page_uid(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        for value in (1, 2):
+            self.manager.schedule_page_show_mode(
+                "sql-db",
+                "page-1",
+                value,
+                restore_authoritative=lambda: projections.append("old"),
+                project_value=lambda value=value: projections.append(str(value)),
+            )
+            self.assertTrue(self.manager.flush())
+        old_callbacks = list(self.service.queued_setting_callbacks)
+        self.manager.invalidate_page_visual_revisions("sql-db", ["page-1"])
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            3,
+            restore_authoritative=lambda: projections.append("remote"),
+            project_value=lambda: projections.append("3"),
+        )
+        self.assertTrue(self.manager.flush())
+        old_callbacks[1](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        old_callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(projections, [])
+        self.service.queued_setting_callbacks[-1](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(projections, ["3"])
+
     def test_sql_visual_coalescing_preserves_first_authoritative_value(self):
         self.service.queue_sql_settings = True
         projections = []
@@ -478,6 +529,38 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             )
         )
         self.assertEqual(projections, ["3", "3", "3"])
+
+    def test_local_page_completion_reprojects_newer_pending_visual_before_barrier(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        for value in (1, 2):
+            self.manager.schedule_page_show_mode(
+                "sql-db",
+                "page-1",
+                value,
+                restore_authoritative=lambda: projections.append("original"),
+                project_value=lambda value=value: projections.append(str(value)),
+            )
+            self.assertTrue(self.manager.flush())
+        self.manager.reproject_newer_page_visual_revisions("sql-db", ["page-1"])
+        self.assertEqual(projections, ["2"])
+
+    def test_local_layer_completion_reprojects_newer_pending_visual_before_barrier(
+        self,
+    ):
+        self.service.queue_sql_settings = True
+        projections = []
+        for value in (False, True):
+            self.manager.schedule_layer_show(
+                "sql-db",
+                "layer-1",
+                value,
+                restore_authoritative=lambda: projections.append("original"),
+                project_value=lambda value=value: projections.append(str(value)),
+            )
+            self.assertTrue(self.manager.flush())
+        self.manager.reproject_newer_layer_visual_revisions("sql-db", ["layer-1"])
+        self.assertEqual(projections, ["True"])
 
     def test_newest_rejection_reprojects_prior_pending_visual_value(self):
         self.service.queue_sql_settings = True
@@ -1741,6 +1824,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def _make_view_state_coordinator(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._plan_view_handler = None
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False
         )
@@ -1804,6 +1888,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def test_active_page_switch_defers_selected_page_and_outgoing_view_state(self):
         coordinator, _pages = self._make_view_state_coordinator()
+        interaction_cancellations = []
+        coordinator._plan_view_handler = SimpleNamespace(
+            prepare_for_authoritative_refresh=lambda: interaction_cancellations.append(
+                "cancel"
+            )
+        )
         self._install_native_mesh_recorders(coordinator)
         coordinator._update_page_settings_bar = lambda _page_uid: None
         coordinator._sync_overlay_display_mode = lambda _page_uid: None
@@ -1829,6 +1919,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
         self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 1)
         self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 1)
+        self.assertEqual(interaction_cancellations, ["cancel"])
 
     def test_missing_selected_page_cancels_pending_bid_selected_page_write(self):
         coordinator, _pages = self._make_view_state_coordinator()
@@ -2510,6 +2601,16 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._undo_service = SimpleNamespace(
             clear=lambda: calls.append("clear-undo")
         )
+        coordinator._prepare_for_modal_mutation_error = lambda file_path: calls.append(
+            ("cancel-interactions", file_path)
+        )
+        coordinator._selected_takeoff_uids = ("stale-takeoff",)
+        coordinator._sync_selection = lambda source, uids: calls.append(
+            ("selection", source, list(uids))
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_current_file_path=lambda: "a.mdb"
+        )
         coordinator._nav = SimpleNamespace(
             start_refresh=lambda _ui_state, _placement, selected_area_uid="": calls.append(
                 "start"
@@ -2534,10 +2635,55 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [
                 ("cancel", "a.mdb"),
                 "clear-undo",
+                ("cancel-interactions", "a.mdb"),
+                ("selection", coordinator._SOURCE_MODEL, []),
                 "start",
                 "refresh",
                 "finish",
             ],
+        )
+
+    def test_external_background_access_refresh_preserves_active_runtime_state(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._deferred_persistence = SimpleNamespace(
+            cancel_for_file=lambda file_path: calls.append(("cancel", file_path)),
+        )
+        coordinator._undo_service = SimpleNamespace(
+            clear=lambda: calls.append("clear-undo")
+        )
+        coordinator._prepare_for_modal_mutation_error = lambda file_path: calls.append(
+            ("cancel-interactions", file_path)
+        )
+        coordinator._selected_takeoff_uids = ("active-takeoff",)
+        coordinator._sync_selection = lambda source, uids: calls.append(
+            ("selection", source, list(uids))
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_current_file_path=lambda: "active.mdb"
+        )
+        coordinator._nav = SimpleNamespace(
+            start_refresh=lambda _ui_state, _placement, selected_area_uid="": calls.append(
+                "start"
+            )
+            or True
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_area_uid="",
+            selected_page_uids=[],
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._mesh_scene_dirty = False
+        coordinator._placement = SimpleNamespace()
+        coordinator._do_file_refresh = lambda: calls.append("refresh")
+        coordinator._finish_refresh = lambda: calls.append("finish")
+        coordinator._on_database_refreshed(
+            file_path="background.mdb",
+            external_change=True,
+        )
+        self.assertEqual(
+            calls,
+            [("cancel", "background.mdb"), "start", "refresh", "finish"],
         )
 
     def test_database_refresh_stops_when_deferred_flush_fails(self):

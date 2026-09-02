@@ -7,6 +7,7 @@ from PySide6.QtCore import QByteArray, Qt
 from ...application.dtos.page_view_dto import PageViewDto
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
+    resource_families_affect_page,
 )
 from ...application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
@@ -31,6 +32,7 @@ from ...application.interfaces.i_infrastructure_service_provider import (
 from ...application.interfaces.i_shutdown_aware import IShutdownAware
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.annotation_view import AnnotationView
+from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.workspace_state import DetachedWindowState
 from ...domain.repositories.i_annotation_view_repository import (
@@ -309,8 +311,10 @@ class DetachedPageViewManager(IShutdownAware):
         bid_ref = view.bid_ref
         if bid_ref and file_path and bid_ref.file_path != file_path:
             return
-        if external_change and self._window_undo_service is not None:
-            self._window_undo_service.clear()
+        if external_change:
+            self._window.prepare_for_authoritative_refresh()
+            if self._window_undo_service is not None:
+                self._window_undo_service.clear()
         self._refresh_signaler.request()
 
     def _on_layer_visibility_changed(
@@ -349,6 +353,7 @@ class DetachedPageViewManager(IShutdownAware):
         affected_page_uids = set(page_uids or ([page_uid] if page_uid else []))
         if affected_page_uids and view.target_page_uid not in affected_page_uids:
             return
+        self._reconcile_target_named_view(view)
         self._refresh_signaler.request()
 
     def _on_remote_bid_content_changed(
@@ -356,7 +361,9 @@ class DetachedPageViewManager(IShutdownAware):
         database_id: str = "",
         bid_uid: str = "",
         families: Optional[List[str]] = None,
+        affected_page_uids_by_family: Optional[dict[str, tuple[str, ...]]] = None,
         defer_plan_projection: bool = False,
+        local_completion: bool = False,
         **_event_data,
     ) -> None:
         view = self.repository.get_active_view()
@@ -367,9 +374,35 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref.bid_uid != bid_uid
         ):
             return
-        if self._window_undo_service is not None and families:
+        changed_families = set(families or ())
+        projected_families = {
+            CollaborationResourceFamily.ANNOTATIONS.value,
+            CollaborationResourceFamily.LAYERS.value,
+            CollaborationResourceFamily.PAGES.value,
+            CollaborationResourceFamily.TAKEOFFS.value,
+        }.intersection(changed_families)
+        affects_target_page = not changed_families or resource_families_affect_page(
+            projected_families,
+            affected_page_uids_by_family or {},
+            view.target_page_uid,
+        )
+        if not local_completion and affects_target_page:
+            self._prepare_window_for_authoritative_change_if_blocked()
+        if (
+            self._window_undo_service is not None
+            and families
+            and not local_completion
+            and affects_target_page
+        ):
             self._window_undo_service.clear()
-        if not defer_plan_projection:
+        annotations_changed = (
+            CollaborationResourceFamily.ANNOTATIONS.value in changed_families
+        )
+        if annotations_changed:
+            self._reconcile_target_named_view(view)
+        if annotations_changed and (defer_plan_projection or not affects_target_page):
+            self._update_window_navigation(view)
+        if not defer_plan_projection and affects_target_page:
             self._refresh_signaler.request()
 
     def _on_conditions_changed(
@@ -390,11 +423,14 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref.bid_uid != bid_uid
         ):
             return
+        plan_refresh_required = condition_changes_require_plan_refresh(
+            changed_fields or (), change_operations or ()
+        )
+        if invalidates_undo and plan_refresh_required:
+            self._prepare_window_for_authoritative_change_if_blocked()
         if self._window_undo_service is not None and invalidates_undo:
             self._window_undo_service.clear()
-        if not defer_plan_projection and condition_changes_require_plan_refresh(
-            changed_fields or (), change_operations or ()
-        ):
+        if not defer_plan_projection and plan_refresh_required:
             self._refresh_signaler.request()
 
     def _on_remote_areas_changed(
@@ -404,12 +440,24 @@ class DetachedPageViewManager(IShutdownAware):
         defer_plan_projection: bool = False,
         **_event_data,
     ) -> None:
+        view = self.repository.get_active_view()
+        if view is not None and view.bid_ref == BidRef(database_id, bid_uid):
+            self._prepare_window_for_authoritative_change_if_blocked()
         self._on_conditions_changed(
             database_id,
             bid_uid,
             defer_plan_projection=defer_plan_projection,
             invalidates_undo=True,
         )
+
+    def _prepare_window_for_authoritative_change_if_blocked(self) -> bool:
+        if (
+            self._window is None
+            or not self._window.plan_view.has_active_remote_projection_blocker()
+        ):
+            return False
+        self._window.prepare_for_authoritative_refresh()
+        return True
 
     def _on_remote_hierarchy_changed(
         self,
@@ -444,6 +492,7 @@ class DetachedPageViewManager(IShutdownAware):
         areas_changed: bool,
         resource_uids_by_family: dict[str, tuple[str, ...]],
         barrier: RemoteProjectionBarrier,
+        affected_page_uids_by_family: Optional[dict[str, tuple[str, ...]]] = None,
     ) -> None:
         del condition_uids, resource_uids_by_family
         plan_families = {
@@ -467,6 +516,14 @@ class DetachedPageViewManager(IShutdownAware):
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
+        changed_plan_families = plan_families.intersection(families)
+        family_plan_refresh = resource_families_affect_page(
+            changed_plan_families,
+            affected_page_uids_by_family or {},
+            view.target_page_uid if view is not None else "",
+        )
+        if not (areas_changed or condition_plan_refresh or family_plan_refresh):
+            return
         if (
             view is None
             or view.bid_ref is None
@@ -514,6 +571,21 @@ class DetachedPageViewManager(IShutdownAware):
         if not bid_ref:
             return None
         return self.project_data.get_bid(bid_ref)
+
+    def _reconcile_target_named_view(self, view: AnnotationView) -> bool:
+        target_uid = view.target_named_view_uid
+        if not target_uid:
+            return False
+        for annotation in self.project_data.get_page_annotations(view.target_page_uid):
+            named_view = build_named_view_from_annotation(annotation)
+            if named_view is not None and named_view.uid == target_uid:
+                return False
+        view.update_view_target(
+            page_uid=view.target_page_uid,
+            named_view_uid=None,
+        )
+        self.repository.update_view(view)
+        return True
 
     def _update_window_navigation(self, view: AnnotationView) -> None:
         if self._window is None:
@@ -774,6 +846,7 @@ class DetachedPageViewManager(IShutdownAware):
         view = self.repository.get_active_view()
         if not view:
             return
+        self._window.prepare_for_authoritative_refresh()
         current_bid_ref = self.project_data.get_current_bid_ref()
         if current_bid_ref:
             view.bid_uid = current_bid_ref.bid_uid
@@ -808,6 +881,7 @@ class DetachedPageViewManager(IShutdownAware):
         view = self.repository.get_active_view()
         if not view or not self._window:
             return
+        self._window.prepare_for_authoritative_refresh()
         view.update_view_target(page_uid=page_uid, named_view_uid=None)
         self.repository.update_view(view)
         page_data = self._get_page_data(view)
@@ -870,6 +944,7 @@ class DetachedPageViewManager(IShutdownAware):
         view = self.repository.get_active_view()
         if not view or not self._window:
             return
+        self._window.prepare_for_authoritative_refresh()
         view.update_view_target(page_uid=page_uid, named_view_uid=named_view_uid)
         self.repository.update_view(view)
         page_data = self._get_page_data(view)

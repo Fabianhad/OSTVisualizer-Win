@@ -9,9 +9,11 @@ from ..dtos.collaboration_resource_catalog import (
     BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
     CONDITION_RESOURCE_TYPES,
     HIERARCHY_RESOURCE_TYPES,
+    CollaborationResourceFamily,
     CollaborationResourceType,
     MASTER_DATA_RESOURCE_TYPES,
     SUPPORTED_REMOTE_RESOURCE_TYPES,
+    parse_annotation_resource_id,
 )
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
@@ -139,12 +141,23 @@ class RemoteChangeReconciliationService:
                 return ReconciliationResult(applied=False)
         bid_data = hydrated.bid_data_by_bid.get(bid_uid)
         families = set()
+        affected_page_uids_by_family: dict[str, tuple[str, ...]] = {}
         if bid_data is not None:
             families = {
                 BID_CONTENT_FAMILY_BY_RESOURCE_TYPE[change.resource.resource_type]
                 for change in active_changes
                 if change.resource.resource_type in BID_CONTENT_FAMILY_BY_RESOURCE_TYPE
             }
+            if CollaborationResourceFamily.ANNOTATIONS.value in families:
+                annotation_page_uids = self._resolve_annotation_page_ownership(
+                    active_changes,
+                    self._project_data.get_all_annotations(),
+                    bid_data.bid_annotations,
+                )
+                if annotation_page_uids is not None:
+                    affected_page_uids_by_family[
+                        CollaborationResourceFamily.ANNOTATIONS.value
+                    ] = annotation_page_uids
             if projection_barrier is not None and "takeoffs" in families:
                 transient_takeoff_uids = (
                     projection_barrier.resource_uid_aliases_by_family.get(
@@ -275,6 +288,7 @@ class RemoteChangeReconciliationService:
                 bid_uid=str(bid_uid),
                 families=sorted(families),
                 resource_uids_by_family=resource_uids_by_family,
+                affected_page_uids_by_family=affected_page_uids_by_family,
                 defer_plan_projection=projection_barrier is not None,
                 local_completion=local_completion,
             )
@@ -314,8 +328,58 @@ class RemoteChangeReconciliationService:
                     for family in projected_families
                 },
                 barrier=projection_barrier,
+                affected_page_uids_by_family=affected_page_uids_by_family,
             )
         return ReconciliationResult(applied=True)
+
+    @staticmethod
+    def _resolve_annotation_page_ownership(
+        active_changes,
+        previous_annotations,
+        authoritative_annotations,
+    ) -> tuple[str, ...] | None:
+        annotation_changes = tuple(
+            change
+            for change in active_changes
+            if change.resource.resource_type
+            == CollaborationResourceType.ANNOTATION.value
+        )
+        if not annotation_changes or any(
+            change.resource.resource_type
+            == CollaborationResourceType.ANNOTATIONS_COLLECTION.value
+            for change in active_changes
+        ):
+            return None
+        previous_by_identity = {
+            (str(annotation.annotation_type), str(annotation.uid)): annotation
+            for annotation in previous_annotations
+        }
+        authoritative_by_identity = {
+            (str(annotation.annotation_type), str(annotation.uid)): annotation
+            for annotation in authoritative_annotations
+        }
+        affected_page_uids: set[str] = set()
+        for change in annotation_changes:
+            try:
+                identity = parse_annotation_resource_id(change.resource.resource_id)
+            except ValueError:
+                return None
+            matching_annotations = tuple(
+                annotation
+                for annotation in (
+                    previous_by_identity.get(identity),
+                    authoritative_by_identity.get(identity),
+                )
+                if annotation is not None
+            )
+            if not matching_annotations:
+                return None
+            affected_page_uids.update(
+                str(annotation.page_uid)
+                for annotation in matching_annotations
+                if annotation.page_uid
+            )
+        return tuple(sorted(affected_page_uids))
 
     def _replace_database_settings(self, hydrated) -> None:
         if all(

@@ -419,10 +419,11 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
                 "Handler",
                 (),
                 {
+                    "reconcile_geometry_edit_access": lambda self, _allowed: None,
                     "can_paste_to_current_bid": lambda self: (
                         access.is_allowed(Feature.EDIT_PLAN_ITEMS)
                         or access.is_allowed(Feature.PLACE_ANNOTATIONS)
-                    )
+                    ),
                 },
             )()
         )
@@ -436,6 +437,34 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         self.assertFalse(undo_action.isEnabled())
         self.assertTrue(plan_view.selection_enabled)
         self.assertFalse(plan_view.editing_enabled)
+
+    def test_access_loss_releases_main_plan_geometry_edit_ownership(self):
+        _app()
+        access = _SelectiveAccess({Feature.EDIT_PLAN_ITEMS})
+        coordinator = ToolbarStateCoordinator(
+            _UiState(active_page_uid="p1"),
+            access,
+            _ProjectData(),
+        )
+        plan_view = _PlanView()
+        reconciled = []
+        coordinator.set_plan_view(plan_view)
+        coordinator.set_plan_view_handler(
+            type(
+                "Handler",
+                (),
+                {
+                    "reconcile_geometry_edit_access": lambda self, allowed: (
+                        reconciled.append(allowed)
+                    ),
+                    "can_paste_to_current_bid": lambda self: False,
+                },
+            )()
+        )
+        coordinator.refresh()
+        access.allowed.clear()
+        coordinator.refresh()
+        self.assertEqual(reconciled, [True, False])
 
     def test_active_inline_editor_keeps_canvas_editing_capability(self):
         _app()

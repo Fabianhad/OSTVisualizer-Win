@@ -61,6 +61,16 @@ class UndoRedoServiceTests(unittest.TestCase):
         self.assertTrue(self.service.can_undo())
         self.assertFalse(self.service.can_redo())
 
+    def test_delayed_history_for_inactive_bid_is_rejected(self):
+        originating_bid = BidRef("database", "7")
+        self.service.set_active_bid(BidRef("database", "8"))
+        self.service.push_for_bid(
+            originating_bid,
+            lambda _complete: None,
+            lambda _complete: None,
+        )
+        self.assertFalse(self.service.can_undo())
+
     def test_uncertain_async_history_stays_frozen_until_recovery(self):
         completions = []
         self.service.push(

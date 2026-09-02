@@ -3281,6 +3281,10 @@ class TakeoffPlanView(
         if self._cancel_rotation_drag_interaction():
             self._rebuild_current_overlays_from_model()
         self._remove_rotate_handle()
+        self._discard_unflushed_geometry_edits()
+        self._rebuild_current_overlays_from_model()
+
+    def _discard_unflushed_geometry_edits(self) -> None:
         for uid, position in self._position_before_edit.items():
             takeoff = self._current_takeoffs.get(uid)
             if takeoff is not None:
@@ -3299,6 +3303,29 @@ class TakeoffPlanView(
         self._dirty_rotations.clear()
         self._rotation_before_edit.clear()
         self._keyboard_move_dirty = False
+
+    def prepare_for_authoritative_refresh(self) -> None:
+        self._finish_active_inline_text_edit(commit=False)
+        self.cancel_overlay_move_mode(restore_preview=True)
+        self._cancel_active_drag_interaction(restore_preview=True)
+        self._cancel_rotation_drag_interaction()
+        self._discard_unflushed_geometry_edits()
+        self.finish_intelligent_paste_placement()
+        self.cancel_paste_backout()
+        if self._place_session_uid is not None:
+            self.clear_place_preview()
+            self._reset_place_session_state()
+        if self._annotation_place_type is not None:
+            self.clear_place_preview()
+            self._annotation_place_points = []
+            self._annotation_place_dragging = False
+            self._annotation_area_rect_dragging = False
+            self._set_area_placement_in_progress(False)
+        if self._panning:
+            self._finish_pan_interaction()
+        self.reset_ctrl_held()
+        self._last_mouse_vp_pos = None
+        self._update_cursor()
         self._rebuild_current_overlays_from_model()
 
     def set_roping_selection_method(self, method: str) -> None:
@@ -3994,7 +4021,7 @@ class TakeoffPlanView(
     def has_active_remote_projection_blocker(self) -> bool:
         return bool(
             self._editing_annotation_uids()
-            or self._drag_plan_item_uid
+            or self._has_active_drag_interaction()
             or self._rotation_drag_active
             or self._overlay_move_dragging
             or self._annotation_place_dragging
