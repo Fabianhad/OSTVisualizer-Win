@@ -153,14 +153,14 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             def deleteLater(self):
                 pass
 
-        with patch.object(
-            export_handler_module.QtWidgets.QFileDialog,
-            "getSaveFileName",
-            return_value=("output.ost", ""),
-        ), patch.object(
-            export_handler_module, "ProgressDialog", _ProgressDialog
-        ), patch.object(
-            export_handler_module, "show_info"
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("output.ost", ""),
+            ),
+            patch.object(export_handler_module, "ProgressDialog", _ProgressDialog),
+            patch.object(export_handler_module, "show_info"),
         ):
             handler._export_bid_file(
                 "OST",
@@ -395,14 +395,14 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             project_data_service=project_data,
             pdf_exporter=SimpleNamespace(export=export),
         )
-        with patch.object(
-            export_handler_module.QtWidgets.QFileDialog,
-            "getSaveFileName",
-            side_effect=choose_output,
-        ), patch.object(
-            export_handler_module, "ProgressDialog", _ProgressDialog
-        ), patch.object(
-            export_handler_module, "show_info"
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                side_effect=choose_output,
+            ),
+            patch.object(export_handler_module, "ProgressDialog", _ProgressDialog),
+            patch.object(export_handler_module, "show_info"),
         ):
             for _transition in transitions:
                 handler.export_as_pdf(selected_page_uids)
@@ -449,21 +449,23 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             project_data_service=project_data,
             pdf_exporter=SimpleNamespace(export=export),
         )
-        with patch.object(
-            export_handler_module.QtWidgets.QFileDialog,
-            "getSaveFileName",
-            side_effect=choose_output,
-        ), patch.object(
-            export_handler_module, "ProgressDialog", _ProgressDialog
-        ), patch.object(
-            export_handler_module,
-            "show_warning",
-            side_effect=lambda _window, title, message: warnings.append(
-                (title, message)
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                side_effect=choose_output,
             ),
-        ), patch.object(export_handler_module, "show_info"):
+            patch.object(export_handler_module, "ProgressDialog", _ProgressDialog),
+            patch.object(
+                export_handler_module,
+                "show_warning",
+                side_effect=lambda _window, title, message: warnings.append(
+                    (title, message)
+                ),
+            ),
+            patch.object(export_handler_module, "show_info"),
+        ):
             handler.export_as_pdf(["page-1"])
-
         self.assertEqual(exports, [])
         self.assertEqual(warnings[0][0], "Export Cancelled")
 
@@ -503,30 +505,29 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 export=lambda *_args, **_kwargs: exports.append(True)
             ),
         )
-        with patch.object(
-            export_handler_module.QtWidgets.QFileDialog,
-            "getSaveFileName",
-            side_effect=choose_output,
-        ), patch.object(
-            export_handler_module, "ProgressDialog", _ProgressDialog
-        ), patch.object(
-            export_handler_module,
-            "show_warning",
-            side_effect=lambda _window, title, message: warnings.append(
-                (title, message)
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                side_effect=choose_output,
             ),
-        ), patch.object(
-            export_handler_module, "show_critical"
+            patch.object(export_handler_module, "ProgressDialog", _ProgressDialog),
+            patch.object(
+                export_handler_module,
+                "show_warning",
+                side_effect=lambda _window, title, message: warnings.append(
+                    (title, message)
+                ),
+            ),
+            patch.object(export_handler_module, "show_critical"),
         ):
             handler.export_as_pdf(["page-1"])
-
         self.assertEqual(exports, [])
         self.assertEqual(warnings[0][0], "Export Cancelled")
 
     def test_pdf_export_stops_if_window_closes_inside_native_save_dialog(self):
         project_data = _FakeProjectData(["Original Page"])
         exports = []
-
         handler = _make_export_handler(
             window=object(),
             config_model=SimpleNamespace(snapshot=Config),
@@ -542,11 +543,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 "getSaveFileName",
                 return_value=(r"C:\tmp\out.pdf", ""),
             ),
-            patch.object(export_handler_module, "isValid", return_value=False, create=True),
+            patch.object(
+                export_handler_module, "isValid", return_value=False, create=True
+            ),
             patch.object(export_handler_module, "show_warning") as warning,
         ):
             handler.export_as_pdf(["page-1"])
-
         self.assertEqual(exports, [])
         warning.assert_not_called()
 
@@ -592,15 +594,18 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 project_data_service=project_data,
                 pdf_exporter=pdf_exporter,
             )
-            with patch.object(
-                export_handler_module.QtWidgets.QFileDialog,
-                "getSaveFileName",
-                return_value=(str(Path(temp_dir) / "source.pdf"), ""),
-            ), patch.object(
-                export_handler_module,
-                "show_critical",
-                side_effect=lambda _window, title, message: errors.append(
-                    (title, message)
+            with (
+                patch.object(
+                    export_handler_module.QtWidgets.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(Path(temp_dir) / "source.pdf"), ""),
+                ),
+                patch.object(
+                    export_handler_module,
+                    "show_critical",
+                    side_effect=lambda _window, title, message: errors.append(
+                        (title, message)
+                    ),
                 ),
             ):
                 handler.export_as_pdf(["page-1"])
@@ -661,15 +666,18 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 project_data_service=project_data,
                 pdf_exporter=SimpleNamespace(export=unexpected_pdf_export),
             )
-            with patch.object(
-                export_handler_module.QtWidgets.QFileDialog,
-                "getSaveFileName",
-                return_value=(str(overlay_path), ""),
-            ), patch.object(
-                export_handler_module,
-                "show_critical",
-                side_effect=lambda _window, title, message: errors.append(
-                    (title, message)
+            with (
+                patch.object(
+                    export_handler_module.QtWidgets.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(overlay_path), ""),
+                ),
+                patch.object(
+                    export_handler_module,
+                    "show_critical",
+                    side_effect=lambda _window, title, message: errors.append(
+                        (title, message)
+                    ),
                 ),
             ):
                 handler.export_as_pdf(["page-1"])
@@ -848,11 +856,14 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 or ExportResultDto(success=True, format_name="Summary CSV"),
             ),
         )
-        with patch.object(
-            export_handler_module.QtWidgets.QFileDialog,
-            "getSaveFileName",
-            side_effect=choose_output,
-        ), patch.object(export_handler_module, "show_warning"):
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                side_effect=choose_output,
+            ),
+            patch.object(export_handler_module, "show_warning"),
+        ):
             handler.export_summary_csv()
         self.assertEqual(calls, [])
 

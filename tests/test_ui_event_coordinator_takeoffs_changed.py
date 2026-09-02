@@ -2095,12 +2095,15 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             )
             sequence.append("dialog")
 
-        with patch(
-            "ost_visualizer.presentation.coordinators.ui_event_coordinator.SynchronizationConflictDialog",
-            return_value=dialog,
-        ), patch(
-            "ost_visualizer.presentation.coordinators.ui_event_coordinator.exec_with_ost_blocking",
-            side_effect=execute,
+        with (
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator.SynchronizationConflictDialog",
+                return_value=dialog,
+            ),
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator.exec_with_ost_blocking",
+                side_effect=execute,
+            ),
         ):
             coordinator._on_synchronization_conflict(
                 database_id="database",
@@ -2953,7 +2956,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         coordinator._update_export_menu_state = lambda: None
         coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
-
         coordinator._on_remote_bid_content_changed(
             database_id=bid_ref.file_path,
             bid_uid=bid_ref.bid_uid,
@@ -2963,7 +2965,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             },
             defer_plan_projection=True,
         )
-
         self.assertEqual(coordinator._selected_takeoff_uids, ("survivor",))
         self.assertEqual(ui_state.highlighted_condition_uids, {"condition-1"})
         self.assertEqual(coordinator.opengl_viewer.selections, [["survivor"]])
@@ -5009,7 +5010,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             ) as warning,
         ):
             coordinator.select_overlay_image()
-
         self.assertEqual(saved, [])
         warning.assert_called_once()
 
@@ -5051,7 +5051,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             ) as warning,
         ):
             coordinator.select_overlay_image()
-
         self.assertEqual(saved, [])
         warning.assert_called_once()
 
@@ -5086,7 +5085,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             side_effect=finish_cleanup_while_dialog_is_open,
         ):
             coordinator.select_overlay_image()
-
         self.assertEqual(saved, [])
 
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):

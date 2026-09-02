@@ -285,16 +285,12 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.assertEqual(self.manager.pending_count, 0)
 
     def test_remote_page_replacement_discards_only_stale_page_writes(self):
-        self.manager.schedule_page_view_state(
-            "a.mdb", "b1", "p1", 2.0, 10.0, 20.0
-        )
+        self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
         self.manager.schedule_page_invert("a.mdb", "p1", True)
         self.manager.schedule_page_bitonal("a.mdb", "p2", True)
         self.manager.schedule_layer_show("a.mdb", "l1", False)
-
         self.manager.cancel_pages("a.mdb", "b1", ["p1"])
-
         self.assertEqual(self.manager.pending_count, 2)
         self.assertTrue(self.manager.flush())
         self.assertEqual(
@@ -332,7 +328,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertTrue(self.manager.flush())
         callback = self.service.queued_setting_callbacks[0]
-
         callback(
             QueuedMutationResult(
                 database_id="sql-db",
@@ -351,7 +346,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             )
         )
         self.assertEqual(projections, [])
-
         callback(
             QueuedMutationResult(
                 database_id="sql-db",
@@ -423,7 +417,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             restore_authoritative=lambda: projections.append("B"),
             project_value=lambda: projections.append("C"),
         )
-
         self.assertTrue(self.manager.flush())
         self.assertEqual(
             self.service.queued_settings,
@@ -459,7 +452,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         schedule(2, "1")
         schedule(3, "2")
         callbacks = list(self.service.queued_setting_callbacks)
-
         callbacks[0](
             QueuedMutationResult(
                 database_id="sql-db",
@@ -485,7 +477,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 outcome_status=MutationOutcomeStatus.REJECTED,
             )
         )
-
         self.assertEqual(projections, ["3", "3", "3"])
 
     def test_newest_rejection_reprojects_prior_pending_visual_value(self):
@@ -502,7 +493,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 project_value=lambda value=value: projections.append(str(value)),
             )
             self.assertTrue(self.manager.flush())
-
         self.service.queued_setting_callbacks[2](
             QueuedMutationResult(
                 database_id="sql-db",
@@ -511,7 +501,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 outcome_status=MutationOutcomeStatus.REJECTED,
             )
         )
-
         self.assertEqual(projections, ["2"])
 
     def test_cancel_for_file_invalidates_queued_visual_callbacks(self):
@@ -526,7 +515,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertTrue(self.manager.flush())
         callback = self.service.queued_setting_callbacks[0]
-
         self.manager.cancel_for_file("sql-db")
         callback(
             QueuedMutationResult(
@@ -536,7 +524,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 outcome_status=MutationOutcomeStatus.REJECTED,
             )
         )
-
         self.assertEqual(projections, [])
 
     def test_cleanup_invalidates_queued_visual_callbacks(self):
@@ -551,7 +538,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertTrue(self.manager.cleanup())
         callback = self.service.queued_setting_callbacks[0]
-
         callback(
             QueuedMutationResult(
                 database_id="sql-db",
@@ -560,7 +546,6 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 outcome_status=MutationOutcomeStatus.REJECTED,
             )
         )
-
         self.assertEqual(projections, [])
 
     def test_failed_write_remains_pending_for_retry(self):
@@ -1042,15 +1027,11 @@ class RecordingDeferredPersistence:
     def schedule_bid_selected_page(self, db_path, bid_uid, page_uid):
         self.selected_page_calls.append((db_path, bid_uid, page_uid))
 
-    def schedule_page_area_selection(
-        self, db_path, page_uid, area_uid, **callbacks
-    ):
+    def schedule_page_area_selection(self, db_path, page_uid, area_uid, **callbacks):
         self.page_area_calls.append((db_path, page_uid, area_uid))
         self.page_area_callbacks.append(callbacks)
 
-    def schedule_page_show_mode(
-        self, db_path, page_uid, show_mode, **callbacks
-    ):
+    def schedule_page_show_mode(self, db_path, page_uid, show_mode, **callbacks):
         self.page_show_mode_calls.append((db_path, page_uid, show_mode))
         self.page_show_mode_callbacks.append(callbacks)
 
@@ -1933,12 +1914,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._sync_overlay_display_mode = lambda _page_uid: None
         coordinator._update_plan_view = lambda _page_uid: None
         coordinator._update_export_menu_state = lambda: None
-
         coordinator._on_overlay_display_mode_requested(2)
         callbacks = coordinator._deferred_persistence.page_show_mode_callbacks[0]
         callbacks["restore_authoritative"]()
         self.assertEqual(pages["p1"].image_show_mode, 0)
-
         coordinator.ui_state_manager.active_page_uid = "p2"
         callbacks["project_value"]()
         self.assertEqual(pages["p1"].image_show_mode, 0)
@@ -1953,17 +1932,14 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator._update_plan_view = lambda page_uid: updates.append(page_uid)
         coordinator._update_export_menu_state = lambda: updates.append("export")
-
         coordinator.toggle_page_invert(True)
         callbacks = coordinator._deferred_persistence.page_invert_callbacks[0]
         callbacks["restore_authoritative"]()
-
         self.assertFalse(page.invert)
         self.assertEqual(
             updates,
             ["p1", "detached", "export", "p1", "detached", "export"],
         )
-
         coordinator.ui_state_manager.active_page_uid = "p2"
         callbacks["project_value"]()
         self.assertFalse(page.invert)
@@ -2384,7 +2360,6 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         callbacks = coordinator._deferred_persistence.layer_callbacks[0]
         callbacks["restore_authoritative"]()
         self.assertTrue(coordinator.project_data.get_bid_layer_snapshot()[0].show)
-
         coordinator.ui_state_manager.get_selected_bid_ref = lambda: BidRef(
             "a.mdb", "bid-2"
         )
@@ -2397,11 +2372,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         callbacks = coordinator._deferred_persistence.layer_callbacks[0]
         event_count = len(coordinator.layer_events)
         coordinator._visibility_test_layers[:] = [
-            layer
-            for layer in coordinator._visibility_test_layers
-            if layer.uid != "l1"
+            layer for layer in coordinator._visibility_test_layers if layer.uid != "l1"
         ]
-
         self.assertFalse(callbacks["restore_authoritative"]())
         self.assertEqual(len(coordinator.layer_events), event_count)
 
@@ -2768,12 +2740,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._apply_pending_hotlink_named_view_focus = (
             lambda require_stable: None
         )
-
         coordinator._on_page_area_changed("a.mdb", "p1", "area-3")
         callbacks = coordinator._deferred_persistence.page_area_callbacks[0]
         callbacks["restore_authoritative"]()
         self.assertEqual(area_selections["p1"], "area-1")
-
         coordinator.ui_state_manager.active_page_uid = "p2"
         callbacks["project_value"]()
         self.assertEqual(area_selections["p1"], "area-1")

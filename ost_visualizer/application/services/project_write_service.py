@@ -2123,10 +2123,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     else ()
                 )
                 annotations = (
-                    tuple(
-                        (str(update[0]), str(update[1]))
-                        for update in decoded
-                    )
+                    tuple((str(update[0]), str(update[1])) for update in decoded)
                     if is_annotation
                     else ()
                 )

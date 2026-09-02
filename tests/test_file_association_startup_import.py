@@ -342,12 +342,9 @@ class FileAssociationStartupImportTests(unittest.TestCase):
                 SimpleNamespace(),
             )
             completed = []
-            use_case.queue_imports(
-                _project_file_args(source), target, completed.append
-            )
+            use_case.queue_imports(_project_file_args(source), target, completed.append)
             queued_callback = service.queued_imports[0][4]
             operation_id = str(uuid.uuid4())
-
             queued_callback(
                 QueuedMutationResult(
                     database_id="sql-database",
@@ -357,19 +354,15 @@ class FileAssociationStartupImportTests(unittest.TestCase):
                 )
             )
             self.assertEqual(completed, [])
-
             queued_callback(
                 QueuedMutationResult(
                     database_id="sql-database",
                     runtime_generation=1,
                     operation_id=operation_id,
-                    outcome_status=(
-                        MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
-                    ),
+                    outcome_status=(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED),
                 )
             )
             self.assertEqual(completed, [])
-
             queued_callback(
                 QueuedMutationResult(
                     database_id="sql-database",

@@ -1696,9 +1696,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                     database_id=database_id,
                     runtime_generation=1,
                     operation_id=operation_id,
-                    outcome_status=(
-                        MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
-                    ),
+                    outcome_status=(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED),
                 )
             )
             self.assertEqual(completions, [])

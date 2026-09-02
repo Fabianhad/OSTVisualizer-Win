@@ -5083,9 +5083,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             def __init__(self):
                 self.verifications = []
 
-            def verify_plan_items_exist(
-                self, database_id, takeoff_uids, annotations
-            ):
+            def verify_plan_items_exist(self, database_id, takeoff_uids, annotations):
                 self.verifications.append(
                     (database_id, tuple(takeoff_uids), tuple(annotations))
                 )
@@ -5123,10 +5121,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             page_uids=("30",),
             dependency_resources=(ResourceRef("condition", "20", 8),),
         )
-
         with self.assertRaisesRegex(RuntimeError, "selected takeoff was deleted"):
             queued[0][0][1]()
-
         self.assertEqual(
             executor.verifications,
             [("database", ("101", "102"), ())],
@@ -5145,9 +5141,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             def __init__(self):
                 self.verifications = []
 
-            def verify_plan_items_exist(
-                self, database_id, takeoff_uids, annotations
-            ):
+            def verify_plan_items_exist(self, database_id, takeoff_uids, annotations):
                 self.verifications.append(
                     (database_id, tuple(takeoff_uids), tuple(annotations))
                 )
@@ -5193,10 +5187,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             annotation_positions=[("201", "line", [5.0, 6.0, 7.0, 8.0])],
             page_uids=("30",),
         )
-
         with self.assertRaisesRegex(RuntimeError, "selected plan item was deleted"):
             queued[0][0][1]()
-
         self.assertEqual(
             executor.verifications,
             [("database", ("101", "102"), (("201", "line"),))],
@@ -5905,7 +5897,6 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         hydrated = HydratedDatabaseChangeBatch(
             _batch(descriptor.database_id, "epoch", 0, 0)
         )
-
         coordinator._recover_journaled_operations(runtime)
         coordinator._on_session_started(
             (
@@ -5920,12 +5911,10 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             DatabaseSession(descriptor.database_id, "session-2"),
         )
         dispatcher.deliver_pending()
-
         self.assertEqual(results, [])
         self.assertIsNotNone(pending.get(request.operation_id))
         self.assertIn(request.operation_id, coordinator._uncertain_callbacks)
         self.assertIn(request.operation_id, journal.records)
-
         coordinator._recover_journaled_operations(runtime)
         coordinator._on_session_started(
             (
@@ -5936,7 +5925,6 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             )
         )
         dispatcher.deliver_pending()
-
         self.assertEqual(
             [result.outcome_status for result in results],
             [MutationOutcomeStatus.COMMITTED],

@@ -990,9 +990,10 @@ class ImportRefreshFlowTests(unittest.TestCase):
             side_effect=select_source_file,
         ), patch.object(
             import_handler_module, "ProgressDialog", FakeProgressDialog
-        ), patch.object(import_handler_module, "show_info"):
+        ), patch.object(
+            import_handler_module, "show_info"
+        ):
             handler.import_ost()
-
         self.assertEqual(
             service.import_calls,
             [("source.ost", "target.mdb", "original-project", False)],
@@ -1037,7 +1038,6 @@ class ImportRefreshFlowTests(unittest.TestCase):
             import_handler_module, "show_info"
         ):
             handler.import_ost()
-
         self.assertEqual(service.import_calls, [])
         self.assertEqual(service.queued_imports, [])
         self.assertEqual(warnings[0][0], "Import Cancelled")
@@ -1053,7 +1053,6 @@ class ImportRefreshFlowTests(unittest.TestCase):
             deferred_persistence_manager=deferred,
             ui_access_manager=FakeAccess(),
         )
-
         with (
             patch.object(
                 import_handler_module.QtWidgets.QFileDialog,
@@ -1066,7 +1065,6 @@ class ImportRefreshFlowTests(unittest.TestCase):
             patch.object(import_handler_module, "show_critical"),
         ):
             handler.import_ost()
-
         self.assertEqual(deferred.flush_calls, [])
         self.assertEqual(service.import_calls, [])
         self.assertEqual(service.queued_imports, [])

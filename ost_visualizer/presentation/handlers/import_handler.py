@@ -53,9 +53,7 @@ class ImportHandler:
             )
             return
         target_project_uid = self._resolve_target_project_uid()
-        target_identity = self._resolve_target_identity(
-            target_db, target_project_uid
-        )
+        target_identity = self._resolve_target_identity(target_db, target_project_uid)
         if target_identity is None:
             show_warning(
                 self.window,

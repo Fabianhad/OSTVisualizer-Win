@@ -4380,9 +4380,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._refresh_signaler = SimpleNamespace(
             request=lambda: calls.append("refresh")
         )
-
         manager._on_remote_hierarchy_changed(database_id="sql-db")
-
         self.assertEqual(calls, ["undo", "refresh"])
 
     def test_remote_condition_and_area_changes_refresh_matching_detached_view(self):

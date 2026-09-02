@@ -1476,7 +1476,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         deferred = FakeDeferredPersistence()
         handler = self._overlay_handler(data, deferred)
         self.assertTrue(handler.save_current_page_overlay_rect((1, 2, 3, 4)))
-
         deferred.overlay_rect_callbacks[0]["restore_authoritative"]()
         self.assertEqual(
             data.get_page("p1").overlay_rect,
@@ -1486,7 +1485,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             handler._plan_view.projected_overlay_rects,
             [("p1", (0.0, 0.0, 10.0, 10.0))],
         )
-
         handler._ui_state.active_page_uid = "p2"
         handler._plan_view.current_page_uid = "p2"
         deferred.overlay_rect_callbacks[0]["project_value"]()

@@ -99,7 +99,6 @@ class UndoRedoServiceTests(unittest.TestCase):
             lambda _complete: None,
         )
         self.service.undo()
-
         self.service.clear()
         self.service.push(
             lambda complete: current_completions.append(complete),
@@ -114,11 +113,7 @@ class UndoRedoServiceTests(unittest.TestCase):
             lambda _complete: None,
             lambda _complete: None,
         )
-
-        stale_completions.pop()(
-            self._mutation_result(MutationOutcomeStatus.REJECTED)
-        )
-
+        stale_completions.pop()(self._mutation_result(MutationOutcomeStatus.REJECTED))
         self.assertFalse(self.service.can_undo())
         current_complete(self._mutation_result(MutationOutcomeStatus.COMMITTED))
         self.assertTrue(self.service.can_undo())

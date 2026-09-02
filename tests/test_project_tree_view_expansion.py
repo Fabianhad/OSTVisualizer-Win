@@ -232,9 +232,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
                 "project_uid": None,
             }
         )
-
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
-
         self.assertEqual(
             self.view.get_selected_node_state(),
             {

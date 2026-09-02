@@ -197,19 +197,14 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             ui_state_manager=state,
             _update_page_settings_bar=refreshes.append,
         )
-
         UIEventCoordinator._on_page_scale_changed(
             coordinator, "sql-database", "page-1", 0.25, 12.0
         )
-        callbacks[0](
-            self._result(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED)
-        )
+        callbacks[0](self._result(MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED))
         self.assertEqual(refreshes, [])
-
         state.active_page_uid = "page-2"
         callbacks[0](self._result(MutationOutcomeStatus.CONFLICT))
         self.assertEqual(refreshes, [])
-
         state.active_page_uid = "page-1"
         callbacks[0](self._result(MutationOutcomeStatus.CONFLICT))
         self.assertEqual(refreshes, ["page-1"])

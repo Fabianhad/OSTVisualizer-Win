@@ -224,9 +224,7 @@ class ImportProjectFilesFromArgsUseCase:
                     MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
                 }:
                     return
-                committed = (
-                    queued.outcome_status == MutationOutcomeStatus.COMMITTED
-                )
+                committed = queued.outcome_status == MutationOutcomeStatus.COMMITTED
                 if queued.outcome_status == MutationOutcomeStatus.COMMITTED:
                     message = "Imported successfully."
                 else:

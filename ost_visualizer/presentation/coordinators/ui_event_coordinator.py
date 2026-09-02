@@ -5035,9 +5035,7 @@ class UIEventCoordinator:
         self.ui_state_manager.selected_area_uid = area_uid or ""
         self._viewer.update_plan_view(page_uid)
         self.main_window.refresh_detached_plan_views()
-        self._request_or_defer_mesh_refresh(
-            self.project_data.get_selected_page_uids()
-        )
+        self._request_or_defer_mesh_refresh(self.project_data.get_selected_page_uids())
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
 
     def _on_overlay_display_mode_requested(self, show_mode: int) -> None:
@@ -5426,9 +5424,7 @@ class UIEventCoordinator:
             layers = self._project_read_service.get_merged_bid_layers(
                 bid_ref.file_path, bid_ref.bid_uid
             )
-        previous_visibility = {
-            str(layer.uid): bool(layer.show) for layer in layers
-        }
+        previous_visibility = {str(layer.uid): bool(layer.show) for layer in layers}
         if not show:
             self._suspend_active_layer_tool()
         self.project_data.set_bid_layer_visibility(layers)

@@ -538,13 +538,11 @@ class NavigationStateMachineTests(unittest.TestCase):
         )
         placement._plan_view = plan_view
         self.assertTrue(placement.enter("c1", ["c1"]))
-
         conditions["c1"] = Condition(
             uid="c1",
             layer_visible=True,
             condition_type=Condition.TYPE_LINEAR,
         )
-
         self.assertFalse(placement.reconcile_authoritative_conditions())
         self.assertEqual(placement.state, PlacementState.IDLE)
         self.assertIsNone(ui_state.place_condition_uid)
@@ -607,13 +605,11 @@ class NavigationStateMachineTests(unittest.TestCase):
         )
         placement._plan_view = plan_view
         self.assertTrue(placement.enter("c1", ["c1", "c2"]))
-
         conditions["c2"] = Condition(
             uid="c2",
             layer_visible=False,
             condition_type=Condition.TYPE_AREA,
         )
-
         self.assertFalse(placement.reconcile_authoritative_conditions())
         self.assertEqual(placement.state, PlacementState.IDLE)
         self.assertEqual(plan_view.cancel_calls, 1)

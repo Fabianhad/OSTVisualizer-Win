@@ -239,17 +239,12 @@ class DeferredPersistenceManager(QtCore.QObject):
                     len(key) > 3
                     and str(key[2]) == str(bid_uid)
                     and (
-                        affected_page_uids is None
-                        or str(key[3]) in affected_page_uids
+                        affected_page_uids is None or str(key[3]) in affected_page_uids
                     )
                 )
             elif item.kind in PAGE_SETTING_KINDS:
-                cancel = (
-                    len(key) > 2
-                    and (
-                        affected_page_uids is None
-                        or str(key[2]) in affected_page_uids
-                    )
+                cancel = len(key) > 2 and (
+                    affected_page_uids is None or str(key[2]) in affected_page_uids
                 )
             if cancel:
                 self._pending.pop(key, None)
@@ -385,9 +380,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             page_uid,
             "bitonal",
             [bitonal],
-            lambda: self._write_service.save_page_bitonal(
-                db_path, page_uid, bitonal
-            ),
+            lambda: self._write_service.save_page_bitonal(db_path, page_uid, bitonal),
             restore_authoritative=restore_authoritative,
             project_value=project_value,
         )
