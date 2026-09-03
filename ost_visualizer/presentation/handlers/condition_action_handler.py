@@ -5,6 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Optional
 from PySide6.QtCore import QSignalBlocker
+from shiboken6 import isValid
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
@@ -30,6 +31,7 @@ from ..utils.messagebox import (
     confirm_multi_delete,
     show_warning,
 )
+from ..utils.dialog import delete_later_if_valid
 from ..utils.ost_blocking import exec_with_ost_blocking
 
 logger = logging.getLogger(__name__)
@@ -582,7 +584,9 @@ class ConditionActionHandler:
         try:
             exec_with_ost_blocking(dialog, self._coordinator.event_bus)
         finally:
-            dialog.deleteLater()
+            delete_later_if_valid(dialog)
+        if not isValid(sidebar) or self._ui_state.get_selected_bid_ref() != bid_ref:
+            return
         if created_refresh_failed[0]:
             show_warning(
                 sidebar.window(),
@@ -1441,7 +1445,7 @@ class ConditionActionHandler:
             finally:
                 if lease_session is not None:
                     lease_session.close()
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
 
         if lease_session is not None:
             lease_session.request_initial(resolved)

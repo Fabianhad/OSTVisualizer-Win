@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
     QStyleOptionGraphicsItem,
 )
+from shiboken6 import delete
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.render_quality import (
@@ -920,6 +921,14 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.cleanup()
         view.cleanup()
         self.assertEqual(rendering_service.shutdown_calls, 1)
+
+    def test_page_load_timer_callback_is_dropped_after_view_destruction(self):
+        view = self._make_plan_view()
+        calls = []
+        view._finalize_page_load_if_ready = lambda: calls.append(True)
+        delete(view)
+        TakeoffPlanView._finalize_queued_page_load_if_valid(view)
+        self.assertEqual(calls, [])
 
     def test_plan_view_cleanup_continues_after_independent_stage_failures(self):
         view = self._make_plan_view()
@@ -4604,6 +4613,29 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertNotIn("TextAlign", emitted[-1][3])
         view.cleanup()
 
+    def test_text_color_picker_drops_result_after_toolbar_target_is_cleared(self):
+        view = self._make_plan_view()
+        annotation, label = self._add_dimension_label_annotation(
+            view, {"FontName": "Arial", "FontColor": 0, "FontSize": 10}
+        )
+        label.setDefaultTextColor(QColor("#000000"))
+        emitted = []
+        view.annotation_text_properties_flushed.connect(
+            lambda changes: emitted.extend(changes)
+        )
+        self.assertTrue(view._select_dimension_text_label(label))
+
+        def clear_target(*_args, **_kwargs):
+            view._clear_text_toolbar_target()
+            return QColor("#445566")
+
+        with patch.object(QColorDialog, "getColor", side_effect=clear_target):
+            view._pick_condition_text_color()
+        self.assertEqual(label.defaultTextColor().name(), "#000000")
+        self.assertEqual(annotation.properties["FontColor"], 0)
+        self.assertEqual(emitted, [])
+        view.cleanup()
+
     def test_text_annotation_alignment_changes_do_not_resize_box(self):
         view = self._make_plan_view()
         page = Page(uid="page-1", name="Page 1")
@@ -4684,6 +4716,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view._current_annotations = {"a1": selected, "a2": other}
         view._selected_uids = {"a1"}
+        view._context_menu_action_state = lambda _key: {"enabled": True}
         emitted = []
         view.annotation_styles_flushed.connect(lambda changes: emitted.extend(changes))
         view.apply_annotation_style_to_selection(color="#336699", width=7.0)
@@ -4702,6 +4735,43 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 )
             ],
         )
+        view.cleanup()
+
+    def test_context_color_picker_drops_result_after_selection_changes(self):
+        view = self._make_plan_view()
+        original = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[1.0, 2.0, 13.0, 14.0],
+            color="#ff0000",
+            width=4.0,
+        )
+        replacement_selection = BidAnnotation(
+            uid="a2",
+            annotation_type="rect",
+            position=[20.0, 22.0, 33.0, 34.0],
+            color="#0000ff",
+            width=5.0,
+        )
+        view._current_annotations = {
+            "a1": original,
+            "a2": replacement_selection,
+        }
+        view._selected_uids = {"a1"}
+        emitted = []
+        view.annotation_styles_flushed.connect(lambda changes: emitted.extend(changes))
+
+        def change_selection(*_args, **_kwargs):
+            view._selected_uids = {"a2"}
+            return QColor("#445566")
+
+        with patch.object(QColorDialog, "getColor", side_effect=change_selection):
+            view._select_context_annotation_color(
+                view._context_menu_owner(), {"a1": original}
+            )
+        self.assertEqual(original.color, "#ff0000")
+        self.assertEqual(replacement_selection.color, "#0000ff")
+        self.assertEqual(emitted, [])
         view.cleanup()
 
     def test_selected_annotation_style_change_does_not_update_tool_defaults(self):

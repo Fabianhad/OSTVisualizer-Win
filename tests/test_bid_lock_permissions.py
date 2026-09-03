@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.dtos.update_condition_dto import (
     UpdateConditionDto,
     UpdateConditionResultDto,
@@ -680,6 +681,59 @@ def _write_service(
 
 
 class BidLockPermissionTests(unittest.TestCase):
+    def test_ui_access_constructor_rolls_back_subscriptions_when_refresh_fails(self):
+        event_bus = _EventBus()
+
+        class FailingTransactionMonitor:
+            def is_ost_active(self):
+                raise RuntimeError("OST status unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "OST status unavailable"):
+            UIAccessManager(
+                event_bus,
+                _License(),
+                FailingTransactionMonitor(),
+                SimpleNamespace(),
+                SimpleNamespace(),
+                _DatabaseCapability(),
+            )
+        self.assertEqual(event_bus.subscriptions, [])
+
+    def test_ui_access_cleanup_retries_only_failed_unsubscriptions(self):
+        class TransientEventBus(_EventBus):
+            def __init__(self):
+                super().__init__()
+                self.failed_once = False
+
+            def unsubscribe(self, event_type, callback):
+                if (
+                    event_type is AppEvents.LICENSE_STATUS_CHANGED
+                    and not self.failed_once
+                ):
+                    self.failed_once = True
+                    raise RuntimeError("temporary unsubscribe failure")
+                super().unsubscribe(event_type, callback)
+
+        event_bus = TransientEventBus()
+        manager = UIAccessManager(
+            event_bus,
+            _License(),
+            _TransactionMonitor(),
+            _ProjectData(),
+            _UiState(BidRef("test.mdb", "bid-1")),
+            _DatabaseCapability(),
+        )
+        with self.assertRaises(ExceptionGroup):
+            manager.cleanup()
+        self.assertEqual(
+            [event_type for event_type, _callback in manager._subscriptions],
+            [AppEvents.LICENSE_STATUS_CHANGED],
+        )
+        manager.cleanup()
+        self.assertEqual(event_bus.subscriptions, [])
+        self.assertEqual(manager._subscriptions, [])
+        self.assertIsNone(manager._event_bus)
+
     def test_area_dialog_without_selected_bid_has_no_stale_presence_reference(self):
         source = Path(
             "ost_visualizer/presentation/coordinators/ui_event_coordinator.py"
@@ -1418,7 +1472,73 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(write_service.notifications, ["db.mdb"])
         self.assertEqual(len(warnings), 1)
         self.assertIn("Some bids were pasted", warnings[0][2])
-        self.assertEqual(criticals, [])
+        self.assertEqual(len(criticals), 0)
+
+    def test_duplicate_stops_after_progress_dialog_destroys_main_window(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = QtWidgets.QWidget()
+        bid_ref = BidRef("db.mdb", "bid-1")
+        handler = ProjectWriteHandler(
+            window=window,
+            project_data_service=SimpleNamespace(
+                get_hierarchy=lambda: SimpleNamespace(
+                    find_bid_info=lambda _ref: SimpleNamespace(name="Bid 1")
+                )
+            ),
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _path: False
+            ),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+
+        def destroy_window(*_args, **_kwargs):
+            delete(window)
+            return QtWidgets.QDialog.DialogCode.Rejected, None, None
+
+        handler._run_progress_dialog = destroy_window
+        criticals = []
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.show_critical",
+            side_effect=lambda *args: criticals.append(args),
+        ):
+            handler.duplicate_selected()
+        self.assertEqual(len(criticals), 0)
+        app.processEvents()
+
+    def test_paste_stops_after_progress_dialog_destroys_main_window(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = QtWidgets.QWidget()
+        bid_ref = BidRef("db.mdb", "bid-1")
+        handler = ProjectWriteHandler(
+            window=window,
+            project_data_service=SimpleNamespace(
+                find_project_uid_for_bid=lambda _ref: "project-1",
+                get_hierarchy=lambda: SimpleNamespace(
+                    find_bid_info=lambda _ref: SimpleNamespace(name="Bid 1")
+                ),
+            ),
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _path: False
+            ),
+            ui_state_manager=SimpleNamespace(),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+
+        def destroy_window(*_args, **_kwargs):
+            delete(window)
+            return QtWidgets.QDialog.DialogCode.Rejected, None, None
+
+        handler._run_progress_dialog = destroy_window
+        criticals = []
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.show_critical",
+            side_effect=lambda *args: criticals.append(args),
+        ):
+            result = handler.paste_bids([bid_ref], "project-2")
+        self.assertFalse(result)
+        self.assertEqual(len(criticals), 0)
+        app.processEvents()
 
     def test_sql_hierarchy_pending_keys_are_database_scoped_and_recovery_safe(self):
         callbacks = {}

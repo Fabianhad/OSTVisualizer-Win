@@ -76,11 +76,28 @@ Threading and events:
 - Worker threads must marshal back through existing Qt bridges before UI updates or EventBus publication.
 - Do not publish EventBus events from worker threads.
 - Subscribe in constructors/init paths and unsubscribe in `cleanup()`.
+- Tentative application shutdown pauses shutdown-owned startup/UI continuations
+  and prepares deferred persistence without destroying it. An aborted close
+  resumes persistence and replays each valid continuation once in causal order;
+  only terminal close discards callbacks and releases persistence dependencies.
+  Cleanup owners retain failed EventBus unsubscriptions so a later cleanup can
+  retry them instead of reporting a stale subscription as released. An
+  in-flight EventBus publication skips subscriptions removed before their turn,
+  including remove-and-readd cycles. Modal cleanup must tolerate Qt destroying
+  a child with its closing parent before the nested event loop returns. Dialog-
+  owned asynchronous completions and unparented `QTimer.singleShot` callbacks
+  must validate the underlying Qt owner before touching widgets or projecting
+  returned state.
 - Native file dialogs run nested event loops. Capture the complete database/bid/
   page target before opening them, then reject the continuation if that context
   changed, the authoritative hierarchy entity was replaced even with the same
   UID, or the owning window was cleaned up or destroyed while the dialog was
   open.
+- Context menus and internal Qt drags also run nested event loops. Bind delayed
+  actions to the exact model or surface revision, selection, and authoritative
+  object identities; cancel active tree drags and inline editors before deleting
+  their items during a model reset. Clipboard payloads remain detached data, and
+  database ownership comparisons use canonical path normalization.
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.

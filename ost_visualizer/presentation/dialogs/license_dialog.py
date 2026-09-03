@@ -1,4 +1,5 @@
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...application.dtos.license_view_model_dto import LicenseViewModelDto
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
@@ -34,7 +35,11 @@ class LicenseDialog(QtWidgets.QDialog):
         self._cleaned_up = False
         self._setup_ui()
         self._setup_event_subscriptions()
-        self._update_display()
+        try:
+            self._update_display()
+        except Exception:
+            self._cleanup_subscriptions()
+            raise
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("License Authorization")
@@ -97,8 +102,11 @@ class LicenseDialog(QtWidgets.QDialog):
         )
 
     def done(self, result: int) -> None:
-        self._cleanup_subscriptions()
+        self.cleanup()
         super().done(result)
+
+    def cleanup(self) -> None:
+        self._cleanup_subscriptions()
 
     def _cleanup_subscriptions(self) -> None:
         if self._cleaned_up:
@@ -177,7 +185,7 @@ class LicenseDialog(QtWidgets.QDialog):
         self._set_busy(True)
 
         def on_complete(success: bool, message: str) -> None:
-            if self._cleaned_up or not self.isVisible():
+            if self._cleaned_up or not isValid(self) or not self.isVisible():
                 return
             self._set_busy(False)
             self._notify_status_changed()
@@ -206,7 +214,7 @@ class LicenseDialog(QtWidgets.QDialog):
         self._set_busy(True)
 
         def on_complete(success: bool, message: str) -> None:
-            if self._cleaned_up or not self.isVisible():
+            if self._cleaned_up or not isValid(self) or not self.isVisible():
                 return
             self._set_busy(False)
             self._notify_status_changed()
@@ -229,7 +237,7 @@ class LicenseDialog(QtWidgets.QDialog):
             self._on_deactivate()
 
     def _on_license_status_changed(self, has_license: bool = False):
-        if self._cleaned_up:
+        if self._cleaned_up or not isValid(self):
             return
         self._update_display()
 

@@ -1167,6 +1167,71 @@ class FakeCloseEvent:
 
 
 class DeferredPersistenceShutdownTests(unittest.TestCase):
+    @staticmethod
+    def _guarded_shutdown_callback(window, key, calls):
+        def callback():
+            if MainWindow._defer_during_application_shutdown(window, key, callback):
+                return
+            calls.append(key)
+
+        return callback
+
+    def test_callbacks_crossing_repeated_tentative_shutdown_run_once_in_order(self):
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = True
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+        window._shutdown_deferred_callbacks = {}
+        calls = []
+        callbacks = [
+            self._guarded_shutdown_callback(window, key, calls)
+            for key in ("first", "second", "third")
+        ]
+        for callback in callbacks:
+            callback()
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, callback: scheduled.append(callback),
+        ):
+            window._collaboration_shutdown_pending = False
+            MainWindow._resume_shutdown_deferred_callbacks(window)
+            window._collaboration_shutdown_pending = True
+            while scheduled:
+                scheduled.pop(0)()
+            self.assertEqual(calls, [])
+            window._collaboration_shutdown_pending = False
+            MainWindow._resume_shutdown_deferred_callbacks(window)
+            while scheduled:
+                scheduled.pop(0)()
+        self.assertEqual(calls, ["first", "second", "third"])
+
+    def test_callbacks_crossing_repeated_tentative_shutdown_stay_discarded(self):
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = True
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+        window._shutdown_deferred_callbacks = {}
+        calls = []
+        callback = self._guarded_shutdown_callback(window, "work", calls)
+        callback()
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, queued: scheduled.append(queued),
+        ):
+            window._collaboration_shutdown_pending = False
+            MainWindow._resume_shutdown_deferred_callbacks(window)
+            window._collaboration_shutdown_pending = True
+            scheduled.pop(0)()
+            window._collaboration_shutdown_complete = True
+            MainWindow._discard_shutdown_deferred_callbacks(window)
+            while scheduled:
+                scheduled.pop(0)()
+        self.assertEqual(calls, [])
+
     def test_update_check_completion_before_shutdown_emits(self):
         emitted = []
         window = SimpleNamespace(
@@ -1186,9 +1251,6 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             MainWindow._defer_during_application_shutdown(window, key, callback)
         )
         window._check_for_updates = lambda: MainWindow._check_for_updates(window)
-        window._application_shutdown_active = lambda: (
-            MainWindow._application_shutdown_active(window)
-        )
         thread = SimpleNamespace(start=lambda: None)
         with patch(
             "ost_visualizer.presentation.main_window.threading.Thread",
@@ -1217,9 +1279,6 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             MainWindow._defer_during_application_shutdown(window, key, callback)
         )
         window._check_for_updates = lambda: MainWindow._check_for_updates(window)
-        window._application_shutdown_active = lambda: (
-            MainWindow._application_shutdown_active(window)
-        )
         thread = SimpleNamespace(start=lambda: None)
         with patch(
             "ost_visualizer.presentation.main_window.threading.Thread",
@@ -1258,6 +1317,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_failed = False
         window._application_shutdown_finalized = False
         window._shutdown_deferred_callbacks = {}
+        window._deferred_persistence_manager = SimpleNamespace(
+            abort_shutdown=lambda: None
+        )
         window._visualization_service = SimpleNamespace(
             set_update_dialog_active=active_states.append
         )
@@ -1356,6 +1418,64 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             MainWindow._show_update_dialog(window, object())
         self.assertEqual(active_states, [True, False])
 
+    def test_update_dialog_return_after_terminal_shutdown_does_not_touch_service(self):
+        active_states = []
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+
+        def set_update_dialog_active(active):
+            if not active and window._collaboration_shutdown_complete:
+                raise AssertionError("Cleaned visualization service was reused")
+            active_states.append(active)
+
+        window._visualization_service = SimpleNamespace(
+            set_update_dialog_active=set_update_dialog_active
+        )
+        window.icon_provider = object()
+
+        def close_during_dialog():
+            window._collaboration_shutdown_complete = True
+
+        dialog = SimpleNamespace(
+            show_dialog=close_during_dialog,
+            deleteLater=lambda: None,
+        )
+        with patch(
+            "ost_visualizer.presentation.main_window.UpdateDialog",
+            return_value=dialog,
+        ):
+            MainWindow._show_update_dialog(window, object())
+        self.assertEqual(active_states, [True])
+
+    def test_update_dialog_return_tolerates_parent_destroying_dialog(self):
+        from shiboken6 import delete
+
+        active_states = []
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+        window._visualization_service = SimpleNamespace(
+            set_update_dialog_active=active_states.append
+        )
+        window.icon_provider = object()
+
+        class DestroyedUpdateDialog(QtWidgets.QDialog):
+            def __init__(self, *_args):
+                super().__init__()
+
+            def show_dialog(self):
+                delete(self)
+
+        with patch(
+            "ost_visualizer.presentation.main_window.UpdateDialog",
+            DestroyedUpdateDialog,
+        ):
+            MainWindow._show_update_dialog(window, object())
+        self.assertEqual(active_states, [True, False])
+
     def test_app_close_captures_current_page_state_before_shutdown_cleanup(self):
         calls = []
         window = MainWindow.__new__(MainWindow)
@@ -1368,10 +1488,10 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         )
         window._deferred_persistence_manager = SimpleNamespace(
             begin_shutdown=lambda: calls.append("begin_shutdown"),
-            cleanup=lambda: calls.append("cleanup") or True,
+            prepare_shutdown=lambda: calls.append("prepare_shutdown") or True,
         )
         self.assertTrue(MainWindow._flush_deferred_persistence_before_close(window))
-        self.assertEqual(calls, ["capture_state", "begin_shutdown", "cleanup"])
+        self.assertEqual(calls, ["capture_state", "begin_shutdown", "prepare_shutdown"])
 
     def test_app_close_reports_critical_deferred_cleanup_failure(self):
         calls = []
@@ -1385,10 +1505,10 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         )
         window._deferred_persistence_manager = SimpleNamespace(
             begin_shutdown=lambda: calls.append("begin_shutdown"),
-            cleanup=lambda: calls.append("cleanup") or False,
+            prepare_shutdown=lambda: calls.append("prepare_shutdown") or False,
         )
         self.assertFalse(MainWindow._flush_deferred_persistence_before_close(window))
-        self.assertEqual(calls, ["capture_state", "begin_shutdown", "cleanup"])
+        self.assertEqual(calls, ["capture_state", "begin_shutdown", "prepare_shutdown"])
 
     def test_app_close_continues_when_pending_page_view_cannot_be_persisted(self):
         service = FakeProjectWriteService()
@@ -1432,6 +1552,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
+        window._deferred_persistence_manager = SimpleNamespace(
+            abort_shutdown=lambda: None
+        )
         window.hide = lambda: None
         window.show = lambda: None
         window._flush_deferred_persistence_before_close = lambda: False
@@ -1445,6 +1568,45 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             scheduled.pop()()
         self.assertTrue(event.ignored)
         self.assertFalse(window._collaboration_shutdown_pending)
+
+    def test_failed_sql_drain_restores_deferred_persistence_after_close_abort(self):
+        service = FakeProjectWriteService()
+        manager = DeferredPersistenceManager(
+            service,
+            _workspace_service(service),
+            logger_=logging.getLogger("tests.close_abort_deferred_persistence"),
+        )
+        drain_callbacks = []
+        collaboration = SimpleNamespace(
+            shutdown_state=CollaborationShutdownState.RUNNING,
+            drain_all_mutations_async=drain_callbacks.append,
+            request_shutdown=lambda _callback: None,
+        )
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = True
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window._application_shutdown_finalized = False
+        window._shutdown_deferred_callbacks = {}
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(
+                capture_current_page_state_for_shutdown=lambda: None
+            )
+        )
+        window._deferred_persistence_manager = manager
+        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window.show = lambda: None
+        with patch("ost_visualizer.presentation.main_window.show_critical"):
+            MainWindow._begin_application_shutdown(window)
+            drain_callbacks.pop()(False, "drain failed")
+        self.assertTrue(
+            manager.schedule(
+                "setting",
+                ("setting", "target.mdb"),
+                "setting",
+                lambda: True,
+            )
+        )
 
     def test_first_close_hides_immediately_and_defers_all_shutdown_work(self):
         scheduled = []
@@ -1532,6 +1694,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = True
         window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
+        window._deferred_persistence_manager = SimpleNamespace(
+            cleanup=lambda: calls.append("deferred_cleanup") or True
+        )
         window._workspace_state_coordinator = SimpleNamespace(
             flush=lambda: calls.append("workspace_flush"),
             cleanup=lambda: calls.append("workspace_cleanup"),
@@ -1572,6 +1737,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
+                "deferred_cleanup",
                 "workspace_flush",
                 "workspace_cleanup",
                 "event_cleanup",
@@ -1594,6 +1760,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = True
         window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
+        window._deferred_persistence_manager = SimpleNamespace(
+            cleanup=lambda: calls.append("deferred_cleanup") or True
+        )
         window._workspace_state_coordinator = SimpleNamespace(
             flush=lambda: calls.append("workspace_flush"),
             cleanup=lambda: calls.append("workspace_cleanup"),
@@ -1631,6 +1800,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
+                "deferred_cleanup",
                 "workspace_flush",
                 "workspace_cleanup",
                 "event_cleanup",
@@ -1662,6 +1832,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = True
         window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
+        window._deferred_persistence_manager = SimpleNamespace(
+            cleanup=cleanup("deferred_cleanup")
+        )
         window._workspace_state_coordinator = SimpleNamespace(
             flush=cleanup("workspace_flush", fail=True),
             cleanup=cleanup("workspace_cleanup"),
@@ -1691,6 +1864,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
+                "deferred_cleanup",
                 "workspace_flush",
                 "workspace_cleanup",
                 "event_cleanup",
@@ -1752,6 +1926,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
+        window._deferred_persistence_manager = SimpleNamespace(
+            abort_shutdown=lambda: None
+        )
         window.show = lambda: enabled_states.append(True)
         window.close = lambda: close_calls.append(True)
         from ost_visualizer.presentation import main_window

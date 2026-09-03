@@ -255,7 +255,17 @@ class UIAccessManager:
         self._subscribe(
             AppEvents.LICENSE_STATUS_CHANGED, self._on_license_status_changed
         )
-        self.refresh()
+        try:
+            self.refresh()
+        except Exception as initialization_error:
+            try:
+                self.cleanup()
+            except Exception as cleanup_error:
+                raise ExceptionGroup(
+                    "UI access initialization and cleanup failed",
+                    [initialization_error, cleanup_error],
+                ) from initialization_error
+            raise
 
     @property
     def _bid_locked(self) -> bool:
@@ -679,9 +689,19 @@ class UIAccessManager:
         )
 
     def cleanup(self) -> None:
-        for event_type, callback in self._subscriptions:
-            self._event_bus.unsubscribe(event_type, callback)
-        self._subscriptions.clear()
+        failures = []
+        remaining = []
+        event_bus = self._event_bus
+        if event_bus is not None:
+            for event_type, callback in self._subscriptions:
+                try:
+                    event_bus.unsubscribe(event_type, callback)
+                except Exception as exc:
+                    failures.append(exc)
+                    remaining.append((event_type, callback))
+        self._subscriptions = remaining
+        if failures:
+            raise ExceptionGroup("UI access cleanup failed", failures)
         self._access_state_listeners.clear()
         self._surface_interactions.clear()
         self._event_bus = None

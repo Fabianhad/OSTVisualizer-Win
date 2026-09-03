@@ -12,6 +12,7 @@ import pyodbc
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
@@ -4474,6 +4475,38 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.combo_estimator.blockSignals(False)
             dialog.close()
             dialog.deleteLater()
+
+    def test_employee_picker_return_stops_after_cover_sheet_is_destroyed(self):
+        data = _cover_sheet_data()
+        reloads = []
+
+        class DestroyingEmployeesDialog(QtWidgets.QDialog):
+            def __init__(self, *_args, parent=None, **_call_options):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            data,
+            reload_employees_fn=lambda: reloads.append(True)
+            or (list(data.employees), data.pay_classes),
+        )
+        from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+        with mock.patch.object(
+            module,
+            "EmployeesDialog",
+            DestroyingEmployeesDialog,
+        ):
+            dialog._open_employees_dialog()
+        self.assertEqual(reloads, [])
 
 
 if __name__ == "__main__":

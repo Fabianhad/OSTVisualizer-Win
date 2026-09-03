@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
@@ -150,6 +151,8 @@ class RenamePageDialog(QtWidgets.QDialog):
             self._apply_interactivity()
 
             def completed(success: bool) -> None:
+                if not isValid(self):
+                    return
                 self._save_pending = False
                 self._apply_interactivity()
                 if success:
@@ -194,7 +197,9 @@ class RenamePageDialog(QtWidgets.QDialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        QtCore.QTimer.singleShot(0, self._select_new_name)
+        QtCore.QTimer.singleShot(
+            0, lambda: self._select_new_name() if isValid(self) else None
+        )
 
     def cleanup(self) -> None:
         pass

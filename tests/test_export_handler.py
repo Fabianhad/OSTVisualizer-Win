@@ -5,6 +5,8 @@ from unittest.mock import patch
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import Optional
+from PySide6 import QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
 )
@@ -122,6 +124,69 @@ def _capture_pdf_default_filename(page_names):
 
 
 class ExportHandlerPdfFilenameTests(unittest.TestCase):
+    def test_bid_export_stops_after_progress_parent_is_destroyed(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = QtWidgets.QDialog()
+        bid = SimpleNamespace(name="Bid")
+        bid_ref = BidRef("bid.mdb", "bid-1")
+        critical_messages = []
+
+        class DestroyingProgressDialog(QtWidgets.QDialog):
+            def __init__(self, _filename, run, parent=None, reporter=None):
+                super().__init__(parent)
+                self.result = run()
+                self.error = None
+
+            def exec(self):
+                delete(window)
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def cleanup(self):
+                pass
+
+        handler = _make_export_handler(
+            window=window,
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: bid_ref,
+                get_current_bid=lambda: bid,
+            ),
+            database_reader=SimpleNamespace(
+                get_raw_bid_data=lambda _path, _uid: RawBidData()
+            ),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("output.ost", ""),
+            ),
+            patch.object(
+                export_handler_module,
+                "ProgressDialog",
+                DestroyingProgressDialog,
+            ),
+            patch.object(
+                export_handler_module,
+                "show_info",
+                side_effect=AssertionError("closed window must not receive success"),
+            ),
+            patch.object(
+                export_handler_module,
+                "show_critical",
+                side_effect=lambda *_args: critical_messages.append(True),
+            ),
+        ):
+            handler._export_bid_file(
+                "OST",
+                "ost",
+                "Export",
+                lambda _raw, _filename, _name, _reporter: lambda: SimpleNamespace(
+                    success=True
+                ),
+            )
+        self.assertIsNotNone(app)
+        self.assertEqual(critical_messages, [])
+
     def test_bid_file_export_reads_through_backend_neutral_reader(self):
         calls = []
         bid = SimpleNamespace(name="Bid")

@@ -48,7 +48,11 @@ class LicenseThreadManager:
             if self._closed:
                 raise RuntimeError("License operations have stopped")
             self._active_threads.append(thread)
-        thread.start()
+            try:
+                thread.start()
+            except Exception:
+                self._active_threads.remove(thread)
+                raise
         return thread
 
     def cleanup(self, timeout: float = 2.0) -> None:

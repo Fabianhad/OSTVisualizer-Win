@@ -42,6 +42,7 @@ from ...domain.services.project_data_service import ProjectDataService
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.undo_redo_service import UndoRedoService
 from ..utils.qt_callback_bridge import QtVoidCallback
+from ..utils.dialog import delete_later_if_valid
 from ..coordinators.remote_plan_update_pipeline import RemotePlanUpdatePipeline
 from .ui_access_manager import (
     PlanSurfaceAccessContext,
@@ -144,36 +145,55 @@ class DetachedPageViewManager(IShutdownAware):
             coalesce=lambda _previous, current: current,
             can_coalesce=self._can_coalesce_remote_page_data,
         )
-        self.event_bus.subscribe(
-            AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
+        subscriptions = (
+            (AppEvents.DATABASE_REFRESHED, self._on_database_refreshed),
+            (AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed),
+            (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
+            (AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed),
+            (
+                AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                self._on_remote_bid_content_changed,
+            ),
+            (AppEvents.CONDITIONS_CHANGED, self._on_conditions_changed),
+            (AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed),
+            (AppEvents.REMOTE_HIERARCHY_CHANGED, self._on_remote_hierarchy_changed),
+            (
+                AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+                self._on_remote_plan_projection_requested,
+            ),
         )
-        self.event_bus.subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
-        self.event_bus.subscribe(
-            AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed
-        )
-        self.event_bus.subscribe(
-            AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
-        )
-        self.event_bus.subscribe(
-            AppEvents.REMOTE_BID_CONTENT_CHANGED,
-            self._on_remote_bid_content_changed,
-        )
-        self.event_bus.subscribe(
-            AppEvents.CONDITIONS_CHANGED,
-            self._on_conditions_changed,
-        )
-        self.event_bus.subscribe(
-            AppEvents.REMOTE_AREAS_CHANGED,
-            self._on_remote_areas_changed,
-        )
-        self.event_bus.subscribe(
-            AppEvents.REMOTE_HIERARCHY_CHANGED,
-            self._on_remote_hierarchy_changed,
-        )
-        self.event_bus.subscribe(
-            AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
-            self._on_remote_plan_projection_requested,
-        )
+        subscribed = []
+        try:
+            for event_type, callback in subscriptions:
+                self.event_bus.subscribe(event_type, callback)
+                subscribed.append((event_type, callback))
+        except Exception as initialization_error:
+            cleanup_errors = []
+            for event_type, callback in reversed(subscribed):
+                try:
+                    self.event_bus.unsubscribe(event_type, callback)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
+            try:
+                self._remote_plan_pipeline.cleanup()
+            except Exception as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+            self._remote_plan_pipeline = None
+            try:
+                self._refresh_signaler.cleanup()
+            except Exception as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+            try:
+                delete_later_if_valid(self._refresh_signaler)
+            except Exception as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+            self._refresh_signaler = None
+            if cleanup_errors:
+                raise ExceptionGroup(
+                    "Detached-view manager initialization cleanup failed",
+                    [initialization_error, *cleanup_errors],
+                )
+            raise
 
     def shutdown(self) -> None:
         def cleanup_step(description: str, action: Callable[[], None]) -> None:

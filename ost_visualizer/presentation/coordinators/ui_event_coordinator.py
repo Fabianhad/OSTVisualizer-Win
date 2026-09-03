@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ...application.dtos.mesh_geometry_dto import (
     MeshGeometry,
     MeshSceneIdentity,
@@ -64,6 +65,7 @@ from ..modes.cursor import (
     CURSOR_MODE_SELECT,
 )
 from ..utils.image_show_mode import SHOW_BOTH, SHOW_ORIGINAL, SHOW_OVERLAY
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import (
     DB_LOCKED_HINT,
     confirm_delete_page_with_contents,
@@ -1526,16 +1528,20 @@ class UIEventCoordinator:
                     if lease_session is not None:
                         lease_session.accept_initial_lease(result)
                     exec_with_ost_blocking(dialog, self.event_bus)
-                    executed = True
+                    executed = isValid(dialog)
             finally:
                 if lease_session is not None:
                     lease_session.close()
                 elif result.handle is not None:
                     self.end_collaboration_edit(result.handle)
-                if after_close is not None:
-                    after_close(executed)
-                cleanup()
-                dialog.deleteLater()
+                try:
+                    if after_close is not None:
+                        after_close(executed)
+                finally:
+                    try:
+                        cleanup()
+                    finally:
+                        delete_later_if_valid(dialog)
 
         self.request_collaboration_edit(
             database_id,
@@ -2630,16 +2636,28 @@ class UIEventCoordinator:
 
     def cleanup(self) -> None:
         if self._is_cleaning_up:
+            errors = self._cleanup_event_subscriptions()
+            if not self._subscriptions:
+                self.event_bus = None
+            self._raise_cleanup_errors(errors)
             return
         self._is_cleaning_up = True
-        self.project_operations.cancel_navigation_load()
+        errors = []
+
+        def cleanup_step(action: Callable[[], None]) -> None:
+            try:
+                action()
+            except Exception as exc:
+                errors.append(exc)
+
+        cleanup_step(self.project_operations.cancel_navigation_load)
         if self._status_panel:
-            self._status_panel.set_page_info("")
-        self._sync_collaboration_status("", reset_mutation=True)
-        self._invalidate_mesh_scene_request()
+            cleanup_step(lambda: self._status_panel.set_page_info(""))
+        cleanup_step(lambda: self._sync_collaboration_status("", reset_mutation=True))
+        cleanup_step(self._invalidate_mesh_scene_request)
         if self._plan_view_handler is not None:
-            self._plan_view_handler.prepare_for_authoritative_refresh()
-            self._plan_view_handler.invalidate_pending_takeoff_placements()
+            cleanup_step(self._plan_view_handler.prepare_for_authoritative_refresh)
+            cleanup_step(self._plan_view_handler.invalidate_pending_takeoff_placements)
         if self._view_stack:
             try:
                 self._view_stack.currentChanged.disconnect(self._on_view_stack_changed)
@@ -2651,38 +2669,36 @@ class UIEventCoordinator:
             except (TypeError, RuntimeError):
                 pass
         if self._undo_service:
-            self._undo_service.set_change_callback(None)
-        for event_name, callback in self._subscriptions:
-            self.event_bus.unsubscribe(event_name, callback)
-        self._subscriptions.clear()
+            cleanup_step(lambda: self._undo_service.set_change_callback(None))
+        errors.extend(self._cleanup_event_subscriptions())
         for signaler in (
             self._plan_view_signaler,
             self._menu_state_signaler,
         ):
             if signaler:
-                signaler.cleanup()
+                cleanup_step(signaler.cleanup)
         if self._bid_data_cache:
-            self._bid_data_cache.clear()
+            cleanup_step(self._bid_data_cache.clear)
         self._bid_data_cache = None
         if self._mesh_window is not None:
-            self._mesh_window.close()
+            cleanup_step(self._mesh_window.close)
             self._mesh_window = None
         self._mesh_window_action = None
         if self._placement:
-            self._placement.cleanup()
+            cleanup_step(self._placement.cleanup)
         self._placement = None
         if self.opengl_viewer:
-            self.opengl_viewer.cleanup()
+            cleanup_step(self.opengl_viewer.cleanup)
         if self.takeoff_sidebar:
-            self.takeoff_sidebar.cleanup()
+            cleanup_step(self.takeoff_sidebar.cleanup)
         if self.plan_view:
-            self.plan_view.cleanup()
+            cleanup_step(self.plan_view.cleanup)
         if self._sidebar:
-            self._sidebar.cleanup()
+            cleanup_step(self._sidebar.cleanup)
         if self._viewer:
-            self._viewer.cleanup()
+            cleanup_step(self._viewer.cleanup)
         if self._toolbar:
-            self._toolbar.cleanup()
+            cleanup_step(self._toolbar.cleanup)
         self._plan_view_signaler = None
         self._menu_state_signaler = None
         self._nav = None
@@ -2693,7 +2709,6 @@ class UIEventCoordinator:
         self.main_window = None
         self.ui_state_manager = None
         self.ui_access_manager = None
-        self.event_bus = None
         self.project_data = None
         self.project_operations = None
         self.visualization_service = None
@@ -2709,6 +2724,32 @@ class UIEventCoordinator:
         self._condition_handler = None
         self._deferred_persistence = None
         self._status_panel = None
+        if not self._subscriptions:
+            self.event_bus = None
+        self._raise_cleanup_errors(errors)
+
+    def _cleanup_event_subscriptions(self) -> list[Exception]:
+        event_bus = self.event_bus
+        if event_bus is None:
+            self._subscriptions.clear()
+            return []
+        errors = []
+        failed_subscriptions = []
+        for event_name, callback in self._subscriptions:
+            try:
+                event_bus.unsubscribe(event_name, callback)
+            except Exception as exc:
+                errors.append(exc)
+                failed_subscriptions.append((event_name, callback))
+        self._subscriptions = failed_subscriptions
+        return errors
+
+    @staticmethod
+    def _raise_cleanup_errors(errors: list[Exception]) -> None:
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("UI event coordinator cleanup failed", errors)
 
     def capture_current_page_state_for_shutdown(self) -> None:
         self._save_current_page_view_state()
@@ -3410,9 +3451,11 @@ class UIEventCoordinator:
         )
         try:
             exec_with_ost_blocking(dialog, self.event_bus)
+            if not isValid(self.main_window) or not isValid(dialog):
+                return
             action = dialog.selected_action()
         finally:
-            dialog.deleteLater()
+            delete_later_if_valid(dialog)
         if action in {
             ConflictResolutionAction.RELOAD,
             ConflictResolutionAction.DISCARD_DRAFT,
@@ -4488,7 +4531,7 @@ class UIEventCoordinator:
             try:
                 exec_with_ost_blocking(dialog, self.event_bus)
             finally:
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
             return
         lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
@@ -4653,7 +4696,7 @@ class UIEventCoordinator:
             try:
                 exec_with_ost_blocking(dialog, self.event_bus)
             finally:
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
             return
         lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
@@ -4830,7 +4873,7 @@ class UIEventCoordinator:
             try:
                 exec_with_ost_blocking(dialog, self.event_bus)
             finally:
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
             return
         lease_session.bind_dialog(dialog)
         self._exec_with_collaboration_lease(
@@ -5037,7 +5080,7 @@ class UIEventCoordinator:
         )
         if not path:
             return
-        if self._is_cleaning_up:
+        if self._is_cleaning_up or not isValid(self.main_window):
             return
         if (
             self.ui_state_manager.get_selected_bid_ref() != bid_ref

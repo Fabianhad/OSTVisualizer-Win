@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainterPath
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
+from shiboken6 import delete
 from single_action import SingleCallRecorder
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
@@ -53,6 +54,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 )
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
+    _ColorButton,
 )
 from ost_visualizer.presentation.handlers.condition_action_handler import (
     ConditionActionHandler,
@@ -296,6 +298,43 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 menu.deleteLater()
         finally:
             sidebar.deleteLater()
+
+    def test_delayed_condition_assignment_overflow_rejects_rebuilt_tree(self):
+        sidebar = ConditionsSidebar(None)
+        assigned = []
+        sidebar.condition_layer_change_requested.connect(
+            lambda uids, layer_uid: assigned.append((list(uids), layer_uid))
+        )
+        sidebar.load_conditions(self._make_conditions(1), {}, "Project")
+        sidebar.set_edit_enabled(True)
+        sidebar.set_available_layers(
+            [
+                BidLayer(
+                    uid=f"layer-{index}",
+                    bid_uid="bid",
+                    name=f"Layer {index:02d}",
+                    show=True,
+                    sequence=index,
+                )
+                for index in range(1, 81)
+            ]
+        )
+        menu = QtWidgets.QMenu()
+        sidebar._add_layer_submenu(menu, ["c1"], True)
+        submenu = menu.actions()[0].menu()
+        submenu.actions()[-1].defaultWidget().click()
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Replacement", ref_no=1)},
+            {},
+            "Project",
+        )
+        self.app.processEvents()
+        next(
+            action
+            for action in submenu.actions()
+            if action.data() and str(action.data()).startswith("layer-")
+        ).trigger()
+        self.assertEqual(assigned, [])
 
     def _point_projection(self, point, angle):
         return point[0] * math.cos(angle) + point[1] * math.sin(angle)
@@ -1302,6 +1341,81 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(pasted[0][1]["folder_uid"], "f1")
         self.assertTrue(pasted[0][1]["cut"])
 
+    def test_stale_condition_context_targets_are_rejected_after_tree_rebuild(self):
+        sidebar = ConditionsSidebar(None)
+        pasted = []
+        sidebar.paste_requested.connect(
+            lambda uids, target: pasted.append((list(uids), dict(target)))
+        )
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Original", ref_no=1)},
+            {},
+            "Project",
+        )
+        sidebar.set_edit_enabled(True)
+        sidebar.set_duplicate_enabled(True)
+        sidebar._copied_condition_uids = ["c1"]
+        original_item = sidebar._condition_items["c1"]
+        sidebar.highlight_conditions({"c1"})
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Replacement", ref_no=1)},
+            {},
+            "Project",
+        )
+        sidebar._rename_context_target(original_item)
+        sidebar._paste_copied_conditions(original_item)
+        self.assertEqual(pasted, [])
+        self.assertNotEqual(
+            sidebar.tree.state(),
+            QtWidgets.QAbstractItemView.State.EditingState,
+        )
+
+    def test_condition_context_delete_keeps_original_selection_target(self):
+        sidebar = ConditionsSidebar(None)
+        deleted = []
+        sidebar.delete_requested.connect(lambda uids: deleted.append(list(uids)))
+        sidebar.load_conditions(self._make_conditions(2), {}, "Project")
+        sidebar.set_delete_enabled(True)
+        sidebar.highlight_conditions({"c1"})
+        menu = QtWidgets.QMenu()
+        sidebar._add_condition_command_actions(
+            menu,
+            sidebar._condition_items["c1"],
+            conditions_sidebar_module._TYPE_CONDITION,
+            ["c1"],
+            False,
+            False,
+        )
+        sidebar.highlight_conditions({"c2"})
+        next(action for action in menu.actions() if action.text() == "Delete").trigger()
+        self.assertEqual(deleted, [["c1"]])
+
+    def test_condition_tree_rebuild_cancels_active_drag_identity(self):
+        sidebar = ConditionsSidebar(None)
+        sidebar.load_conditions(self._make_conditions(1), {}, "Project")
+        sidebar.tree._drag_uid = "c1"
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Replacement", ref_no=1)},
+            {},
+            "Project",
+        )
+        self.assertIsNone(sidebar.tree._drag_uid)
+
+    def test_condition_tree_rebuild_cancels_active_folder_editor(self):
+        sidebar = ConditionsSidebar(None)
+        sidebar.load_conditions(
+            {}, {"f1": BidConditionFolder(uid="f1", name="Original")}, "Project"
+        )
+        sidebar.set_create_folder_enabled(True)
+        sidebar.start_folder_edit("f1")
+        self.assertIsNotNone(sidebar._editing_folder)
+        sidebar.load_conditions(
+            {}, {"f1": BidConditionFolder(uid="f1", name="Replacement")}, "Project"
+        )
+        sidebar._on_folder_editor_closed()
+        self.assertIsNone(sidebar._editing_folder)
+        self.assertEqual(sidebar._folder_items["f1"].text(0), "Replacement")
+
     def test_condition_folder_delete_uses_structure_not_condition_delete(self):
         sidebar = ConditionsSidebar(None)
         deleted = []
@@ -1449,6 +1563,77 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(save_calls.calls[0][0][0], "c1")
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         dialog.close()
+
+    def test_condition_type_dialog_return_stops_after_parent_is_destroyed(self):
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        dialog = self._make_dialog(condition)
+        reloads = []
+        dialog._condition_type_reload_fn = lambda: reloads.append(True) or []
+
+        class DestroyingConditionTypesDialog(QtWidgets.QDialog):
+            def __init__(self, *_args, parent=None, **_kwargs):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog."
+            "ConditionTypesDialog",
+            DestroyingConditionTypesDialog,
+        ):
+            dialog._open_condition_types_dialog()
+        self.assertEqual(reloads, [])
+
+    def test_condition_color_picker_stops_when_button_is_destroyed(self):
+        button = _ColorButton(0)
+        changes = []
+        button.color_changed.connect(changes.append)
+
+        class DestroyingColorDialog(QtWidgets.QColorDialog):
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def currentColor(self):
+                raise AssertionError("destroyed color dialog must not be read")
+
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog."
+            "QtWidgets.QColorDialog",
+            DestroyingColorDialog,
+        ):
+            button._pick_color()
+        self.assertEqual(changes, [])
+
+    def test_layers_dialog_return_stops_after_parent_is_destroyed(self):
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        dialog = self._make_dialog(condition)
+        reloads = []
+        dialog._layer_reload_fn = lambda: reloads.append(True) or []
+        dialog._layer_used_uids_fn = lambda: set()
+
+        class DestroyingLayersDialog(QtWidgets.QDialog):
+            def __init__(self, *_args, parent=None, **_kwargs):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog." "LayersDialog",
+            DestroyingLayersDialog,
+        ):
+            dialog._open_layers_dialog()
+        self.assertEqual(reloads, [True])
 
     def test_edit_condition_requires_its_read_service_dependency(self):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)

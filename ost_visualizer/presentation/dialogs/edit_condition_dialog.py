@@ -37,6 +37,7 @@ from ..config import (
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
 from ..utils.color_swatch import rounded_color_swatch
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import (
     confirm_not_found,
     confirm_save_discard_cancel,
@@ -198,7 +199,10 @@ class _ColorButton(QtWidgets.QPushButton):
         dlg = QtWidgets.QColorDialog(self._to_qcolor(), self)
         dlg.setWindowTitle("Select Color")
         remove_minimize_maximize(dlg)
-        if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+        result = dlg.exec()
+        if not isValid(self) or not isValid(dlg):
+            return
+        if result == QtWidgets.QDialog.DialogCode.Accepted:
             color = dlg.currentColor()
             self._color_int = color.red() | (color.green() << 8) | (color.blue() << 16)
             self._update_icon()
@@ -1025,6 +1029,8 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
             accepted = result == QtWidgets.QDialog.DialogCode.Accepted
             self._reload_condition_types()
             if accepted:
@@ -1032,8 +1038,10 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._type_edit.setText(selected_name)
         finally:
             self._active_sub_dialog = None
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
 
     def _create_condition_type(self, name: str) -> Optional[str]:
         temp_uid = "new_condition_type"
@@ -1120,6 +1128,8 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
             accepted = result == QtWidgets.QDialog.DialogCode.Accepted
             self._reload_layers()
             if accepted:
@@ -1127,8 +1137,10 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._layer_edit.setText(selected_name)
         finally:
             self._active_sub_dialog = None
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
 
     def _resolve_layer_uid(self):
         layer_name = self._layer_edit.text().strip()

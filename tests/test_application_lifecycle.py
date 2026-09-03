@@ -2,6 +2,7 @@ import logging
 import inspect
 import threading
 import unittest
+from unittest.mock import patch
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,7 @@ from ost_visualizer.application.services.visualization_service import (
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
+from ost_visualizer import main as application_main
 from ost_visualizer.presentation.services.qt_scene_notifier import QtSceneNotifier
 
 
@@ -78,6 +80,104 @@ class QtSceneNotifierLifecycleTests(unittest.TestCase):
             "bounds",
             inspect.signature(QtSceneNotifier.notify_scene_ready).parameters,
         )
+
+
+class ApplicationStartupFailureTests(unittest.TestCase):
+    def test_main_window_construction_failure_shuts_down_configured_application(self):
+        shutdown_calls = []
+        lifecycle = SimpleNamespace(shutdown=lambda: shutdown_calls.append(True))
+        controller = SimpleNamespace(
+            get_service=lambda name: (
+                lifecycle if name == "lifecycle_orchestrator" else None
+            )
+        )
+        container = SimpleNamespace(get=lambda name: controller)
+        app = SimpleNamespace(processEvents=lambda: None)
+        socket = SimpleNamespace(
+            connectToServer=lambda _name: None,
+            waitForConnected=lambda _timeout: False,
+        )
+        server = SimpleNamespace(
+            removeServer=lambda _name: None,
+            listen=lambda _name: True,
+        )
+        splash = SimpleNamespace(show=lambda: None)
+        logger = SimpleNamespace(
+            info=lambda *_args: None, exception=lambda *_args: None
+        )
+        with patch.object(
+            application_main, "_install_runtime_logging", return_value=logger
+        ), patch.object(
+            application_main,
+            "parse_project_file_args",
+            return_value=SimpleNamespace(has_file_args=False),
+        ), patch.object(
+            application_main.QtWidgets, "QApplication", return_value=app
+        ), patch.object(
+            application_main, "QLocalSocket", return_value=socket
+        ), patch.object(
+            application_main, "QLocalServer", return_value=server
+        ), patch.object(
+            application_main, "SplashScreen", return_value=splash
+        ), patch.object(
+            application_main, "configure_application", return_value=container
+        ), patch.object(
+            application_main.MainWindow,
+            "__new__",
+            side_effect=RuntimeError("window construction failed"),
+        ), self.assertRaisesRegex(
+            RuntimeError, "window construction failed"
+        ):
+            application_main.main()
+        self.assertEqual(shutdown_calls, [True])
+
+    def test_event_loop_exit_shuts_down_application_without_window_close(self):
+        shutdown_calls = []
+        lifecycle = SimpleNamespace(shutdown=lambda: shutdown_calls.append(True))
+        controller = SimpleNamespace(
+            get_service=lambda name: (
+                lifecycle if name == "lifecycle_orchestrator" else None
+            )
+        )
+        container = SimpleNamespace(get=lambda _name: controller)
+        app = SimpleNamespace(processEvents=lambda: None, exec=lambda: 7)
+        socket = SimpleNamespace(
+            connectToServer=lambda _name: None,
+            waitForConnected=lambda _timeout: False,
+        )
+        server = SimpleNamespace(
+            removeServer=lambda _name: None,
+            listen=lambda _name: True,
+        )
+        splash = SimpleNamespace(show=lambda: None)
+        logger = SimpleNamespace(
+            info=lambda *_args: None, exception=lambda *_args: None
+        )
+        with patch.object(
+            application_main, "_install_runtime_logging", return_value=logger
+        ), patch.object(
+            application_main,
+            "parse_project_file_args",
+            return_value=SimpleNamespace(has_file_args=False),
+        ), patch.object(
+            application_main.QtWidgets, "QApplication", return_value=app
+        ), patch.object(
+            application_main, "QLocalSocket", return_value=socket
+        ), patch.object(
+            application_main, "QLocalServer", return_value=server
+        ), patch.object(
+            application_main, "SplashScreen", return_value=splash
+        ), patch.object(
+            application_main, "configure_application", return_value=container
+        ), patch.object(
+            application_main, "MainWindow", return_value=object()
+        ), patch.object(
+            application_main, "_install_single_instance_handler"
+        ), self.assertRaisesRegex(
+            SystemExit, "7"
+        ):
+            application_main.main()
+        self.assertEqual(shutdown_calls, [True])
 
 
 class FakeShutdownParticipant(IShutdownAware):
@@ -705,6 +805,60 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertEqual(recording.join_calls, [0.25])
         self.assertEqual(manager._active_threads, [])
         manager.cleanup(timeout=0.25)
+
+    def test_license_thread_cleanup_waits_for_an_accepted_worker_to_start(self):
+        real_thread = threading.Thread
+        start_entered = threading.Event()
+        allow_start = threading.Event()
+        cleanup_started = threading.Event()
+        order = []
+        order_lock = threading.Lock()
+
+        class DelayedStartThread(real_thread):
+            def start(self):
+                start_entered.set()
+                allow_start.wait(1.0)
+                super().start()
+
+        class RecordingBridge:
+            def request_callback(self, _callback, _success, _message):
+                pass
+
+        def operation():
+            with order_lock:
+                order.append("operation")
+            return True, "ok", None
+
+        manager = LicenseThreadManager(logging.getLogger("test"))
+        with patch(
+            "ost_visualizer.application.orchestrators.license_thread_manager.threading.Thread",
+            DelayedStartThread,
+        ):
+            spawn_call = real_thread(
+                target=lambda: manager.spawn_with_bridge(
+                    operation=operation,
+                    callback_bridge=RecordingBridge(),
+                    on_main_thread=lambda *_args: None,
+                )
+            )
+            spawn_call.start()
+            self.assertTrue(start_entered.wait(1.0))
+
+            def cleanup():
+                cleanup_started.set()
+                manager.cleanup(timeout=1.0)
+                with order_lock:
+                    order.append("cleanup")
+
+            cleanup_call = real_thread(target=cleanup)
+            cleanup_call.start()
+            self.assertTrue(cleanup_started.wait(1.0))
+            allow_start.set()
+            spawn_call.join(1.0)
+            cleanup_call.join(1.0)
+        self.assertFalse(spawn_call.is_alive())
+        self.assertFalse(cleanup_call.is_alive())
+        self.assertEqual(order, ["operation", "cleanup"])
 
 
 if __name__ == "__main__":

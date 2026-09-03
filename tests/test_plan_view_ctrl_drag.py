@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsTextItem,
+    QMenu,
 )
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
@@ -30,6 +31,8 @@ from ost_visualizer.domain.entities.annotation import (
 )
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.components import (
     input_handler as input_handler_module,
@@ -837,6 +840,8 @@ class CtrlDragTests(unittest.TestCase):
 
     def _make_view(self, selected_uids=None):
         view = InputHandlerHarness()
+        view._current_bid_ref = None
+        view._current_page = None
         view._cursor_mode = "select"
         view._selection_enabled = True
         view._ctrl_held = False
@@ -1834,7 +1839,7 @@ class CtrlDragTests(unittest.TestCase):
         view._add_context_clipboard_actions = lambda _menu: None
         view._add_context_page_actions = lambda _menu, **_options: None
         view._context_menu_command_trigger = None
-        view._context_menu_action_state = None
+        view._context_menu_action_state = lambda _key: {"enabled": True}
         view._suppress_next_context_menu = False
         view.reset_ctrl_held = lambda: None
         return view
@@ -2198,6 +2203,77 @@ class CtrlDragTests(unittest.TestCase):
             [([("area1", old_pos, new_pos)], [])],
         )
 
+    def test_context_menu_rejects_takeoff_action_after_same_uid_page_replacement(self):
+        view = self._make_area_control_point_view({"area1"})
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view._current_page = Page(uid="page-1", name="Original")
+        view.assign_to_area_requested = FakeSignal()
+        view._context_menu_action_state = lambda _key: {"enabled": True}
+
+        class ReplacingMenu(CapturingMenu):
+            def exec(self, _pos):
+                view._current_page = Page(uid="page-1", name="Replacement")
+                return next(
+                    action
+                    for action in self.actions
+                    if isinstance(action, QAction)
+                    and action.text() == "Assign to Current Area"
+                )
+
+        with (
+            patch.object(input_handler_module, "QMenu", ReplacingMenu),
+            patch.object(
+                input_handler_module,
+                "add_reassign_condition_submenu",
+                return_value=None,
+            ),
+        ):
+            InputHandlerMixin.contextMenuEvent(view, FakeContextMenuEvent(50, 50))
+        self.assertEqual(view.assign_to_area_requested.emitted, [])
+
+    def test_context_menu_rejects_takeoff_action_after_edit_access_loss(self):
+        view = self._make_area_control_point_view({"area1"})
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view._current_page = Page(uid="page-1", name="Page")
+        view.assign_to_area_requested = FakeSignal()
+        access = {"enabled": True}
+        view._context_menu_action_state = lambda _key: dict(access)
+
+        class RevokingMenu(CapturingMenu):
+            def exec(self, _pos):
+                access["enabled"] = False
+                return next(
+                    action
+                    for action in self.actions
+                    if isinstance(action, QAction)
+                    and action.text() == "Assign to Current Area"
+                )
+
+        with (
+            patch.object(input_handler_module, "QMenu", RevokingMenu),
+            patch.object(
+                input_handler_module,
+                "add_reassign_condition_submenu",
+                return_value=None,
+            ),
+        ):
+            InputHandlerMixin.contextMenuEvent(view, FakeContextMenuEvent(50, 50))
+        self.assertEqual(view.assign_to_area_requested.emitted, [])
+
+    def test_queued_context_command_rejects_replaced_page_owner(self):
+        view = self._make_area_control_point_view()
+        view._current_bid_ref = BidRef("db.mdb", "bid-1")
+        view._current_page = Page(uid="page-1", name="Original")
+        triggered = []
+        view._context_menu_command_trigger = triggered.append
+        view._context_menu_action_state = lambda _key: {"enabled": True}
+        menu = QMenu()
+        InputHandlerMixin._add_context_command(view, menu, "Delete", "delete")
+        action = menu.actions()[0]
+        view._current_page = Page(uid="page-1", name="Replacement")
+        action.trigger()
+        self.assertEqual(triggered, [])
+
     def test_polygon_and_cloud_annotations_expose_existing_control_point_actions(self):
         for annotation_type in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):
             with self.subTest(annotation_type=annotation_type):
@@ -2211,6 +2287,19 @@ class CtrlDragTests(unittest.TestCase):
                 self.assertIn("Subtract Control Point", subtract_texts)
                 self.assertNotIn("Add Control Point", subtract_texts)
                 self.assertEqual(view._selected_uids, {annotation.uid})
+
+    def test_context_annotation_style_rejects_edit_access_loss(self):
+        view, annotation = self._make_annotation_control_point_view(
+            ANNOTATION_TYPE_POLYGON
+        )
+        owner = view._context_menu_owner()
+        applied = []
+        view.apply_annotation_style_to_selection = lambda **values: applied.append(
+            values
+        )
+        view._context_menu_action_state = lambda _key: {"enabled": False}
+        view._apply_context_annotation_width(owner, {annotation.uid: annotation}, 6.0)
+        self.assertEqual(applied, [])
 
     def test_polygon_and_cloud_add_control_point_use_annotation_flush_path(self):
         for annotation_type in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):

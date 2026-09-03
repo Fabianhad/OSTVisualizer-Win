@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ....application.dtos.annotation_caption_dto import ANNOTATION_CAPTION_SPECS
 from ....domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
@@ -117,7 +118,10 @@ class _ColorButton(QtWidgets.QPushButton):
         dialog = QtWidgets.QColorDialog(QtGui.QColor(self._color), self)
         dialog.setWindowTitle(self._dialog_title)
         remove_minimize_maximize(dialog)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        if not isValid(self) or not isValid(dialog):
+            return
+        if result != QtWidgets.QDialog.DialogCode.Accepted:
             return
         selected = dialog.currentColor()
         if not selected.isValid():

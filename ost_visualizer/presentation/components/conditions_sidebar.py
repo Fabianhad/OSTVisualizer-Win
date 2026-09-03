@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
+from shiboken6 import isValid
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
@@ -54,7 +55,12 @@ class _ConditionsTree(QtWidgets.QTreeWidget):
         if not data or data[0] != _TYPE_CONDITION:
             return
         self._drag_uid = data[1]
-        super().startDrag(supported_actions)
+        try:
+            super().startDrag(supported_actions)
+        finally:
+            self.cancel_drag()
+
+    def cancel_drag(self) -> None:
         self._drag_uid = None
 
     def dragEnterEvent(self, event) -> None:
@@ -132,6 +138,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._condition_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
         self._conditions: Dict[str, Condition] = {}
         self._block_selection_signal = False
+        self._tree_revision = 0
         self._selected_condition_uids: List[str] = []
         self._copied_condition_uids: List[str] = []
         self._condition_clipboard_cut: bool = False
@@ -392,6 +399,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._sync_button_states()
 
     def _rebuild_tree(self, preserve_scroll: bool = True) -> None:
+        self._tree_revision += 1
+        self.tree.cancel_drag()
+        self._cancel_folder_edit()
         had_tree = self.tree.topLevelItemCount() > 0
         preserve_tree_state = preserve_scroll and had_tree
         expanded_keys = self._expanded_item_keys() if preserve_tree_state else set()
@@ -853,7 +863,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
             is_condition_target and self._can_copy_selected_conditions()
         )
         self._add_new_submenu(menu)
-        self._add_change_properties_action(menu, kind, can_edit_condition)
+        self._add_change_properties_action(
+            menu, kind, condition_uids, can_edit_condition
+        )
         menu.addSeparator()
         self._add_condition_command_actions(
             menu, item, kind, condition_uids, can_cut_conditions, can_copy_conditions
@@ -894,12 +906,16 @@ class ConditionsSidebar(QtWidgets.QWidget):
         )
 
     def _add_change_properties_action(
-        self, menu: QtWidgets.QMenu, kind: Optional[str], enabled: bool
+        self,
+        menu: QtWidgets.QMenu,
+        kind: Optional[str],
+        condition_uids: List[str],
+        enabled: bool,
     ) -> None:
         change_action = self._add_context_action(
             menu,
             "Change Properties",
-            self._on_edit_clicked,
+            lambda: self._edit_context_conditions(condition_uids),
             enabled,
             action_key="edit",
         )
@@ -920,21 +936,21 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._add_context_action(
             menu,
             "Duplicate",
-            self._on_duplicate_clicked,
+            lambda: self._duplicate_context_conditions(condition_uids),
             is_condition_target and bool(condition_uids) and self._duplicate_allowed,
             action_key="duplicate",
         )
         self._add_context_action(
             menu,
             "Cut",
-            self._cut_selected_conditions,
+            lambda: self._cut_context_conditions(condition_uids),
             can_cut_conditions,
             action_key="cut",
         )
         self._add_context_action(
             menu,
             "Copy",
-            self._copy_selected_conditions,
+            lambda: self._copy_context_conditions(condition_uids),
             can_copy_conditions,
             action_key="copy",
         )
@@ -948,7 +964,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._add_context_action(
             menu,
             "Delete",
-            self._delete_context_target(kind),
+            self._delete_context_target(
+                kind, condition_uids, self._selected_folder_uids[:]
+            ),
             self._can_delete_context_target(kind),
             action_key="delete",
         )
@@ -985,12 +1003,18 @@ class ConditionsSidebar(QtWidgets.QWidget):
         checkable: bool = False,
         checked: bool = False,
     ) -> QtGui.QAction:
+        tree_revision = self._tree_revision
+
+        def guarded_callback() -> None:
+            if self._tree_revision == tree_revision:
+                callback()
+
         return ContextMenuManager.add_action(
             menu,
             ContextMenuManager.action_spec(
                 None,
                 text,
-                callback=callback,
+                callback=guarded_callback,
                 enabled=enabled,
                 action_key=action_key,
                 checkable=checkable,
@@ -1013,10 +1037,50 @@ class ConditionsSidebar(QtWidgets.QWidget):
             return bool(self._selected_condition_uids) and self._delete_allowed
         return False
 
-    def _delete_context_target(self, kind: Optional[str]):
+    def _delete_context_target(
+        self,
+        kind: Optional[str],
+        condition_uids: List[str],
+        folder_uids: List[str],
+    ):
         if kind == _TYPE_FOLDER:
-            return self._request_folder_delete
-        return self._delete_selected_conditions
+            return lambda: self._delete_context_folders(folder_uids)
+        return lambda: self._delete_context_conditions(condition_uids)
+
+    def _delete_context_conditions(self, condition_uids: List[str]) -> None:
+        current_uids = [uid for uid in condition_uids if uid in self._conditions]
+        if self._delete_allowed and current_uids:
+            self.delete_requested.emit(current_uids)
+
+    def _delete_context_folders(self, folder_uids: List[str]) -> None:
+        current_uids = [uid for uid in folder_uids if uid in self._folder_items]
+        if self._structure_edit_allowed and current_uids:
+            self.folder_delete_requested.emit(current_uids)
+
+    def _edit_context_conditions(self, condition_uids: List[str]) -> None:
+        if (
+            self._properties_allowed
+            and len(condition_uids) == 1
+            and self.is_condition_placeable(condition_uids[0])
+        ):
+            self.edit_requested.emit(condition_uids[:])
+
+    def _duplicate_context_conditions(self, condition_uids: List[str]) -> None:
+        current_uids = [uid for uid in condition_uids if uid in self._conditions]
+        if self._duplicate_allowed and current_uids:
+            self.duplicate_requested.emit(current_uids)
+
+    def _copy_context_conditions(self, condition_uids: List[str]) -> None:
+        current_uids = [uid for uid in condition_uids if uid in self._conditions]
+        if self._copy_allowed and current_uids:
+            self._copied_condition_uids = current_uids
+            self._condition_clipboard_cut = False
+
+    def _cut_context_conditions(self, condition_uids: List[str]) -> None:
+        current_uids = [uid for uid in condition_uids if uid in self._conditions]
+        if self._structure_edit_allowed and current_uids:
+            self._copied_condition_uids = current_uids
+            self._condition_clipboard_cut = True
 
     def _delete_selected_conditions(self) -> None:
         if self._delete_allowed and self._selected_condition_uids:
@@ -1046,6 +1110,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
         ) and self._can_paste_to_item(item)
 
     def _rename_context_target(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        if not self._is_current_tree_item(item):
+            return
         kind, uid = self._item_kind_uid(item)
         if kind == _TYPE_FOLDER and uid and self._can_rename_context_target(kind, []):
             self.start_folder_edit(uid)
@@ -1053,6 +1119,16 @@ class ConditionsSidebar(QtWidgets.QWidget):
             kind, self._selected_condition_uids
         ):
             self.tree.editItem(item, _COL_NAME)
+
+    def _is_current_tree_item(self, item: Optional[QtWidgets.QTreeWidgetItem]) -> bool:
+        if item is None or not isValid(item) or item.treeWidget() is not self.tree:
+            return False
+        kind, uid = self._item_kind_uid(item)
+        if kind == _TYPE_CONDITION:
+            return self._condition_items.get(uid) is item
+        if kind == _TYPE_FOLDER:
+            return self._folder_items.get(uid) is item
+        return kind in (_TYPE_ROOT, _TYPE_CDN_TYPE)
 
     def _add_layer_submenu(
         self, menu: QtWidgets.QMenu, condition_uids: List[str], enabled: bool
@@ -1107,12 +1183,17 @@ class ConditionsSidebar(QtWidgets.QWidget):
         submenu = QtWidgets.QMenu(title, menu)
         menu.addMenu(submenu)
         submenu.setEnabled(enabled and bool(condition_uids) and bool(items))
+        tree_revision = self._tree_revision
+
+        def request_assignment(item_uid: str) -> None:
+            if self._tree_revision == tree_revision:
+                callback(condition_uids, item_uid)
 
         def _add_assignment_action(target_menu: QtWidgets.QMenu, item) -> QtGui.QAction:
             action = self._add_context_action(
                 target_menu,
                 item.name,
-                lambda uid=item.uid: callback(condition_uids, uid),
+                lambda uid=item.uid: request_assignment(uid),
                 enabled,
                 checkable=True,
                 checked=str(item.uid) == str(checked_uid),
@@ -1250,6 +1331,11 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._folder_editor_connected = False
         delegate = self.tree.itemDelegate()
         delegate.closeEditor.disconnect(self._on_folder_editor_closed)
+
+    def _cancel_folder_edit(self) -> None:
+        if self._folder_editor_connected:
+            self._disconnect_folder_editor_signal()
+        self._editing_folder = None
 
     def _on_folder_editor_closed(self, _editor=None, _hint=None) -> None:
         if self._editing_folder is None:
@@ -1408,6 +1494,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
             return
         if item is None:
             item = self.tree.currentItem()
+        elif not self._is_current_tree_item(item):
+            return
         target = self._resolve_paste_target(item)
         if target is None:
             return
@@ -1479,9 +1567,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self.condition_folder_move_requested.emit(condition_uid, folder_uid)
 
     def clear(self) -> None:
-        if self._editing_folder is not None:
-            self._disconnect_folder_editor_signal()
-        self._editing_folder = None
+        self._tree_revision += 1
+        self.tree.cancel_drag()
+        self._cancel_folder_edit()
         self._pending_folder_edit_uid = None
         self._pending_condition_select_uid = None
         self._block_item_changed = False

@@ -30,12 +30,24 @@
   visual-setting callbacks, local completions preserve newer pending visual
   values across Main and detached Plan projections, and cleared undo history
   ignores late completions. Tentative application shutdown now holds queued
-  startup loading, project imports, database prompts, and update checks until
-  shutdown either succeeds or aborts; aborted closes replay valid work, while
-  terminal shutdown invalidates it along with stale license callbacks and
-  detached-workspace restoration. Cleanup attempts every owned subscription and
-  license worker even when an earlier teardown step fails, and late navigation
-  cancellation preserves the worker stop request.
+  startup loading, project imports, database creation results, detached-workspace
+  restoration, and update checks until shutdown either succeeds or aborts;
+  aborted closes resume deferred persistence and replay valid work once in causal
+  order, while terminal shutdown invalidates it along with stale license
+  callbacks and post-import refresh work. Configured application services now
+  shut down after startup failure or an unexpected event-loop exit, and open
+  License, Update, Open Files, SQL database, nested Cover Sheet/master-data,
+  New Project, page-setting, named-view, color/font, database-prompt, and
+  import/export progress dialogs do not resume into released UI/service state
+  when their parent closes or their page/selection target changes. Dialog-owned
+  asynchronous saves, queued view/toolbar callbacks, and realtime notifications
+  also discard stale Qt ownership. Cleanup attempts every owned UI stage,
+  workspace-state binding, subscription, and license worker even when an earlier
+  teardown step fails, retains
+  transiently failed subscriptions and worker waits for retry, and cannot finish
+  before an accepted worker starts; EventBus delivery also skips subscriptions
+  removed or replaced during the same publication, including recursive delivery,
+  and late navigation cancellation preserves the worker stop request.
 - Fixed structural Condition and layer changes leaving multi-Condition placement
   active after a primary or secondary Condition became hidden, unavailable, or
   incompatible with the active placement geometry.
@@ -64,6 +76,10 @@
   server/name as the saved database, and fixed import/export continuations
   accepting replacement projects or bids that reused the captured UID while a
   native file dialog was open.
+- Fixed hierarchy, Summary, Plan, and 3D context actions applying to rebuilt
+  same-UID rows, replaced scenes, changed selections, or revoked edit access.
+  Tree resets now cancel active drags and inline editors, and Main and detached
+  Plan clipboards recognize equivalent Windows paths for the same database.
 
 ## 1.2.6.1 - 2026-08-19
 

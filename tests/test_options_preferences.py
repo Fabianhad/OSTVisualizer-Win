@@ -9,6 +9,7 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 from tests.single_action import SingleCallRecorder
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.dtos.annotation_caption_dto import (
@@ -1003,6 +1004,26 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(_apply_button(dialog).isEnabled())
         dialog.close()
 
+    def test_options_color_picker_stops_when_button_is_destroyed(self):
+        dialog = OptionsDialog(Config(crosshair_color="#123456"))
+        button = dialog._crosshair_color_button
+
+        class DestroyingColorDialog(QtWidgets.QColorDialog):
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def currentColor(self):
+                raise AssertionError("destroyed color dialog must not be read")
+
+        with mock.patch.object(
+            options_components.QtWidgets,
+            "QColorDialog",
+            DestroyingColorDialog,
+        ):
+            button._choose_color()
+        dialog.close()
+
     def test_options_dialog_removes_inactive_unsupported_options(self):
         dialog = OptionsDialog(Config())
         texts = _visible_texts(dialog)
@@ -1661,6 +1682,29 @@ class OptionsPreferencesTests(unittest.TestCase):
         finally:
             parent.deleteLater()
 
+    def test_annotation_style_color_picker_drops_result_after_owner_destruction(self):
+        _app()
+        selected = []
+        parent = QtWidgets.QWidget()
+        button = create_annotation_style_button(
+            parent,
+            lambda: AnnotationStyle("#ff0000", 4.0),
+            lambda **updates: selected.append(updates),
+            annotation_type="highlight",
+        )
+
+        def destroy_owner(*_args, **_kwargs):
+            delete(parent)
+            return QtGui.QColor("#445566")
+
+        with mock.patch.object(
+            QtWidgets.QColorDialog,
+            "getColor",
+            side_effect=destroy_owner,
+        ):
+            button.click()
+        self.assertEqual(selected, [])
+
     def test_annotation_style_button_exposes_widths_and_updates_style(self):
         _app()
         selected = []
@@ -1702,6 +1746,29 @@ class OptionsPreferencesTests(unittest.TestCase):
             self.assertEqual(selected[-1].color, "#445566")
         finally:
             parent.deleteLater()
+
+    def test_annotation_style_menu_color_drops_result_after_menu_destruction(self):
+        _app()
+        selected = []
+        parent = QtWidgets.QWidget()
+        button = create_annotation_style_button(
+            parent,
+            lambda: AnnotationStyle("#ff0000", 4.0),
+            lambda **updates: selected.append(updates),
+        )
+        menu = button.menu()
+
+        def destroy_owner(*_args, **_kwargs):
+            delete(parent)
+            return QtGui.QColor("#445566")
+
+        with mock.patch.object(
+            QtWidgets.QColorDialog,
+            "getColor",
+            side_effect=destroy_owner,
+        ):
+            menu.actions()[-1].trigger()
+        self.assertEqual(selected, [])
 
     def test_text_annotation_style_button_exposes_text_controls_without_widths(self):
         _app()
@@ -2151,6 +2218,62 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertIsNone(captured["save_employees_async_fn"])
         self.assertIsNone(captured["save_pay_classes_async_fn"])
         self.assertIsNone(captured["save_cover_sheet_async_fn"])
+
+    def test_access_new_project_stops_after_main_window_destruction(self):
+        continued = []
+        window = QtWidgets.QWidget()
+
+        class DestroyedWithParentDialog(QtWidgets.QDialog):
+            def __init__(self, *args, **_kwargs):
+                super().__init__(args[1])
+
+            def get_updates(self):
+                continued.append("updates")
+                return {}
+
+        controller = MenuController.__new__(MenuController)
+        controller._resolve_project_tree_file_path = lambda: "projects.mdb"
+        controller._resolve_target_project_uid = lambda: "project-1"
+        controller.ui_access_manager = SimpleNamespace(
+            can_create_project_tree_items=lambda _has_file: True,
+            has_license=lambda: True,
+            is_allowed=lambda _feature: True,
+        )
+        controller._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False,
+            create_bid_result=lambda *_args: continued.append("create"),
+        )
+        controller._project_read_service = SimpleNamespace(
+            get_settings_defaults=lambda _file_path: {},
+            get_job_statuses=lambda _file_path: [],
+            get_employees_and_pay_classes=lambda _file_path: ([], []),
+        )
+        controller.icon_provider = None
+        controller.window = window
+        controller._infrastructure_provider = SimpleNamespace(
+            get_pdf_page_sizes=lambda _path: []
+        )
+        controller._workspace_state_model = make_workspace_state_model()
+        controller._event_bus = object()
+
+        def destroy_parent(_dialog, _event_bus):
+            delete(window)
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        with (
+            mock.patch(
+                "ost_visualizer.presentation.controllers.menu_controller."
+                "CoverSheetDialog",
+                DestroyedWithParentDialog,
+            ),
+            mock.patch(
+                "ost_visualizer.presentation.controllers.menu_controller."
+                "exec_with_ost_blocking",
+                side_effect=destroy_parent,
+            ),
+        ):
+            controller._new_project()
+        self.assertEqual(continued, [])
 
     def test_sql_new_project_nested_and_outer_saves_transfer_dialog_ownership(self):
         captured = {}

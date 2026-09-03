@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ..actions.action_ids import (
     ACTION_COPY,
     ACTION_CUT,
@@ -150,6 +151,8 @@ class _PlanToolbarLayoutSyncFilter(QtCore.QObject):
         return super().eventFilter(watched, event)
 
     def _run_callback(self) -> None:
+        if not isValid(self):
+            return
         self._sync_pending = False
         self._callback()
 
@@ -1089,6 +1092,10 @@ class ComponentBuilder:
                 overlay_tools_toolbar,
                 workspace_view_toolbar,
             )
+            if not isValid(self.window) or any(
+                not isValid(toolbar) for toolbar in docked_toolbars
+            ):
+                return
             if any(
                 toolbar.isFloating()
                 or self.window.toolBarArea(toolbar)

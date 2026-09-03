@@ -88,6 +88,7 @@ class PdfTextSelectionTests(unittest.TestCase):
     def _make_view(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._scene = QGraphicsScene()
+        view._current_bid_ref = None
         view._current_page = Page(
             uid="page-1",
             name="Page 1",

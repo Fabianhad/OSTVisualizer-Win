@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import replace
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ....domain.entities.config import Config
 from ....domain.entities.font_definition import FontDefinition
 from ...config import COMPACT_SPACING, DIALOG_BUTTON_WIDTH, RELAXED_SPACING
@@ -192,7 +193,10 @@ class FontsColorsTab(QtWidgets.QWidget):
         if category_id is None:
             return
         dialog = FontDialog(self._fonts[category_id], self.change_font_button)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        if not isValid(self) or not isValid(dialog):
+            return
+        if result != QtWidgets.QDialog.DialogCode.Accepted:
             return
         selected = dialog.selected_font()
         if selected is None or selected == self._fonts[category_id]:
@@ -209,7 +213,10 @@ class FontsColorsTab(QtWidgets.QWidget):
         dialog = QtWidgets.QColorDialog(QtGui.QColor(current), self.change_color_button)
         dialog.setWindowTitle("Color")
         remove_minimize_maximize(dialog)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        if not isValid(self) or not isValid(dialog):
+            return
+        if result != QtWidgets.QDialog.DialogCode.Accepted:
             return
         selected = dialog.currentColor()
         if not selected.isValid():

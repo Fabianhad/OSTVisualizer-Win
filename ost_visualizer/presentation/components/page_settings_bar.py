@@ -2,6 +2,7 @@ import logging
 from typing import Callable, List, Optional, Set
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
+from shiboken6 import isValid
 from ...domain.entities.identity_refs import BidRef
 from ..components.area_combo import AreaComboBox
 from ..components.resizable_combo import ResizableComboBox
@@ -16,6 +17,7 @@ from ..config import (
 from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.button_policy import apply_no_highlight_button_policy
+from ..utils.dialog import delete_later_if_valid
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.scales import ALL_SCALES, format_custom_scale
 
@@ -311,16 +313,19 @@ class PageSettingsBar(QtWidgets.QWidget):
             workspace_state_model=self._workspace_state_model,
         )
         selected_uid = None
+        saved_changes = False
         try:
-            if (
-                exec_with_ost_blocking(dlg, self._event_bus)
-                == QtWidgets.QDialog.DialogCode.Accepted
-            ):
+            result = exec_with_ost_blocking(dlg, self._event_bus)
+            if not isValid(self) or not isValid(dlg):
+                return
+            if result == QtWidgets.QDialog.DialogCode.Accepted:
                 selected_uid = dlg.get_selected_uid()
-        finally:
-            dlg.cleanup()
             saved_changes = dlg.has_saved_changes()
-            dlg.deleteLater()
+        finally:
+            try:
+                dlg.cleanup()
+            finally:
+                delete_later_if_valid(dlg)
         if saved_changes and not use_async_save:
             self._refresh_areas_fn(bid_ref.file_path)
         if self._bid_ref != bid_ref or self._page_uid != page_uid:

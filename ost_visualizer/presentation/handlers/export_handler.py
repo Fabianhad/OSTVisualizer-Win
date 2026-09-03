@@ -20,6 +20,7 @@ from ...domain.entities.file_extensions import (
 )
 from ...domain.entities.annotation_caption import AnnotationCaptionId
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_critical, show_info, show_warning
 
 logger = logging.getLogger(__name__)
@@ -225,7 +226,9 @@ class ExportHandler:
                 worker_error = dialog.error
             finally:
                 dialog.cleanup()
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
+            if not isValid(self.window):
+                return
             if (
                 rc == QtWidgets.QDialog.DialogCode.Accepted
                 and result
@@ -400,7 +403,9 @@ class ExportHandler:
                 worker_error = dialog.error
             finally:
                 dialog.cleanup()
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
+            if not isValid(self.window):
+                return
             if (
                 rc == QtWidgets.QDialog.DialogCode.Accepted
                 and result

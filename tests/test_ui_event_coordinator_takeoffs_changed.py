@@ -1,6 +1,11 @@
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6 import QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     CollaborationStatus,
@@ -2226,6 +2231,60 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 "delete",
             ],
         )
+
+    def test_conflict_dialog_return_stops_after_main_window_is_destroyed(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = QtWidgets.QWidget()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._sql_collaboration = SimpleNamespace(
+            enter_resource_conflict=lambda *_args: None,
+            discard_local_draft=lambda *_args: self.fail(
+                "destroyed conflict dialog must not discard a draft"
+            ),
+        )
+        coordinator._icon_provider = object()
+        coordinator.main_window = window
+        coordinator.event_bus = EventBus()
+        coordinator._prepare_for_modal_mutation_error = lambda _database_id: None
+        coordinator._on_full_reconciliation_required = lambda *_args: self.fail(
+            "destroyed conflict dialog must not start reconciliation"
+        )
+
+        class DestroyingConflictDialog(QtWidgets.QDialog):
+            def __init__(self, _icon_provider, _message, _actions, parent=None):
+                super().__init__(parent)
+
+            def selected_action(self):
+                raise AssertionError("destroyed conflict dialog must not be read")
+
+            def set_interactive(self, _enabled):
+                pass
+
+        def destroy_window(dialog, _event_bus):
+            delete(window)
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with (
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "SynchronizationConflictDialog",
+                DestroyingConflictDialog,
+            ),
+            patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "exec_with_ost_blocking",
+                side_effect=destroy_window,
+            ),
+        ):
+            coordinator._on_synchronization_conflict(
+                database_id="database",
+                resource_type="takeoff",
+                resource_id="t1",
+                bid_uid="8",
+                message="Conflict",
+                blocks_database=False,
+            )
+        app.processEvents()
 
     def test_edit_lease_loss_is_routed_only_to_its_exact_plan_owner(self):
         losses = []
@@ -5370,6 +5429,42 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         ):
             coordinator.select_overlay_image()
         self.assertEqual(saved, [])
+
+    def test_overlay_file_dialog_return_after_window_destruction_is_ignored(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("sql-database", "8")
+        page = Page(uid="page-1", name="Original")
+        saved = []
+        window = QtWidgets.QWidget()
+        coordinator._is_cleaning_up = False
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda _page_uid: page)
+        coordinator.main_window = window
+        coordinator._save_page_overlay_image = (
+            lambda database_id, page_uid, path: saved.append(
+                (database_id, page_uid, path)
+            )
+        )
+
+        def destroy_window_while_dialog_is_open(_parent, _current_path):
+            delete(window)
+            return "replacement-overlay.pdf"
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "select_overlay_image_path",
+            side_effect=destroy_window_while_dialog_is_open,
+        ):
+            coordinator.select_overlay_image()
+        self.assertEqual(saved, [])
+        app.processEvents()
 
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

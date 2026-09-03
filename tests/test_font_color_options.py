@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.font_definition import FontDefinition
@@ -431,6 +432,27 @@ class FontColorOptionsTests(unittest.TestCase):
         finally:
             tab.close()
 
+    def test_change_color_stops_when_owning_button_is_destroyed(self):
+        tab = FontsColorsTab()
+        tab.load_config(Config())
+        tab.color_list.setCurrentRow(5)
+
+        class DestroyingColorDialog(QtWidgets.QColorDialog):
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def currentColor(self):
+                raise AssertionError("destroyed color dialog must not be read")
+
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.fonts_colors_tab."
+            "QtWidgets.QColorDialog",
+            DestroyingColorDialog,
+        ):
+            tab._change_color()
+        tab.close()
+
     def test_change_font_accepts_and_cancels_with_button_parent(self):
         tab = FontsColorsTab()
         tab.load_config(Config())
@@ -479,6 +501,29 @@ class FontColorOptionsTests(unittest.TestCase):
             )
         finally:
             tab.close()
+
+    def test_change_font_stops_when_owning_button_is_destroyed(self):
+        tab = FontsColorsTab()
+        tab.load_config(Config())
+
+        class DestroyingFontDialog(QtWidgets.QDialog):
+            def __init__(self, _definition, parent=None):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def selected_font(self):
+                raise AssertionError("destroyed font dialog must not be read")
+
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.fonts_colors_tab."
+            "FontDialog",
+            DestroyingFontDialog,
+        ):
+            tab._change_font()
+        tab.close()
 
     def test_inactive_color_substitution_preserves_opacity(self):
         service = ColorService()

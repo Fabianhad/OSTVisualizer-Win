@@ -14,7 +14,11 @@ from ..config import (
 from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.condition_tree_style import apply_tree_indentation
-from ..utils.dialog import save_result_mapping, save_result_succeeded
+from ..utils.dialog import (
+    delete_later_if_valid,
+    save_result_mapping,
+    save_result_succeeded,
+)
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.persistent_header import PersistentHeaderController
 from ..utils.tree_widget import set_tree_item_row_height
@@ -282,7 +286,10 @@ class EmployeesDialog(QtWidgets.QDialog):
         )
         self._active_detail_dialog = form
         try:
-            if form.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            result = form.exec()
+            if not isValid(self) or not isValid(form):
+                return
+            if result == QtWidgets.QDialog.DialogCode.Accepted:
                 results = form.get_results()
                 current_uid = form.get_current_uid()
                 persisted_uid = (
@@ -293,11 +300,13 @@ class EmployeesDialog(QtWidgets.QDialog):
                 if persisted_uid:
                     self._employees = results
                     self._populate(select_uid=persisted_uid)
-        finally:
             self._pay_classes = form.get_pay_classes()
+        finally:
             self._active_detail_dialog = None
-            form.cleanup()
-            form.deleteLater()
+            try:
+                form.cleanup()
+            finally:
+                delete_later_if_valid(form)
 
     def _save_new_employee(
         self, employees: List[EmployeeRecord], current_uid: Optional[str]

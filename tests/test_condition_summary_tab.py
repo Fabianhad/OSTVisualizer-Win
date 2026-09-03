@@ -910,6 +910,34 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self.tab.copy_current_row()
         self.assertEqual(QtWidgets.QApplication.clipboard().text(), "L-0 FDN\t1\tEA")
 
+    def test_context_copy_uses_clicked_row_after_current_row_changes(self):
+        self._load()
+        detail_items = [
+            item
+            for root_item in _top_level_items(self.tab.tree)
+            for item in _tree_items(root_item)
+            if (
+                item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                and item.data(0, QtCore.Qt.ItemDataRole.UserRole).kind
+                == SUMMARY_NODE_AREA_DETAIL
+            )
+        ]
+        self.tab.tree.setCurrentItem(detail_items[0])
+        menu = self.tab.build_context_menu(detail_items[0])
+        self.tab.tree.setCurrentItem(detail_items[1])
+        self._action_by_text(menu, "Copy").trigger()
+        self.assertEqual(QtWidgets.QApplication.clipboard().text(), "L-0 FDN\t1\tEA")
+
+    def test_context_delete_rejects_replaced_summary_owner(self):
+        self._load()
+        deleted = []
+        self.tab.delete_requested.connect(lambda uids: deleted.append(list(uids)))
+        total_item = self._item_for_kind(SUMMARY_NODE_MULTI_AREA_TOTAL)
+        menu = self.tab.build_context_menu(total_item)
+        self._load()
+        self._action_by_text(menu, "Delete").trigger()
+        self.assertEqual(deleted, [])
+
     def test_delete_current_row_emits_condition_delete_request(self):
         self._load()
         deleted = []

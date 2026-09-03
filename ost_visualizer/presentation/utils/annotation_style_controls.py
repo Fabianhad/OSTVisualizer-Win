@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections.abc import Callable, Mapping
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ...domain.entities.annotation import (
     ANNOTATION_TYPE_DIMENSION,
     ANNOTATION_TYPE_HIGHLIGHT,
@@ -79,6 +80,8 @@ def create_annotation_style_menu(
     def _choose_default_color() -> None:
         style = get_style()
         color = QtWidgets.QColorDialog.getColor(QtGui.QColor(style.color), parent)
+        if not isValid(parent) or not isValid(menu):
+            return
         if color.isValid():
             set_style(color=color.name())
         refresh_shape_width_actions()
@@ -222,6 +225,8 @@ def _create_font_annotation_style_menu(
     def _choose_default_text_color() -> None:
         style = get_style()
         color = QtWidgets.QColorDialog.getColor(QtGui.QColor(style.color), parent)
+        if not isValid(parent) or not isValid(menu):
+            return
         if color.isValid():
             set_style(color=color.name())
         _refresh_text_menu_state()
@@ -297,6 +302,8 @@ def create_annotation_style_button(
         def _choose_default_color() -> None:
             style = get_style()
             color = QtWidgets.QColorDialog.getColor(QtGui.QColor(style.color), parent)
+            if not isValid(parent) or not isValid(button):
+                return
             if color.isValid():
                 set_style(color=color.name())
 

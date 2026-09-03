@@ -1015,9 +1015,20 @@ class TakeoffPlanView(
         item = self._active_text_toolbar_item()
         if item is None:
             return
+        uid = self._selected_text_annotation_uid
+        annotation = self._current_annotations.get(uid) if uid is not None else None
         color = QColorDialog.getColor(item.defaultTextColor(), self)
+        if (
+            not isValid(self)
+            or not isValid(item)
+            or self._selected_text_annotation_uid != uid
+            or self._active_text_toolbar_item() is not item
+            or (
+                uid is not None and self._current_annotations.get(uid) is not annotation
+            )
+        ):
+            return
         if color.isValid():
-            uid = self._selected_text_annotation_uid
             item.setDefaultTextColor(color)
             self._update_condition_text_color_swatch(color)
             if uid is None:
@@ -2635,6 +2646,10 @@ class TakeoffPlanView(
             self._update_tile_coverage(self.transform().m11())
         self.page_fully_loaded.emit()
         return True
+
+    def _finalize_queued_page_load_if_valid(self) -> None:
+        if isValid(self):
+            self._finalize_page_load_if_ready()
 
     @property
     def has_selection(self) -> bool:

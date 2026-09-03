@@ -31,6 +31,7 @@ from ost_visualizer.domain.entities.annotation import (
     BidAnnotation,
     hex_color_to_int,
 )
+from ost_visualizer.domain.entities.file_state import normalize_path
 from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
@@ -1185,6 +1186,13 @@ class FakeClipboard:
 
     def has_content(self):
         return bool(self.items or self.annotations)
+
+    def source_matches_database(self, file_path):
+        return bool(
+            self.source_file_path
+            and file_path
+            and normalize_path(self.source_file_path) == normalize_path(file_path)
+        )
 
     def get_extras(self, uid):
         return self._extras.get(uid, {})
@@ -2434,6 +2442,40 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(plan_view.activated_annotations, [])
         self.assertEqual(plan_view.cancel_place_mode_calls, 1)
         self.assertEqual(plan_view.placement_flow, ["cancel_place_mode", "dialog_exec"])
+
+    def test_hotlink_dialog_return_does_not_write_after_page_retarget(self):
+        ann_write = FakeAnnotationWriteService()
+        plan_view = FakePlanView()
+        ui_state = FakeUiState()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=ui_state,
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
+        )
+
+        class RetargetingDialog:
+            def __init__(self, _named_views, parent=None):
+                pass
+
+            def exec(self):
+                ui_state.active_page_uid = "p2"
+                plan_view.current_page_uid = "p2"
+                return handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def result_data(self):
+                raise AssertionError("stale hotlink dialog result must not be read")
+
+        with patch.object(handler_module, "SelectNamedViewDialog", RetargetingDialog):
+            handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+        self.assertEqual(ann_write.insert_calls, [])
+        self.assertEqual(plan_view.activated_annotations, [])
 
     def test_denied_place_annotations_access_blocks_text_commit_write(self):
         ann_write = FakeAnnotationWriteService()
@@ -6740,6 +6782,19 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertFalse(handler.can_paste_to_current_bid())
         handler.on_paste_requested()
         self.assertEqual(ann_write.insert_calls, [])
+
+    def test_clipboard_paste_accepts_equivalent_windows_database_path(self):
+        source = self._copied_takeoff()
+        handler = self._paste_handler()
+        handler._ui_state = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("C:/Jobs/Bid.mdb", "7")
+        )
+        handler._clipboard_svc = FakeClipboard(
+            [source], source_file_path=r"c:\jobs\bid.mdb"
+        )
+        self.assertTrue(handler.can_paste_to_current_bid())
+        handler.on_paste_requested()
+        self.assertEqual(len(handler._write_svc.calls), 1)
 
     def test_paste_bid_dimension_preserves_style_properties(self):
         source = self._copied_annotation(

@@ -23,7 +23,7 @@ from ...config import (
 )
 from ...managers.icon_manager import IconId, IconManager
 from ...utils.button_policy import apply_no_highlight_button_policy
-from ...utils.dialog import save_result_refresh_failed
+from ...utils.dialog import delete_later_if_valid, save_result_refresh_failed
 from ...utils.image_show_mode import (
     SHOW_BOTH,
     SHOW_LABELS,
@@ -1076,6 +1076,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
             selected_name = None
             if result == QtWidgets.QDialog.DialogCode.Accepted:
                 res = dialog.get_result()
@@ -1117,8 +1119,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._on_job_status_changed()
         finally:
             self._active_sub_dialog = None
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
 
     def _open_job_statuses_picker(self, *_args) -> None:
         self._open_job_statuses_dialog()
@@ -1142,6 +1146,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
             selected_name = None
             if result == QtWidgets.QDialog.DialogCode.Accepted:
                 res = dialog.get_result()
@@ -1174,8 +1180,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 self.combo_estimator.lineEdit().clear()
         finally:
             self._active_sub_dialog = None
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
 
     def _open_employees_picker(self, *_args) -> None:
         self._open_employees_dialog()
@@ -1223,13 +1231,18 @@ class CoverSheetDialog(QtWidgets.QDialog):
             workspace_state_model=self._workspace_state_model,
         )
         self._active_sub_dialog = dialog
+        saved_changes = False
         try:
             dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
+            saved_changes = dialog.has_saved_changes()
         finally:
             self._active_sub_dialog = None
-            dialog.cleanup()
-            saved_changes = dialog.has_saved_changes()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
         if saved_changes and self._save_bid_areas_async_fn is None and self._refresh_fn:
             refresh_result = self._refresh_fn()
             if refresh_result is False:
@@ -1714,7 +1727,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             "",
             IMAGE_FILE_FILTER,
         )
-        if not files:
+        if not files or not isValid(self):
             return
         normalized = [os.path.normpath(f) for f in files]
         total = len(normalized)
@@ -1731,10 +1744,14 @@ class CoverSheetDialog(QtWidgets.QDialog):
         progress = ProgressDialog(
             label, _read_all_sizes, parent=self, reporter=reporter
         )
-        progress.exec()
-        file_sizes = progress.result
-        progress.cleanup()
-        progress.deleteLater()
+        try:
+            progress.exec()
+            file_sizes = progress.result
+        finally:
+            progress.cleanup()
+            delete_later_if_valid(progress)
+        if not isValid(self):
+            return
         if not file_sizes:
             return
         self._populate_imported_pages(file_sizes)
@@ -1958,6 +1975,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 current,
                 IMAGE_FILE_FILTER,
             )
+            if not isValid(self):
+                return
             if path:
                 _set_path(path)
 

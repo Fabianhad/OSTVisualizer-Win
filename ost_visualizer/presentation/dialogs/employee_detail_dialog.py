@@ -1,5 +1,6 @@
 from typing import List, Optional
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...domain.entities.employee import PayClass
 from ..config import (
     COMPACT_SPACING,
@@ -10,6 +11,7 @@ from ..config import (
 )
 from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..utils.button_policy import apply_no_highlight_button_policy
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import confirm_not_found, show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 from .payroll_class_dialog import PayrollClassListDialog
@@ -299,6 +301,8 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         self._active_payroll_dialog = dialog
         try:
             result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
             accepted = result == QtWidgets.QDialog.DialogCode.Accepted
             if accepted or not dialog.was_cancelled:
                 res = dialog.get_result()
@@ -310,8 +314,10 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
                     self._select_pay_class_by_uid(res.selected_uid or str(current_uid))
         finally:
             self._active_payroll_dialog = None
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
 
     def set_interactive(self, enabled: bool) -> None:
         for edit in (

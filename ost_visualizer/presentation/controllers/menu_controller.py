@@ -1,6 +1,7 @@
 import datetime
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtWidgets
+from shiboken6 import isValid
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.config import Config
@@ -47,6 +48,7 @@ from ..dialogs.options.dialog import OptionsDialog
 from ..managers.ui_access_manager import Feature
 from ..interfaces.i_workspace_shell import CurrentAreaSelectionContext
 from ..utils.image_show_mode import mode_to_flags
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
@@ -938,9 +940,16 @@ class MenuController:
         def execute_dialog() -> None:
             try:
                 result = exec_with_ost_blocking(dialog, self._event_bus)
+                if not isValid(self.window) or not isValid(dialog):
+                    return
                 if result != QtWidgets.QDialog.DialogCode.Accepted:
                     return
                 if uses_sql_queue:
+                    return
+                if (
+                    self._resolve_project_tree_file_path() != file_path
+                    or self._resolve_target_project_uid() != target_project_uid
+                ):
                     return
                 if not self.ui_access_manager.can_create_project_tree_items(
                     file_path is not None
@@ -969,14 +978,16 @@ class MenuController:
             finally:
                 if lease_session is not None:
                     lease_session.close()
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
 
         if lease_session is None:
             execute_dialog()
             return
         lease_session.bind_dialog(dialog)
         lease_session.request_initial(
-            lambda result: execute_dialog() if result.granted else dialog.deleteLater()
+            lambda result: (
+                execute_dialog() if result.granted else delete_later_if_valid(dialog)
+            )
         )
 
     def _resolve_project_tree_file_path(self) -> Optional[str]:
@@ -1039,11 +1050,16 @@ class MenuController:
         type_dialog = NewDatabaseTypeDialog(self.icon_provider, self.window)
         selected_backend = None
         try:
-            if type_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            result = type_dialog.exec()
+            if not isValid(self.window) or not isValid(type_dialog):
+                return
+            if result == QtWidgets.QDialog.DialogCode.Accepted:
                 selected_backend = type_dialog.selected_backend()
         finally:
-            type_dialog.cleanup()
-            type_dialog.deleteLater()
+            try:
+                type_dialog.cleanup()
+            finally:
+                delete_later_if_valid(type_dialog)
         if selected_backend is None:
             return
         if selected_backend == DatabaseBackend.SQL_SERVER:
@@ -1057,7 +1073,10 @@ class MenuController:
             dialog.setModal(True)
             self.icon_provider.set_window_icon(dialog)
             remove_minimize_maximize(dialog)
-            if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            result = dialog.exec()
+            if not isValid(self.window) or not isValid(dialog):
+                return
+            if result != QtWidgets.QDialog.DialogCode.Accepted:
                 return
             name = dialog.textValue().strip()
             db_path = self._create_new_database_fn(name or None)
@@ -1074,15 +1093,18 @@ class MenuController:
                     AppEvents.FILE_OPENED, file_path=result.file_path
                 )
         finally:
-            dialog.deleteLater()
+            delete_later_if_valid(dialog)
 
     def _show_about_dialog(self) -> None:
         dialog = AboutDialog(self.icon_provider, self.window)
         try:
             dialog.exec()
         finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                if isValid(dialog):
+                    dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
 
     def _show_options_dialog(self) -> None:
         dialog = OptionsDialog(
@@ -1094,7 +1116,7 @@ class MenuController:
         try:
             dialog.exec()
         finally:
-            dialog.deleteLater()
+            delete_later_if_valid(dialog)
 
     def _reset_all_settings(self) -> Config:
         default_config = Config()

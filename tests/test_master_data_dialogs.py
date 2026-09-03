@@ -7,6 +7,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
+from shiboken6 import delete
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     EditLeaseHandle,
@@ -1344,6 +1345,52 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         finally:
             bar.deleteLater()
 
+    def test_page_settings_area_picker_stops_after_bar_is_destroyed(self):
+        bar = PageSettingsBar(
+            FakeIconProvider(),
+            event_bus=EventBus(),
+            load_areas_fn=lambda _file_path, _bid_uid: [],
+            save_areas_fn=lambda *_args, **_kwargs: {},
+            refresh_areas_fn=lambda _file_path: self.fail(
+                "destroyed page settings must not refresh areas"
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+        )
+        bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
+        bar.load_page("page-1", 1.0, 1.0, "")
+        bar.set_interactive(True)
+
+        class DestroyingPicker(QtWidgets.QDialog):
+            def __init__(self, *_args, parent=None, **_kwargs):
+                super().__init__(parent)
+
+            def get_selected_uid(self):
+                raise AssertionError("destroyed area picker must not be read")
+
+            def has_saved_changes(self):
+                raise AssertionError("destroyed area picker must not be read")
+
+            def cleanup(self):
+                pass
+
+        def execute(picker, _event_bus):
+            delete(bar)
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        with (
+            patch(
+                "ost_visualizer.presentation.components.page_settings_bar."
+                "BidAreaPickerDialog",
+                DestroyingPicker,
+            ),
+            patch(
+                "ost_visualizer.presentation.components.page_settings_bar."
+                "exec_with_ost_blocking",
+                side_effect=execute,
+            ),
+        ):
+            bar._on_area_browse()
+
     def test_page_settings_area_picker_uses_async_save_without_sync_refresh(self):
         async_calls = []
         sync_calls = []
@@ -1845,6 +1892,61 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_employee_detail_stops_after_payroll_dialog_destroys_parent(self):
+        dialog = EmployeeDetailDialog(
+            FakeIconProvider(),
+            [EmployeeRecord(uid="emp-1", first_name="Ava")],
+            0,
+            make_workspace_state_model(),
+            pay_classes=[PayClass(uid="pay-1", name="Regular")],
+        )
+
+        class DestroyingPayrollDialog(QtWidgets.QDialog):
+            def __init__(self, *_args, parent=None, **_kwargs):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            @property
+            def was_cancelled(self):
+                raise AssertionError("destroyed payroll dialog must not be read")
+
+            def cleanup(self):
+                pass
+
+        with patch(
+            "ost_visualizer.presentation.dialogs.employee_detail_dialog."
+            "PayrollClassListDialog",
+            DestroyingPayrollDialog,
+        ):
+            dialog._open_payroll_class_dialog()
+
+    def test_employees_dialog_stops_after_detail_dialog_destroys_parent(self):
+        dialog = self._employee_dialog()
+
+        class DestroyingDetailDialog(QtWidgets.QDialog):
+            def __init__(self, *_args, parent=None, **_kwargs):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def get_pay_classes(self):
+                raise AssertionError("destroyed employee detail must not be read")
+
+            def cleanup(self):
+                pass
+
+        with patch(
+            "ost_visualizer.presentation.dialogs.employees_dialog."
+            "EmployeeDetailDialog",
+            DestroyingDetailDialog,
+        ):
+            dialog._open_detail_dialog(dialog._employees, 0)
 
     def test_employee_detail_new_employee_saves_immediately_and_selects_real_uid(self):
         save_calls = []

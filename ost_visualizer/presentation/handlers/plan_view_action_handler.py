@@ -4,6 +4,7 @@ import weakref
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional
 from PySide6 import QtWidgets
+from shiboken6 import isValid
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.collaboration_dtos import (
@@ -457,7 +458,7 @@ class PlanViewActionHandler:
     def _permitted_paste_content(self, bid_ref) -> tuple[list, list]:
         if (
             not self._clipboard_svc.has_content()
-            or self._clipboard_svc.source_file_path != bid_ref.file_path
+            or not self._clipboard_svc.source_matches_database(bid_ref.file_path)
         ):
             return [], []
         items = (
@@ -2352,7 +2353,15 @@ class PlanViewActionHandler:
             self._collect_named_view_choices(),
             parent=self._plan_view,
         )
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        result_code = dialog.exec()
+        if (
+            not isValid(dialog)
+            or not isValid(self._plan_view)
+            or not self._plan_context_is_current(bid_ref, (str(page_uid),))
+            or not self._is_allowed(Feature.PLACE_ANNOTATIONS)
+        ):
+            return
+        if result_code != QtWidgets.QDialog.DialogCode.Accepted:
             return
         result = dialog.result_data()
         if result.create_new:
@@ -2623,7 +2632,7 @@ class PlanViewActionHandler:
         ]
         same_bid_paste = (
             source_bid_uid == bid_ref.bid_uid
-            and self._clipboard_svc.source_file_path == bid_ref.file_path
+            and self._clipboard_svc.source_matches_database(bid_ref.file_path)
         )
         if uses_sql_queue:
             source_bid_key = str(source_bid_uid or bid_ref.bid_uid)
@@ -3345,11 +3354,14 @@ class PlanViewActionHandler:
     ) -> Optional[Dict[str, str]]:
         source_bid_uid = self._clipboard_svc.source_bid_uid
         source_file_path = self._clipboard_svc.source_file_path
-        if source_bid_uid == bid_ref.bid_uid and source_file_path == bid_ref.file_path:
+        if (
+            source_bid_uid == bid_ref.bid_uid
+            and self._clipboard_svc.source_matches_database(bid_ref.file_path)
+        ):
             return {}
         if not source_bid_uid:
             return None
-        if source_file_path != bid_ref.file_path:
+        if not self._clipboard_svc.source_matches_database(bid_ref.file_path):
             logger.warning(
                 "Cannot paste takeoffs across database files: source=%s destination=%s",
                 source_file_path,

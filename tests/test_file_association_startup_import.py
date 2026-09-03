@@ -279,6 +279,7 @@ def _startup_import_window():
     window._collaboration_shutdown_complete = False
     window._application_shutdown_finalized = False
     window._shutdown_deferred_callbacks = {}
+    window._deferred_persistence_manager = SimpleNamespace(abort_shutdown=lambda: None)
     return window
 
 
@@ -493,7 +494,7 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             self.assertTrue(window._startup_load_complete)
             self.assertEqual(
                 timer.callbacks,
-                [window._workspace_state_coordinator.restore_deferred_state],
+                [window._restore_deferred_workspace_state],
             )
             self.assertFalse(window._project_file_import_scheduled)
 
@@ -626,6 +627,66 @@ class FileAssociationStartupImportTests(unittest.TestCase):
         self.assertEqual(restores, [True])
         self.assertTrue(window._startup_load_complete)
 
+    def test_aborted_shutdown_replays_startup_load_before_main_window_show(self):
+        window = _startup_import_window()
+        window._collaboration_shutdown_pending = True
+        calls = []
+        window._needs_create_database_prompt = False
+        window._update_service = None
+        window.app_controller = SimpleNamespace(
+            load_files_from_config=lambda: calls.append("load") or [],
+            has_any_databases=lambda: False,
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(sync_after_startup_load=lambda: None)
+        )
+        window._workspace_state_coordinator = SimpleNamespace(
+            show_main_window=lambda: calls.append("show"),
+            restore_deferred_state=lambda: calls.append("restore"),
+        )
+        window.raise_ = lambda: None
+        window.activateWindow = lambda: None
+        window._prompt_create_database = lambda: calls.append("prompt")
+        timer = FakeTimerQueue()
+        original_single_shot = main_window_module.QtCore.QTimer.singleShot
+        try:
+            main_window_module.QtCore.QTimer.singleShot = timer.singleShot
+            MainWindow._show_main_window(window)
+            MainWindow._load_files_from_config(window)
+            window._collaboration_shutdown_pending = False
+            MainWindow._resume_shutdown_deferred_callbacks(window)
+            while timer.callbacks:
+                timer.callbacks.pop(0)()
+        finally:
+            main_window_module.QtCore.QTimer.singleShot = original_single_shot
+        self.assertEqual(calls[:2], ["load", "show"])
+        self.assertEqual(calls.count("prompt"), 1)
+
+    def test_deferred_workspace_restore_waits_for_tentative_shutdown(self):
+        window = _startup_import_window()
+        restores = []
+        window.app_controller = SimpleNamespace(
+            load_files_from_config=lambda: ["target.mdb"],
+            has_any_databases=lambda: True,
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(sync_after_startup_load=lambda: None)
+        )
+        window._workspace_state_coordinator = SimpleNamespace(
+            restore_deferred_state=lambda: restores.append(True)
+        )
+        timer = FakeTimerQueue()
+        original_single_shot = main_window_module.QtCore.QTimer.singleShot
+        try:
+            main_window_module.QtCore.QTimer.singleShot = timer.singleShot
+            MainWindow._load_files_from_config(window)
+            window._collaboration_shutdown_pending = True
+            timer.callbacks.pop(0)()
+        finally:
+            main_window_module.QtCore.QTimer.singleShot = original_single_shot
+        self.assertEqual(restores, [])
+        self.assertTrue(window._shutdown_deferred_callbacks)
+
     def test_queued_main_window_show_is_ignored_after_shutdown_starts(self):
         window = _startup_import_window()
         window._collaboration_shutdown_pending = True
@@ -748,6 +809,67 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             "create_database_after_prompt", window._shutdown_deferred_callbacks
         )
 
+    def test_database_creation_does_not_load_when_shutdown_starts_in_progress(self):
+        window = _startup_import_window()
+        loads = []
+
+        def create_database():
+            window._collaboration_shutdown_pending = True
+            return "new.mdb"
+
+        window._create_database_with_progress = create_database
+        window._file_loading_service = SimpleNamespace(load_file=loads.append)
+        MainWindow._complete_create_database_prompt(window)
+        self.assertEqual(loads, [])
+        self.assertTrue(window._shutdown_deferred_callbacks)
+
+    def test_database_creation_failure_notice_waits_when_shutdown_starts_in_progress(
+        self,
+    ):
+        window = _startup_import_window()
+        warnings = []
+
+        def create_database():
+            window._collaboration_shutdown_pending = True
+            return None
+
+        window._create_database_with_progress = create_database
+        original_show_warning = main_window_module.show_warning
+        try:
+            main_window_module.show_warning = lambda *_args: warnings.append(True)
+            MainWindow._complete_create_database_prompt(window)
+        finally:
+            main_window_module.show_warning = original_show_warning
+        self.assertEqual(warnings, [])
+        self.assertTrue(window._shutdown_deferred_callbacks)
+
+    def test_database_prompt_tolerates_parent_destroying_dialog(self):
+        from shiboken6 import delete
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertIsNotNone(app)
+        window = _startup_import_window()
+        window.icon_provider = object()
+        window.ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
+        window._complete_create_database_prompt = lambda: self.fail(
+            "A rejected prompt must not create a database"
+        )
+
+        class DestroyedCreateDatabaseDialog(QtWidgets.QDialog):
+            def __init__(self, *_args):
+                super().__init__()
+
+            def exec(self):
+                delete(self)
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+        original_dialog = main_window_module.CreateDatabaseDialog
+        try:
+            main_window_module.CreateDatabaseDialog = DestroyedCreateDatabaseDialog
+            MainWindow._prompt_create_database(window)
+        finally:
+            main_window_module.CreateDatabaseDialog = original_dialog
+
     def test_queued_startup_import_does_not_begin_after_shutdown_starts(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.ost"
@@ -801,6 +923,89 @@ class FileAssociationStartupImportTests(unittest.TestCase):
         self.assertIn(
             "complete_project_file_imports", window._shutdown_deferred_callbacks
         )
+
+    def test_sync_startup_import_completion_waits_when_shutdown_starts_in_progress(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.ost"
+            source.write_text("ost")
+            window = _startup_import_window()
+            window._startup_load_complete = True
+            window._main_window_ready = True
+            window._pending_project_file_args.append(_project_file_args(source))
+            selections = []
+            summaries = []
+            result = import_args_use_case.ProjectFileImportBatchResult(
+                target_db_path="target.mdb"
+            )
+
+            def import_with_progress(_args):
+                window._collaboration_shutdown_pending = True
+                return result
+
+            window._import_project_files_with_progress = import_with_progress
+            window._select_project_file_import_result = selections.append
+            window._show_project_file_import_result = summaries.append
+            MainWindow._run_pending_project_file_imports(window)
+            self.assertEqual(selections, [])
+            self.assertEqual(summaries, [])
+            self.assertIn(
+                "complete_project_file_imports",
+                window._shutdown_deferred_callbacks,
+            )
+
+    def test_sync_startup_import_does_not_refresh_after_terminal_modal_shutdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.ost"
+            source.write_text("ost")
+            window = _startup_import_window()
+            window._startup_load_complete = True
+            window._main_window_ready = True
+            window._pending_project_file_args.append(_project_file_args(source))
+            target = import_args_use_case.ProjectImportTarget("target.mdb")
+            raw_result = import_args_use_case.ProjectFileImportBatchResult(
+                results=[
+                    import_args_use_case.ProjectFileImportResult(
+                        source_path=str(source),
+                        success=True,
+                        message="Imported successfully.",
+                    )
+                ],
+                target_db_path=target.file_path,
+                refresh_pending=True,
+            )
+            refreshes = []
+            window._current_project_import_target = lambda: None
+            window._deferred_persistence_manager = SimpleNamespace(
+                flush_for_file=lambda _path: True
+            )
+            window._import_project_files_from_args = SimpleNamespace(
+                resolve_target=lambda _current: target,
+                uses_async_import=lambda _target: False,
+                execute_imports=lambda *_args, **_kwargs: raw_result,
+                refresh_import_result=lambda result: refreshes.append(result) or result,
+            )
+            window._select_project_file_import_result = lambda _result: self.fail(
+                "Terminal shutdown must not project the imported project"
+            )
+            window._show_project_file_import_result = lambda _result: self.fail(
+                "Terminal shutdown must not show an import result"
+            )
+
+            class ClosingProgressDialog(FakeStartupProgressDialog):
+                def exec(self):
+                    window._collaboration_shutdown_complete = True
+                    return self.result_code
+
+            original_progress_dialog = main_window_module.ProgressDialog
+            try:
+                main_window_module.ProgressDialog = ClosingProgressDialog
+                MainWindow._run_pending_project_file_imports(window)
+            finally:
+                main_window_module.ProgressDialog = original_progress_dialog
+            self.assertEqual(refreshes, [])
+            self.assertFalse(window._project_file_import_running)
 
     def test_terminal_shutdown_discards_deferred_startup_import_completion(self):
         window = _startup_import_window()

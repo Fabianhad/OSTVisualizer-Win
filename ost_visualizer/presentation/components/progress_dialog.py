@@ -128,6 +128,7 @@ class ProgressDialog(QtWidgets.QDialog):
         self._result: Any = None
         self._error: Optional[Exception] = None
         self._cleaned_up = False
+        self._cleanup_complete = False
         self._started = False
         self._worker_finished = False
         self._setup_ui(filename)
@@ -210,7 +211,7 @@ class ProgressDialog(QtWidgets.QDialog):
         return self._error
 
     def cleanup(self) -> None:
-        if self._cleaned_up:
+        if self._cleanup_complete:
             return
         self._cleaned_up = True
         if self._thread and self._thread.isRunning():
@@ -236,6 +237,7 @@ class ProgressDialog(QtWidgets.QDialog):
         self._reporter = None
         self._label = None
         self._progress = None
+        self._cleanup_complete = True
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         event.ignore()

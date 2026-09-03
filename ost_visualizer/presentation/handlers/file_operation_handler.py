@@ -1,4 +1,5 @@
 from PySide6 import QtWidgets
+from shiboken6 import isValid
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ..dialogs.open_files_dialog import OpenFilesDialog
@@ -7,6 +8,7 @@ from ..dialogs.sql_database_dialog import (
     SqlDatabasePropertiesMode,
 )
 from ..managers.ui_access_manager import Feature
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_warning
 from ...domain.entities.database_descriptor import (
     DatabaseBackend,
@@ -90,7 +92,10 @@ class FileOperationHandler:
         file_entries = None
         reconfigured_database_ids: set[str] = set()
         try:
-            if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            result = dialog.exec()
+            if not isValid(self.window) or not isValid(dialog):
+                return
+            if result == QtWidgets.QDialog.DialogCode.Accepted:
                 selected_entries = dialog.get_file_entries()
                 try:
                     self._file_state_model.update_entries(selected_entries)
@@ -124,8 +129,10 @@ class FileOperationHandler:
                     else:
                         file_entries = selected_entries
         finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
         if file_entries is None:
             return
         self._prepare_open_files_changes(
@@ -354,11 +361,16 @@ class FileOperationHandler:
         )
         result = None
         try:
-            if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            rc = dialog.exec()
+            if not isValid(self.window) or not isValid(dialog):
+                return False
+            if rc == QtWidgets.QDialog.DialogCode.Accepted:
                 result = dialog.result_data()
         finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
         if result is None:
             return False
         descriptor = DatabaseDescriptor.for_sql_server(

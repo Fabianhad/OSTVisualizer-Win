@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 from ...domain.entities.annotation import BidAnnotation
+from ...domain.entities.file_state import normalize_path
 from ...domain.entities.takeoff import Takeoff
 
 
@@ -74,6 +75,13 @@ class SelectionClipboardService:
     @property
     def source_file_path(self) -> Optional[str]:
         return self._source_file_path
+
+    def source_matches_database(self, file_path: Optional[str]) -> bool:
+        return bool(
+            self._source_file_path
+            and file_path
+            and normalize_path(self._source_file_path) == normalize_path(file_path)
+        )
 
     def get_extras(self, takeoff_uid: str) -> Dict[str, Any]:
         return self._takeoff_extras.get(str(takeoff_uid), {})

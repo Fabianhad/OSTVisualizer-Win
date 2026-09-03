@@ -1,10 +1,18 @@
 import os
 import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    EditLeaseHandle,
+    EditLeaseResult,
+    ResourceRef,
+)
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.presentation import main_window as main_window_module
 from ost_visualizer.presentation.components.progress_dialog import (
@@ -12,9 +20,21 @@ from ost_visualizer.presentation.components.progress_dialog import (
     ProgressReporter,
 )
 from ost_visualizer.presentation.coordinators.event_coordinator import EventCoordinator
+from ost_visualizer.presentation.coordinators.license_ui_coordinator import (
+    LicenseUICoordinator,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.infrastructure.events.event_bus import EventBus
+from ost_visualizer.presentation.coordinators import (
+    license_ui_coordinator as license_ui_coordinator_module,
+)
 from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.dialog import BaseListDialog
+from ost_visualizer.presentation.utils.qt_message_notifier import QtMessageNotifier
+from ost_visualizer.presentation.utils.ost_blocking import exec_with_ost_blocking
 from ost_visualizer.presentation.utils.windows import set_fixed_width_auto_height
 
 
@@ -116,6 +136,79 @@ class FakeProgressDialog:
 
 
 class DialogLifecycleTests(unittest.TestCase):
+    def test_collaboration_modal_return_marks_destroyed_dialog_unexecuted(self):
+        _app()
+        parent = QtWidgets.QWidget()
+        dialog = QtWidgets.QDialog(parent)
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.event_bus = EventBus()
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="dialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("page", "page-1", 8),),
+        )
+        released = []
+        cleaned = []
+        after_close = []
+        coordinator.end_collaboration_edit = released.append
+
+        def request_edit(_database_id, _resources, callback, **_kwargs):
+            callback(EditLeaseResult(True, handle=handle))
+
+        coordinator.request_collaboration_edit = request_edit
+
+        def destroy_parent(_dialog, _event_bus):
+            delete(parent)
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "exec_with_ost_blocking",
+            side_effect=destroy_parent,
+        ):
+            coordinator._exec_with_collaboration_lease(
+                dialog,
+                "database",
+                handle.resources,
+                lambda: cleaned.append(True),
+                after_close.append,
+            )
+        self.assertEqual(released, [handle])
+        self.assertEqual(cleaned, [True])
+        self.assertEqual(after_close, [False])
+
+    def test_message_notifier_cleanup_tolerates_parent_destroyed_dialog(self):
+        _app()
+        parent = QtWidgets.QDialog()
+        parent.show()
+        notifier = QtMessageNotifier(parent=None)
+        notifier.set_parent(parent)
+        notifier.post_message("Notice", "Queued work completed")
+        self.assertIsNotNone(notifier._current_dialog)
+        delete(parent)
+        notifier.cleanup()
+        self.assertIsNone(notifier._current_dialog)
+        self.assertIsNone(notifier._default_parent)
+
+    def test_message_notifier_drops_stale_queue_after_parent_is_destroyed(self):
+        _app()
+        parent = QtWidgets.QDialog()
+        notifier = QtMessageNotifier(parent=None)
+        notifier.set_parent(parent)
+        notifier._update_active = True
+        notifier.post_message("Notice", "Queued work completed")
+        self.assertEqual(len(notifier._queue), 1)
+        delete(parent)
+        notifier._update_active = False
+        notifier._maybe_show_next()
+        self.assertEqual(notifier._queue, [])
+        self.assertIsNone(notifier._current_dialog)
+        self.assertIsNone(notifier._default_parent)
+        notifier.cleanup()
+
     def test_fixed_width_auto_height_tracks_layout_spacing(self):
         _app()
         dialog = QtWidgets.QDialog()
@@ -186,6 +279,23 @@ class DialogLifecycleTests(unittest.TestCase):
         finally:
             dialog.done(0)
 
+    def test_license_dialog_constructor_failure_unsubscribes_event_callback(self):
+        _app()
+        event_bus = EventBus()
+
+        class FailingLicenseOrchestrator(FakeLicenseOrchestrator):
+            def get_view_model(self):
+                raise RuntimeError("view model unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "view model unavailable"):
+            LicenseDialog(
+                FakeIconProvider(),
+                None,
+                FailingLicenseOrchestrator(),
+                event_bus,
+            )
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=False)
+
     def test_event_coordinator_cleanup_releases_event_bus_reference(self):
         event_bus = FakeEventBus()
         coordinator = EventCoordinator(event_bus)
@@ -222,8 +332,11 @@ class DialogLifecycleTests(unittest.TestCase):
                 (AppEvents.FILE_OPENED, second),
             ],
         )
-        self.assertIsNone(coordinator.event_bus)
-        self.assertEqual(coordinator._subscriptions, [])
+        self.assertIs(coordinator.event_bus, event_bus)
+        self.assertEqual(
+            coordinator._subscriptions,
+            [(AppEvents.LICENSE_STATUS_CHANGED, first)],
+        )
 
     def test_event_coordinator_cleanup_reports_every_unsubscribe_failure(self):
         class FailingEventBus(FakeEventBus):
@@ -247,9 +360,366 @@ class DialogLifecycleTests(unittest.TestCase):
             ],
         )
         self.assertEqual(len(event_bus.unsubscriptions), 2)
+        self.assertIs(coordinator.event_bus, event_bus)
+        self.assertEqual(
+            coordinator._subscriptions,
+            [
+                (AppEvents.LICENSE_STATUS_CHANGED, first),
+                (AppEvents.FILE_OPENED, second),
+            ],
+        )
+
+    def test_event_coordinator_retries_transient_unsubscribe_failures(self):
+        class TransientEventBus(FakeEventBus):
+            def __init__(self):
+                super().__init__()
+                self.subscribers = {}
+                self.attempts = {}
+
+            def subscribe(self, event_type, callback):
+                super().subscribe(event_type, callback)
+                self.subscribers.setdefault(event_type, []).append(callback)
+
+            def unsubscribe(self, event_type, callback):
+                key = (event_type, callback)
+                self.attempts[key] = self.attempts.get(key, 0) + 1
+                if self.attempts[key] == 1:
+                    raise RuntimeError(f"transient: {event_type.__name__}")
+                self.subscribers[event_type].remove(callback)
+
+            def publish(self, event_type):
+                for callback in tuple(self.subscribers.get(event_type, ())):
+                    callback()
+
+        event_bus = TransientEventBus()
+        coordinator = EventCoordinator(event_bus)
+        delivered = []
+        first = lambda: delivered.append("first")
+        second = lambda: delivered.append("second")
+        coordinator.register(AppEvents.LICENSE_STATUS_CHANGED, first)
+        coordinator.register(AppEvents.FILE_OPENED, second)
+        with self.assertRaises(ExceptionGroup):
+            coordinator.cleanup()
+        coordinator.cleanup()
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED)
+        event_bus.publish(AppEvents.FILE_OPENED)
+        self.assertEqual(delivered, [])
         self.assertIsNone(coordinator.event_bus)
         self.assertEqual(coordinator._subscriptions, [])
+
+    def test_event_bus_skips_subscriber_removed_during_same_publish(self):
+        event_bus = EventBus()
+        coordinator = EventCoordinator(event_bus)
+        delivered = []
+        event_bus.subscribe(
+            AppEvents.LICENSE_STATUS_CHANGED,
+            lambda **_: coordinator.cleanup(),
+        )
+        coordinator.register(
+            AppEvents.LICENSE_STATUS_CHANGED,
+            lambda **_: delivered.append("stale"),
+        )
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        self.assertEqual(delivered, [])
+
+    def test_event_bus_defers_readded_subscriber_until_next_publish(self):
+        event_bus = EventBus()
+        delivered = []
+
+        def target(**_payload):
+            delivered.append("target")
+
+        def replace_target(**_payload):
+            event_bus.unsubscribe(AppEvents.LICENSE_STATUS_CHANGED, replace_target)
+            event_bus.unsubscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+            event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+
+        event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, replace_target)
+        event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        self.assertEqual(delivered, [])
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        self.assertEqual(delivered, ["target"])
+
+    def test_event_bus_recursive_publish_uses_current_subscription_identity(self):
+        event_bus = EventBus()
+        delivered = []
+        reentered = False
+
+        def target(**_payload):
+            delivered.append("target")
+
+        def replace_and_reenter(**_payload):
+            nonlocal reentered
+            if reentered:
+                return
+            reentered = True
+            event_bus.unsubscribe(
+                AppEvents.LICENSE_STATUS_CHANGED,
+                replace_and_reenter,
+            )
+            event_bus.unsubscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+            event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+            event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+
+        event_bus.subscribe(
+            AppEvents.LICENSE_STATUS_CHANGED,
+            replace_and_reenter,
+        )
+        event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        self.assertEqual(delivered, ["target"])
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        self.assertEqual(delivered, ["target", "target"])
+
+    def test_event_bus_subscription_mutation_survives_subscriber_exception(self):
+        event_bus = EventBus()
+        delivered = []
+
+        def target(**_payload):
+            delivered.append("target")
+
+        def replace_and_fail(**_payload):
+            event_bus.unsubscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+            event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+            raise RuntimeError("subscriber failed")
+
+        event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, replace_and_fail)
+        event_bus.subscribe(AppEvents.LICENSE_STATUS_CHANGED, target)
+        with self.assertRaisesRegex(RuntimeError, "subscriber failed"):
+            event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        event_bus.unsubscribe(
+            AppEvents.LICENSE_STATUS_CHANGED,
+            replace_and_fail,
+        )
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+        self.assertEqual(delivered, ["target"])
+
+    def test_ost_blocking_skips_access_change_after_dialog_is_destroyed(self):
+        _app()
+        event_bus = EventBus()
+
+        class Signal:
+            def __init__(self):
+                self.callback = None
+
+            def connect(self, callback):
+                self.callback = callback
+
+            def emit(self, active):
+                self.callback(active)
+
+        class Signaler:
+            def __init__(self):
+                self.ost_changed = Signal()
+
+            def deleteLater(self):
+                pass
+
+        class Dialog(QtWidgets.QDialog):
+            def set_interactive(self, enabled):
+                self.setEnabled(enabled)
+
+            def exec(self):
+                event_bus.publish(AppEvents.OST_STATUS_CHANGED, active=True)
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+        dialog = Dialog()
+        event_bus.subscribe(
+            AppEvents.OST_STATUS_CHANGED,
+            lambda **_payload: delete(dialog),
+        )
+        with patch(
+            "ost_visualizer.presentation.utils.ost_blocking.OstSignaler",
+            Signaler,
+        ):
+            result = exec_with_ost_blocking(dialog, event_bus)
+        self.assertEqual(result, QtWidgets.QDialog.DialogCode.Rejected)
+
+    def test_license_dialog_return_does_not_touch_cleaned_coordinator(self):
+        status_updates = []
+        menu_updates = []
+        coordinator = LicenseUICoordinator(
+            window=object(),
+            icon_provider=object(),
+            license_orchestrator=FakeLicenseOrchestrator(),
+            event_bus=FakeEventBus(),
+            status_panel=type(
+                "StatusPanel",
+                (),
+                {
+                    "set_license_active": lambda _self, active: status_updates.append(
+                        active
+                    )
+                },
+            )(),
+            menu_controller=type(
+                "MenuController",
+                (),
+                {"update_menu_states": lambda _self: menu_updates.append(True)},
+            )(),
+        )
+
+        class ClosingLicenseDialog:
+            def __init__(self, *_args):
+                self.license_orchestrator = object()
+                self.event_bus = object()
+
+            def exec(self):
+                coordinator.cleanup()
+
+            def cleanup(self):
+                self.license_orchestrator = None
+                self.event_bus = None
+
+            def deleteLater(self):
+                pass
+
+        with patch.object(
+            license_ui_coordinator_module,
+            "LicenseDialog",
+            ClosingLicenseDialog,
+        ):
+            coordinator.show_dialog()
+        self.assertEqual(status_updates, [])
+        self.assertEqual(menu_updates, [])
+
+    def test_license_dialog_return_tolerates_parent_destroying_dialog(self):
+        _app()
+        coordinator = LicenseUICoordinator(
+            window=object(),
+            icon_provider=object(),
+            license_orchestrator=FakeLicenseOrchestrator(),
+            event_bus=FakeEventBus(),
+            status_panel=SimpleNamespace(set_license_active=lambda _active: None),
+            menu_controller=SimpleNamespace(update_menu_states=lambda: None),
+        )
+
+        class DestroyedLicenseDialog(QtWidgets.QDialog):
+            def __init__(self, *_args):
+                super().__init__()
+                self.license_orchestrator = object()
+                self.event_bus = object()
+
+            def exec(self):
+                delete(self)
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                self.license_orchestrator = None
+                self.event_bus = None
+
+        with patch.object(
+            license_ui_coordinator_module,
+            "LicenseDialog",
+            DestroyedLicenseDialog,
+        ):
+            coordinator.show_dialog()
+
+    def test_destroyed_license_dialog_releases_event_subscription(self):
+        _app()
+        parent = QtWidgets.QDialog()
+        event_bus = EventBus()
+        coordinator = LicenseUICoordinator(
+            window=parent,
+            icon_provider=FakeIconProvider(),
+            license_orchestrator=FakeLicenseOrchestrator(),
+            event_bus=event_bus,
+            status_panel=SimpleNamespace(set_license_active=lambda _active: None),
+            menu_controller=SimpleNamespace(update_menu_states=lambda: None),
+        )
+
+        def destroy_parent(_dialog):
+            delete(parent)
+            event_bus.publish(
+                AppEvents.LICENSE_STATUS_CHANGED,
+                has_license=False,
+            )
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch.object(LicenseDialog, "exec", destroy_parent):
+            coordinator.show_dialog()
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=False)
+
+    def test_ui_event_cleanup_attempts_later_stages_and_retries_unsubscribe(self):
+        calls = []
+
+        class EventBus:
+            def __init__(self):
+                self.attempts = 0
+
+            def unsubscribe(self, event_type, _callback):
+                calls.append(f"unsubscribe:{event_type.__name__}")
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RuntimeError("transient unsubscribe")
+
+        def failing(name):
+            def cleanup():
+                calls.append(name)
+                raise RuntimeError(f"{name} failed")
+
+            return cleanup
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.project_operations = SimpleNamespace(
+            cancel_navigation_load=failing("navigation")
+        )
+        coordinator._status_panel = None
+        coordinator._sync_collaboration_status = lambda *_args, **_kwargs: None
+        coordinator._invalidate_mesh_scene_request = lambda: None
+        coordinator._plan_view_handler = None
+        coordinator._view_stack = None
+        coordinator._tab_widget = None
+        coordinator._undo_service = None
+        coordinator.event_bus = EventBus()
+        coordinator._subscriptions = [
+            (AppEvents.LICENSE_STATUS_CHANGED, lambda **_: None),
+            (AppEvents.FILE_OPENED, lambda **_: None),
+        ]
+        coordinator._plan_view_signaler = None
+        coordinator._menu_state_signaler = None
+        coordinator._bid_data_cache = None
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator._placement = SimpleNamespace(cleanup=failing("placement"))
+        coordinator.opengl_viewer = SimpleNamespace(
+            cleanup=lambda: calls.append("viewer")
+        )
+        coordinator.takeoff_sidebar = None
+        coordinator.plan_view = None
+        coordinator._sidebar = None
+        coordinator._viewer = None
+        coordinator._toolbar = None
+        coordinator.main_window = object()
+        coordinator.ui_state_manager = object()
+        coordinator.ui_access_manager = object()
+        coordinator.project_data = object()
+        coordinator.visualization_service = object()
+        coordinator._color_service = object()
+        coordinator._icon_provider = object()
+        coordinator._project_write_service = object()
+        coordinator._project_read_service = object()
+        coordinator.conditions_sidebar = None
+        coordinator.condition_summary_tab = None
+        coordinator._condition_handler = object()
+        coordinator._deferred_persistence = object()
+        with self.assertRaises(ExceptionGroup) as captured:
+            coordinator.cleanup()
+        self.assertEqual(
+            [str(error) for error in captured.exception.exceptions],
+            [
+                "navigation failed",
+                "transient unsubscribe",
+                "placement failed",
+            ],
+        )
+        self.assertIn("viewer", calls)
+        self.assertEqual(len(coordinator._subscriptions), 1)
         coordinator.cleanup()
+        self.assertEqual(coordinator._subscriptions, [])
+        self.assertIsNone(coordinator.event_bus)
 
     def test_progress_dialog_cleanup_releases_worker_callback_references(self):
         dialog = ProgressDialog.__new__(ProgressDialog)
@@ -261,6 +731,7 @@ class DialogLifecycleTests(unittest.TestCase):
         dialog._label = object()
         dialog._progress = object()
         dialog._cleaned_up = False
+        dialog._cleanup_complete = False
         ProgressDialog.cleanup(dialog)
         ProgressDialog.cleanup(dialog)
         self.assertIsNone(dialog._task_fn)
@@ -268,6 +739,54 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertIsNone(dialog._thread)
         self.assertIsNone(dialog._reporter)
         self.assertIsNone(dialog._label)
+        self.assertIsNone(dialog._progress)
+
+    def test_progress_dialog_cleanup_retries_after_worker_wait_timeout(self):
+        class Signal:
+            def __init__(self):
+                self.disconnect_calls = 0
+
+            def disconnect(self, _callback):
+                self.disconnect_calls += 1
+
+        class Thread:
+            def __init__(self):
+                self.finished = Signal()
+                self.wait_calls = 0
+
+            def isRunning(self):
+                return True
+
+            def quit(self):
+                pass
+
+            def wait(self, _timeout):
+                self.wait_calls += 1
+                return self.wait_calls > 1
+
+        thread = Thread()
+        dialog = ProgressDialog.__new__(ProgressDialog)
+        dialog._task_fn = lambda: None
+        dialog._thread = thread
+        dialog._worker = object()
+        dialog._reporter = None
+        dialog._label = object()
+        dialog._progress = object()
+        dialog._cleaned_up = False
+        dialog._cleanup_complete = False
+        ProgressDialog.cleanup(dialog)
+        ProgressDialog.cleanup(dialog)
+        self.assertEqual(thread.wait_calls, 2)
+        self.assertEqual(thread.finished.disconnect_calls, 1)
+        self.assertIsNone(dialog._thread)
+        self.assertIsNone(dialog._task_fn)
+
+    def test_progress_dialog_cleanup_tolerates_destroyed_qt_children(self):
+        _app()
+        dialog = ProgressDialog("export.ost", lambda: True)
+        delete(dialog)
+        dialog.cleanup()
+        self.assertTrue(dialog._cleanup_complete)
         self.assertIsNone(dialog._progress)
 
     def test_progress_dialog_ignores_worker_finish_after_cleanup(self):
@@ -443,6 +962,54 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertEqual(dialog.delete_calls, 1)
         self.assertTrue(dialog.cleaned_up)
         self.assertTrue(dialog.deleted)
+
+    def test_create_database_prompt_stops_after_main_window_destruction(self):
+        _app()
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+        window._collaboration_shutdown_pending = False
+        window._shutdown_deferred_callbacks = {}
+        window.ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
+        window.icon_provider = None
+        continued = []
+        window._complete_create_database_prompt = lambda: continued.append(True)
+
+        class DestroyingDialog(QtWidgets.QDialog):
+            def __init__(self, _icon_provider, parent):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(window)
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+        with patch.object(main_window_module, "CreateDatabaseDialog", DestroyingDialog):
+            MainWindow._prompt_create_database(window)
+        self.assertEqual(continued, [])
+
+    def test_create_database_progress_stops_after_main_window_destruction(self):
+        _app()
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        window.app_controller = SimpleNamespace(create_new_database=lambda *_args: "x")
+        cleaned = []
+
+        class DestroyingProgress(QtWidgets.QDialog):
+            def __init__(self, *_args, parent=None, **_kwargs):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(window)
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def cleanup(self):
+                cleaned.append(True)
+
+        with patch.object(main_window_module, "ProgressDialog", DestroyingProgress):
+            result = MainWindow._create_database_with_progress(window)
+        self.assertIsNone(result)
+        self.assertEqual(cleaned, [])
 
 
 if __name__ == "__main__":

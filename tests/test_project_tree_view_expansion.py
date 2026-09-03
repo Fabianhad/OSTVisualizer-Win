@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtTest, QtWidgets
+from shiboken6 import delete
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.loaded_file import LoadedFile
 from ost_visualizer.domain.entities.project import Project
@@ -81,6 +82,15 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
                 ],
             )
         ]
+
+    def test_pending_rename_is_dropped_after_project_view_destruction(self):
+        calls = []
+        view = ProjectView(None, _EventBus())
+        view._find_project_item = lambda *_args: calls.append(True) or (None, None)
+        view.schedule_rename("project-1", "C:/jobs/test.mdb")
+        delete(view)
+        self.app.processEvents()
+        self.assertEqual(calls, [])
 
     def _find_item(self, uid):
         found = None
@@ -495,6 +505,75 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(
             [[ref.bid_uid for ref in refs] for refs in copied], [["bid-2"]]
         )
+
+    def test_stale_project_context_rename_is_rejected_after_tree_rebuild(self):
+        self.view.build_complete_structure(self._loaded_file([]))
+        original_item = self._find_item("project-1")
+        context = self.view._context_for_item(original_item)
+        replacement_files = self._loaded_file([])
+        replacement_files[0].projects[0].name = "Replacement"
+        self.view.build_complete_structure(replacement_files)
+        self.view._rename_context(context)
+        self.assertIsNone(self.view._rename_item)
+        self.assertEqual(self._find_item("project-1").text(0), "Replacement")
+
+    def test_project_tree_rebuild_cancels_active_drag_items(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        self.view.top_tree._drag_items = [self._find_item("bid-1")]
+        self.view.top_tree._drag_file_path = "C:/jobs/test.mdb"
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        self.assertEqual(self.view.top_tree._drag_items, [])
+        self.assertIsNone(self.view.top_tree._drag_file_path)
+
+    def test_project_context_command_rejects_replaced_tree_owner(self):
+        commands = []
+        self.view.on_menu_command = commands.append
+        self.view.on_menu_command_enabled = lambda _key: True
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        bid_item = self._find_item("bid-1")
+        self.view._prepare_context_menu_selection(bid_item)
+        context = self.view._context_for_item(bid_item)
+        menu = QtWidgets.QMenu()
+        self.view._build_project_context_menu(menu, context)
+        delete_action = next(
+            action for action in menu.actions() if action.text() == "Delete"
+        )
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        delete_action.trigger()
+        self.assertEqual(commands, [])
+
+    def test_project_context_command_rejects_changed_selection(self):
+        commands = []
+        self.view.on_menu_command = commands.append
+        self.view.on_menu_command_enabled = lambda _key: True
+        self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
+        bid_1 = self._find_item("bid-1")
+        self.view._prepare_context_menu_selection(bid_1)
+        context = self.view._context_for_item(bid_1)
+        menu = QtWidgets.QMenu()
+        self.view._build_project_context_menu(menu, context)
+        delete_action = next(
+            action for action in menu.actions() if action.text() == "Delete"
+        )
+        bid_2 = self._find_item("bid-2")
+        self.view.top_tree.clearSelection()
+        self.view.top_tree.setCurrentItem(bid_2)
+        bid_2.setSelected(True)
+        delete_action.trigger()
+        self.assertEqual(commands, [])
+
+    def test_project_context_expand_action_ignores_qaction_checked_argument(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        bid_item = self._find_item("bid-1")
+        self.view._prepare_context_menu_selection(bid_item)
+        context = self.view._context_for_item(bid_item)
+        menu = QtWidgets.QMenu()
+        self.view._build_project_context_menu(menu, context)
+        expand_action = next(
+            action for action in menu.actions() if action.text() == "Expand All"
+        )
+        expand_action.trigger()
+        self.assertTrue(bid_item.parent().isExpanded())
 
     def test_context_paste_blocks_different_database_target(self):
         self.view.build_complete_structure(

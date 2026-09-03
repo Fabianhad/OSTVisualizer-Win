@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
@@ -127,7 +128,10 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         return super().eventFilter(watched, event)
 
     def _queue_show_current_completions(self) -> None:
-        QtCore.QTimer.singleShot(0, self._show_current_completions)
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: self._show_current_completions() if isValid(self) else None,
+        )
 
     def _show_current_completions(self) -> None:
         if not self._named_view_combo.isEnabled():

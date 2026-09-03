@@ -400,17 +400,25 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self, item: QtWidgets.QTreeWidgetItem | None
     ) -> QtWidgets.QMenu:
         node = self._node_for_item(item)
+        summary_owner = self._root_node
+        copy_text = self._copyable_text(item)
         menu = QtWidgets.QMenu(self)
         copy_action = menu.addAction("Copy")
         ShortcutManager.apply_to_action(copy_action, ACTION_COPY)
         IconManager.apply_to_action(copy_action, ACTION_COPY)
         copy_action.setEnabled(self._copy_allowed() and self._can_copy_item(item))
-        copy_action.triggered.connect(lambda _checked=False: self.copy_current_row())
+        copy_action.triggered.connect(
+            lambda _checked=False, text=copy_text: self._copy_context_text(text)
+        )
         delete_action = menu.addAction("Delete")
         ShortcutManager.apply_to_action(delete_action, ACTION_DELETE)
         IconManager.apply_to_action(delete_action, ACTION_DELETE)
         delete_action.setEnabled(self._can_delete_node(node) and self._delete_allowed())
-        delete_action.triggered.connect(lambda _checked=False: self._delete_node(node))
+        delete_action.triggered.connect(
+            lambda _checked=False, owner=summary_owner: self._delete_context_node(
+                node, owner
+            )
+        )
         menu.addSeparator()
         self._add_group_action(
             menu,
@@ -475,6 +483,10 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         text = self._copyable_text(item)
         QtWidgets.QApplication.clipboard().setText(text)
 
+    def _copy_context_text(self, text: str) -> None:
+        if self._copy_allowed() and text:
+            QtWidgets.QApplication.clipboard().setText(text)
+
     def delete_current_row(self) -> None:
         self._delete_node(self._node_for_item(self.tree.currentItem()))
 
@@ -502,6 +514,14 @@ class ConditionSummaryTab(QtWidgets.QWidget):
     def _delete_node(self, node: ConditionSummaryNode | None) -> None:
         if self._delete_allowed() and self._can_delete_node(node):
             self.delete_requested.emit([node.condition_uid])
+
+    def _delete_context_node(
+        self,
+        node: ConditionSummaryNode | None,
+        summary_owner: ConditionSummaryNode | None,
+    ) -> None:
+        if self._root_node is summary_owner:
+            self._delete_node(node)
 
     def _delete_allowed(self) -> bool:
         return bool(self._delete_allowed_fn and self._delete_allowed_fn())

@@ -439,29 +439,30 @@ class OpenFilesDialog(QtWidgets.QDialog):
 
     def cleanup(self) -> None:
         self._rollback_credential_changes()
-        try:
-            self.table.itemSelectionChanged.disconnect()
-        except (TypeError, RuntimeError):
-            pass
-        try:
-            self.close_button.clicked.disconnect()
-        except (TypeError, RuntimeError):
-            pass
-        try:
-            self.find_button.clicked.disconnect()
-        except (TypeError, RuntimeError):
-            pass
-        try:
-            self.remove_button.clicked.disconnect()
-        except (TypeError, RuntimeError):
-            pass
-        self.table.clear()
+        table = self.table
+        if table is not None:
+            try:
+                table.itemSelectionChanged.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                table.clear()
+            except RuntimeError:
+                pass
+        for button in (self.close_button, self.find_button, self.remove_button):
+            if button is None:
+                continue
+            try:
+                button.clicked.disconnect()
+            except (TypeError, RuntimeError):
+                pass
         if self.file_entries:
             self.file_entries.clear()
         self.close_button = None
         self.find_button = None
         self.remove_button = None
         self.table = None
+        self._header_controller = None
         self._working_directory_service = None
         self._sql_catalog = None
         self._credential_store = None

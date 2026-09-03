@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from shiboken6 import delete
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.builders.component_builder import (
@@ -54,6 +55,15 @@ class ComponentBuilderTests(unittest.TestCase):
         )
         self.app.processEvents()
         self.assertEqual(calls, ["sync", "sync"])
+
+    def test_plan_toolbar_layout_filter_drops_callback_after_owner_destruction(self):
+        calls = []
+        owner = QtWidgets.QWidget()
+        sync_filter = _PlanToolbarLayoutSyncFilter(lambda: calls.append("stale"), owner)
+        sync_filter.eventFilter(owner, QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest))
+        delete(owner)
+        self.app.processEvents()
+        self.assertEqual(calls, [])
 
     def test_plan_ribbon_toolbar_honors_preferred_vertical_docked_height(self):
         host = QtWidgets.QMainWindow()

@@ -5,6 +5,7 @@ from shiboken6 import isValid
 from ...application.dtos.collaboration_dtos import MutationOutcomeStatus
 from ..managers.ui_access_manager import Feature
 from ..components.progress_dialog import ProgressDialog
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_critical, show_info, show_warning
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,9 @@ class ImportHandler:
                 worker_error = dialog.error
             finally:
                 dialog.cleanup()
-                dialog.deleteLater()
+                delete_later_if_valid(dialog)
+            if not isValid(self.window):
+                return
             if rc == QtWidgets.QDialog.DialogCode.Accepted:
                 if self._import_service.reload_and_notify(target_db):
                     show_info(

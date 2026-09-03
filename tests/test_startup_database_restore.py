@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.app_controller import AppController
 from ost_visualizer.application.use_cases.project.load_file_use_case import (
     LoadFileUseCase,
@@ -92,6 +93,53 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertFalse(use_case.execute("sql-database-id"))
         self.assertEqual(data_service.reset_count, 0)
         self.assertEqual(model.projects, ["access-project"])
+
+    def test_open_files_return_tolerates_destroyed_parent(self):
+        window = QtWidgets.QDialog()
+
+        class _State:
+            file_entries = []
+
+            def __init__(self):
+                self.reloads = 0
+
+            def reload(self):
+                self.reloads += 1
+
+        state = _State()
+
+        class _Dialog(QtWidgets.QDialog):
+            def __init__(self, _icon, parent, *_args, **_kwargs):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(window)
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+        handler = FileOperationHandler(
+            window=window,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=state,
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=SimpleNamespace(),
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: True,
+            deferred_persistence_manager=SimpleNamespace(),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.OpenFilesDialog",
+            _Dialog,
+        ):
+            handler.open_files()
+        self.assertEqual(state.reloads, 2)
 
     def test_failed_file_state_save_preserves_authoritative_in_memory_entries(self):
         original = FileEntry("C:/projects/active.mdb", is_checked=True)
@@ -856,6 +904,20 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         finally:
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_open_files_cleanup_tolerates_destroyed_parent(self):
+        parent = QtWidgets.QDialog()
+        dialog = OpenFilesDialog(
+            SimpleNamespace(set_window_icon=lambda _widget: None),
+            parent,
+            [],
+            None,
+        )
+        delete(parent)
+        dialog.cleanup()
+        dialog.cleanup()
+        self.assertEqual(dialog.file_entries, [])
+        self.assertIsNone(dialog.table)
 
     def test_sql_retry_uses_coordinator_without_loading_on_qt_thread(self):
         descriptor = DatabaseDescriptor.for_sql_server(

@@ -1042,6 +1042,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, self._focus_named_view_timeout_fallback)
 
     def _focus_named_view_timeout_fallback(self) -> None:
+        if not isValid(self) or self._is_closing:
+            return
         self._focus_on_named_view()
         self._reveal_named_view_blank_canvas()
 
@@ -2050,7 +2052,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not self._annotation_clipboard_svc.has_content():
             return
         if (
-            self._annotation_clipboard_svc.source_file_path != bid_ref.file_path
+            not self._annotation_clipboard_svc.source_matches_database(
+                bid_ref.file_path
+            )
             or self._annotation_clipboard_svc.source_bid_uid != bid_ref.bid_uid
         ):
             self._reset_annotation_clipboard()
@@ -2086,7 +2090,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return False
         bid_ref = self.view.bid_ref
         if (
-            self._annotation_clipboard_svc.source_file_path != bid_ref.file_path
+            not self._annotation_clipboard_svc.source_matches_database(
+                bid_ref.file_path
+            )
             or self._annotation_clipboard_svc.source_bid_uid != bid_ref.bid_uid
         ):
             return False
@@ -2362,7 +2368,16 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         self.plan_view.cancel_place_mode()
         dialog = SelectNamedViewDialog(self._named_views, parent=self)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        result_code = dialog.exec()
+        if (
+            not isValid(dialog)
+            or not isValid(self.plan_view)
+            or self._is_closing
+            or not self._annotation_context_is_current(bid_ref, (str(page_uid),))
+            or not self._annotation_placement_enabled()
+        ):
+            return
+        if result_code != QtWidgets.QDialog.DialogCode.Accepted:
             return
         result = dialog.result_data()
         if result.create_new:
@@ -2476,6 +2491,20 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def cleanup(self) -> None:
         if self._is_closing:
+            event_bus = self.event_bus
+            if event_bus is not None:
+                try:
+                    event_bus.unsubscribe(
+                        AppEvents.EDIT_LEASE_LOST,
+                        self._on_edit_lease_lost,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "Failed to unsubscribe edit lease loss during "
+                        "detached-window cleanup"
+                    )
+                else:
+                    self.event_bus = None
             return
         self._is_closing = True
 
@@ -2678,14 +2707,18 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._named_views = []
         event_bus = self.event_bus
         if event_bus is not None:
-            cleanup_step(
-                "unsubscribe edit lease loss",
-                lambda: event_bus.unsubscribe(
+            try:
+                event_bus.unsubscribe(
                     AppEvents.EDIT_LEASE_LOST,
                     self._on_edit_lease_lost,
-                ),
-            )
-        self.event_bus = None
+                )
+            except Exception:
+                self.logger.exception(
+                    "Failed to unsubscribe edit lease loss during "
+                    "detached-window cleanup"
+                )
+            else:
+                self.event_bus = None
         self.view = None
         self.page_data = None
         self.icon_provider = None

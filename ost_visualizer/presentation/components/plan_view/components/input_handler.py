@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QRubberBand,
 )
+from shiboken6 import isValid
 from .....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
     ANNOTATION_TYPE_CALLOUT,
@@ -2579,16 +2580,33 @@ class InputHandlerMixin:
         if self._context_menu_command_trigger:
             self._context_menu_command_trigger(action_key)
 
+    def _context_menu_owner(self):
+        return self._current_bid_ref, self._current_page, frozenset(self._selected_uids)
+
+    def _context_menu_owner_is_current(self, owner) -> bool:
+        bid_ref, page, selected_uids = owner
+        return bool(
+            self._current_bid_ref == bid_ref
+            and self._current_page is page
+            and frozenset(self._selected_uids) == selected_uids
+        )
+
+    def _trigger_owned_context_command(self, owner, action_key: str) -> None:
+        if self._context_menu_owner_is_current(owner):
+            self._trigger_context_command(action_key)
+
     def _add_context_command(self, menu: QMenu, label: str, action_key: str) -> None:
+        owner = self._context_menu_owner()
         add_context_command(
             menu,
             label,
             action_key,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
         )
 
     def _add_common_context_submenus(self, menu: QMenu):
+        owner = self._context_menu_owner()
         current_mode = (
             self._current_page.image_show_mode if self._current_page is not None else 0
         )
@@ -2598,25 +2616,27 @@ class InputHandlerMixin:
         overlay_action, original_action = add_common_context_submenus(
             menu,
             current_mode,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
             has_overlay_image=has_overlay,
         )
         return current_mode, overlay_action, original_action
 
     def _add_context_clipboard_actions(self, menu: QMenu) -> None:
+        owner = self._context_menu_owner()
         add_context_clipboard_actions(
             menu,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
         )
 
     def _add_context_page_actions(
         self, menu: QMenu, separate_delete: bool = False
     ) -> None:
+        owner = self._context_menu_owner()
         add_context_page_actions(
             menu,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
             separate_delete=separate_delete,
         )
@@ -2766,20 +2786,53 @@ class InputHandlerMixin:
             )["enabled"]
         )
 
-    def _select_context_annotation_color(self, annotation_uids: list[str]) -> None:
-        first_annotation = (
-            self._current_annotations.get(annotation_uids[0])
-            if annotation_uids
-            else None
+    def _context_annotations_are_current(self, owner, annotations: dict) -> bool:
+        return bool(
+            self._context_menu_owner_is_current(owner)
+            and set(annotations)
+            == {uid for uid in self._selected_uids if uid in self._current_annotations}
+            and all(
+                self._current_annotations.get(uid) is annotation
+                for uid, annotation in annotations.items()
+            )
         )
+
+    def _select_context_annotation_color(self, owner, annotations: dict) -> None:
+        if (
+            not annotations
+            or not self._plan_item_edit_actions_enabled()
+            or not self._context_annotations_are_current(owner, annotations)
+        ):
+            return
+        first_annotation = next(iter(annotations.values()))
         initial_color = first_annotation.color if first_annotation else "#ff0000"
         color = QColorDialog.getColor(QColor(initial_color), self)
+        if (
+            not isValid(self)
+            or not self._plan_item_edit_actions_enabled()
+            or not self._context_annotations_are_current(owner, annotations)
+        ):
+            return
         if color.isValid():
             self.apply_annotation_style_to_selection(color=color.name())
+
+    def _apply_context_annotation_width(
+        self, owner, annotations: dict, width: float
+    ) -> None:
+        if (
+            self._plan_item_edit_actions_enabled()
+            and self._context_annotations_are_current(owner, annotations)
+        ):
+            self.apply_annotation_style_to_selection(width=width)
 
     def _show_annotation_context_menu(
         self, event, annotation_state, control_point_target
     ) -> None:
+        owner = self._context_menu_owner()
+        annotations = {
+            uid: self._current_annotations.get(uid)
+            for uid in annotation_state.annotation_uids
+        }
         menu = QMenu(self)
         add_control_point_action, subtract_control_point_action = (
             self._add_polygon_control_point_context_action(menu, control_point_target)
@@ -2790,10 +2843,10 @@ class InputHandlerMixin:
             menu,
             annotation_state,
             select_color_callback=lambda: self._select_context_annotation_color(
-                annotation_state.annotation_uids
+                owner, annotations
             ),
-            line_width_callback=lambda width: (
-                self.apply_annotation_style_to_selection(width=width)
+            line_width_callback=lambda width: self._apply_context_annotation_width(
+                owner, annotations, width
             ),
             enabled=self._plan_item_edit_actions_enabled(),
         )
@@ -2811,10 +2864,15 @@ class InputHandlerMixin:
         if action is None:
             event.accept()
             return
+        if not self._context_annotations_are_current(owner, annotations):
+            event.accept()
+            return
         if add_control_point_action and action == add_control_point_action:
-            self._apply_polygon_control_point_target(control_point_target)
+            if self._plan_item_edit_actions_enabled():
+                self._apply_polygon_control_point_target(control_point_target)
         elif subtract_control_point_action and action == subtract_control_point_action:
-            self._apply_polygon_control_point_target(control_point_target)
+            if self._plan_item_edit_actions_enabled():
+                self._apply_polygon_control_point_target(control_point_target)
         else:
             self._resolve_context_overlay_action(
                 action, current_mode, overlay_action, original_action
@@ -2824,6 +2882,7 @@ class InputHandlerMixin:
     def _show_common_context_menu(
         self, event, add_clipboard_actions: Callable[[QMenu], None]
     ) -> None:
+        owner = self._context_menu_owner()
         menu = QMenu(self)
         current_mode, overlay_action, original_action = (
             self._add_common_context_submenus(menu)
@@ -2835,6 +2894,8 @@ class InputHandlerMixin:
         self.reset_ctrl_held()
         action = menu.exec(event.globalPos())
         if action is None:
+            return
+        if not self._context_menu_owner_is_current(owner):
             return
         self._resolve_context_overlay_action(
             action, current_mode, overlay_action, original_action
@@ -2893,6 +2954,10 @@ class InputHandlerMixin:
             self._show_background_context_menu(event)
             event.accept()
             return
+        owner = self._context_menu_owner()
+        takeoff_owners = {
+            uid: self._current_takeoffs.get(uid) for uid in selected_state.takeoff_uids
+        }
         menu = QMenu(self)
         edit_enabled = self._plan_item_edit_actions_enabled()
         assign_action = None
@@ -2958,9 +3023,18 @@ class InputHandlerMixin:
         if action is None:
             event.accept()
             return
+        if not self._context_menu_owner_is_current(owner) or any(
+            self._current_takeoffs.get(uid) is not takeoff
+            for uid, takeoff in takeoff_owners.items()
+        ):
+            event.accept()
+            return
         if self._resolve_context_overlay_action(
             action, current_mode, overlay_action, original_action
         ):
+            event.accept()
+            return
+        if not self._plan_item_edit_actions_enabled():
             event.accept()
             return
         selected_takeoff_uids = list(selected_state.takeoff_uids)
@@ -2988,7 +3062,7 @@ class InputHandlerMixin:
         super().showEvent(event)
         self._apply_pending_visible_view_state()
         if not self._load_view_applied:
-            QtCore.QTimer.singleShot(0, self._finalize_page_load_if_ready)
+            QtCore.QTimer.singleShot(0, self._finalize_queued_page_load_if_valid)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -2999,7 +3073,7 @@ class InputHandlerMixin:
             and self.isVisible()
             and self.viewport().size().isValid()
         ):
-            QtCore.QTimer.singleShot(0, self._finalize_page_load_if_ready)
+            QtCore.QTimer.singleShot(0, self._finalize_queued_page_load_if_valid)
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)

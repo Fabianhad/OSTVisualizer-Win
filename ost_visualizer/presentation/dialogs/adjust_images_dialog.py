@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, Optional
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ..config import (
     ADJUST_IMAGES_WINDOW_WIDTH,
     COMPACT_MARGINS,
@@ -200,6 +201,8 @@ class AdjustImagesDialog(QtWidgets.QDialog):
             self.set_interactive(False)
 
             def completed(success: bool) -> None:
+                if not isValid(self):
+                    return
                 self._save_pending = False
                 if success:
                     self._saved_form_state = self._current_form_state()

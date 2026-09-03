@@ -255,73 +255,103 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         if self._cleaned_up:
             return
         self._cleaned_up = True
-        if self._save_timer is not None:
-            self._save_timer.stop()
-            self._disconnect(self._save_timer.timeout, self._save_now)
-            self._save_timer.deleteLater()
+        errors: list[Exception] = []
+
+        def cleanup_step(action) -> None:
+            try:
+                action()
+            except Exception as exc:
+                errors.append(exc)
+
+        def cleanup_save_timer() -> None:
+            timer = self._save_timer
+            if timer is None:
+                return
+            timer.stop()
+            self._disconnect(timer.timeout, self._save_now)
+            timer.deleteLater()
             self._save_timer = None
+
+        cleanup_step(cleanup_save_timer)
         if self._host_window is not None:
-            self._host_window.removeEventFilter(self)
+            cleanup_step(lambda: self._host_window.removeEventFilter(self))
         for toolbar in self._tracked_toolbars:
-            toolbar.removeEventFilter(self)
-        self._disconnect(
-            self._shell.get_conditions_sidebar().group_by_type_changed,
-            self.request_save,
+            cleanup_step(lambda toolbar=toolbar: toolbar.removeEventFilter(self))
+        disconnect_steps = (
+            lambda: self._disconnect(
+                self._shell.get_conditions_sidebar().group_by_type_changed,
+                self.request_save,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_condition_summary_tab().summary_ui_state_changed,
+                self.request_save,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_project_tree().itemExpanded, self.request_save
+            ),
+            lambda: self._disconnect(
+                self._shell.get_project_tree().itemCollapsed, self.request_save
+            ),
+            lambda: self._disconnect(
+                self._shell.get_project_tree().itemSelectionChanged,
+                self.request_save,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_view_stack().currentChanged, self.request_save
+            ),
+            lambda: self._disconnect(
+                self._shell.get_takeoff_splitter().splitterMoved,
+                self.request_save,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_left_splitter().splitterMoved,
+                self.request_save,
+            ),
+            lambda: self._disconnect(
+                self._shell.takeoff_sidebar.popup_size_changed,
+                self._on_dropdown_size_changed,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_page_settings_bar().dropdown_size_changed,
+                self._on_dropdown_size_changed,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_layers_toggle_action().toggled, self.request_save
+            ),
+            lambda: self._disconnect(
+                self._shell.get_conditions_toggle_action().toggled,
+                self.request_save,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_status_bar_action().toggled, self.request_save
+            ),
+            lambda: self._disconnect(
+                self._shell.get_mesh_window_action().toggled,
+                self._on_mesh_window_toggled,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_annotation_window_action().toggled,
+                self._on_annotation_window_toggled,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_view_window_action().toggled,
+                self._on_view_window_toggled,
+            ),
+            lambda: self._disconnect(
+                self._shell.takeoff_sidebar.active_page_changed,
+                self._on_active_page_changed,
+            ),
+            lambda: self._disconnect(
+                self._shell.get_takeoff_plan_view().page_fully_loaded,
+                self._on_takeoff_page_fully_loaded,
+            ),
         )
-        self._disconnect(
-            self._shell.get_condition_summary_tab().summary_ui_state_changed,
-            self.request_save,
-        )
-        self._disconnect(self._shell.get_project_tree().itemExpanded, self.request_save)
-        self._disconnect(
-            self._shell.get_project_tree().itemCollapsed, self.request_save
-        )
-        self._disconnect(
-            self._shell.get_project_tree().itemSelectionChanged, self.request_save
-        )
-        self._disconnect(self._shell.get_view_stack().currentChanged, self.request_save)
-        self._disconnect(
-            self._shell.get_takeoff_splitter().splitterMoved, self.request_save
-        )
-        self._disconnect(
-            self._shell.get_left_splitter().splitterMoved, self.request_save
-        )
-        self._disconnect(
-            self._shell.takeoff_sidebar.popup_size_changed,
-            self._on_dropdown_size_changed,
-        )
-        self._disconnect(
-            self._shell.get_page_settings_bar().dropdown_size_changed,
-            self._on_dropdown_size_changed,
-        )
-        self._disconnect(
-            self._shell.get_layers_toggle_action().toggled, self.request_save
-        )
-        self._disconnect(
-            self._shell.get_conditions_toggle_action().toggled, self.request_save
-        )
-        self._disconnect(self._shell.get_status_bar_action().toggled, self.request_save)
-        self._disconnect(
-            self._shell.get_mesh_window_action().toggled,
-            self._on_mesh_window_toggled,
-        )
-        self._disconnect(
-            self._shell.get_annotation_window_action().toggled,
-            self._on_annotation_window_toggled,
-        )
-        self._disconnect(
-            self._shell.get_view_window_action().toggled,
-            self._on_view_window_toggled,
-        )
-        self._disconnect(
-            self._shell.takeoff_sidebar.active_page_changed,
-            self._on_active_page_changed,
-        )
-        self._disconnect(
-            self._shell.get_takeoff_plan_view().page_fully_loaded,
-            self._on_takeoff_page_fully_loaded,
-        )
-        self._clear_tracked_detached_windows()
+        for disconnect_step in disconnect_steps:
+            cleanup_step(disconnect_step)
+        cleanup_step(self._clear_tracked_detached_windows)
+        if errors:
+            self._cleaned_up = False
+            raise ExceptionGroup("Workspace-state cleanup failed", errors)
         self._tracked_toolbars = ()
         self._host_window = None
         self._shell = None

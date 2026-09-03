@@ -438,6 +438,63 @@ class TestMeshViewLifecycle(unittest.TestCase):
         ):
             self.assertFalse(viewer._ensure_renderer())
 
+    def test_mesh_context_command_rejects_replaced_scene_generation(self):
+        self._app()
+        viewer = OpenGLViewer(None, SimpleNamespace())
+        viewer._current_bid_ref = BidRef("a.mdb", "bid-1")
+        viewer._displayed_scene_page_uids = ("page-1",)
+        viewer._latest_scene_generation = 1
+        triggered = []
+        viewer._context_menu_command_trigger = triggered.append
+        viewer._context_menu_action_state = lambda _key: {"enabled": True}
+        menu = QtWidgets.QMenu()
+        viewer._add_context_command(menu, "Delete", "delete")
+        viewer._latest_scene_generation = 2
+        menu.actions()[0].trigger()
+        self.assertEqual(triggered, [])
+        viewer.cleanup()
+
+    def test_mesh_context_action_rejects_edit_access_loss(self):
+        self._app()
+        viewer = OpenGLViewer(None, SimpleNamespace())
+        viewer._pick_enabled = True
+        viewer._selected_takeoff_uids = ["takeoff-1"]
+        viewer._selected_context_state_fn = lambda _uids: SimpleNamespace(
+            takeoff_uids=["takeoff-1"],
+            show_assign=True,
+            show_negative=False,
+            show_curved=False,
+            all_negative=False,
+            all_curved=False,
+            reassign_geometry_type=None,
+        )
+        access = {"enabled": True}
+        viewer._context_menu_action_state = lambda _key: dict(access)
+        emitted = []
+        viewer.assign_to_area_requested.connect(lambda uids: emitted.append(list(uids)))
+        menu_base = QtWidgets.QMenu
+
+        class RevokingMenu(menu_base):
+            def exec(self, _pos):
+                access["enabled"] = False
+                return next(
+                    action
+                    for action in self.actions()
+                    if action.text() == "Assign to Current Area"
+                )
+
+        event = SimpleNamespace(
+            globalPos=lambda: QtCore.QPoint(),
+            accept=lambda: None,
+        )
+        with patch(
+            "ost_visualizer.presentation.components.mesh_view.QtWidgets.QMenu",
+            RevokingMenu,
+        ):
+            viewer.contextMenuEvent(event)
+        self.assertEqual(emitted, [])
+        viewer.cleanup()
+
     def test_cleanup_releases_viewer_ownership_when_renderer_shutdown_fails(self):
         self._app()
         viewer = OpenGLViewer(None, SimpleNamespace())

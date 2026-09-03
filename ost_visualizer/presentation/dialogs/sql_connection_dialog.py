@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.database_descriptor import (
     SqlAuthenticationMode,
@@ -135,7 +136,8 @@ class SqlConnectionFormMixin:
         return SqlConnectionDialogResult(location, password)
 
     def _clear_connection_secret(self) -> None:
-        self.password_input.clear()
+        if isValid(self.password_input):
+            self.password_input.clear()
 
     def _disconnect_connection_form(self) -> None:
         for signal in (
@@ -203,15 +205,16 @@ class SqlConnectionDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
     def cleanup(self) -> None:
         self._clear_connection_secret()
         self._result_data = None
-        self._disconnect_connection_form()
-        for signal in (
-            self.connect_button.clicked,
-            self.cancel_button.clicked,
-            self.server_input.returnPressed,
-            self.username_input.returnPressed,
-            self.password_input.returnPressed,
-        ):
-            try:
-                signal.disconnect()
-            except (TypeError, RuntimeError):
-                pass
+        if isValid(self):
+            self._disconnect_connection_form()
+            for signal in (
+                self.connect_button.clicked,
+                self.cancel_button.clicked,
+                self.server_input.returnPressed,
+                self.username_input.returnPressed,
+                self.password_input.returnPressed,
+            ):
+                try:
+                    signal.disconnect()
+                except (TypeError, RuntimeError):
+                    pass

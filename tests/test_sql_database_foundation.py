@@ -13,6 +13,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
+from shiboken6 import delete
 from ost_visualizer.application.dtos.application_info import APPLICATION_VERSION
 from ost_visualizer.application.dtos.collaboration_dtos import SynchronizationState
 from ost_visualizer.application.services.database_session_registry import (
@@ -839,6 +840,21 @@ class SqlDialogTests(unittest.TestCase):
             type_dialog.cleanup()
             type_dialog.deleteLater()
 
+    def test_sql_database_dialog_cleanup_tolerates_destroyed_parent(self):
+        parent = QtWidgets.QDialog()
+        dialog = SqlDatabasePropertiesDialog(
+            self.icon_provider,
+            SqlDatabasePropertiesMode.CREATE,
+            _Catalog([]),
+            _SqlDatabaseCreator(),
+            parent,
+        )
+        delete(parent)
+        dialog.cleanup()
+        dialog.cleanup()
+        self.assertIsNone(dialog._catalog)
+        self.assertIsNone(dialog._database_creator)
+
     def test_certificate_error_explains_default_trust_behavior(self):
         error = RuntimeError(
             "08001",
@@ -1064,6 +1080,85 @@ class SqlDialogTests(unittest.TestCase):
                 MenuController._new_database(controller)
         self.assertTrue(_AccessNameDialog.instances[2].deleted)
         controller.icon_provider = original_icon_provider
+
+    def test_new_database_stops_when_type_dialog_destroys_main_window(self):
+        window = QtWidgets.QWidget()
+
+        class _DestroyingTypeDialog(QtWidgets.QDialog):
+            def __init__(self, _icon_provider, parent=None):
+                super().__init__(parent)
+
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def selected_backend(self):
+                raise AssertionError("destroyed type dialog must not be read")
+
+            def cleanup(self):
+                pass
+
+        controller = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            icon_provider=self.icon_provider,
+            window=window,
+            handlers=SimpleNamespace(
+                file_ops=SimpleNamespace(
+                    create_sql_database=lambda: self.fail(
+                        "destroyed window must not continue database creation"
+                    )
+                )
+            ),
+        )
+        with patch(
+            "ost_visualizer.presentation.controllers.menu_controller."
+            "NewDatabaseTypeDialog",
+            _DestroyingTypeDialog,
+        ):
+            MenuController._new_database(controller)
+
+    def test_new_access_database_stops_when_name_dialog_destroys_main_window(self):
+        window = QtWidgets.QWidget()
+
+        class _AccessTypeDialog:
+            def __init__(self, _icon_provider, _parent=None):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def selected_backend(self):
+                return DatabaseBackend.ACCESS
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        class _DestroyingNameDialog(QtWidgets.QInputDialog):
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def textValue(self):
+                raise AssertionError("destroyed name dialog must not be read")
+
+        controller = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            icon_provider=self.icon_provider,
+            window=window,
+            handlers=SimpleNamespace(file_ops=SimpleNamespace()),
+            _create_new_database_fn=lambda _name: self.fail(
+                "destroyed window must not create a database"
+            ),
+        )
+        with patch(
+            "ost_visualizer.presentation.controllers.menu_controller."
+            "NewDatabaseTypeDialog",
+            _AccessTypeDialog,
+        ), patch.object(QtWidgets, "QInputDialog", _DestroyingNameDialog):
+            MenuController._new_database(controller)
 
     def test_create_mode_initializes_before_accepting(self):
         class _Creator:

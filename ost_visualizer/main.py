@@ -249,16 +249,33 @@ def main():
     splash = SplashScreen()
     splash.show()
     app.processEvents()
-    container = configure_application()
-    app_controller = container.get("app_controller")
-    window = MainWindow(
-        app_controller,
-        splash_screen=splash,
-        startup_project_file_args=project_file_args,
-    )
-    app.main_window = window
-    _install_single_instance_handler(server, window, logger)
-    exit_code = app.exec()
+    app_controller = None
+    lifecycle_orchestrator = None
+    try:
+        container = configure_application()
+        app_controller = container.get("app_controller")
+        lifecycle_orchestrator = app_controller.get_service("lifecycle_orchestrator")
+        window = MainWindow(
+            app_controller,
+            splash_screen=splash,
+            startup_project_file_args=project_file_args,
+        )
+        app.main_window = window
+        _install_single_instance_handler(server, window, logger)
+    except Exception:
+        if lifecycle_orchestrator is not None:
+            try:
+                lifecycle_orchestrator.shutdown()
+            except Exception:
+                logger.exception("Application startup cleanup failed")
+        raise
+    try:
+        exit_code = app.exec()
+    finally:
+        try:
+            lifecycle_orchestrator.shutdown()
+        except Exception:
+            logger.exception("Application exit cleanup failed")
     logger.info("Application exiting with code %s", exit_code)
     sys.exit(exit_code)
 

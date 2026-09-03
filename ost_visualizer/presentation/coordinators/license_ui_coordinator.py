@@ -1,5 +1,6 @@
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ..dialogs.license_dialog import LicenseDialog
+from ..utils.dialog import delete_later_if_valid
 
 
 class LicenseUICoordinator:
@@ -18,12 +19,17 @@ class LicenseUICoordinator:
         self.event_bus = event_bus
         self.status_panel = status_panel
         self.menu_controller = menu_controller
+        self._closed = False
 
     def initialize(self) -> None:
+        if self._closed:
+            return
         self.license_orchestrator.initialize()
         self.update_license_ui()
 
     def show_dialog(self) -> None:
+        if self._closed:
+            return
         dialog = LicenseDialog(
             self.icon_provider,
             self.window,
@@ -34,15 +40,19 @@ class LicenseUICoordinator:
         try:
             dialog.exec()
         finally:
-            dialog.license_orchestrator = None
-            dialog.event_bus = None
-            dialog.deleteLater()
-            self.update_license_ui()
+            dialog.cleanup()
+            delete_later_if_valid(dialog)
+            if not self._closed:
+                self.update_license_ui()
 
     def on_license_status_changed(self, has_license: bool) -> None:
+        if self._closed:
+            return
         self.update_license_ui()
 
     def update_license_ui(self) -> None:
+        if self._closed:
+            return
         self._update_status_panel()
         self.menu_controller.update_menu_states()
 
@@ -51,6 +61,9 @@ class LicenseUICoordinator:
         self.status_panel.set_license_active(vm.has_license)
 
     def cleanup(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self.window = None
         self.icon_provider = None
         self.license_orchestrator = None

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.builders.annotation_view_builder import (
     AnnotationViewBuilder,
 )
@@ -1017,6 +1018,95 @@ class FakeCheckAction:
 
 
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
+    def test_workspace_cleanup_attempts_all_stages_and_retries_failures(self):
+        disconnected = []
+
+        class Signal:
+            def __init__(self, name):
+                self.name = name
+
+            def disconnect(self, _callback):
+                disconnected.append(self.name)
+
+        class FilterOwner:
+            def __init__(self, name):
+                self.name = name
+                self.attempts = 0
+
+            def removeEventFilter(self, _filter):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RuntimeError(f"{self.name} failed")
+
+        conditions = SimpleNamespace(group_by_type_changed=Signal("conditions"))
+        summary = SimpleNamespace(summary_ui_state_changed=Signal("summary"))
+        project_tree = SimpleNamespace(
+            itemExpanded=Signal("expanded"),
+            itemCollapsed=Signal("collapsed"),
+            itemSelectionChanged=Signal("selection"),
+        )
+        view_stack = SimpleNamespace(currentChanged=Signal("view-stack"))
+        takeoff_splitter = SimpleNamespace(splitterMoved=Signal("takeoff-splitter"))
+        left_splitter = SimpleNamespace(splitterMoved=Signal("left-splitter"))
+        takeoff_sidebar = SimpleNamespace(
+            popup_size_changed=Signal("popup"),
+            active_page_changed=Signal("active-page"),
+        )
+        page_settings = SimpleNamespace(dropdown_size_changed=Signal("page-settings"))
+        actions = {
+            name: SimpleNamespace(toggled=Signal(name))
+            for name in (
+                "layers",
+                "conditions-action",
+                "status",
+                "mesh",
+                "annotation",
+                "view",
+            )
+        }
+        plan_view = SimpleNamespace(page_fully_loaded=Signal("page-loaded"))
+        shell = SimpleNamespace(
+            get_conditions_sidebar=lambda: conditions,
+            get_condition_summary_tab=lambda: summary,
+            get_project_tree=lambda: project_tree,
+            get_view_stack=lambda: view_stack,
+            get_takeoff_splitter=lambda: takeoff_splitter,
+            get_left_splitter=lambda: left_splitter,
+            takeoff_sidebar=takeoff_sidebar,
+            get_page_settings_bar=lambda: page_settings,
+            get_layers_toggle_action=lambda: actions["layers"],
+            get_conditions_toggle_action=lambda: actions["conditions-action"],
+            get_status_bar_action=lambda: actions["status"],
+            get_mesh_window_action=lambda: actions["mesh"],
+            get_annotation_window_action=lambda: actions["annotation"],
+            get_view_window_action=lambda: actions["view"],
+            get_takeoff_plan_view=lambda: plan_view,
+        )
+        host = FilterOwner("host")
+        toolbar = FilterOwner("toolbar")
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = False
+        coordinator._save_timer = None
+        coordinator._host_window = host
+        coordinator._tracked_toolbars = (toolbar,)
+        coordinator._shell = shell
+        coordinator._tracked_detached_windows = {}
+        coordinator._tracked_detached_destroy_callbacks = {}
+        coordinator._detached_restore_applied = {}
+        coordinator.workspace_state_model = object()
+        coordinator._state = WorkspaceState()
+        with self.assertRaises(ExceptionGroup) as raised:
+            coordinator.cleanup()
+        self.assertEqual(len(raised.exception.exceptions), 2)
+        self.assertEqual(host.attempts, 1)
+        self.assertEqual(toolbar.attempts, 1)
+        self.assertEqual(len(disconnected), 18)
+        self.assertFalse(coordinator._cleaned_up)
+        coordinator.cleanup()
+        self.assertEqual(host.attempts, 2)
+        self.assertEqual(toolbar.attempts, 2)
+        self.assertTrue(coordinator._cleaned_up)
+
     def test_explicit_annotation_window_state_overrides_saved_fullscreen(self):
         calls = []
         state = WorkspaceState()
@@ -2003,6 +2093,30 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             ["show-stop", "show-delete", "focus-stop", "focus-delete"],
         )
 
+    def test_detached_page_window_retries_failed_event_unsubscribe(self):
+        class TransientEventBus:
+            def __init__(self):
+                self.attempts = 0
+
+            def unsubscribe(self, event_type, _callback):
+                self.attempts += 1
+                self.assert_event_type = event_type
+                if self.attempts == 1:
+                    raise RuntimeError("transient unsubscribe failure")
+
+        event_bus = TransientEventBus()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._is_closing = True
+        window.logger = logging.getLogger("test.detached_window_cleanup_retry")
+        window.event_bus = event_bus
+        with self.assertLogs(window.logger, level="ERROR"):
+            DetachedPageViewWindow.cleanup(window)
+        self.assertIs(window.event_bus, event_bus)
+        DetachedPageViewWindow.cleanup(window)
+        self.assertEqual(event_bus.attempts, 2)
+        self.assertEqual(event_bus.assert_event_type, AppEvents.EDIT_LEASE_LOST)
+        self.assertIsNone(window.event_bus)
+
 
 def FakeDetachedPageData(*, annotation_layer_hidden: bool = False):
     annotation_layer_uid = "detached-annotation-layer"
@@ -2153,6 +2267,50 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def _indicator_is_active(combo, page_uid):
         icon = combo._page_items[page_uid].data(_ITEM_ROLE_PRECHECK_ICON)
         return icon.cacheKey() == combo._draft_icon_active.cacheKey()
+
+    def test_detached_manager_constructor_rolls_back_partial_subscriptions(self):
+        class FailingEventBus:
+            def __init__(self):
+                self.subscriptions = []
+                self.attempts = 0
+
+            def subscribe(self, event_type, callback):
+                self.attempts += 1
+                if self.attempts == 4:
+                    raise RuntimeError("subscription failed")
+                self.subscriptions.append((event_type, callback))
+
+            def unsubscribe(self, event_type, callback):
+                self.subscriptions.remove((event_type, callback))
+
+        event_bus = FailingEventBus()
+        with self.assertRaisesRegex(RuntimeError, "subscription failed"):
+            DetachedPageViewManager(
+                event_bus,
+                FakeWindowIconProvider(),
+                repository=object(),
+                project_data=object(),
+                config_model=Config(),
+                coord_factory=object(),
+                color_service=object(),
+                infrastructure_provider=SimpleNamespace(
+                    get_thread_callback_bridge=lambda: object()
+                ),
+                ui_access_manager=object(),
+                window_factory=lambda **_kwargs: None,
+            )
+        self.assertEqual(event_bus.subscriptions, [])
+
+    def test_named_view_timeout_callback_is_dropped_after_window_destruction(self):
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        window._is_closing = False
+        calls = []
+        window._focus_on_named_view = lambda: calls.append("focus")
+        window._reveal_named_view_blank_canvas = lambda: calls.append("reveal")
+        delete(window)
+        DetachedPageViewWindow._focus_named_view_timeout_fallback(window)
+        self.assertEqual(calls, [])
 
     @staticmethod
     def _indicator_bid():
@@ -2933,6 +3091,22 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertFalse(window._annotation_clipboard_svc.has_content())
         self.assertEqual(plan_view.clipboard_emit_count, 2)
+
+    def test_detached_annotation_clipboard_accepts_equivalent_database_path(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="line", page_uid="p1")
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            [annotation]
+        )
+        window.view = SimpleNamespace(bid_ref=BidRef(r"C:\Jobs\Bid.mdb", "7"))
+        plan_view.set_selected_uids({"a1"})
+        DetachedPageViewWindow._on_copy_requested(window, ["a1"])
+        replacement_view = SimpleNamespace(bid_ref=BidRef("c:/jobs/bid.mdb", "7"))
+        window.view = replacement_view
+        DetachedPageViewWindow._reset_annotation_clipboard_if_context_changed(
+            window, replacement_view
+        )
+        self.assertTrue(window._annotation_clipboard_svc.has_content())
+        self.assertTrue(DetachedPageViewWindow._can_paste_annotations(window))
 
     def test_detached_annotation_paste_writes_specs_and_preserves_annotation_data(self):
         annotation = BidAnnotation(
@@ -5439,6 +5613,42 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(write_service.insert_calls, [])
         self.assertEqual(plan_view.cancel_place_mode_calls, 1)
         self.assertEqual(plan_view.activate_calls, ["namedview"])
+
+    def test_detached_hotlink_dialog_return_does_not_write_after_page_retarget(self):
+        write_service = FakeAnnotationWriteService()
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._access_state = _full_plan_surface_access()
+        window.page_data = FakeDetachedPageData()
+        window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._named_views = [("nv1", "p1", "Page 1", "Lobby")]
+
+        class RetargetingDialog:
+            def __init__(self, _named_views, parent=None):
+                pass
+
+            def exec(self):
+                plan_view.current_page_uid = "p2"
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def result_data(self):
+                raise AssertionError("stale hotlink dialog result must not be read")
+
+        with patch(
+            "ost_visualizer.presentation.windows.components.window."
+            "SelectNamedViewDialog",
+            RetargetingDialog,
+        ):
+            window._on_hotlink_placement_requested([5.0, 6.0], "p1")
+        self.assertEqual(write_service.insert_calls, [])
+        self.assertEqual(plan_view.activate_calls, [])
 
     def test_detached_named_view_delete_with_linked_hotlink_no_or_close_cancels(self):
         for response in (False, None):

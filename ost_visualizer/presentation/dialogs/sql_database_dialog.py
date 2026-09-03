@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Iterable
 from PySide6 import QtWidgets
+from shiboken6 import isValid
 from ...application.dtos.application_info import APPLICATION_VERSION
 from ...application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
@@ -221,19 +222,20 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         self._result_data = None
         self._initial_connection = None
         self._databases = ()
-        self._disconnect_connection_form()
-        for signal in (
-            self.ok_button.clicked,
-            self.cancel_button.clicked,
-            self.server_input.returnPressed,
-            self.username_input.returnPressed,
-            self.password_input.returnPressed,
-            self.database_name_input.returnPressed,
-        ):
-            try:
-                signal.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-        self.database_combo.clear()
+        if isValid(self):
+            self._disconnect_connection_form()
+            for signal in (
+                self.ok_button.clicked,
+                self.cancel_button.clicked,
+                self.server_input.returnPressed,
+                self.username_input.returnPressed,
+                self.password_input.returnPressed,
+                self.database_name_input.returnPressed,
+            ):
+                try:
+                    signal.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
+            self.database_combo.clear()
         self._catalog = None
         self._database_creator = None

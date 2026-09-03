@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 from PySide6 import QtWidgets
+from shiboken6 import delete
 from ost_visualizer.application.services.import_service import ImportService
 from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
@@ -1068,6 +1069,66 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self.assertEqual(deferred.flush_calls, [])
         self.assertEqual(service.import_calls, [])
         self.assertEqual(service.queued_imports, [])
+
+    def test_import_handler_stops_after_progress_parent_is_destroyed(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        service = FakeImportService()
+        window = QtWidgets.QDialog()
+        critical_messages = []
+
+        class DestroyingProgressDialog(QtWidgets.QDialog):
+            def __init__(self, _filename, task_fn, parent=None):
+                super().__init__(parent)
+                self.result = task_fn()
+                self.error = None
+                self.cleanup_calls = 0
+
+            def exec(self):
+                delete(window)
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def cleanup(self):
+                self.cleanup_calls += 1
+
+        handler = ImportHandler(
+            window=window,
+            project_data_service=FakeProjectData(),
+            import_service=service,
+            ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
+        )
+        with (
+            patch.object(
+                import_handler_module.QtWidgets.QFileDialog,
+                "getOpenFileName",
+                return_value=("source.ost", ""),
+            ),
+            patch.object(
+                import_handler_module,
+                "ProgressDialog",
+                DestroyingProgressDialog,
+            ),
+            patch.object(
+                import_handler_module,
+                "show_info",
+                side_effect=AssertionError("closed window must not receive success"),
+            ),
+            patch.object(
+                import_handler_module,
+                "show_warning",
+                side_effect=AssertionError("closed window must not receive warning"),
+            ),
+            patch.object(
+                import_handler_module,
+                "show_critical",
+                side_effect=lambda *_args: critical_messages.append(True),
+            ),
+        ):
+            handler.import_ost()
+        self.assertIsNotNone(app)
+        self.assertEqual(service.reloads, [])
+        self.assertEqual(critical_messages, [])
 
     def test_sql_import_handler_queues_without_modal_or_ui_thread_reload(self):
         service = FakeImportService()

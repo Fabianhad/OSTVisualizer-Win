@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6 import QtWidgets
+from shiboken6 import isValid
 from ...application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
@@ -11,6 +12,7 @@ from ...application.dtos.collaboration_dtos import (
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical, show_warning
 
 _DELETED_BIDS_PROJECT_UID = "1"
@@ -160,6 +162,8 @@ class ProjectWriteHandler:
             )
         finally:
             self._set_duplicate_busy(False)
+        if not isValid(self.window):
+            return
         if worker_error is not None:
             logger.error(
                 "Bid duplication worker raised: %s",
@@ -416,6 +420,8 @@ class ProjectWriteHandler:
             action_text="Pasting",
             reporter=reporter,
         )
+        if not isValid(self.window):
+            return False
         if worker_error is not None:
             logger.error(
                 "Bid paste worker raised: %s",
@@ -548,10 +554,14 @@ class ProjectWriteHandler:
         )
         try:
             rc = dialog.exec()
+            if not isValid(dialog):
+                return rc, None, None
             return rc, dialog.result, dialog.error
         finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            try:
+                dialog.cleanup()
+            finally:
+                delete_later_if_valid(dialog)
 
     def restore_bids(self, bid_refs: List[BidRef]) -> None:
         groups: Dict[tuple, List[str]] = defaultdict(list)

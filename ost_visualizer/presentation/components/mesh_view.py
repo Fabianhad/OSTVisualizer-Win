@@ -545,14 +545,30 @@ class OpenGLViewer(QtWidgets.QWidget):
         if self._context_menu_command_trigger:
             self._context_menu_command_trigger(action_key)
 
+    def _context_menu_owner(self):
+        return (
+            self._current_bid_ref,
+            self._displayed_scene_page_uids,
+            self._latest_scene_generation,
+            tuple(self._selected_takeoff_uids),
+        )
+
+    def _context_menu_owner_is_current(self, owner) -> bool:
+        return owner == self._context_menu_owner()
+
+    def _trigger_owned_context_command(self, owner, action_key: str) -> None:
+        if self._context_menu_owner_is_current(owner):
+            self._trigger_context_command(action_key)
+
     def _add_context_command(
         self, menu: QtWidgets.QMenu, label: str, action_key: str
     ) -> None:
+        owner = self._context_menu_owner()
         add_context_command(
             menu,
             label,
             action_key,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
         )
 
@@ -563,26 +579,29 @@ class OpenGLViewer(QtWidgets.QWidget):
         return bool(state.get("enabled", False))
 
     def _add_common_context_submenus(self, menu: QtWidgets.QMenu):
+        owner = self._context_menu_owner()
         return add_common_context_submenus(
             menu,
             self._image_show_mode,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
         )
 
     def _add_context_clipboard_actions(self, menu: QtWidgets.QMenu) -> None:
+        owner = self._context_menu_owner()
         add_context_clipboard_actions(
             menu,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
         )
 
     def _add_context_page_actions(
         self, menu: QtWidgets.QMenu, separate_delete: bool = False
     ) -> None:
+        owner = self._context_menu_owner()
         add_context_page_actions(
             menu,
-            self._context_menu_command_trigger,
+            lambda key: self._trigger_owned_context_command(owner, key),
             self._context_menu_action_state,
             separate_delete=separate_delete,
         )
@@ -634,6 +653,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._suppress_next_context_menu = False
             event.accept()
             return
+        owner = self._context_menu_owner()
         menu = QtWidgets.QMenu(self)
         selected_state = (
             self._selected_takeoff_context_state()
@@ -700,6 +720,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         if action is None:
             event.accept()
             return
+        if not self._context_menu_owner_is_current(owner):
+            event.accept()
+            return
         if self._resolve_context_overlay_action(
             action, overlay_action, original_action
         ):
@@ -708,20 +731,23 @@ class OpenGLViewer(QtWidgets.QWidget):
         if not has_selected_takeoffs:
             event.accept()
             return
+        if not self._plan_item_edit_actions_enabled():
+            event.accept()
+            return
         if reassign_condition_menu and action in reassign_condition_menu.actions:
             self.reassign_condition_requested.emit(
-                list(self._selected_takeoff_uids),
+                list(selected_state.takeoff_uids),
                 reassign_condition_menu.actions[action],
             )
         elif action == assign_action:
-            self.assign_to_area_requested.emit(list(self._selected_takeoff_uids))
+            self.assign_to_area_requested.emit(list(selected_state.takeoff_uids))
         elif action == negative_action:
             self.set_negative_requested.emit(
-                list(self._selected_takeoff_uids), not selected_state.all_negative
+                list(selected_state.takeoff_uids), not selected_state.all_negative
             )
         elif curved_action and action == curved_action:
             self.set_curved_requested.emit(
-                list(self._selected_takeoff_uids), not selected_state.all_curved
+                list(selected_state.takeoff_uids), not selected_state.all_curved
             )
         event.accept()
 

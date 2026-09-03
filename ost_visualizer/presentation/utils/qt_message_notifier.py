@@ -1,6 +1,8 @@
 from typing import Optional
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
+from .dialog import delete_later_if_valid
 
 _SEVERITY_MAP = {
     "info": QtWidgets.QMessageBox.Icon.Information,
@@ -49,12 +51,13 @@ class QtMessageNotifier(QtCore.QObject):
         if self._queue:
             self._queue.clear()
         if self._current_dialog is not None:
+            dialog = self._current_dialog
+            self._current_dialog = None
             try:
-                self._current_dialog.finished.disconnect()
+                dialog.finished.disconnect()
             except (TypeError, RuntimeError):
                 pass
-            self._current_dialog.deleteLater()
-            self._current_dialog = None
+            delete_later_if_valid(dialog)
         self._default_parent = None
 
     @QtCore.Slot(str, str, QtWidgets.QMessageBox.Icon)
@@ -71,9 +74,15 @@ class QtMessageNotifier(QtCore.QObject):
             self._maybe_show_next()
 
     def _maybe_show_next(self) -> None:
+        if self._current_dialog is not None and not isValid(self._current_dialog):
+            self._current_dialog = None
         if self._current_dialog is not None or self._update_active or not self._queue:
             return
-        if self._default_parent and not self._default_parent.isVisible():
+        if self._default_parent is not None and not isValid(self._default_parent):
+            self._default_parent = None
+            self._queue.clear()
+            return
+        if self._default_parent is not None and not self._default_parent.isVisible():
             QtCore.QTimer.singleShot(100, self._maybe_show_next)
             return
         title, message, icon = self._queue.pop(0)
@@ -88,10 +97,11 @@ class QtMessageNotifier(QtCore.QObject):
 
     def _on_dialog_closed(self) -> None:
         if self._current_dialog is not None:
+            dialog = self._current_dialog
+            self._current_dialog = None
             try:
-                self._current_dialog.finished.disconnect()
+                dialog.finished.disconnect()
             except (TypeError, RuntimeError):
                 pass
-            self._current_dialog.deleteLater()
-            self._current_dialog = None
+            delete_later_if_valid(dialog)
         self._maybe_show_next()

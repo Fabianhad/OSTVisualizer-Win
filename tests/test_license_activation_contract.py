@@ -553,6 +553,47 @@ class LicenseActivationContractTests(unittest.TestCase):
         self.assertIsNone(orchestrator._event_publisher)
         orchestrator.cleanup()
 
+    def test_cleanup_reports_failures_from_every_teardown_stage(self):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "invalid",
+        )
+        orchestrator = self._build_orchestrator(
+            FakeUseCase(invalid),
+            FakeUseCase(invalid),
+            FakeEventPublisher(),
+        )
+        calls = []
+
+        class FailingScheduler(FakeScheduler):
+            def stop(self):
+                calls.append("stop")
+                raise RuntimeError("stop failed")
+
+            def clear_task(self):
+                calls.append("clear_task")
+                raise RuntimeError("clear failed")
+
+        class FailingThreadManager(ImmediateThreadManager):
+            def cleanup(self):
+                calls.append("thread_cleanup")
+                raise RuntimeError("worker failed")
+
+        orchestrator._scheduler = FailingScheduler()
+        orchestrator._thread_manager = FailingThreadManager()
+        with self.assertRaises(ExceptionGroup) as captured:
+            orchestrator.cleanup()
+        self.assertEqual(calls, ["stop", "clear_task", "thread_cleanup"])
+        self.assertEqual(
+            [str(error) for error in captured.exception.exceptions],
+            ["stop failed", "clear failed", "worker failed"],
+        )
+        self.assertIsNone(orchestrator._scheduler)
+        self.assertIsNone(orchestrator._thread_manager)
+        orchestrator.cleanup()
+
     def test_startup_hwid_failure_is_explicit_and_skips_server_validation(self):
         invalid = self._result(
             False,

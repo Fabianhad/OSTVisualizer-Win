@@ -758,7 +758,7 @@ class DeferredPersistenceManager(QtCore.QObject):
         self._shutdown_started = True
         self._timer.stop()
 
-    def cleanup(self) -> bool:
+    def prepare_shutdown(self) -> bool:
         if self._cleaned_up:
             return True
         if not self._shutdown_started:
@@ -785,9 +785,21 @@ class DeferredPersistenceManager(QtCore.QObject):
             key: item for key, item in failed.items() if item.blocks_shutdown
         }
         if blocking_failed:
-            self._shutdown_started = False
-            if self._pending:
-                self._timer.start()
+            self.abort_shutdown()
+            return False
+        return True
+
+    def abort_shutdown(self) -> None:
+        if self._cleaned_up:
+            return
+        self._shutdown_started = False
+        if self._pending:
+            self._timer.start()
+
+    def cleanup(self) -> bool:
+        if self._cleaned_up:
+            return True
+        if not self.prepare_shutdown():
             return False
         self._timer.stop()
         self._visual_states.clear()

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ...application.events.app_events import AppEvents
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
@@ -153,7 +154,12 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
             return
         self._drag_items = items
         self._drag_file_path = items[0].data(0, self._ITEM_ROLE)[2]
-        super().startDrag(supported_actions)
+        try:
+            super().startDrag(supported_actions)
+        finally:
+            self.cancel_drag()
+
+    def cancel_drag(self) -> None:
         self._drag_items = []
         self._drag_file_path = None
 
@@ -282,6 +288,7 @@ class ProjectView(QtWidgets.QWidget):
         self._has_saved_expanded_nodes = False
         self._group_by_job_status = False
         self._selected_node_state: Optional[dict] = None
+        self._tree_revision = 0
         self._build_ui()
         self._connect_signals()
 
@@ -596,6 +603,8 @@ class ProjectView(QtWidgets.QWidget):
         item.setIcon(0, IconManager.icon(icon_id))
 
     def _start_pending_rename(self) -> None:
+        if not isValid(self):
+            return
         uid = self._pending_rename_uid
         if not uid:
             return
@@ -1166,32 +1175,46 @@ class ProjectView(QtWidgets.QWidget):
         rename_action = menu.addAction("Rename")
         rename_action.setEnabled(self._can_rename_context(context))
         rename_action.triggered.connect(
-            lambda _checked=False, ctx=context: self._rename_context(ctx)
+            self._guard_context_callback(
+                lambda _checked=False, ctx=context: self._rename_context(ctx)
+            )
         )
         menu.addSeparator()
         renumber_action = menu.addAction("Renumber Conditions")
         renumber_action.setEnabled(self._can_renumber_conditions())
         renumber_action.triggered.connect(
-            lambda _checked=False: self._renumber_conditions()
+            self._guard_context_callback(
+                lambda _checked=False: self._renumber_conditions()
+            )
         )
         self._add_job_status_submenu(menu, context)
         menu.addSeparator()
         empty_action = menu.addAction("Empty Deleted Bids Folder")
         empty_action.setEnabled(self._can_empty_deleted_bids(context))
         empty_action.triggered.connect(
-            lambda _checked=False, refs=context.empty_deleted_refs: self._empty_deleted_bids(
-                refs
+            self._guard_context_callback(
+                lambda _checked=False, refs=context.empty_deleted_refs: self._empty_deleted_bids(
+                    refs
+                )
             )
         )
         menu.addSeparator()
         group_action = menu.addAction("Group by Job Status")
         group_action.setCheckable(True)
         group_action.setChecked(self._group_by_job_status)
-        group_action.toggled.connect(self.set_group_by_job_status)
+        group_action.toggled.connect(
+            self._guard_context_callback(self.set_group_by_job_status)
+        )
         expand_action = menu.addAction("Expand All")
-        expand_action.triggered.connect(self.expand_all_nodes)
+        expand_action.triggered.connect(
+            self._guard_context_callback(lambda _checked=False: self.expand_all_nodes())
+        )
         collapse_action = menu.addAction("Collapse All")
-        collapse_action.triggered.connect(self.collapse_all_nodes)
+        collapse_action.triggered.connect(
+            self._guard_context_callback(
+                lambda _checked=False: self.collapse_all_nodes()
+            )
+        )
 
     def _add_new_submenu(self, menu: QtWidgets.QMenu) -> None:
         new_menu = menu.addMenu("New")
@@ -1227,7 +1250,9 @@ class ProjectView(QtWidgets.QWidget):
             ContextMenuManager.action_spec(
                 ContextActionId.COPY,
                 "Copy",
-                callback=lambda refs=context.copy_refs: self._copy_bid_refs(refs),
+                callback=self._guard_context_callback(
+                    lambda refs=context.copy_refs: self._copy_bid_refs(refs)
+                ),
                 enabled=bool(context.copy_refs),
             ),
         )
@@ -1236,8 +1261,8 @@ class ProjectView(QtWidgets.QWidget):
             ContextMenuManager.action_spec(
                 ContextActionId.PASTE,
                 "Paste",
-                callback=lambda target=context.paste_target: self._paste_to_target(
-                    target
+                callback=self._guard_context_callback(
+                    lambda target=context.paste_target: self._paste_to_target(target)
                 ),
                 enabled=self._can_paste_to_target(context.paste_target),
             ),
@@ -1254,8 +1279,10 @@ class ProjectView(QtWidgets.QWidget):
                 self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
             )
             restore_action.triggered.connect(
-                lambda _checked=False, refs=context.selected_deleted_refs: self._restore_bids(
-                    refs
+                self._guard_context_callback(
+                    lambda _checked=False, refs=context.selected_deleted_refs: self._restore_bids(
+                        refs
+                    )
                 )
             )
 
@@ -1276,9 +1303,11 @@ class ProjectView(QtWidgets.QWidget):
             action.setEnabled(can_edit_status and status.name != context.bid_status)
             group.addAction(action)
             action.triggered.connect(
-                lambda _checked=False, bid_ref=context.bid_ref, uid=str(
-                    status.uid
-                ): self._change_bid_job_status(bid_ref, uid)
+                self._guard_context_callback(
+                    lambda _checked=False, bid_ref=context.bid_ref, uid=str(
+                        status.uid
+                    ): self._change_bid_job_status(bid_ref, uid)
+                )
             )
         status_menu.setEnabled(context.kind == "bid" and bool(statuses))
 
@@ -1293,9 +1322,38 @@ class ProjectView(QtWidgets.QWidget):
             menu,
             label,
             command_key,
-            lambda key=command_key: self._trigger_command(key),
+            self._guard_context_callback(
+                lambda key=command_key: self._trigger_command(key)
+            ),
             enabled=self._command_enabled(command_key) if enabled is None else enabled,
         )
+
+    def _context_selection_signature(self) -> tuple:
+        return tuple(
+            sorted(
+                (
+                    kind or "",
+                    uid or "",
+                    normalize_path(file_path) if file_path else "",
+                )
+                for kind, uid, file_path in (
+                    self._get_item_info(item) for item in self.top_tree.selectedItems()
+                )
+            )
+        )
+
+    def _guard_context_callback(self, callback):
+        tree_revision = self._tree_revision
+        selection_signature = self._context_selection_signature()
+
+        def guarded(*args) -> None:
+            if (
+                self._tree_revision == tree_revision
+                and self._context_selection_signature() == selection_signature
+            ):
+                callback(*args)
+
+        return guarded
 
     def _trigger_command(self, command_key: str) -> None:
         if self.on_menu_command:
@@ -1365,7 +1423,14 @@ class ProjectView(QtWidgets.QWidget):
         )
 
     def _rename_context(self, context: ProjectTreeContext) -> None:
-        if self._can_rename_context(context):
+        current_item, _file_path = self._find_project_item(
+            context.project_uid or "", context.file_path
+        )
+        if (
+            self._can_rename_context(context)
+            and isValid(context.item)
+            and current_item is context.item
+        ):
             self._start_project_rename(
                 context.item, context.project_uid or "", context.file_path
             )
@@ -1611,7 +1676,9 @@ class ProjectView(QtWidgets.QWidget):
             self._selected_node_state = self._selection_state_for_item(item)
 
     def _clear_tree_items(self) -> None:
+        self._tree_revision += 1
         self._cancel_active_rename()
+        self.top_tree.cancel_drag()
         signals_were_blocked = self.top_tree.blockSignals(True)
         try:
             self.top_tree.clear()

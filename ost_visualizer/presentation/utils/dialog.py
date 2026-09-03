@@ -12,6 +12,14 @@ class ItemRecord(TypedDict):
     is_new: bool
 
 
+def delete_later_if_valid(qt_object: QtCore.QObject) -> None:
+    try:
+        qt_object.deleteLater()
+    except RuntimeError:
+        if isValid(qt_object):
+            raise
+
+
 def _is_write_reload_result(result) -> bool:
     result_type = type(result)
     return (

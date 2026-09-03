@@ -1,5 +1,6 @@
 import unittest
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
     SelectNamedViewDialog,
 )
@@ -131,6 +132,15 @@ class SelectNamedViewDialogTests(unittest.TestCase):
         dialog._named_view_combo.setEditText("")
         dialog._show_current_completions()
         self.assertEqual(completer.completionPrefix(), "")
+
+    def test_queued_completion_popup_is_dropped_after_dialog_destruction(self):
+        dialog = SelectNamedViewDialog([("nv-1", "p1", "Page A", "Level 6 East")])
+        calls = []
+        dialog._show_current_completions = lambda: calls.append(True)
+        dialog._queue_show_current_completions()
+        delete(dialog)
+        self.app.processEvents()
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":
