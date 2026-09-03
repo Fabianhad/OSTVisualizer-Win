@@ -7149,6 +7149,84 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(plan_view.selected, {"100", "ann-1"})
         self.assertEqual(plan_view.intelligent_paste_calls, [])
 
+    def test_mixed_paste_delete_undo_tracks_table_scoped_annotation_uids(self):
+        takeoff = self._copied_takeoff()
+        rect = self._copied_annotation(
+            uid="rect-source",
+            annotation_type="rect",
+        )
+        oval = self._copied_annotation(
+            uid="oval-source",
+            annotation_type="oval",
+            position=[20.0, 30.0, 24.0, 34.0],
+        )
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.intelligent_paste_enabled = False
+        plan_view.annotation_key_map = {
+            ("shared-new", "rect"): "shared-new",
+            ("shared-new", "oval"): "shared-new_oval",
+        }
+        write = FakeWriteService()
+        write.next_uids = ["takeoff-new", "takeoff-restored"]
+        annotation_write = FakeAnnotationWriteService()
+        annotation_write.next_uids = ["shared-new", "shared-new"]
+        undo = UndoRedoService()
+        bid_ref = FakeUiState().get_selected_bid_ref()
+        undo.set_active_bid(bid_ref)
+        prior_undos = []
+        undo.push_local(
+            lambda: prior_undos.append("prior") or True,
+            lambda: True,
+        )
+        write.annotation_write_service = annotation_write
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler._clipboard_svc = FakeClipboard(
+            [takeoff],
+            annotations=[rect, oval],
+        )
+        handler.on_paste_requested()
+        self.assertEqual(
+            plan_view.selected,
+            {"takeoff-new", "shared-new", "shared-new_oval"},
+        )
+        plan_view.annotations = {
+            plan_view.annotation_key_map[
+                (annotation.uid, annotation.annotation_type)
+            ]: (annotation)
+            for annotation in data.annotations
+        }
+        handler.on_elements_deleted(list(plan_view.selected))
+        self.assertEqual(
+            set(write.local_deletes[-1][3]),
+            {("shared-new", "rect"), ("shared-new", "oval")},
+        )
+        self.assertEqual(data.annotations, [])
+        undo.undo()
+        self.assertEqual(prior_undos, [])
+        self.assertEqual(
+            {
+                (annotation.uid, annotation.annotation_type)
+                for annotation in data.annotations
+            },
+            {("shared-new", "rect"), ("shared-new", "oval")},
+        )
+        self.assertEqual(
+            plan_view.selected,
+            {"takeoff-restored", "shared-new", "shared-new_oval"},
+        )
+
     def test_intelligent_paste_text_annotation_moves_center_only(self):
         source = self._copied_annotation(
             uid="source-text",
