@@ -11,7 +11,10 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 from ...domain.entities.database_descriptor import DatabaseBackend
-from ..dtos.collaboration_resource_catalog import resource_definition
+from ..dtos.collaboration_resource_catalog import (
+    parse_annotation_resource_id,
+    resource_definition,
+)
 from ..dtos.application_info import APPLICATION_VERSION
 from ..dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
@@ -2614,9 +2617,22 @@ class SqlCollaborationCoordinator:
                 )
                 sources = tuple(source for source, _target in normalized)
                 targets = tuple(target for _source, target in normalized)
-                if any(not identity for identity in (*sources, *targets)) or len(
-                    set(targets)
-                ) != len(targets):
+                if any(not identity for identity in (*sources, *targets)):
+                    return None
+                if projection_name == "annotations":
+                    try:
+                        target_identities = tuple(
+                            (
+                                parse_annotation_resource_id(source)[0],
+                                target,
+                            )
+                            for source, target in normalized
+                        )
+                    except ValueError:
+                        return None
+                else:
+                    target_identities = targets
+                if len(set(target_identities)) != len(target_identities):
                     return None
                 created_uid_maps.append((projection_name, normalized))
             map_values = {

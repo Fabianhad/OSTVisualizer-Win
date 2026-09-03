@@ -1,5 +1,6 @@
 import os
 import unittest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.annotation import BidAnnotation
@@ -22,11 +23,15 @@ from ost_visualizer.presentation.utils.view_context_menu import (
     build_selected_annotation_style_context_state,
     build_selected_takeoff_context_state,
 )
+
+
 def _app():
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
 def _build_tools_context_menu():
     menu = QtWidgets.QMenu()
     add_common_context_submenus(
@@ -39,12 +44,16 @@ def _build_tools_context_menu():
         has_overlay_image=False,
     )
     return menu, menu.actions()[0].menu()
+
+
 class ViewContextMenuTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = _app()
+
     def tearDown(self):
         self.app.processEvents()
+
     def test_reassign_condition_submenu_lists_conditions_by_ref_no(self):
         menu = QtWidgets.QMenu()
         try:
@@ -89,6 +98,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_reassign_condition_submenu_uses_compact_overflow_menu(self):
         menu = QtWidgets.QMenu()
         try:
@@ -133,6 +143,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_reassign_condition_submenu_sizes_naturally_when_under_limit(self):
         menu = QtWidgets.QMenu()
         try:
@@ -162,6 +173,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_reassign_condition_submenu_filters_to_selected_geometry_type(self):
         conditions = {
             "linear": Condition(
@@ -212,6 +224,7 @@ class ViewContextMenuTests(unittest.TestCase):
                     )
                 finally:
                     menu.deleteLater()
+
     def test_reassign_condition_submenu_is_not_added_when_no_targets_match(self):
         menu = QtWidgets.QMenu()
         try:
@@ -230,6 +243,7 @@ class ViewContextMenuTests(unittest.TestCase):
             self.assertEqual(reassign_menu.actions, {})
         finally:
             menu.deleteLater()
+
     def test_selected_takeoff_context_state_tracks_common_reassign_geometry(self):
         conditions = {
             "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
@@ -248,6 +262,7 @@ class ViewContextMenuTests(unittest.TestCase):
             ["l1", "a1"], takeoffs.get, conditions
         )
         self.assertIsNone(mixed_state.reassign_geometry_type)
+
     def test_plan_tools_context_submenu_uses_shared_tool_registry(self):
         menu, tools_menu = _build_tools_context_menu()
         try:
@@ -277,6 +292,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_context_menu_annotation_tool_icons_use_per_tool_colors(self):
         original_rect_style = get_annotation_style_for_tool("rect")
         original_cloud_style = get_annotation_style_for_tool("cloud")
@@ -359,6 +375,7 @@ class ViewContextMenuTests(unittest.TestCase):
                 font_underline=original_ink_style.font_underline,
                 text_align=original_ink_style.text_align,
             )
+
     def test_selected_line_annotation_context_shows_color_and_width(self):
         annotations = {
             "line-1": BidAnnotation(uid="line-1", annotation_type="line", width=8.0),
@@ -392,6 +409,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_selected_rectangle_context_checks_current_width(self):
         annotations = {
             "rect-1": BidAnnotation(uid="rect-1", annotation_type="rect", width=4.0),
@@ -415,6 +433,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_invalid_annotation_width_leaves_context_width_unchecked(self):
         for invalid_width in (None, float("nan"), float("inf"), "invalid"):
             with self.subTest(width=invalid_width):
@@ -443,6 +462,7 @@ class ViewContextMenuTests(unittest.TestCase):
                     )
                 finally:
                     menu.deleteLater()
+
     def test_selected_shape_annotation_context_capabilities(self):
         for annotation_type in ("arrow", "rect", "oval", "polygon", "cloud", "ink"):
             with self.subTest(annotation_type=annotation_type):
@@ -456,6 +476,7 @@ class ViewContextMenuTests(unittest.TestCase):
                 )
                 self.assertTrue(state.show_color)
                 self.assertTrue(state.show_line_width)
+
     def test_selected_highlight_context_shows_color_only(self):
         annotations = {
             "highlight-1": BidAnnotation(
@@ -483,6 +504,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_selected_dimension_context_shows_color_only(self):
         annotations = {
             "dimension-1": BidAnnotation(
@@ -494,6 +516,7 @@ class ViewContextMenuTests(unittest.TestCase):
         )
         self.assertTrue(state.show_color)
         self.assertFalse(state.show_line_width)
+
     def test_selected_annotation_style_actions_respect_disabled_state(self):
         annotations = {
             "line-1": BidAnnotation(uid="line-1", annotation_type="line"),
@@ -516,6 +539,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_selected_text_context_shows_no_generic_style_actions(self):
         annotations = {
             "text-1": BidAnnotation(uid="text-1", annotation_type="text"),
@@ -539,6 +563,7 @@ class ViewContextMenuTests(unittest.TestCase):
             self.assertEqual(menu.actions(), [])
         finally:
             menu.deleteLater()
+
     def test_mixed_annotation_context_intersects_style_capabilities(self):
         annotations = {
             "line-1": BidAnnotation(uid="line-1", annotation_type="line"),
@@ -561,6 +586,7 @@ class ViewContextMenuTests(unittest.TestCase):
         self.assertEqual(empty.annotation_uids, [])
         self.assertFalse(empty.show_color)
         self.assertFalse(empty.show_line_width)
+
     def test_mixed_same_width_annotation_context_checks_shared_width(self):
         annotations = {
             "line-1": BidAnnotation(uid="line-1", annotation_type="line", width=6.0),
@@ -586,6 +612,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
     def test_mixed_different_width_annotation_context_checks_no_width(self):
         annotations = {
             "line-1": BidAnnotation(uid="line-1", annotation_type="line", width=6.0),
@@ -611,5 +638,7 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -295,12 +295,13 @@ class SelectionManagerMixin:
                 if self._text_annotation_contains_scene_point(uid, scene_pos):
                     return uid
         for item, link_info in self._hotlink_items:
+            scene_key = str(item.data(0) or "")
             if (
-                link_info.uid in self._selected_uids
-                and self._is_selectable(link_info.uid)
+                scene_key in self._selected_uids
+                and self._is_selectable(scene_key)
                 and self._hotlink_item_contains_scene_point(item, link_info, scene_pos)
             ):
-                return link_info.uid
+                return scene_key
         for uid in self.find_takeoffs_at(scene_pos):
             if uid in self._selected_uids:
                 return uid
@@ -320,9 +321,12 @@ class SelectionManagerMixin:
 
     def find_hotlink_at(self, scene_pos) -> Optional[HotlinkDto]:
         for item, link_info in self._hotlink_items:
-            if self._is_selectable(
-                link_info.uid
-            ) and self._hotlink_item_contains_scene_point(item, link_info, scene_pos):
+            scene_key = str(item.data(0) or "")
+            if (
+                scene_key
+                and self._is_selectable(scene_key)
+                and self._hotlink_item_contains_scene_point(item, link_info, scene_pos)
+            ):
                 return link_info
         return None
 

@@ -3019,6 +3019,41 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             sidebar.close()
             sidebar.deleteLater()
 
+    def test_layers_sidebar_inline_rename_reverts_after_access_loss(self):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)])
+        renamed = []
+        sidebar.layer_renamed.connect(
+            lambda layer_uid, name: renamed.append((layer_uid, name))
+        )
+        item = sidebar._table.topLevelItem(0)
+        try:
+            sidebar.set_interactive(False)
+            item.setText(1, "Unauthorized rename")
+            self.assertEqual(renamed, [])
+            self.assertEqual(item.text(1), "Layer 1")
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_layers_sidebar_access_loss_cancels_pending_new_layer_editor(self):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)])
+        added = []
+        sidebar.layer_added.connect(
+            lambda name, sequence: added.append((name, sequence))
+        )
+        try:
+            sidebar._on_add_clicked()
+            self.assertIsNotNone(sidebar._pending_new_item)
+            sidebar.set_interactive(False)
+            self.assertIsNone(sidebar._pending_new_item)
+            self.assertEqual(sidebar._table.topLevelItemCount(), 1)
+            self.assertEqual(added, [])
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
     def test_layers_dialog_partial_batch_delete_reloads_and_warns(self):
         reload_calls = []
         warnings = []

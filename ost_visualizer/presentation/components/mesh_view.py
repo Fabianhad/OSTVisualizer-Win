@@ -126,6 +126,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._right_button_dragged = False
 
     def _update_right_context_drag(self, pos: QtCore.QPointF) -> None:
+        if self._right_button_press_pos is None:
+            return
         total = pos - self._right_button_press_pos
         if total.manhattanLength() >= QtWidgets.QApplication.startDragDistance():
             self._right_button_dragged = True
@@ -401,6 +403,20 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def set_editing_enabled(self, enabled: bool) -> None:
         self._editing_enabled = bool(enabled)
+
+    def _cancel_scene_pointer_interaction(self) -> None:
+        if self._right_button_press_pos is not None:
+            self._suppress_next_context_menu = True
+        self._right_button_press_pos = None
+        self._right_button_dragged = False
+        self._last_mouse_pos = None
+        self._click_pos = None
+        self._dragged = False
+        self._camera_moving = False
+
+    def _stop_native_camera_inertia(self) -> None:
+        if self._renderer and self._renderer.camera.has_velocity():
+            self._stabilize_preserved_camera_for_current_scene()
 
     def _handle_pick(self, pos: QtCore.QPointF | QtCore.QPoint, additive: bool) -> None:
         if not self._renderer or not self._pick_enabled:
@@ -1035,6 +1051,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._loading_bid_ref = None
         self._scene_refresh_pending = False
         self._page_floor_elevations = validated_page_floor_elevations
+        self._cancel_scene_pointer_interaction()
         if is_new_bid:
             self._selected_takeoff_uids.clear()
             self._camera_initialized_for_scene = False
@@ -1048,6 +1065,8 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._has_visible_plan_texture = False
             self._renderer.clear_plan_texture()
         self._reconcile_selected_takeoffs_with_scene()
+        if is_same_bid and self._camera_initialized_for_scene:
+            self._stabilize_preserved_camera_for_current_scene()
         if not self._has_renderable_content():
             if not is_same_bid or was_loading:
                 self._camera_initialized_for_scene = False
@@ -1067,6 +1086,8 @@ class OpenGLViewer(QtWidgets.QWidget):
     def begin_scene_load(self, bid_ref: BidRef) -> None:
         if self._destroyed:
             return
+        self._cancel_scene_pointer_interaction()
+        self._stop_native_camera_inertia()
         self._save_current_camera()
         self._loading_bid_ref = bid_ref
         self._set_scene_request(bid_ref, ())
@@ -1113,6 +1134,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._loading_bid_ref = None
         self._scene_refresh_pending = True
         self._page_floor_elevations = {}
+        self._cancel_scene_pointer_interaction()
+        self._stop_native_camera_inertia()
         if self._renderer:
             self._renderer.scene.clear()
             self._renderer.clear_plan_texture()
@@ -1202,6 +1225,11 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._zoom_reference_distance = self._get_camera_distance()
         self.zoom_changed.emit(1.0)
 
+    def _stabilize_preserved_camera_for_current_scene(self) -> None:
+        camera = self._renderer.camera
+        bounds = self._current_view_bounds() or ost_renderer.Box3()
+        camera.restore_state(camera.position, camera.target, camera.fov, bounds)
+
     def _replace_plan_texture(self) -> None:
         self._current_plan_texture = None
         self._has_visible_plan_texture = False
@@ -1288,6 +1316,7 @@ class OpenGLViewer(QtWidgets.QWidget):
     def clear_scene(self) -> None:
         if self._destroyed:
             return
+        self._cancel_scene_pointer_interaction()
         self._save_current_camera()
         self._zoom_reference_distance = 0.0
         self._selected_takeoff_uids = []
@@ -1325,6 +1354,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._renderer.render()
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        self._cancel_scene_pointer_interaction()
+        self._stop_native_camera_inertia()
         if self._renderer:
             self._renderer.suspend()
         super().hideEvent(event)

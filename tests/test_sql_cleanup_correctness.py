@@ -2500,6 +2500,44 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
 
+    def test_sql_import_identity_result_keeps_table_scoped_annotation_uids(self):
+        writer = SqlProjectWriter(
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        table_uid_maps = {
+            "BidAnnotationRects": {"shared": "rect-new"},
+            "BidAnnotationOvals": {"shared": "oval-new"},
+        }
+        with (
+            patch.object(
+                writer,
+                "_connection",
+                return_value=contextlib.nullcontext(object()),
+            ),
+            patch.object(writer, "_resolve_global_by_column", return_value={}),
+            patch.object(writer, "_resolve_sql_employees", return_value={}),
+            patch.object(writer, "_assign_next_bid_no"),
+            patch.object(
+                writer,
+                "_write_remapped_identity_graph",
+                return_value=table_uid_maps,
+            ),
+        ):
+            result = writer.import_ost_data(
+                "database",
+                RawBidData(bid_row={"UID": "1"}),
+                lambda data, *_maps: data,
+            )
+        self.assertEqual(
+            result["annotation_uids"],
+            {
+                "rect/shared": "rect-new",
+                "oval/shared": "oval-new",
+            },
+        )
+
     def test_sql_import_rebinds_bid_owned_rows_to_inserted_bid_identity(self):
         class _Connection:
             def cursor(self):

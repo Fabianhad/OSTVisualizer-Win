@@ -4862,6 +4862,18 @@ class TakeoffPlanView(
             return True
         self._cancel_pending_renders()
         saved_selection = set() if project_changed else set(self._selected_uids)
+        if project_changed:
+            saved_takeoff_selection: Set[str] = set()
+            saved_annotation_selection: Set[Tuple[str, str]] = set()
+            saved_pending_takeoffs: Set[str] = set()
+            saved_pending_annotations: Set[Tuple[str, str]] = set()
+        else:
+            saved_takeoff_selection, saved_annotation_selection = (
+                self._selected_overlay_identities()
+            )
+            saved_pending_takeoffs, saved_pending_annotations = (
+                self._overlay_identities_for_keys(self._pending_mutation_uids)
+            )
         page_changed = (
             self._current_page is not None and self._current_page.uid != page.uid
         )
@@ -4934,8 +4946,13 @@ class TakeoffPlanView(
         self._update_scene_rect()
         if strategy.needs_async_loading and strategy.show_canvas:
             self._apply_loading_view_contract()
-        self._selected_uids = saved_selection & (
-            self._current_takeoffs.keys() | self._current_annotations.keys()
+        self._restore_selected_overlay_identities(
+            saved_takeoff_selection,
+            saved_annotation_selection,
+        )
+        self._restore_pending_overlay_identities(
+            saved_pending_takeoffs,
+            saved_pending_annotations,
         )
         if self._selected_uids or saved_selection:
             self.update_selection_visuals()
@@ -5064,16 +5081,16 @@ class TakeoffPlanView(
         if not annotations or not self._dirty_ann_positions:
             return annotations
         dirty_by_db_uid = {
-            self._ann_db_uid_map.get(key, key): (ann_type, list(position))
+            (self._ann_db_uid_map.get(key, key), ann_type): list(position)
             for key, (ann_type, position) in self._dirty_ann_positions.items()
         }
         result: List[BidAnnotation] = []
         for annotation in annotations:
-            dirty = dirty_by_db_uid.get(annotation.uid)
-            if dirty is None or dirty[0] != annotation.annotation_type:
+            dirty = dirty_by_db_uid.get((annotation.uid, annotation.annotation_type))
+            if dirty is None:
                 result.append(annotation)
                 continue
-            result.append(replace(annotation, position=list(dirty[1])))
+            result.append(replace(annotation, position=list(dirty)))
         return result
 
     def _refresh_overlays_impl_unflushed(
@@ -5086,14 +5103,24 @@ class TakeoffPlanView(
         page_area_selections: Optional[Dict[str, Optional[str]]],
         bid_ref: Optional[BidRef],
     ) -> None:
-        saved_text_annotation_uid = self._selected_text_annotation_uid
-        saved_dimension_label_uid = self._selected_dimension_text_label_target()
+        saved_text_annotation_identity = self._annotation_identity_for_key(
+            self._selected_text_annotation_uid
+        )
+        saved_dimension_label_identity = self._annotation_identity_for_key(
+            self._selected_dimension_text_label_target()
+        )
         saved_condition_label_target = self._selected_condition_text_label_target()
         self._clear_text_selection()
         self._remove_text_annotation_draft()
         self._remove_named_view_draft()
         self.clear_selection_items()
         saved_selection = set(self._selected_uids)
+        saved_takeoff_selection, saved_annotation_selection = (
+            self._selected_overlay_identities()
+        )
+        saved_pending_takeoffs, saved_pending_annotations = (
+            self._overlay_identities_for_keys(self._pending_mutation_uids)
+        )
         self._selected_uids.clear()
         self._drag_plan_item_uid = None
         self._drag_handle_index = -2
@@ -5152,13 +5179,22 @@ class TakeoffPlanView(
         self._apply_page_transform_to_items()
         if self._defer_page_visual_reveal:
             self._set_page_overlay_items_visible(False)
-        self._selected_uids = saved_selection & (
-            self._current_takeoffs.keys() | self._current_annotations.keys()
+        self._restore_selected_overlay_identities(
+            saved_takeoff_selection,
+            saved_annotation_selection,
+        )
+        self._restore_pending_overlay_identities(
+            saved_pending_takeoffs,
+            saved_pending_annotations,
         )
         if self._selected_uids or saved_selection:
             self.update_selection_visuals()
-        self._restore_selected_text_annotation_toolbar(saved_text_annotation_uid)
-        self._restore_selected_dimension_text_label_toolbar(saved_dimension_label_uid)
+        self._restore_selected_text_annotation_toolbar(
+            self._annotation_key_for_identity(saved_text_annotation_identity)
+        )
+        self._restore_selected_dimension_text_label_toolbar(
+            self._annotation_key_for_identity(saved_dimension_label_identity)
+        )
         self._restore_selected_condition_text_label_toolbar(
             saved_condition_label_target
         )
@@ -5359,6 +5395,88 @@ class TakeoffPlanView(
             result[identity] = key
         return result
 
+    def _overlay_identities_for_keys(
+        self, keys: Set[str]
+    ) -> Tuple[Set[str], Set[Tuple[str, str]]]:
+        takeoffs = keys.intersection(self._current_takeoffs)
+        annotations = {
+            self._annotation_identity(key, annotation, self._ann_db_uid_map)
+            for key, annotation in self._current_annotations.items()
+            if key in keys
+        }
+        return takeoffs, annotations
+
+    def _overlay_keys_for_identities(
+        self,
+        takeoff_uids: Set[str],
+        annotation_identities: Set[Tuple[str, str]],
+    ) -> Set[str]:
+        annotation_keys = self._annotation_keys_by_identity(
+            self._current_annotations,
+            self._ann_db_uid_map,
+        )
+        selected_annotations = (
+            {
+                annotation_keys[identity]
+                for identity in annotation_identities
+                if identity in annotation_keys
+            }
+            if annotation_keys is not None
+            else set()
+        )
+        return takeoff_uids.intersection(self._current_takeoffs) | selected_annotations
+
+    def _selected_overlay_identities(
+        self,
+    ) -> Tuple[Set[str], Set[Tuple[str, str]]]:
+        return self._overlay_identities_for_keys(self._selected_uids)
+
+    def _restore_selected_overlay_identities(
+        self,
+        takeoff_uids: Set[str],
+        annotation_identities: Set[Tuple[str, str]],
+    ) -> None:
+        self._selected_uids = self._overlay_keys_for_identities(
+            takeoff_uids,
+            annotation_identities,
+        )
+
+    def _restore_pending_overlay_identities(
+        self,
+        takeoff_uids: Set[str],
+        annotation_identities: Set[Tuple[str, str]],
+    ) -> None:
+        previous = set(self._pending_mutation_uids)
+        self._pending_mutation_uids = self._overlay_keys_for_identities(
+            takeoff_uids,
+            annotation_identities,
+        )
+        for key in previous.symmetric_difference(self._pending_mutation_uids):
+            self._apply_pending_mutation_visual(key)
+
+    def _annotation_identity_for_key(
+        self, key: Optional[str]
+    ) -> Optional[Tuple[str, str]]:
+        if key is None:
+            return None
+        annotation = self._current_annotations.get(key)
+        if annotation is None:
+            return None
+        return self._annotation_identity(key, annotation, self._ann_db_uid_map)
+
+    def _annotation_key_for_identity(
+        self, identity: Optional[Tuple[str, str]]
+    ) -> Optional[str]:
+        if identity is None:
+            return None
+        annotation_keys = self._annotation_keys_by_identity(
+            self._current_annotations,
+            self._ann_db_uid_map,
+        )
+        if annotation_keys is None:
+            return None
+        return annotation_keys.get(identity)
+
     def _editing_annotation_uids(self) -> Set[str]:
         return {
             uid
@@ -5464,10 +5582,20 @@ class TakeoffPlanView(
             or editing_uids & {identity[0] for identity in changed_identities}
         ):
             return False
-        saved_text_annotation_uid = self._selected_text_annotation_uid
-        saved_dimension_label_uid = self._selected_dimension_text_label_target()
+        saved_text_annotation_identity = self._annotation_identity_for_key(
+            self._selected_text_annotation_uid
+        )
+        saved_dimension_label_identity = self._annotation_identity_for_key(
+            self._selected_dimension_text_label_target()
+        )
         saved_condition_label_target = self._selected_condition_text_label_target()
         saved_selection = set(self._selected_uids)
+        saved_takeoff_selection, saved_annotation_selection = (
+            self._selected_overlay_identities()
+        )
+        saved_pending_takeoffs, saved_pending_annotations = (
+            self._overlay_identities_for_keys(self._pending_mutation_uids)
+        )
         self._remove_annotation_overlay_items(affected_current_keys)
         page_info = self._scene_builder.build_page_info(
             page,
@@ -5513,13 +5641,23 @@ class TakeoffPlanView(
         if self._defer_page_visual_reveal:
             for item in new_items:
                 item.setVisible(False)
-        valid_selection = set(self._current_takeoffs) | set(self._current_annotations)
-        self._selected_uids = saved_selection & valid_selection
+        self._restore_selected_overlay_identities(
+            saved_takeoff_selection,
+            saved_annotation_selection,
+        )
+        self._restore_pending_overlay_identities(
+            saved_pending_takeoffs,
+            saved_pending_annotations,
+        )
         affected_keys = affected_current_keys | affected_incoming_keys
         if self._selected_uids != saved_selection or saved_selection & affected_keys:
             self.update_selection_visuals()
-        self._restore_selected_text_annotation_toolbar(saved_text_annotation_uid)
-        self._restore_selected_dimension_text_label_toolbar(saved_dimension_label_uid)
+        self._restore_selected_text_annotation_toolbar(
+            self._annotation_key_for_identity(saved_text_annotation_identity)
+        )
+        self._restore_selected_dimension_text_label_toolbar(
+            self._annotation_key_for_identity(saved_dimension_label_identity)
+        )
         self._restore_selected_condition_text_label_toolbar(
             saved_condition_label_target
         )
@@ -5629,6 +5767,12 @@ class TakeoffPlanView(
                     self._scene.removeItem(item)
             return False
         saved_selection = set(self._selected_uids)
+        saved_takeoff_selection, saved_annotation_selection = (
+            self._selected_overlay_identities()
+        )
+        saved_pending_takeoffs, saved_pending_annotations = (
+            self._overlay_identities_for_keys(self._pending_mutation_uids)
+        )
         self._remove_annotation_overlay_items(affected_current_uids)
         self._current_page = page
         self._current_bid_page_uid = page.uid
@@ -5654,8 +5798,14 @@ class TakeoffPlanView(
         if self._defer_page_visual_reveal:
             for item in new_items:
                 item.setVisible(False)
-        valid_selection = set(incoming_by_uid) | set(annotation_dict)
-        self._selected_uids = saved_selection & valid_selection
+        self._restore_selected_overlay_identities(
+            saved_takeoff_selection,
+            saved_annotation_selection,
+        )
+        self._restore_pending_overlay_identities(
+            saved_pending_takeoffs,
+            saved_pending_annotations,
+        )
         if self._selected_uids != saved_selection or saved_selection & changed_uids:
             self.update_selection_visuals()
         self._invalidate_snap_index()

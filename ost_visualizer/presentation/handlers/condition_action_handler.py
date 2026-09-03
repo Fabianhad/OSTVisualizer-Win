@@ -653,6 +653,7 @@ class ConditionActionHandler:
         if target_kind not in ("root", "folder", "cdn_type"):
             return
         is_cut = bool(target.get("cut"))
+        clipboard_revision = int(target["clipboard_revision"]) if is_cut else -1
         required_feature = (
             Feature.EDIT_CONDITION_STRUCTURE if is_cut else Feature.DUPLICATE_CONDITION
         )
@@ -669,6 +670,15 @@ class ConditionActionHandler:
             if target_kind == "cdn_type":
                 target_changes["cdn_type_uid"] = target.get("cdn_type_uid") or None
             if is_cut:
+
+                def committed_cut(_result: QueuedMutationResult) -> None:
+                    if sidebar and self._is_current_bid(bid_ref):
+                        sidebar.complete_cut_paste(
+                            condition_uids,
+                            clipboard_revision,
+                        )
+                        self._coordinator.highlight_sidebar(set(condition_uids))
+
                 self._submit_sql_condition_operation(
                     bid_ref,
                     ("move", *condition_uids),
@@ -680,11 +690,7 @@ class ConditionActionHandler:
                         target_changes,
                         callback,
                     ),
-                    lambda _result: (
-                        self._coordinator.highlight_sidebar(set(condition_uids))
-                        if sidebar and self._is_current_bid(bid_ref)
-                        else None
-                    ),
+                    committed_cut,
                 )
                 return
 
@@ -712,7 +718,12 @@ class ConditionActionHandler:
             return
         if is_cut:
             self._move_conditions_to_target(
-                bid_ref, write_service, condition_uids, target, sidebar
+                bid_ref,
+                write_service,
+                condition_uids,
+                target,
+                sidebar,
+                clipboard_revision,
             )
             return
         result = self._duplicate_conditions_result(
@@ -757,7 +768,13 @@ class ConditionActionHandler:
         self._finish_condition_duplicate(new_uids, sidebar)
 
     def _move_conditions_to_target(
-        self, bid_ref, write_service, condition_uids: list, target: dict, sidebar
+        self,
+        bid_ref,
+        write_service,
+        condition_uids: list,
+        target: dict,
+        sidebar,
+        clipboard_revision: int,
     ) -> None:
         if not self._flush_deferred_for_bid(bid_ref):
             return
@@ -798,6 +815,7 @@ class ConditionActionHandler:
             self._warn_condition_refresh_failed("moved")
             return
         if sidebar:
+            sidebar.complete_cut_paste(moved_uids, clipboard_revision)
             self._coordinator.highlight_sidebar(set(moved_uids))
 
     def _duplicate_conditions_result(

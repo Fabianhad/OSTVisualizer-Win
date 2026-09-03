@@ -106,8 +106,11 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.MouseButton.RightButton:
-            pos = self._context_menu_press_pos or event.position().toPoint()
+            pos = self._context_menu_press_pos
             self._context_menu_press_pos = None
+            if pos is None:
+                event.accept()
+                return
             self.customContextMenuRequested.emit(pos)
             event.accept()
             return
@@ -162,6 +165,9 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
     def cancel_drag(self) -> None:
         self._drag_items = []
         self._drag_file_path = None
+
+    def cancel_pending_context_menu(self) -> None:
+        self._context_menu_press_pos = None
 
     def dragEnterEvent(self, event) -> None:
         if self._drag_items:
@@ -1679,6 +1685,7 @@ class ProjectView(QtWidgets.QWidget):
         self._tree_revision += 1
         self._cancel_active_rename()
         self.top_tree.cancel_drag()
+        self.top_tree.cancel_pending_context_menu()
         signals_were_blocked = self.top_tree.blockSignals(True)
         try:
             self.top_tree.clear()

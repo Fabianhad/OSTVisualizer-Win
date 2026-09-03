@@ -6,6 +6,8 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_INCHES,
     calculate_condition_quantities,
 )
+
+
 class UomServiceTests(unittest.TestCase):
     def test_axis_aligned_circular_curve_uses_its_arc_length(self):
         quantity, _quantity2, _quantity3 = calculate_condition_quantities(
@@ -24,5 +26,7 @@ class UomServiceTests(unittest.TestCase):
             curve=0,
         )
         self.assertAlmostEqual(quantity, math.pi / math.sqrt(2.0), delta=0.03)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -142,6 +142,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._selected_condition_uids: List[str] = []
         self._copied_condition_uids: List[str] = []
         self._condition_clipboard_cut: bool = False
+        self._condition_clipboard_revision: int = 0
         self._duplicate_allowed: bool = False
         self._copy_allowed: bool = False
         self._delete_allowed: bool = False
@@ -823,6 +824,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
             return
         condition_uid = data[1]
         condition = self._conditions[condition_uid]
+        if not self._edit_allowed:
+            self._restore_condition_item_name(item, condition.name)
+            return
         new_name = item.text(_COL_NAME).strip()
         if not new_name:
             self._restore_condition_item_name(item, condition.name)
@@ -1075,12 +1079,14 @@ class ConditionsSidebar(QtWidgets.QWidget):
         if self._copy_allowed and current_uids:
             self._copied_condition_uids = current_uids
             self._condition_clipboard_cut = False
+            self._condition_clipboard_revision += 1
 
     def _cut_context_conditions(self, condition_uids: List[str]) -> None:
         current_uids = [uid for uid in condition_uids if uid in self._conditions]
         if self._structure_edit_allowed and current_uids:
             self._copied_condition_uids = current_uids
             self._condition_clipboard_cut = True
+            self._condition_clipboard_revision += 1
 
     def _delete_selected_conditions(self) -> None:
         if self._delete_allowed and self._selected_condition_uids:
@@ -1303,6 +1309,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._pending_folder_edit_uid = folder_uid
 
     def start_folder_edit(self, folder_uid: str) -> None:
+        if not self._structure_edit_allowed:
+            return
         item = self._folder_items.get(folder_uid)
         if item is None:
             return
@@ -1345,6 +1353,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._disconnect_folder_editor_signal()
         item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
         new_name = item.text(_COL_NO).strip()
+        if not self._structure_edit_allowed:
+            item.setText(_COL_NO, original_name)
+            return
         if not new_name:
             if original_name:
                 item.setText(_COL_NO, original_name)
@@ -1459,10 +1470,13 @@ class ConditionsSidebar(QtWidgets.QWidget):
             else self._duplicate_allowed
         )
         return (
-            bool(self._copied_condition_uids)
+            bool(self._current_copied_condition_uids())
             and can_write
             and self._resolve_paste_target(item) is not None
         )
+
+    def _current_copied_condition_uids(self) -> List[str]:
+        return [uid for uid in self._copied_condition_uids if uid in self._conditions]
 
     def _copy_selected_conditions(self) -> None:
         if self._text_editor_has_focus():
@@ -1471,6 +1485,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             return
         self._copied_condition_uids = self._selected_condition_uids[:]
         self._condition_clipboard_cut = False
+        self._condition_clipboard_revision += 1
 
     def _cut_selected_conditions(self) -> None:
         if self._text_editor_has_focus():
@@ -1479,6 +1494,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             return
         self._copied_condition_uids = self._selected_condition_uids[:]
         self._condition_clipboard_cut = True
+        self._condition_clipboard_revision += 1
 
     def _paste_copied_conditions(
         self, item: Optional[QtWidgets.QTreeWidgetItem] = None
@@ -1490,7 +1506,11 @@ class ConditionsSidebar(QtWidgets.QWidget):
             if self._condition_clipboard_cut
             else self._duplicate_allowed
         )
-        if not self._copied_condition_uids or not can_write:
+        current_uids = self._current_copied_condition_uids()
+        self._copied_condition_uids = current_uids
+        if not current_uids or not can_write:
+            if not current_uids:
+                self._condition_clipboard_cut = False
             return
         if item is None:
             item = self.tree.currentItem()
@@ -1500,9 +1520,27 @@ class ConditionsSidebar(QtWidgets.QWidget):
         if target is None:
             return
         target["cut"] = self._condition_clipboard_cut
-        self.paste_requested.emit(self._copied_condition_uids[:], target)
-        if self._condition_clipboard_cut:
-            self._copied_condition_uids = []
+        target["clipboard_revision"] = self._condition_clipboard_revision
+        self.paste_requested.emit(current_uids, target)
+
+    def complete_cut_paste(
+        self,
+        moved_condition_uids: List[str],
+        clipboard_revision: int,
+    ) -> None:
+        if (
+            not self._condition_clipboard_cut
+            or clipboard_revision != self._condition_clipboard_revision
+        ):
+            return
+        moved = {str(uid) for uid in moved_condition_uids if uid}
+        if not moved:
+            return
+        self._copied_condition_uids = [
+            uid for uid in self._copied_condition_uids if uid not in moved
+        ]
+        self._condition_clipboard_revision += 1
+        if not self._copied_condition_uids:
             self._condition_clipboard_cut = False
 
     def _text_editor_has_focus(self) -> bool:
@@ -1584,6 +1622,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._selected_folder_uids = []
         self._copied_condition_uids = []
         self._condition_clipboard_cut = False
+        self._condition_clipboard_revision += 1
         self._create_allowed = False
         self._create_folder_allowed = False
         self._structure_edit_allowed = False

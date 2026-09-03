@@ -125,6 +125,8 @@ class PageComboBox(TreePopupComboBoxBase):
         self._block_signals: bool = False
         self._show_page_index: bool = False
         self._show_sheet_number: bool = False
+        self._model_revision: int = 0
+        self._page_pointer_owner: Optional[tuple[int, str, bool]] = None
         self._page_delegate = _PageComboItemDelegate(self._tree)
         self._tree.setItemDelegate(self._page_delegate)
         self._model.itemChanged.connect(self._on_item_changed)
@@ -146,6 +148,8 @@ class PageComboBox(TreePopupComboBoxBase):
     def load_bid(
         self, bid: Bid, pages_with_takeoffs: Optional[Set[str]] = None
     ) -> None:
+        self._model_revision += 1
+        self._page_pointer_owner = None
         bid_uid = str(bid.uid)
         preserve_navigation = self._bid_uid == bid_uid
         previous_selected = list(self._selected_uids) if preserve_navigation else []
@@ -268,15 +272,40 @@ class PageComboBox(TreePopupComboBoxBase):
     def eventFilter(self, obj, event) -> bool:
         if (
             obj is self._tree.viewport()
+            and event.type() == QtCore.QEvent.Type.MouseButtonPress
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        ):
+            pos = event.position().toPoint()
+            index = self._tree.indexAt(pos)
+            item = self._model.itemFromIndex(index) if index.isValid() else None
+            self._page_pointer_owner = None
+            if item and item.data(_ITEM_ROLE_KIND) == "page":
+                self._page_pointer_owner = (
+                    self._model_revision,
+                    str(item.data(_ITEM_ROLE_UID)),
+                    self._is_click_on_checkbox(index, pos),
+                )
+        if (
+            obj is self._tree.viewport()
             and event.type() == QtCore.QEvent.Type.MouseButtonRelease
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
+            pointer_owner = self._page_pointer_owner
+            self._page_pointer_owner = None
             pos = event.position().toPoint()
             index = self._tree.indexAt(pos)
             if index.isValid():
                 item = self._model.itemFromIndex(index)
                 if item and item.data(_ITEM_ROLE_KIND) == "page":
-                    if self._is_click_on_checkbox(index, pos):
+                    uid = str(item.data(_ITEM_ROLE_UID))
+                    on_checkbox = self._is_click_on_checkbox(index, pos)
+                    if pointer_owner != (
+                        self._model_revision,
+                        uid,
+                        on_checkbox,
+                    ):
+                        return True
+                    if on_checkbox:
                         checked = item.checkState() == QtCore.Qt.CheckState.Checked
                         item.setCheckState(
                             QtCore.Qt.CheckState.Unchecked
@@ -284,7 +313,6 @@ class PageComboBox(TreePopupComboBoxBase):
                             else QtCore.Qt.CheckState.Checked
                         )
                         return True
-                    uid = item.data(_ITEM_ROLE_UID)
                     if uid != self._active_uid:
                         self._set_active(uid)
         return super().eventFilter(obj, event)
@@ -394,6 +422,8 @@ class PageComboBox(TreePopupComboBoxBase):
         self._go(1)
 
     def clear(self) -> None:
+        self._model_revision += 1
+        self._page_pointer_owner = None
         self._block_signals = True
         self._model.clear()
         self._page_items.clear()
@@ -423,6 +453,7 @@ class PageComboBox(TreePopupComboBoxBase):
         self._selected_uids = None
         self._active_uid = None
         self._bid_uid = None
+        self._page_pointer_owner = None
         self._page_delegate = None
 
 

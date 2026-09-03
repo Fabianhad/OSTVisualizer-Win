@@ -78,8 +78,23 @@
   native file dialog was open.
 - Fixed hierarchy, Summary, Plan, and 3D context actions applying to rebuilt
   same-UID rows, replaced scenes, changed selections, or revoked edit access.
-  Tree resets now cancel active drags and inline editors, and Main and detached
+  Tree resets now cancel active drags and inline editors, 3D scene replacement
+  cancels pointer/context actions and camera inertia begun on prior geometry,
+  hidden or retargeted 3D surfaces cannot retain native camera motion, and page
+  or project-tree rebuilds cannot activate replacement rows from earlier mouse
+  presses. Authoritative project deletion now projects the tree's database-root
+  fallback into action state, while revoked access cancels provisional layer
+  creation and prevents inline Condition, folder, or layer names from remaining
+  changed without persistence. Condition and bid paste drop remotely deleted
+  source rows, reference clipboards are invalidated when their database unloads,
+  and late cut completions cannot clear newer clipboard work. Main and detached
   Plan clipboards recognize equivalent Windows paths for the same database.
+  Mixed annotation paste/delete history, SQL import and recovery correlation,
+  dirty previews, selection, and pending completion state now keep table-scoped
+  annotation IDs distinct by type across Main and detached Plan rebuilds.
+  Pending 3D edit state is scoped to its originating database, and Plan hot-link
+  hit testing uses collision-safe scene identity when another entity shares its
+  stored UID.
 
 ## 1.2.6.1 - 2026-08-19
 

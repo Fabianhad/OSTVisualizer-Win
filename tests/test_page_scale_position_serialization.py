@@ -13,44 +13,61 @@ from ost_visualizer.infrastructure.mdb.components.serialization import (
     parse_position_storage,
     serialize_position_for_table,
 )
+
+
 class _Schema:
     def __init__(self, position_table):
         self.position_table = position_table
+
     def optional_table_missing(self, _table):
         return False
+
     def column_exists(self, table, column):
         return table == self.position_table and column in (
             "UID",
             "BidPageUID",
             "Position",
         )
+
+
 class _Cursor:
     def __init__(self, table, rows):
         self.table = table
         self.rows = list(rows)
         self.updates = []
+
     def execute(self, query, *params):
         if query.startswith(f"UPDATE [{self.table}]"):
             self.updates.append((params[0], params[1]))
+
     def fetchall(self):
         return list(self.rows)
+
+
 class _Logger:
     def __init__(self):
         self.warnings = []
+
     def warning(self, message, *args):
         self.warnings.append(message % args)
+
+
 class _PageOps(PageOperationsMixin):
     def __init__(self):
         self.logger = _Logger()
+
     @staticmethod
     def _record_caught_mutation_error(_exc):
         return False
+
+
 class PageScalePositionSerializationTests(unittest.TestCase):
     def test_text_position_table_classification_includes_text_annotation_tables(self):
         self.assertIn("BidTexts", TEXT_POSITION_TABLES)
         self.assertIn("BidCallOuts", TEXT_POSITION_TABLES)
         self.assertIn("BidComments", TEXT_POSITION_TABLES)
         self.assertNotIn("BidTakeoffs", TEXT_POSITION_TABLES)
+
     def test_position_serializer_returns_text_for_text_position_tables(self):
         position = [1.0, 2.0, 3.0, 4.0]
         self.assertIsInstance(serialize_position_for_table("BidTexts", position), str)
@@ -60,25 +77,30 @@ class PageScalePositionSerializationTests(unittest.TestCase):
         self.assertIsInstance(
             serialize_position_for_table("BidComments", position), str
         )
+
     def test_position_serializer_returns_bytes_for_binary_position_tables(self):
         value = serialize_position_for_table("BidTakeoffs", [1.0, 2.0, 3.0, 4.0])
         self.assertIsInstance(value, bytes)
+
     def test_position_parser_reads_text_and_binary_storage_values(self):
         position = [1.0, 2.0, 3.0, 4.0]
         binary_value = serialize_position_for_table("BidTakeoffs", position)
         text_value = serialize_position_for_table("BidTexts", position)
         self.assertEqual(parse_position_storage(binary_value), position)
         self.assertEqual(parse_position_storage(text_value), position)
+
     def test_position_parsing_has_one_value_contract_across_consumers(self):
         text = "1; 2;&#xA;3;4"
         expected = [1.0, 2.0, 3.0, 4.0]
         self.assertEqual(parse_position(text), expected)
         self.assertEqual(parse_position_storage(text), expected)
         self.assertEqual(OSTCoordinateSystem.parse_position(text), expected)
+
     def test_position_parsing_returns_independent_lists(self):
         first = parse_position_storage("1;2;3;4")
         first.append(5.0)
         self.assertEqual(parse_position_storage("1;2;3;4"), [1.0, 2.0, 3.0, 4.0])
+
     def test_position_parsing_preserves_previous_text_edge_cases(self):
         cases = (
             (None, []),
@@ -93,6 +115,7 @@ class PageScalePositionSerializationTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(parse_position(value), expected)
                 self.assertEqual(OSTCoordinateSystem.parse_position(value), expected)
+
     def test_position_storage_preserves_binary_and_text_contracts(self):
         self.assertEqual(
             parse_position_storage(b"-1.5;0;2.25;4\n"),
@@ -103,6 +126,7 @@ class PageScalePositionSerializationTests(unittest.TestCase):
             [1.0, 2.0, 3.0, 4.0],
         )
         self.assertEqual(OSTCoordinateSystem.parse_position((1, 2)), [1.0, 2.0])
+
     def test_page_scale_rescale_writes_text_payload_for_text_position_tables(self):
         ops = _PageOps()
         cursor = _Cursor(
@@ -114,6 +138,7 @@ class PageScalePositionSerializationTests(unittest.TestCase):
             cursor.updates,
             [(serialize_position_for_table("BidTexts", [0.5, 1.0, 1.5, 2.0]), 7)],
         )
+
     def test_page_scale_rescale_writes_binary_payload_for_binary_position_tables(self):
         ops = _PageOps()
         cursor = _Cursor(
@@ -132,6 +157,7 @@ class PageScalePositionSerializationTests(unittest.TestCase):
                 )
             ],
         )
+
     def test_page_scale_rescale_skips_unparseable_position_payload(self):
         ops = _PageOps()
         cursor = _Cursor(
@@ -142,5 +168,7 @@ class PageScalePositionSerializationTests(unittest.TestCase):
         self.assertEqual(len(ops.logger.warnings), 1)
         self.assertIn("BidTexts", ops.logger.warnings[0])
         self.assertIn("8", ops.logger.warnings[0])
+
+
 if __name__ == "__main__":
     unittest.main()

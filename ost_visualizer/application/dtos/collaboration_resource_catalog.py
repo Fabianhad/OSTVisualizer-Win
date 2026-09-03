@@ -277,6 +277,14 @@ def parse_annotation_resource_id(resource_id: str) -> tuple[str, str]:
     return annotation_type, annotation_uid
 
 
+def annotation_resource_id(annotation_type: str, annotation_uid: str) -> str:
+    normalized_type = str(annotation_type or "")
+    normalized_uid = str(annotation_uid or "")
+    if not normalized_type or not normalized_uid:
+        raise ValueError("Invalid annotation collaboration resource identity")
+    return f"{normalized_type}/{normalized_uid}"
+
+
 def resource_families_affect_page(
     families: Iterable[str],
     affected_page_uids_by_family: Mapping[str, Collection[str]],

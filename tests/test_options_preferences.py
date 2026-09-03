@@ -5456,6 +5456,53 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(combo.lineEdit().text(), "")
         combo.close()
 
+    def test_page_combo_model_rebuild_cancels_pressed_page_activation(self):
+        combo = PageComboBox()
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="Bid",
+                pages_without_folder=[Page(uid="page-a", name="A101")],
+            )
+        )
+        old_index = combo._page_items["page-a"].index()
+        press = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonPress,
+            QtCore.QPointF(5.0, 5.0),
+            QtCore.QPointF(5.0, 5.0),
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+        with mock.patch.object(combo._tree, "indexAt", return_value=old_index):
+            combo.eventFilter(combo._tree.viewport(), press)
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="Bid",
+                pages_without_folder=[Page(uid="page-b", name="A102")],
+            )
+        )
+        new_index = combo._page_items["page-b"].index()
+        activated = []
+        combo.active_page_changed.connect(activated.append)
+        release = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonRelease,
+            QtCore.QPointF(5.0, 5.0),
+            QtCore.QPointF(5.0, 5.0),
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.NoButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+        with (
+            mock.patch.object(combo._tree, "indexAt", return_value=new_index),
+            mock.patch.object(combo, "_is_click_on_checkbox", return_value=False),
+        ):
+            combo.eventFilter(combo._tree.viewport(), release)
+        self.assertIsNone(combo.get_active_page_uid())
+        self.assertEqual(activated, [])
+        combo.close()
+
     def test_page_combo_one_page_refresh_keeps_text_with_no_navigation(self):
         combo = PageComboBox()
         bid = Bid(

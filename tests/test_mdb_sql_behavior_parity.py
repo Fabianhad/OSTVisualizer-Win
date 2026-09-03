@@ -12,6 +12,9 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     QueuedMutationResult,
     ResourceRef,
 )
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    annotation_resource_id,
+)
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
@@ -337,7 +340,10 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                     is_negative=True,
                 ),
             ),
-            annotation_source_uids=("named", "rect"),
+            annotation_source_uids=(
+                annotation_resource_id("namedview", "shared"),
+                annotation_resource_id("rect", "shared"),
+            ),
             annotation_specs=(
                 InsertAnnotationSpec(
                     page_uid="p1",
@@ -372,9 +378,37 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         )
         self.assertEqual(
             dict(maps["annotations"]),
-            {"named": "named-new", "rect": "rect-new"},
+            {
+                annotation_resource_id("namedview", "shared"): "named-new",
+                annotation_resource_id("rect", "shared"): "rect-new",
+            },
         )
         self.assertEqual(service.reload_calls, [])
+
+    def test_sql_mixed_paste_distinguishes_table_scoped_annotation_uids(self):
+        service, provider = self._queued_project_service()
+        service._insert_takeoffs = _SequenceUseCase(["parent-new"], ["hole-new"])
+        service._insert_annotations = _SequenceUseCase(["named-new"], ["rect-new"])
+        generation = service.queue_plan_items_paste(
+            "database",
+            self._mixed_paste_payload(),
+            lambda _result: None,
+        )
+        result = provider.requests[0][1]()
+        self.assertEqual(generation, 41)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        maps = dict(result.authoritative_result.created_uid_maps)
+        self.assertEqual(
+            dict(maps["annotations"]),
+            {
+                annotation_resource_id("namedview", "shared"): "named-new",
+                annotation_resource_id("rect", "shared"): "rect-new",
+            },
+        )
+        self.assertEqual(
+            service._insert_annotations.calls[1][3].namedview_uids,
+            {"shared": "named-new"},
+        )
 
     def test_mdb_mixed_paste_failure_has_no_success_projection(self):
         stage_overrides = {

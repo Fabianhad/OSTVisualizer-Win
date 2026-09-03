@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.pdf import ost_pdf
+
+
 class PdfRendererNativeValidationTests(unittest.TestCase):
     def setUp(self):
         source_path = (
@@ -18,6 +20,7 @@ class PdfRendererNativeValidationTests(unittest.TestCase):
         binary_path = Path(ost_pdf.__file__)
         if source_path.stat().st_mtime > binary_path.stat().st_mtime:
             self.skipTest("ost_pdf must be rebuilt for native source changes")
+
     def _create_blank_pdf(self, directory: str) -> Path:
         pdf_path = Path(directory) / "blank.pdf"
         writer = ost_pdf_writer.PDFWriter()
@@ -27,6 +30,7 @@ class PdfRendererNativeValidationTests(unittest.TestCase):
         page.page_height = 72.0
         self.assertTrue(writer.merge_pages_with_annotations([page], str(pdf_path)))
         return pdf_path
+
     def test_render_rejects_invalid_scales_and_frame_values(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = self._create_blank_pdf(temp_dir)
@@ -48,6 +52,7 @@ class PdfRendererNativeValidationTests(unittest.TestCase):
             self.assertIsNotNone(page)
             self.assertEqual((page.width, page.height, page.stride), (18, 18, 72))
             renderer.close()
+
     def test_pdfium_can_reinitialize_after_explicit_shutdown(self):
         repo = Path(__file__).parents[1]
         code = """
@@ -83,5 +88,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,9 @@ from ....application.dtos.collaboration_dtos import (
     QueuedMutationResult,
     ResourceRef,
 )
+from ....application.dtos.collaboration_resource_catalog import (
+    annotation_resource_id,
+)
 from ....application.events.app_events import AppEvents
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
@@ -194,7 +197,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
         self._file_path: Optional[str] = file_path
         self._undo_svc = undo_service
-        self._pending_annotation_mutation_uids: set[str] = set()
+        self._pending_annotation_mutations_by_context: dict[
+            tuple[str, str], set[tuple[str, str]]
+        ] = {}
         self._completed_sql_mutation_ids: set[str] = set()
         self._geometry_edit_lease_handle: Optional[EditLeaseHandle] = None
         self._geometry_edit_lease_request_id = ""
@@ -1406,15 +1411,34 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._completed_sql_mutation_ids.add(result.operation_id)
 
     def _set_annotation_items_pending(
-        self, annotation_keys: set[str], pending: bool
+        self,
+        bid_ref,
+        annotation_identities: set[tuple[str, str]],
+        pending: bool,
     ) -> None:
+        context = (str(bid_ref.file_path), str(bid_ref.bid_uid))
+        pending_identities = self._pending_annotation_mutations_by_context.setdefault(
+            context, set()
+        )
         if pending:
-            self._pending_annotation_mutation_uids.update(annotation_keys)
+            pending_identities.update(annotation_identities)
         else:
-            self._pending_annotation_mutation_uids.difference_update(annotation_keys)
+            pending_identities.difference_update(annotation_identities)
+        if not pending_identities:
+            self._pending_annotation_mutations_by_context.pop(context, None)
         if self.plan_view is not None:
+            active_ref = self.view.bid_ref if self.view is not None else None
+            active_context = (
+                (str(active_ref.file_path), str(active_ref.bid_uid))
+                if active_ref is not None
+                else ("", "")
+            )
             self.plan_view.set_pending_mutation_uids(
-                set(self._pending_annotation_mutation_uids)
+                self._annotation_keys_for_identities(
+                    self._pending_annotation_mutations_by_context.get(
+                        active_context, set()
+                    )
+                )
             )
 
     def _annotation_keys_for_identities(self, identities) -> set[str]:
@@ -1478,7 +1502,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._geometry_edit_lease_request_id = ""
             self._geometry_edit_lease_selection.clear()
             self.plan_view.disable_geometry_edit_leasing()
-        self._set_annotation_items_pending(keys, True)
+        self._set_annotation_items_pending(bid_ref, identities, True)
         window_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1489,14 +1513,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             if window._sql_result_remains_pending(result):
                 return
-            window._set_annotation_items_pending(keys, False)
+            current_keys = window._annotation_keys_for_identities(identities)
+            window._set_annotation_items_pending(bid_ref, identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 if window._annotation_context_is_current(bid_ref, page_uids):
                     window.plan_view.restore_flushed_positions([], ann_changes)
-                    window.plan_view.set_selected_uids(keys)
+                    window.plan_view.set_selected_uids(current_keys)
                 return
             if window._annotation_context_is_current(bid_ref, page_uids):
-                window.plan_view.set_selected_uids(keys)
+                window.plan_view.set_selected_uids(current_keys)
             window._push_sql_annotation_geometry_history(
                 bid_ref,
                 old_changes,
@@ -1567,7 +1592,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         }
         keys = self._annotation_keys_for_identities(identities)
         page_uids = self._annotation_page_uids_for_keys(keys)
-        self._set_annotation_items_pending(keys, True)
+        self._set_annotation_items_pending(bid_ref, identities, True)
         window_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1578,14 +1603,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             if window._sql_result_remains_pending(result):
                 return
-            window._set_annotation_items_pending(keys, False)
+            current_keys = window._annotation_keys_for_identities(identities)
+            window._set_annotation_items_pending(bid_ref, identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 if window._annotation_context_is_current(bid_ref, page_uids):
                     restore()
-                    window.plan_view.set_selected_uids(keys)
+                    window.plan_view.set_selected_uids(current_keys)
                 return
             if window._annotation_context_is_current(bid_ref, page_uids):
-                window.plan_view.set_selected_uids(keys)
+                window.plan_view.set_selected_uids(current_keys)
             window._push_sql_annotation_property_history(
                 bid_ref,
                 property_kind,
@@ -1655,7 +1681,16 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not specs:
             return
         self._annotation_write_coordinator.apply_default_annotation_layer(specs)
-        sources = tuple(source_uids or (f"detached-{uuid.uuid4()}" for _spec in specs))
+        sources = tuple(
+            source_uids
+            or (
+                annotation_resource_id(
+                    spec.annotation_type,
+                    f"detached-{uuid.uuid4()}",
+                )
+                for spec in specs
+            )
+        )
         payload = PlanItemsPastePayload(
             source_bid_uid=str(bid_ref.bid_uid),
             destination_bid_uid=str(bid_ref.bid_uid),
@@ -1770,15 +1805,22 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _queue_sql_annotation_delete(
         self,
         bid_ref,
-        requested_selection_uids: set[str],
         saved_annotations: list,
         skipped_selection_keys: set[str],
+        requested_annotation_identities: set[tuple[str, str]],
     ) -> None:
         identities = [
             (str(annotation.uid), str(annotation.annotation_type))
             for annotation in saved_annotations
         ]
-        pending_keys = set(requested_selection_uids).difference(skipped_selection_keys)
+        skipped_annotation_identities = {
+            identity
+            for identity in requested_annotation_identities
+            if self._annotation_keys_for_identities({identity}).intersection(
+                skipped_selection_keys
+            )
+        }
+        pending_identities = set(identities)
         page_uids = tuple(
             dict.fromkeys(
                 str(annotation.page_uid)
@@ -1786,7 +1828,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 if annotation.page_uid
             )
         )
-        self._set_annotation_items_pending(pending_keys, True)
+        self._set_annotation_items_pending(bid_ref, pending_identities, True)
         self.plan_view.set_selected_uids(set(skipped_selection_keys))
         window_ref = weakref.ref(self)
 
@@ -1798,11 +1840,21 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             if window._sql_result_remains_pending(result):
                 return
-            window._set_annotation_items_pending(pending_keys, False)
+            window._set_annotation_items_pending(bid_ref, pending_identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 if window._annotation_context_is_current(bid_ref, page_uids):
-                    window.plan_view.set_selected_uids(requested_selection_uids)
+                    window.plan_view.set_selected_uids(
+                        window._annotation_keys_for_identities(
+                            requested_annotation_identities
+                        )
+                    )
                 return
+            if window._annotation_context_is_current(bid_ref, page_uids):
+                window.plan_view.set_selected_uids(
+                    window._annotation_keys_for_identities(
+                        skipped_annotation_identities
+                    )
+                )
             window._push_sql_annotation_delete_history(
                 bid_ref,
                 saved_annotations,
@@ -1833,7 +1885,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 saved_annotations
             )
         )
-        source_uids = tuple(str(annotation.uid) for annotation in saved_annotations)
+        source_uids = tuple(
+            annotation_resource_id(annotation.annotation_type, annotation.uid)
+            for annotation in saved_annotations
+        )
         payload = PlanItemsPastePayload(
             source_bid_uid=str(bid_ref.bid_uid),
             destination_bid_uid=str(bid_ref.bid_uid),
@@ -2168,7 +2223,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 bid_ref,
                 specs,
                 source_uids=[
-                    str(annotation.uid) for annotation in clipboard_annotations
+                    annotation_resource_id(
+                        annotation.annotation_type,
+                        annotation.uid,
+                    )
+                    for annotation in clipboard_annotations
                 ],
                 source_anchor=source_anchor,
             )
@@ -2468,9 +2527,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._uses_sql_mutation_queue():
             self._queue_sql_annotation_delete(
                 bid_ref,
-                set(uids),
                 saved_annotations,
                 skipped_selection_keys,
+                set(annotation_selection_keys),
             )
             return
         if not self._delete_saved_annotations(db_path, saved_annotations):

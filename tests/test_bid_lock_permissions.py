@@ -167,6 +167,25 @@ class _ProjectData:
             return self.project_uid
         return None
 
+    def get_hierarchy(self):
+        return _hierarchy_with_bids(self.bid_ref.bid_uid)
+
+
+def _hierarchy_with_bids(*bid_uids, file_path="C:/jobs/test.mdb"):
+    return HierarchyData(
+        loaded_files=[
+            HierarchyFileEntry(
+                file_path=file_path,
+                bid_projects={
+                    "project-1": HierarchyProjectInfo(
+                        name="Project 1",
+                        bids=[HierarchyBidInfo(uid=uid) for uid in bid_uids],
+                    )
+                },
+            )
+        ]
+    )
+
 
 class _UiState:
     def __init__(self, bid_ref):
@@ -1317,6 +1336,21 @@ class BidLockPermissionTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._bid_clipboard = BidClipboardService()
         window._bid_clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: HierarchyData(
+                loaded_files=[
+                    HierarchyFileEntry(
+                        file_path="C:\\jobs\\test.mdb",
+                        bid_projects={
+                            "project-1": HierarchyProjectInfo(
+                                name="Project 1",
+                                bids=[HierarchyBidInfo(uid="bid-1")],
+                            )
+                        },
+                    )
+                ]
+            )
+        )
         window.ui_access_manager = _FakeAccess({Feature.DUPLICATE_BID})
         self.assertTrue(
             MainWindow._can_paste_project_bids(
@@ -1349,6 +1383,9 @@ class BidLockPermissionTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._bid_clipboard = BidClipboardService()
         window._bid_clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: _hierarchy_with_bids("bid-1")
+        )
         window.ui_access_manager = _FakeAccess({Feature.DUPLICATE_BID})
         paste_calls = []
         refresh_calls = []
@@ -1367,6 +1404,202 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(paste_calls, [(["bid-1"], "project-2", False)])
         self.assertEqual(refresh_calls, [True])
 
+    def test_project_cut_clipboard_waits_for_authoritative_move_completion(self):
+        window = MainWindow.__new__(MainWindow)
+        window._bid_clipboard = BidClipboardService()
+        window._bid_clipboard.cut([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: _hierarchy_with_bids("bid-1")
+        )
+        window.ui_access_manager = _FakeAccess({Feature.DELETE_BID})
+        completions = []
+        refresh_calls = []
+
+        def paste_bids(
+            _refs,
+            _project_uid,
+            *,
+            is_cut=False,
+            on_cut_committed=None,
+        ):
+            self.assertTrue(is_cut)
+            completions.append(on_cut_committed)
+            return True
+
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(paste_bids=paste_bids),
+            ui_event=SimpleNamespace(
+                refresh_toolbar=lambda: refresh_calls.append(True)
+            ),
+        )
+        MainWindow._paste_project_bids(window, "C:/jobs/test.mdb", "project-2")
+        self.assertTrue(window._bid_clipboard.has_content())
+        completions[0]()
+        self.assertFalse(window._bid_clipboard.has_content())
+        self.assertEqual(refresh_calls, [True, True])
+
+    def test_older_bid_cut_completion_preserves_newer_clipboard(self):
+        window = MainWindow.__new__(MainWindow)
+        window._bid_clipboard = BidClipboardService()
+        window._bid_clipboard.cut([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: _hierarchy_with_bids("bid-1", "bid-2")
+        )
+        window.ui_access_manager = _FakeAccess({Feature.DELETE_BID})
+        completions = []
+
+        def paste_bids(
+            _refs,
+            _project_uid,
+            *,
+            is_cut=False,
+            on_cut_committed=None,
+        ):
+            self.assertTrue(is_cut)
+            completions.append(on_cut_committed)
+            return True
+
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(paste_bids=paste_bids),
+            ui_event=SimpleNamespace(refresh_toolbar=lambda: None),
+        )
+        MainWindow._paste_project_bids(window, "C:/jobs/test.mdb", "project-2")
+        window._bid_clipboard.cut([BidRef("C:/jobs/test.mdb", "bid-2")])
+        completions[0]()
+        self.assertTrue(window._bid_clipboard.is_cut)
+        self.assertEqual(
+            window._bid_clipboard.bid_refs,
+            [BidRef("C:/jobs/test.mdb", "bid-2")],
+        )
+
+    def test_project_paste_reconciles_partial_remote_bid_deletion(self):
+        window = MainWindow.__new__(MainWindow)
+        window._bid_clipboard = BidClipboardService()
+        window._bid_clipboard.cut(
+            [
+                BidRef("C:/jobs/test.mdb", "deleted-bid"),
+                BidRef("C:/jobs/test.mdb", "surviving-bid"),
+            ]
+        )
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: HierarchyData(
+                loaded_files=[
+                    HierarchyFileEntry(
+                        file_path="C:\\jobs\\test.mdb",
+                        bid_projects={
+                            "project-1": HierarchyProjectInfo(
+                                name="Project 1",
+                                bids=[HierarchyBidInfo(uid="surviving-bid")],
+                            )
+                        },
+                    )
+                ]
+            )
+        )
+        window.ui_access_manager = _FakeAccess({Feature.DELETE_BID})
+        self.assertTrue(
+            MainWindow._can_paste_project_bids(window, "C:/jobs/test.mdb", "project-2")
+        )
+        self.assertEqual(
+            [ref.bid_uid for ref in window._bid_clipboard.bid_refs],
+            ["surviving-bid"],
+        )
+
+    def test_bid_clipboard_file_unload_invalidates_equivalent_source_path(self):
+        clipboard = BidClipboardService()
+        clipboard.cut([BidRef("C:/jobs/test.mdb", "bid-1")])
+        self.assertTrue(clipboard.clear_for_file("C:\\jobs\\test.mdb"))
+        self.assertFalse(clipboard.has_content())
+        self.assertFalse(clipboard.is_cut)
+
+    def test_sql_bid_cut_completion_callback_runs_only_after_commit(self):
+        write_service = _QueuedHierarchyDeleteWriteService()
+        committed = []
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=SimpleNamespace(),
+            project_write_service=write_service,
+            ui_state_manager=SimpleNamespace(),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        bid_ref = BidRef("database", "bid-1")
+        self.assertTrue(
+            handler.paste_bids(
+                [bid_ref],
+                "project-2",
+                is_cut=True,
+                on_cut_committed=lambda: committed.append(True),
+            )
+        )
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000301",
+                outcome_status=MutationOutcomeStatus.REJECTED,
+                commit_attempted=False,
+            )
+        )
+        self.assertEqual(committed, [])
+        self.assertTrue(
+            handler.paste_bids(
+                [bid_ref],
+                "project-2",
+                is_cut=True,
+                on_cut_committed=lambda: committed.append(True),
+            )
+        )
+        write_service.callbacks[1](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000302",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(committed, [True])
+
+    def test_bid_paste_handler_accepts_normalized_same_database_source_paths(self):
+        write_service = _PartialPasteWriteService()
+        write_service.duplicate_results = ["copy-1", "copy-2"]
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=SimpleNamespace(
+                find_project_uid_for_bid=lambda _ref: "project-2"
+            ),
+            project_write_service=write_service,
+            ui_state_manager=SimpleNamespace(),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+
+        def run_progress(_label, task_fn, action_text, reporter):
+            del action_text, reporter
+            return QtWidgets.QDialog.DialogCode.Accepted, task_fn(), None
+
+        handler._run_progress_dialog = run_progress
+        result = handler.paste_bids(
+            [
+                BidRef("C:/jobs/test.mdb", "bid-1"),
+                BidRef("C:\\jobs\\test.mdb", "bid-2"),
+            ],
+            "project-2",
+        )
+        self.assertTrue(result)
+        self.assertEqual(
+            write_service.duplicate_calls,
+            [
+                ("C:/jobs/test.mdb", "bid-1", False),
+                ("C:/jobs/test.mdb", "bid-2", False),
+            ],
+        )
+
     def test_project_paste_allowed_when_project_target_replaces_bid_selection(self):
         project_data = _ProjectData()
         ui_state = SimpleNamespace(
@@ -1381,6 +1614,9 @@ class BidLockPermissionTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._bid_clipboard = BidClipboardService()
         window._bid_clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window._project_data_service = SimpleNamespace(
+            get_hierarchy=lambda: _hierarchy_with_bids("bid-1")
+        )
         window.ui_access_manager = manager
         self.assertTrue(
             MainWindow._can_paste_project_bids(window, "C:/jobs/test.mdb", "project-2")
@@ -1397,14 +1633,73 @@ class BidLockPermissionTests(unittest.TestCase):
         toolbar = ToolbarStateCoordinator(
             ui_state,
             _FakeAccess({Feature.DUPLICATE_BID}),
-            SimpleNamespace(find_project_uid_for_bid=lambda _ref: None),
+            SimpleNamespace(
+                find_project_uid_for_bid=lambda _ref: None,
+                get_hierarchy=lambda: _hierarchy_with_bids(
+                    "bid-1", file_path="C:\\jobs\\test.mdb"
+                ),
+            ),
         )
         toolbar.set_bid_clipboard(clipboard)
         self.assertTrue(toolbar._can_paste_bid_clipboard())
 
-    def test_toolbar_paste_allowed_when_project_target_replaces_bid_selection(self):
+    def test_toolbar_prunes_remotely_deleted_bid_clipboard_sources(self):
+        clipboard = BidClipboardService()
+        clipboard.cut([BidRef("C:/jobs/test.mdb", "deleted-bid")])
+        ui_state = SimpleNamespace(
+            selected_file_path="C:/jobs/test.mdb",
+            selected_project_uid="project-2",
+            get_selected_bid_ref=lambda: None,
+        )
+        toolbar = ToolbarStateCoordinator(
+            ui_state,
+            _FakeAccess({Feature.DELETE_BID}),
+            SimpleNamespace(
+                get_hierarchy=lambda: _hierarchy_with_bids(),
+                find_project_uid_for_bid=lambda _ref: None,
+            ),
+        )
+        toolbar.set_bid_clipboard(clipboard)
+        self.assertFalse(toolbar._can_paste_bid_clipboard())
+        self.assertFalse(clipboard.has_content())
+        self.assertFalse(clipboard.is_cut)
+
+    def test_toolbar_prunes_clipboard_source_moved_to_deleted_bids(self):
         clipboard = BidClipboardService()
         clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="C:/jobs/test.mdb",
+                    bid_projects={
+                        "1": HierarchyProjectInfo(
+                            name="Deleted Bids",
+                            bids=[HierarchyBidInfo(uid="bid-1")],
+                        )
+                    },
+                )
+            ]
+        )
+        ui_state = SimpleNamespace(
+            selected_file_path="C:/jobs/test.mdb",
+            selected_project_uid="project-2",
+            get_selected_bid_ref=lambda: None,
+        )
+        toolbar = ToolbarStateCoordinator(
+            ui_state,
+            _FakeAccess({Feature.DUPLICATE_BID}),
+            SimpleNamespace(
+                get_hierarchy=lambda: hierarchy,
+                find_project_uid_for_bid=lambda _ref: None,
+            ),
+        )
+        toolbar.set_bid_clipboard(clipboard)
+        self.assertFalse(toolbar._can_paste_bid_clipboard())
+        self.assertFalse(clipboard.has_content())
+
+    def test_toolbar_paste_allowed_when_project_target_replaces_bid_selection(self):
+        clipboard = BidClipboardService()
+        clipboard.copy([BidRef("C:/jobs/test.mdb", "7")])
         project_data = _ProjectData()
         ui_state = SimpleNamespace(
             selected_file_path="C:/jobs/test.mdb",

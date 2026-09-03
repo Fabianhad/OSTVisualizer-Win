@@ -6,7 +6,10 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from functools import total_ordering
 from typing import Any, Generic, Optional, TypeVar
-from .collaboration_resource_catalog import resource_definition
+from .collaboration_resource_catalog import (
+    parse_annotation_resource_id,
+    resource_definition,
+)
 from .insert_annotation_spec_dto import InsertAnnotationSpec
 from .insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...domain.entities.area import BidArea
@@ -347,6 +350,15 @@ class PlanItemsPastePayload:
             raise ValueError("Paste takeoff source identities must be unique")
         if len(set(self.annotation_source_uids)) != len(self.annotation_source_uids):
             raise ValueError("Paste annotation source identities must be unique")
+        for source_uid, spec in zip(
+            self.annotation_source_uids,
+            self.annotation_specs,
+        ):
+            source_type, _source_uid = parse_annotation_resource_id(source_uid)
+            if source_type != spec.annotation_type:
+                raise ValueError(
+                    "Paste annotation sources must use type-qualified identities"
+                )
 
 
 @dataclass(frozen=True, kw_only=True)

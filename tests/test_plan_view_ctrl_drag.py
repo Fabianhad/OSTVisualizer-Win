@@ -2553,6 +2553,33 @@ class CtrlDragTests(unittest.TestCase):
         del view.find_takeoffs_at
         return view
 
+    def test_pending_hotlink_collision_uses_scene_key_for_hit_testing(self):
+        view = self._make_hotlink_view(selected=False)
+        item, hotlink = view._hotlink_items[0]
+        hotlink.uid = "shared"
+        item.setData(0, "shared_hotlink")
+        view._uid_to_items = {"shared_hotlink": [item]}
+        view._current_conditions = {
+            "c": Condition(
+                uid="c",
+                condition_type=Condition.TYPE_COUNT,
+                layer_visible=True,
+            )
+        }
+        view._current_takeoffs = {
+            "shared": Takeoff(uid="shared", condition_uid="c", position=[10.0, 10.0])
+        }
+        view._current_annotations = {
+            "shared_hotlink": BidAnnotation(
+                uid="shared",
+                annotation_type="hotlink",
+                position=[10.0, 10.0],
+                properties={"BidPageViewUID": "view-1"},
+            )
+        }
+        view._pending_mutation_uids = {"shared_hotlink"}
+        self.assertIsNone(view.find_hotlink_at(QtCore.QPointF(10.0, 10.0)))
+
     def test_ctrl_left_press_uses_zoom_even_if_cached_ctrl_state_is_false(self):
         view = self._make_view()
         event = FakeMouseEvent(Qt.KeyboardModifier.ControlModifier)

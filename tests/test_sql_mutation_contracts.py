@@ -356,7 +356,7 @@ class SqlMutationContractTests(unittest.TestCase):
             request_hash=request.request_hash,
             result_format_version=1,
             result_payload=(
-                '{"value":{"annotation_uids":{"a":"200"},'
+                '{"value":{"annotation_uids":{"rect/a":"200"},'
                 '"condition_uids":{"c":"300"},'
                 '"takeoff_uids":{"t":"100"}},"value_available":true}'
             ),
@@ -370,7 +370,7 @@ class SqlMutationContractTests(unittest.TestCase):
             dict(recovered.created_uid_maps),
             {
                 "takeoffs": (("t", "100"),),
-                "annotations": (("a", "200"),),
+                "annotations": (("rect/a", "200"),),
                 "conditions": (("c", "300"),),
             },
         )
@@ -409,7 +409,7 @@ class SqlMutationContractTests(unittest.TestCase):
                         "layer_uids": {"l": "40"},
                         "area_uids": {"r": "50"},
                         "takeoff_uids": {"t": "60"},
-                        "annotation_uids": {"a": "70"},
+                        "annotation_uids": {"rect/a": "70"},
                     },
                     "value_available": True,
                 },
@@ -449,6 +449,54 @@ class SqlMutationContractTests(unittest.TestCase):
                 "master_data",
             ),
         )
+
+    def test_recovered_annotations_allow_target_uid_collision_across_types(self):
+        operation_id = str(uuid.uuid4())
+        request = QueuedMutationRequest(
+            database_id="database",
+            operation_id=operation_id,
+            mutation_type=CollaborationMutationType.PLAN_ITEMS_PASTE,
+            owning_surface="main-plan",
+            resources=(ResourceRef("annotation", "rect/a", 7),),
+            bid_uid=7,
+            page_uid="20",
+            payload={"source": "clipboard"},
+        )
+
+        def recover(annotation_uids):
+            durable = DurableOperationResult(
+                database_id="database",
+                operation_id=operation_id,
+                found=True,
+                mutation_type=request.mutation_type.value,
+                request_hash=request.request_hash,
+                result_format_version=1,
+                result_payload=json.dumps(
+                    {
+                        "value": {
+                            "annotation_uids": annotation_uids,
+                            "condition_uids": {},
+                            "takeoff_uids": {},
+                        },
+                        "value_available": True,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            return SqlCollaborationCoordinator._recovered_authoritative_result(
+                request,
+                durable,
+            )
+
+        recovered = recover({"rect/a": "200", "oval/b": "200"})
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered.created_resource_ids, ("200", "200"))
+        self.assertEqual(
+            dict(recovered.created_uid_maps)["annotations"],
+            (("oval/b", "200"), ("rect/a", "200")),
+        )
+        self.assertIsNone(recover({"rect/a": "200", "rect/b": "200"}))
 
 
 if __name__ == "__main__":

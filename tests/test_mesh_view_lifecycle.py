@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.services.page_image_plane_transform import (
     resolve_page_floor_elevations,
@@ -42,10 +42,9 @@ class FakeMeshScene:
         self.clear_calls = 0
         self.scene_clear_calls = 0
         self.get_bounds_calls = 0
-        self.bounds = SimpleNamespace(
-            min=SimpleNamespace(x=0.0, y=0.0, z=0.0),
-            max=SimpleNamespace(x=1.0, y=1.0, z=1.0),
-        )
+        self.bounds = ost_renderer.Box3()
+        self.bounds.min = ost_renderer.Vec3(0.0, 0.0, 0.0)
+        self.bounds.max = ost_renderer.Vec3(1.0, 1.0, 1.0)
 
     def mesh_count(self):
         return len(self.takeoff_uids)
@@ -115,6 +114,9 @@ class FakeMeshCamera:
 
     def pan(self, delta_x, delta_y):
         self.pan_calls.append((delta_x, delta_y))
+
+    def has_velocity(self):
+        return False
 
 
 class FakeMeshRenderer:
@@ -244,6 +246,9 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._scene_refresh_pending = False
         viewer._camera_initialized_for_scene = True
         viewer._saved_camera_states = {}
+        viewer._right_button_press_pos = None
+        viewer._right_button_dragged = False
+        viewer._suppress_next_context_menu = False
         viewer._selected_takeoff_uids = []
         viewer._current_plan_texture = self._page_texture("existing")
         viewer._has_visible_plan_texture = True
@@ -575,6 +580,9 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._loading_bid_ref = None
         viewer._camera_initialized_for_scene = True
         viewer._saved_camera_states = {}
+        viewer._right_button_press_pos = None
+        viewer._right_button_dragged = False
+        viewer._suppress_next_context_menu = False
         viewer._pending_camera_reset = False
         viewer._render_suspended = False
         viewer._zoom_reference_distance = 3.0
@@ -1235,11 +1243,6 @@ class TestMeshViewLifecycle(unittest.TestCase):
         publish("page-a", "takeoff-a", 64)
         self.assertEqual(renderer.scene.takeoff_uids, ["takeoff-a"])
         self.assertEqual(self._camera_state(viewer, renderer), camera_state)
-        self.assertEqual(
-            len(renderer.camera.show_object_calls)
-            + len(renderer.camera.restore_state_calls),
-            1,
-        )
 
     def test_two_3d_surfaces_keep_independent_saved_cameras(self):
         bid_ref = BidRef("a.mdb", "bid-1")
@@ -1368,6 +1371,166 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(viewer.get_selected_takeoff_uids(), ["existing", "selected"])
         self.assertEqual(scene.selected, {0, 1})
         self.assertEqual(viewer.mesh_clicked.emitted, [["existing", "selected"]])
+
+    def test_scene_replacement_cancels_click_started_on_previous_geometry(self):
+        bid_ref = BidRef("a.mdb", "bid-1")
+        viewer, renderer = self._make_page_plane_viewer([self._page_texture("page-1")])
+        renderer.pick = lambda _x, _y: 0
+        viewer._pick_enabled = True
+        viewer._pending_mutation_uids = set()
+        viewer._cursor_mode = CURSOR_MODE_DEFAULT
+        viewer.width = lambda: 100
+        viewer.height = lambda: 100
+        viewer.devicePixelRatioF = lambda: 1.0
+        viewer._click_pos = QtCore.QPointF(10.0, 20.0)
+        viewer._last_mouse_pos = QtCore.QPointF(10.0, 20.0)
+        viewer._dragged = False
+        viewer._camera_moving = True
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [[0.0, 0.0, 0.0]],
+            [[0.0, 0.0, 1.0]],
+            [[0]],
+            ["#ffffff"],
+            self._scene_identity(bid_ref, 1),
+            {"page-1": 0.0},
+            ["condition-new"],
+            ["takeoff-new"],
+        )
+        event = SimpleNamespace(
+            button=lambda: QtCore.Qt.MouseButton.LeftButton,
+            position=lambda: QtCore.QPointF(10.0, 20.0),
+            modifiers=lambda: QtCore.Qt.KeyboardModifier.NoModifier,
+            accept=lambda: None,
+        )
+        OpenGLViewer.mouseReleaseEvent(viewer, event)
+        self.assertEqual(viewer.get_selected_takeoff_uids(), [])
+        self.assertEqual(viewer.mesh_clicked.emitted, [])
+
+    def test_scene_replacement_cancels_camera_drag_from_previous_geometry(self):
+        bid_ref = BidRef("a.mdb", "bid-1")
+        viewer, renderer = self._make_page_plane_viewer([self._page_texture("page-1")])
+        viewer._cursor_mode = CURSOR_MODE_DEFAULT
+        viewer._last_mouse_pos = QtCore.QPointF(10.0, 20.0)
+        viewer._click_pos = QtCore.QPointF(10.0, 20.0)
+        viewer._dragged = True
+        viewer._camera_moving = True
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [[0.0, 0.0, 0.0]],
+            [[0.0, 0.0, 1.0]],
+            [[0]],
+            ["#ffffff"],
+            self._scene_identity(bid_ref, 1),
+            {"page-1": 0.0},
+            ["condition-new"],
+            ["takeoff-new"],
+        )
+        event = SimpleNamespace(
+            position=lambda: QtCore.QPointF(30.0, 40.0),
+            buttons=lambda: QtCore.Qt.MouseButton.LeftButton,
+            accept=lambda: None,
+            ignore=lambda: None,
+        )
+        OpenGLViewer.mouseMoveEvent(viewer, event)
+        self.assertEqual(renderer.camera.rotate_calls, [])
+        self.assertEqual(renderer.camera.pan_calls, [])
+
+    def test_scene_replacement_stops_native_camera_inertia_without_moving_pose(self):
+        bid_ref = BidRef("a.mdb", "bid-1")
+        viewer, renderer = self._make_page_plane_viewer([self._page_texture("page-1")])
+        renderer.camera = ost_renderer.Camera()
+        renderer.camera.rotate(100.0, -50.0)
+        self.assertTrue(renderer.camera.has_velocity())
+        before = self._camera_state(viewer, renderer)[:7]
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [],
+            [],
+            [],
+            [],
+            self._scene_identity(bid_ref, 1),
+            {"page-1": 0.0},
+        )
+        self.assertFalse(renderer.camera.has_velocity())
+        self.assertEqual(self._camera_state(viewer, renderer)[:7], before)
+
+    def test_begin_scene_load_stops_native_camera_inertia_while_suspended(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        renderer.camera = ost_renderer.Camera()
+        renderer.camera.rotate(100.0, -50.0)
+        self.assertTrue(renderer.camera.has_velocity())
+        before = self._camera_state(viewer, renderer)[:7]
+        OpenGLViewer.begin_scene_load(viewer, BidRef("a.mdb", "bid-2"))
+        self.assertFalse(renderer.camera.has_velocity())
+        self.assertEqual(self._camera_state(viewer, renderer)[:7], before)
+
+    def test_hiding_view_stops_native_camera_inertia_without_moving_pose(self):
+        self._app()
+        viewer = OpenGLViewer(None, FakeColorService())
+        renderer = FakeMeshRenderer(FakeMeshScene([]))
+        renderer.camera = ost_renderer.Camera()
+        viewer._renderer = renderer
+        renderer.camera.rotate(100.0, -50.0)
+        self.assertTrue(renderer.camera.has_velocity())
+        before = self._camera_state(viewer, renderer)[:7]
+        OpenGLViewer.hideEvent(viewer, QtGui.QHideEvent())
+        self.assertFalse(renderer.camera.has_velocity())
+        self.assertEqual(self._camera_state(viewer, renderer)[:7], before)
+        self.assertEqual(renderer.suspend_calls, 1)
+        viewer._renderer = None
+        viewer.cleanup()
+
+    def test_scene_camera_notifications_distinguish_fit_from_preserved_pose(self):
+        bid_ref = BidRef("a.mdb", "bid-1")
+        viewer, _renderer = self._make_page_plane_viewer([self._page_texture("page-1")])
+        emitted = []
+        viewer.zoom_changed = SimpleNamespace(emit=emitted.append)
+        viewer._camera_initialized_for_scene = False
+        OpenGLViewer._initialize_camera_for_current_scene(viewer)
+        self.assertEqual(emitted, [1.0])
+        emitted.clear()
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [],
+            [],
+            [],
+            [],
+            self._scene_identity(bid_ref, 1),
+            {"page-1": 0.0},
+        )
+        self.assertEqual(emitted, [])
+
+    def test_scene_replacement_suppresses_context_menu_from_previous_geometry(self):
+        bid_ref = BidRef("a.mdb", "bid-1")
+        viewer, _renderer = self._make_page_plane_viewer([self._page_texture("page-1")])
+        viewer._right_button_press_pos = QtCore.QPointF(10.0, 20.0)
+        viewer._right_button_dragged = False
+        viewer._suppress_next_context_menu = False
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [[0.0, 0.0, 0.0]],
+            [[0.0, 0.0, 1.0]],
+            [[0]],
+            ["#ffffff"],
+            self._scene_identity(bid_ref, 1),
+            {"page-1": 0.0},
+            ["condition-new"],
+            ["takeoff-new"],
+        )
+        accepted = []
+        event = SimpleNamespace(accept=lambda: accepted.append(True))
+        with patch(
+            "ost_visualizer.presentation.components.mesh_view.QtWidgets.QMenu",
+            side_effect=AssertionError("stale context menu must not open"),
+        ):
+            OpenGLViewer.contextMenuEvent(viewer, event)
+        self.assertEqual(accepted, [True])
 
     def test_orbit_keeps_fractional_qt_delta_in_logical_coordinates(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)

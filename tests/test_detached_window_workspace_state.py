@@ -2515,7 +2515,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._ann_write_svc = write_service or FakeAnnotationWriteService()
         window._project_write_svc = project_write_service
         window._file_path = "bid.mdb"
-        window._pending_annotation_mutation_uids = set()
+        window._pending_annotation_mutations_by_context = {}
         window._completed_sql_mutation_ids = set()
         window._geometry_edit_lease_handle = None
         window._geometry_edit_lease_request_id = ""
@@ -2666,6 +2666,97 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.pending_mutation_uids, set())
         self.assertEqual(len(undo_service.async_pushes), 1)
+
+    def test_detached_sql_annotation_failure_reselects_rekeyed_identity(self):
+        annotation = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        plan_view.annotation_key_map[("shared", "text")] = "shared"
+        changes = [("shared", "text", [1.0, 1.0], [2.0, 2.0])]
+        window._on_positions_flushed([], changes)
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        plan_view.annotation_key_map[("shared", "text")] = "shared_text"
+        plan_view.annotations = {"shared_text": annotation}
+        queued_write.geometry_calls[0][0][2](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(plan_view.selected_uids, {"shared_text"})
+
+    def test_detached_new_pending_edit_preserves_rekeyed_pending_identity(self):
+        first = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        second = BidAnnotation(
+            uid="second",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [first, second],
+            project_write_service=queued_write,
+        )
+        plan_view.annotation_key_map = {
+            ("shared", "text"): "shared",
+            ("second", "text"): "second",
+        }
+        plan_view.annotations = {"shared": first, "second": second}
+        window._on_positions_flushed([], [("shared", "text", [1.0, 1.0], [2.0, 2.0])])
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        plan_view.annotation_key_map[("shared", "text")] = "shared_text"
+        plan_view.annotations = {"shared_text": first, "second": second}
+        plan_view.pending_mutation_uids = {"shared_text"}
+        window._on_positions_flushed([], [("second", "text", [3.0, 3.0], [4.0, 4.0])])
+        self.assertEqual(
+            plan_view.pending_mutation_uids,
+            {"shared_text", "second"},
+        )
+
+    def test_detached_old_context_completion_keeps_new_same_uid_pending_edit(self):
+        annotation = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        plan_view.annotation_key_map = {("shared", "text"): "shared"}
+        plan_view.annotations = {"shared": annotation}
+        window._on_positions_flushed([], [("shared", "text", [1.0, 1.0], [2.0, 2.0])])
+        first_callback = queued_write.geometry_calls[0][0][2]
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        window._file_path = "second.mdb"
+        window.view = SimpleNamespace(bid_ref=BidRef("second.mdb", "8"))
+        plan_view.pending_mutation_uids = set()
+        window._on_positions_flushed([], [("shared", "text", [2.0, 2.0], [3.0, 3.0])])
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        first_callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
 
     def test_detached_sql_annotation_move_consumes_gesture_lease(self):
         annotation = BidAnnotation(
@@ -2847,6 +2938,34 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.pending_mutation_uids, set())
         self.assertEqual(plan_view.selected_uids, {"a1"})
+
+    def test_detached_sql_annotation_delete_failure_reselects_rekeyed_identity(self):
+        annotation = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        plan_view.annotation_key_map[("shared", "text")] = "shared"
+        plan_view.selected_uids = {"shared"}
+        window._on_elements_deleted(["shared"])
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        plan_view.annotation_key_map[("shared", "text")] = "shared_text"
+        plan_view.annotations = {"shared_text": annotation}
+        queued_write.delete_calls[0][0][4](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(plan_view.selected_uids, {"shared_text"})
 
     def test_detached_sql_failure_does_not_restore_old_page_after_navigation(self):
         annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")

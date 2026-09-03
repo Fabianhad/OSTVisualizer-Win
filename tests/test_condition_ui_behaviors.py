@@ -1211,6 +1211,79 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(placement_calls, [])
 
+    def test_sql_condition_cut_clipboard_clears_only_after_committed_move(self):
+        callbacks = []
+        completed = []
+        highlighted = []
+        bid_ref = BidRef("database", "7")
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_update(
+                _database_id,
+                _bid_uid,
+                _condition_uids,
+                _changes,
+                callback,
+            ):
+                callbacks.append(callback)
+                return len(callbacks)
+
+        sidebar = SimpleNamespace(
+            complete_cut_paste=lambda uids, revision: completed.append(
+                (list(uids), revision)
+            ),
+            window=lambda: None,
+        )
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=sidebar,
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda uids: highlighted.append(set(uids)),
+            present_queued_mutation_error=lambda *_args: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        target = {
+            "kind": "folder",
+            "folder_uid": "f1",
+            "cut": True,
+            "clipboard_revision": 3,
+        }
+        handler.on_paste_requested(["c1"], target)
+        callbacks[0](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000201",
+                outcome_status=MutationOutcomeStatus.REJECTED,
+                commit_attempted=False,
+            )
+        )
+        self.assertEqual(completed, [])
+        handler.on_paste_requested(["c1"], target)
+        callbacks[1](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000202",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(completed, [(["c1"], 3)])
+        self.assertEqual(highlighted, [{"c1"}])
+
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
         sidebar = ConditionsSidebar(None)
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
@@ -1341,6 +1414,60 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(pasted[0][1]["folder_uid"], "f1")
         self.assertTrue(pasted[0][1]["cut"])
 
+    def test_condition_cut_clipboard_retains_unconfirmed_and_partial_sources(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        sidebar.load_conditions(
+            {
+                "c1": Condition(uid="c1", name="First", ref_no=1),
+                "c2": Condition(uid="c2", name="Second", ref_no=2),
+            },
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        sidebar.set_copy_enabled(True)
+        sidebar.set_create_folder_enabled(True)
+        sidebar.highlight_conditions({"c1", "c2"})
+        sidebar._cut_selected_conditions()
+        sidebar._paste_copied_conditions(sidebar._folder_items["f1"])
+        self.assertEqual(set(sidebar._copied_condition_uids), {"c1", "c2"})
+        self.assertTrue(sidebar._condition_clipboard_cut)
+        clipboard_revision = sidebar._condition_clipboard_revision
+        sidebar.complete_cut_paste(["c1"], clipboard_revision)
+        self.assertEqual(sidebar._copied_condition_uids, ["c2"])
+        self.assertTrue(sidebar._condition_clipboard_cut)
+        self.assertTrue(sidebar._can_paste_to_item(sidebar._folder_items["f1"]))
+        sidebar.complete_cut_paste(["c2"], sidebar._condition_clipboard_revision)
+        self.assertEqual(sidebar._copied_condition_uids, [])
+        self.assertFalse(sidebar._condition_clipboard_cut)
+
+    def test_older_condition_cut_completion_preserves_newer_cut_clipboard(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        pasted = []
+        sidebar.paste_requested.connect(
+            lambda uids, target: pasted.append((list(uids), dict(target)))
+        )
+        sidebar.load_conditions(
+            {
+                "c1": Condition(uid="c1", name="First", ref_no=1),
+                "c2": Condition(uid="c2", name="Second", ref_no=2),
+            },
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        sidebar.set_copy_enabled(True)
+        sidebar.set_create_folder_enabled(True)
+        sidebar.highlight_conditions({"c1"})
+        sidebar._cut_selected_conditions()
+        sidebar._paste_copied_conditions(sidebar._folder_items["f1"])
+        clipboard_revision = pasted[0][1]["clipboard_revision"]
+        sidebar.highlight_conditions({"c1"})
+        sidebar._cut_selected_conditions()
+        sidebar.complete_cut_paste(["c1"], clipboard_revision)
+        self.assertTrue(sidebar._condition_clipboard_cut)
+        self.assertEqual(sidebar._copied_condition_uids, ["c1"])
+
     def test_stale_condition_context_targets_are_rejected_after_tree_rebuild(self):
         sidebar = ConditionsSidebar(None)
         pasted = []
@@ -1369,6 +1496,56 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             sidebar.tree.state(),
             QtWidgets.QAbstractItemView.State.EditingState,
         )
+
+    def test_condition_clipboard_drops_sources_deleted_by_remote_rebuild(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        pasted = []
+        sidebar.paste_requested.connect(
+            lambda uids, target: pasted.append((list(uids), dict(target)))
+        )
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Original", ref_no=1)},
+            {},
+            "Project",
+        )
+        sidebar.set_duplicate_enabled(True)
+        sidebar.set_copy_enabled(True)
+        sidebar.highlight_conditions({"c1"})
+        sidebar._copy_selected_conditions()
+        sidebar.load_conditions({}, {}, "Project")
+        root = sidebar.tree.topLevelItem(0)
+        self.assertFalse(sidebar._can_paste_to_item(root))
+        sidebar._paste_copied_conditions(root)
+        self.assertEqual(pasted, [])
+
+    def test_condition_clipboard_pastes_only_survivors_of_remote_rebuild(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        pasted = []
+        sidebar.paste_requested.connect(
+            lambda uids, target: pasted.append((list(uids), dict(target)))
+        )
+        sidebar.load_conditions(
+            {
+                "c1": Condition(uid="c1", name="First", ref_no=1),
+                "c2": Condition(uid="c2", name="Second", ref_no=2),
+            },
+            {},
+            "Project",
+        )
+        sidebar.set_duplicate_enabled(True)
+        sidebar.set_copy_enabled(True)
+        sidebar.highlight_conditions({"c1", "c2"})
+        sidebar._copy_selected_conditions()
+        sidebar.load_conditions(
+            {"c2": Condition(uid="c2", name="Second", ref_no=2)},
+            {},
+            "Project",
+        )
+        root = sidebar.tree.topLevelItem(0)
+        sidebar._paste_copied_conditions(root)
+        self.assertEqual(pasted[0][0], ["c2"])
 
     def test_condition_context_delete_keeps_original_selection_target(self):
         sidebar = ConditionsSidebar(None)
@@ -1415,6 +1592,30 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar._on_folder_editor_closed()
         self.assertIsNone(sidebar._editing_folder)
         self.assertEqual(sidebar._folder_items["f1"].text(0), "Replacement")
+
+    def test_condition_folder_rename_reverts_when_structure_access_is_revoked(self):
+        sidebar = ConditionsSidebar(None)
+        renamed = []
+        sidebar.folder_renamed.connect(lambda uid, name: renamed.append((uid, name)))
+        sidebar.load_conditions(
+            {}, {"f1": BidConditionFolder(uid="f1", name="Original")}, "Project"
+        )
+        sidebar.set_create_folder_enabled(True)
+        sidebar.start_folder_edit("f1")
+        item = sidebar._folder_items["f1"]
+        item.setText(0, "Unauthorized rename")
+        sidebar.set_create_folder_enabled(False)
+        sidebar._on_folder_editor_closed()
+        self.assertEqual(renamed, [])
+        self.assertEqual(item.text(0), "Original")
+
+    def test_pending_condition_folder_edit_does_not_open_after_access_loss(self):
+        sidebar = ConditionsSidebar(None)
+        sidebar.load_conditions(
+            {}, {"f1": BidConditionFolder(uid="f1", name="Original")}, "Project"
+        )
+        sidebar.start_folder_edit("f1")
+        self.assertIsNone(sidebar._editing_folder)
 
     def test_condition_folder_delete_uses_structure_not_condition_delete(self):
         sidebar = ConditionsSidebar(None)
@@ -1869,6 +2070,18 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar.set_edit_enabled(True)
         sidebar._on_item_double_clicked(sidebar._condition_items["c1"], 1)
         self.assertEqual(edits, [])
+        sidebar.close()
+
+    def test_inline_condition_rename_reverts_when_edit_access_is_revoked(self):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        renamed = []
+        sidebar.condition_renamed.connect(lambda uid, name: renamed.append((uid, name)))
+        sidebar.set_edit_enabled(True)
+        item = sidebar._condition_items["c1"]
+        sidebar.set_edit_enabled(False)
+        item.setText(1, "Unauthorized rename")
+        self.assertEqual(renamed, [])
+        self.assertEqual(item.text(1), "Condition 1")
         sidebar.close()
 
     def test_edit_condition_dialog_initializes_style_locked_when_takeoffs_exist(self):

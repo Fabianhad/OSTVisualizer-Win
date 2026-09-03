@@ -17,6 +17,8 @@ from tests.sql_integration_support import (
     DisposableSqlDatabase,
     _require_test_database_name,
 )
+
+
 def _execute_batch(
     manager: SqlConnectionManager,
     request: SqlConnectionRequest,
@@ -37,6 +39,8 @@ def _execute_batch(
             cursor.close()
     finally:
         connection.close()
+
+
 class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
     def test_authentication_encryption_and_engine_capabilities(self):
         configuration = DisposableSqlConfiguration.from_environment()
@@ -81,6 +85,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
                 )
                 permission_row = cursor.fetchone()
         self.assertEqual(tuple(map(int, permission_row)), (0, 0, 0))
+
     def test_change_tracking_rowversion_transactions_and_application_locks(self):
         configuration = DisposableSqlConfiguration.from_environment()
         with DisposableSqlDatabase(configuration) as database:
@@ -184,6 +189,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
                             resource,
                         )
                         self.assertGreaterEqual(int(second_cursor.fetchone()[0]), 0)
+
     def test_executor_cannot_bypass_guarded_database_procedures(self):
         configuration = DisposableSqlConfiguration.from_environment()
         direct_name = f"OSTV_IT_DIRECT_DENIED_{secrets.token_hex(6)}"
@@ -252,6 +258,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
                 with manager.connection(executor_master, autocommit=True) as lease:
                     with lease.cursor() as cursor:
                         cursor.execute(f"DROP DATABASE [{database.database_name}]")
+
     def test_disposable_database_is_removed_after_test_failure(self):
         configuration = DisposableSqlConfiguration.from_environment()
         database = DisposableSqlDatabase(configuration)
@@ -271,6 +278,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
             with lease.cursor() as cursor:
                 cursor.execute("SELECT DB_ID(?)", database.database_name)
                 self.assertIsNone(cursor.fetchone()[0])
+
     def test_guarded_restore_preserves_data_and_database_marker(self):
         configuration = DisposableSqlConfiguration.from_environment()
         backup_root = os.path.join(
@@ -399,6 +407,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
                         )
             if backup_path and os.path.exists(backup_path):
                 os.remove(backup_path)
+
     def test_temporary_reader_editor_and_admin_role_boundaries(self):
         configuration = DisposableSqlConfiguration.from_environment()
         suffix = secrets.token_hex(6).upper()
@@ -538,6 +547,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
                             f"IF SUSER_ID(N'{login}') IS NOT NULL "
                             f"DROP LOGIN [{login}]"
                         )
+
     @staticmethod
     def _sql_login_request(
         database: DisposableSqlDatabase,
@@ -550,6 +560,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
             username=username,
         )
         return SqlConnectionRequest(location, password=password)
+
     @staticmethod
     def _database_permissions(
         database: DisposableSqlDatabase,
@@ -570,5 +581,7 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
                     "ISNULL(IS_ROLEMEMBER(N'db_datawriter'), 0)"
                 )
                 return tuple(map(int, cursor.fetchone()))
+
+
 if __name__ == "__main__":
     unittest.main()

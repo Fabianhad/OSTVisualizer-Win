@@ -514,6 +514,9 @@ class ToolbarStateCoordinator:
     def _can_paste_bid_clipboard(self) -> bool:
         if not self.bid_clipboard or not self.bid_clipboard.has_content():
             return False
+        self.bid_clipboard.reconcile(self._project_data.get_hierarchy())
+        if not self.bid_clipboard.has_content():
+            return False
         target_file_path = self._ui_state.selected_file_path
         if not target_file_path:
             return False

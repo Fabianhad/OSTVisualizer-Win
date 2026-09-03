@@ -146,6 +146,8 @@ class BidLayersSidebar(QtWidgets.QWidget):
 
     def set_interactive(self, enabled: bool) -> None:
         self._interactive = enabled
+        if not enabled and self._pending_new_item is not None:
+            self._remove_pending_new_layer()
         for checkbox in self._checkboxes:
             checkbox.setEnabled(enabled)
         self._sync_top_buttons()
@@ -265,6 +267,11 @@ class BidLayersSidebar(QtWidgets.QWidget):
             return
         layer = self._layers[row]
         if layer.is_template or layer.is_locked:
+            return
+        if not self._interactive:
+            self._block_item_changed = True
+            item.setText(1, layer.name)
+            self._block_item_changed = False
             return
         new_name = item.text(1).strip()
         if not new_name:

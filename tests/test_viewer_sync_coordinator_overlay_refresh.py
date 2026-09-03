@@ -8662,6 +8662,200 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(renderer.calls, [])
         self.assertNotIn("refresh_overlays", calls)
 
+    def test_dirty_positions_preserve_each_table_scoped_annotation_identity(self):
+        view = SimpleNamespace(
+            _dirty_ann_positions={
+                "shared_text": (ANNOTATION_TYPE_TEXT, [10.0, 11.0]),
+                "shared_hotlink": (ANNOTATION_TYPE_HOTLINK, [20.0, 21.0]),
+            },
+            _ann_db_uid_map={
+                "shared_text": "shared",
+                "shared_hotlink": "shared",
+            },
+        )
+        annotations = [
+            self._text_annotation(uid="shared", text="old"),
+            self._hotlink_annotation(uid="shared"),
+        ]
+        refreshed = TakeoffPlanView._annotations_with_dirty_positions(
+            view,
+            annotations,
+        )
+        self.assertEqual(refreshed[0].position, [10.0, 11.0])
+        self.assertEqual(refreshed[1].position, [20.0, 21.0])
+
+    def test_full_refresh_keeps_annotation_selected_when_takeoff_claims_raw_uid(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, _calls = self._make_incremental_refresh_view(renderer)
+        annotation = self._text_annotation(uid="2")
+        self._install_annotation_item(view, annotation)
+        view._selected_uids = {"2"}
+        view._clear_text_selection = lambda: None
+        view._remove_text_annotation_draft = lambda: None
+        view._remove_named_view_draft = lambda: None
+        view.clear_selection_items = lambda: view._selection_items.clear()
+        view._remove_rotate_handle = lambda: None
+        view._apply_page_transform_to_items = lambda: None
+        view._cancel_backout_if_invalid = lambda: None
+        view._cursor_mode = "select"
+        takeoffs = [
+            view._current_takeoffs["1"],
+            Takeoff(
+                uid="2",
+                condition_uid="c1",
+                page_uid=page.uid,
+                position=[3.0, 4.0],
+            ),
+        ]
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=takeoffs,
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[annotation],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=["2"],
+        )
+        annotation_keys = view.find_annotation_keys_by_uid_type(
+            {("2", ANNOTATION_TYPE_TEXT)}
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(view._selected_uids, annotation_keys)
+        self.assertNotEqual(view._selected_uids, {"2"})
+
+    def test_forced_page_reload_keeps_annotation_selection_by_typed_identity(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        annotation = self._text_annotation(uid="2")
+        condition = Condition(uid="c1", condition_type=Condition.TYPE_COUNT)
+        self.assertTrue(
+            view.load_page(
+                page,
+                [],
+                {"c1": condition},
+                {"c1": "#000000"},
+                annotations=[annotation],
+            )
+        )
+        view.set_selected_uids({"2"})
+        self.assertTrue(
+            view._load_page_impl(
+                page,
+                [
+                    Takeoff(
+                        uid="2",
+                        condition_uid="c1",
+                        page_uid=page.uid,
+                        position=[3.0, 4.0],
+                    )
+                ],
+                {"c1": condition},
+                {"c1": "#000000"},
+                annotations=[annotation],
+                force_visual_reload=True,
+            )
+        )
+        annotation_keys = view.find_annotation_keys_by_uid_type(
+            {("2", ANNOTATION_TYPE_TEXT)}
+        )
+        self.assertEqual(view._selected_uids, annotation_keys)
+        self.assertNotEqual(view._selected_uids, {"2"})
+        view.cleanup()
+
+    def test_forced_page_reload_keeps_pending_state_on_typed_annotation(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        annotation = self._text_annotation(uid="2")
+        condition = Condition(uid="c1", condition_type=Condition.TYPE_COUNT)
+        self.assertTrue(
+            view.load_page(
+                page,
+                [],
+                {"c1": condition},
+                {"c1": "#000000"},
+                annotations=[annotation],
+            )
+        )
+        view.set_pending_mutation_uids({"2"})
+        self.assertTrue(
+            view._load_page_impl(
+                page,
+                [
+                    Takeoff(
+                        uid="2",
+                        condition_uid="c1",
+                        page_uid=page.uid,
+                        position=[3.0, 4.0],
+                    )
+                ],
+                {"c1": condition},
+                {"c1": "#000000"},
+                annotations=[annotation],
+                force_visual_reload=True,
+            )
+        )
+        annotation_key = next(
+            iter(view.find_annotation_keys_by_uid_type({("2", ANNOTATION_TYPE_TEXT)}))
+        )
+        self.assertEqual(view.get_pending_mutation_uids(), {annotation_key})
+        self.assertTrue(
+            all(item.opacity() == 0.35 for item in view._uid_to_items[annotation_key])
+        )
+        view.cleanup()
+
+    def test_full_refresh_keeps_surviving_same_uid_annotation_selected(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, _calls = self._make_incremental_refresh_view(renderer)
+        text = self._text_annotation(uid="shared")
+        hotlink = self._hotlink_annotation(uid="shared")
+        self._install_annotation_item(view, text)
+        self._install_annotation_item(
+            view,
+            hotlink,
+            key="shared_hotlink",
+            hotlink=True,
+        )
+        view._ann_db_uid_map["shared_hotlink"] = "shared"
+        view._selected_uids = {"shared_hotlink"}
+        view._clear_text_selection = lambda: None
+        view._remove_text_annotation_draft = lambda: None
+        view._remove_named_view_draft = lambda: None
+        view.clear_selection_items = lambda: view._selection_items.clear()
+        view._remove_rotate_handle = lambda: None
+        view._apply_page_transform_to_items = lambda: None
+        view._cancel_backout_if_invalid = lambda: None
+        view._cursor_mode = "select"
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[hotlink],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["shared"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        annotation_keys = view.find_annotation_keys_by_uid_type(
+            {("shared", ANNOTATION_TYPE_HOTLINK)}
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(view._selected_uids, annotation_keys)
+        self.assertEqual(annotation_keys, {"shared"})
+
     def test_multi_page_annotation_metadata_uses_full_refresh(self):
         renderer = RecordingPathTakeoffRenderer()
         view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)

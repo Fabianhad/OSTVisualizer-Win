@@ -26,6 +26,7 @@ from ...application.dtos.collaboration_dtos import (
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
     CollaborationResourceType,
+    parse_annotation_resource_id,
     resource_families_affect_page,
 )
 from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
@@ -200,6 +201,7 @@ class UIEventCoordinator:
         self._toolbar = ToolbarStateCoordinator(
             ui_state_manager, ui_access_manager, self.project_data
         )
+        self._bid_clipboard = None
         self._app_config_presentation = AppConfigPresentationManager()
         self._placement = PlacementCoordinator(
             ui_state_manager=ui_state_manager,
@@ -228,6 +230,7 @@ class UIEventCoordinator:
         self._mesh_window: Optional[MeshViewWindow] = None
         self._mesh_window_action: Optional[QtGui.QAction] = None
         self._last_mesh_scene: Optional[_MeshScenePublication] = None
+        self._pending_3d_takeoff_uids_by_database: dict[str, set[str]] = {}
         self._mesh_scene_dirty: bool = False
         self._dirty_mesh_page_uids: set[str] = set()
         self._pending_dirty_mesh_refresh: bool = False
@@ -262,6 +265,7 @@ class UIEventCoordinator:
         self._toolbar.refresh()
 
     def set_bid_clipboard(self, clipboard) -> None:
+        self._bid_clipboard = clipboard
         self._toolbar.set_bid_clipboard(clipboard)
         self._toolbar.refresh()
 
@@ -463,6 +467,10 @@ class UIEventCoordinator:
     def set_opengl_viewer(self, viewer) -> None:
         self.opengl_viewer = viewer
         self._toolbar.opengl_viewer = viewer
+        self._project_pending_3d_mutations(
+            viewer,
+            self.ui_state_manager.get_selected_bid_ref(),
+        )
         if self._plan_texture_provider:
             viewer.set_plan_texture_provider(self._plan_texture_provider)
         viewer.mesh_clicked.connect(self._on_3d_mesh_clicked)
@@ -560,6 +568,10 @@ class UIEventCoordinator:
                 lambda _object: self._on_mesh_window_destroyed(window_identity)
             )
             self._mesh_window = window
+            self._project_pending_3d_mutations(
+                window,
+                self.ui_state_manager.get_selected_bid_ref(),
+            )
             self._refresh_mesh_window_access()
             if self._plan_texture_provider:
                 window.set_plan_texture_provider(self._plan_texture_provider)
@@ -630,7 +642,16 @@ class UIEventCoordinator:
             return False
         surface.prepare_scene_refresh(active_bid_ref, active_pages)
         publication.apply_to(surface)
+        self._project_pending_3d_mutations(surface, active_bid_ref)
         return True
+
+    def _project_pending_3d_mutations(self, surface, bid_ref: Optional[BidRef]) -> None:
+        takeoff_uids = (
+            self._pending_3d_takeoff_uids_by_database.get(bid_ref.file_path, set())
+            if bid_ref is not None
+            else set()
+        )
+        surface.set_pending_mutation_uids(takeoff_uids)
 
     def _clear_mesh_replay_buffer(self) -> None:
         self._last_mesh_scene = None
@@ -649,6 +670,7 @@ class UIEventCoordinator:
         self._invalidate_mesh_scene_request()
         for view in self._native_3d_views():
             view.begin_scene_load(bid_ref)
+            self._project_pending_3d_mutations(view, bid_ref)
 
     def _discard_mesh_camera_states(
         self,
@@ -2680,6 +2702,7 @@ class UIEventCoordinator:
         if self._bid_data_cache:
             cleanup_step(self._bid_data_cache.clear)
         self._bid_data_cache = None
+        self._pending_3d_takeoff_uids_by_database.clear()
         if self._mesh_window is not None:
             cleanup_step(self._mesh_window.close)
             self._mesh_window = None
@@ -2705,6 +2728,7 @@ class UIEventCoordinator:
         self._sidebar = None
         self._viewer = None
         self._toolbar = None
+        self._bid_clipboard = None
         self._undo_service = None
         self.main_window = None
         self.ui_state_manager = None
@@ -2871,15 +2895,17 @@ class UIEventCoordinator:
         takeoff_uids: Optional[List[str]] = None,
         pending: bool = True,
     ) -> None:
+        changed = {str(uid) for uid in (takeoff_uids or ()) if uid}
+        current = set(self._pending_3d_takeoff_uids_by_database.get(database_id, set()))
+        next_uids = current.union(changed) if pending else current.difference(changed)
+        if next_uids:
+            self._pending_3d_takeoff_uids_by_database[database_id] = next_uids
+        else:
+            self._pending_3d_takeoff_uids_by_database.pop(database_id, None)
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected is None or selected.file_path != database_id:
             return
-        changed = {str(uid) for uid in (takeoff_uids or ()) if uid}
         for view in self._native_3d_views():
-            existing = view.get_pending_mutation_uids()
-            next_uids = (
-                existing.union(changed) if pending else existing.difference(changed)
-            )
             view.set_pending_mutation_uids(next_uids)
 
     def _on_remote_bid_content_changed(
@@ -2961,11 +2987,24 @@ class UIEventCoordinator:
             affected_pages,
             self.ui_state_manager.active_page_uid,
         ):
+            annotation_identities = tuple(
+                parse_annotation_resource_id(resource_id)
+                for resource_id in (
+                    changed_uids.get(CollaborationResourceFamily.ANNOTATIONS.value)
+                    or ()
+                )
+            )
             self._on_annotations_changed(
                 page_uid=self.ui_state_manager.active_page_uid,
                 annotation_uids=(
-                    changed_uids.get(CollaborationResourceFamily.ANNOTATIONS.value)
-                    or None
+                    [uid for _annotation_type, uid in annotation_identities]
+                    if annotation_identities
+                    else None
+                ),
+                annotation_types=(
+                    [annotation_type for annotation_type, _uid in annotation_identities]
+                    if annotation_identities
+                    else None
                 ),
                 update_shell=False,
                 update_plan=(
@@ -3256,6 +3295,7 @@ class UIEventCoordinator:
         active_bid = self.project_data.get_current_bid_ref()
         selected_bid = self.ui_state_manager.get_selected_bid_ref()
         selected_database_id = self.ui_state_manager.selected_file_path
+        selected_node_before = self.main_window.project_view.get_selected_node_state()
         self._do_file_refresh()
         if self.project_data.get_current_file_path() and normalize_path(
             self.project_data.get_current_file_path()
@@ -3287,6 +3327,9 @@ class UIEventCoordinator:
                 and self.project_data.get_bid(restored_bid) is not None
             ):
                 self.handle_bid_selection(restored_bid, force=True)
+                return
+            if selected_node != selected_node_before:
+                self.main_window.project_view.notify_current_selection()
                 return
             if (
                 not self.ui_state_manager.selected_file_path
@@ -3647,6 +3690,9 @@ class UIEventCoordinator:
     ) -> None:
         self.project_operations.cancel_navigation_load(file_path)
         removed_path = file_path or ""
+        self._pending_3d_takeoff_uids_by_database.pop(removed_path, None)
+        if self._bid_clipboard is not None:
+            self._bid_clipboard.clear_for_file(removed_path)
         selected_path = self.ui_state_manager.selected_file_path
         if removed_path and selected_path:
             active_context_removed = active_context_removed or (
@@ -3668,6 +3714,8 @@ class UIEventCoordinator:
         self._reset_takeoff_workspace_state()
         self._viewer.clear_plan_view()
         self._clear_mesh_views_for_scene_update()
+        for view in self._native_3d_views():
+            self._project_pending_3d_mutations(view, None)
         self._discard_mesh_camera_states(file_path=removed_path)
         self._set_takeoff_tab_visible(False)
         self._refresh_project_tree_after_file_unload()
@@ -3862,6 +3910,7 @@ class UIEventCoordinator:
         )
         for surface in live_surfaces:
             publication.apply_to(surface)
+            self._project_pending_3d_mutations(surface, bid_ref)
         if selected_pages and live_surfaces:
             self._plan_view_signaler.request()
 

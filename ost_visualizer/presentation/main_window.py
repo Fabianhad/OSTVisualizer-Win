@@ -1306,11 +1306,26 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._can_paste_project_bids(file_path, target_project_uid):
             return
         is_cut = self._bid_clipboard.is_cut
-        success = self.handlers.delete.paste_bids(
-            self._bid_clipboard.bid_refs, target_project_uid, is_cut=is_cut
-        )
-        if success and is_cut:
-            self._bid_clipboard.clear()
+        if is_cut:
+            cut_refs = self._bid_clipboard.bid_refs
+            clipboard_revision = self._bid_clipboard.ownership_revision
+
+            def cut_committed() -> None:
+                if self._bid_clipboard.complete_cut(clipboard_revision, cut_refs):
+                    self.handlers.ui_event.refresh_toolbar()
+
+            self.handlers.delete.paste_bids(
+                cut_refs,
+                target_project_uid,
+                is_cut=True,
+                on_cut_committed=cut_committed,
+            )
+        else:
+            self.handlers.delete.paste_bids(
+                self._bid_clipboard.bid_refs,
+                target_project_uid,
+                is_cut=False,
+            )
         self.handlers.ui_event.refresh_toolbar()
 
     def _can_paste_project_bids(
@@ -1318,6 +1333,7 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> bool:
         if target_project_uid == DELETED_BIDS_PROJECT_UID:
             return False
+        self._bid_clipboard.reconcile(self._project_data_service.get_hierarchy())
         if not self._bid_clipboard.has_content():
             return False
         if not self._bid_clipboard.source_matches_file(file_path):

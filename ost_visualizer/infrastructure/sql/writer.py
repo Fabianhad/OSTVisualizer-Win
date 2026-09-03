@@ -10,6 +10,7 @@ from typing import Callable, Generator, Optional, Sequence, TypeVar
 import pyodbc
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceType,
+    annotation_resource_id,
     coalesced_resource_type,
     resource_definition,
 )
@@ -1124,7 +1125,10 @@ class SqlProjectWriter(MdbWriter):
             )
             table_uid_maps = self._write_remapped_identity_graph(connection, remapped)
         annotation_uids = {
-            source_uid: actual_uid
+            annotation_resource_id(
+                ANNOTATION_TYPE_BY_TABLE[table],
+                source_uid,
+            ): actual_uid
             for table, uid_map in table_uid_maps.items()
             if table in ANNOTATION_TYPE_BY_TABLE
             for source_uid, actual_uid in uid_map.items()

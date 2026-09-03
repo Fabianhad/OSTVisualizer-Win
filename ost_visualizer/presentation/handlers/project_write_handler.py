@@ -365,11 +365,15 @@ class ProjectWriteHandler:
         bid_refs: List[BidRef],
         target_project_uid: Optional[str],
         is_cut: bool = False,
+        on_cut_committed: Optional[Callable[[], None]] = None,
     ) -> bool:
         if not bid_refs:
             return True
-        if len({ref.file_path for ref in bid_refs}) != 1:
+        grouped_refs = self._group_bids_by_file(bid_refs)
+        if len(grouped_refs) != 1:
             return False
+        file_path, bid_uids = next(iter(grouped_refs.items()))
+        bid_refs = [BidRef(file_path, bid_uid) for bid_uid in bid_uids]
         source_projects = (
             {}
             if is_cut
@@ -378,7 +382,6 @@ class ProjectWriteHandler:
                 for ref in bid_refs
             }
         )
-        file_path = bid_refs[0].file_path
         if not self._flush_deferred_for_file(file_path):
             return False
         if self._uses_sql_queue(file_path):
@@ -393,6 +396,11 @@ class ProjectWriteHandler:
                         bid_uids,
                         target_project_uid,
                         callback,
+                    ),
+                    (
+                        (lambda _result: on_cut_committed())
+                        if on_cut_committed is not None
+                        else None
                     ),
                 )
             return self._submit_sql_hierarchy_operation(
@@ -461,6 +469,8 @@ class ProjectWriteHandler:
             and paste_result is not None
             and paste_result.success
         ):
+            if is_cut and on_cut_committed is not None:
+                on_cut_committed()
             if not paste_result.reload_success:
                 logger.error("Bid paste completed but database reload failed")
                 show_warning(
@@ -605,10 +615,13 @@ class ProjectWriteHandler:
         self._delete_bids(bid_refs, selection_after_delete)
 
     def _group_bids_by_file(self, bid_refs: List[BidRef]) -> Dict[str, List[str]]:
-        out: Dict[str, List[str]] = defaultdict(list)
+        grouped: Dict[str, tuple[str, List[str]]] = {}
         for ref in bid_refs:
-            out[ref.file_path].append(ref.bid_uid)
-        return out
+            key = normalize_path(ref.file_path)
+            if key not in grouped:
+                grouped[key] = (ref.file_path, [])
+            grouped[key][1].append(ref.bid_uid)
+        return {file_path: uids for file_path, uids in grouped.values()}
 
     def _delete_bids(
         self, bid_refs: List[BidRef], selection_after_delete: Optional[dict] = None

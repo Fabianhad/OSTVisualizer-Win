@@ -479,6 +479,35 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         self.assertEqual(len(emitted_positions), 1)
 
+    def test_tree_rebuild_cancels_context_menu_press_from_previous_rows(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        self.view.top_tree.expandAll()
+        old_item = self._find_item("bid-1")
+        self.view.top_tree.scrollToItem(old_item)
+        self.app.processEvents()
+        pos = self.view.top_tree.visualItemRect(old_item).center()
+        emitted_positions = []
+        self.view.top_tree.customContextMenuRequested.disconnect()
+        self.view.top_tree.customContextMenuRequested.connect(
+            lambda emitted_pos: emitted_positions.append(emitted_pos)
+        )
+        QtTest.QTest.mousePress(
+            self.view.top_tree.viewport(),
+            QtCore.Qt.MouseButton.RightButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+            pos,
+        )
+        self.view.build_complete_structure(self._loaded_file(["bid-2"]))
+        self.view.top_tree.expandAll()
+        self.app.processEvents()
+        QtTest.QTest.mouseRelease(
+            self.view.top_tree.viewport(),
+            QtCore.Qt.MouseButton.RightButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+            pos,
+        )
+        self.assertEqual(emitted_positions, [])
+
     def test_context_menu_paste_target_uses_right_clicked_project(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         target_project = self._find_item("project-2")

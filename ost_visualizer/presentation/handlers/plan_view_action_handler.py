@@ -18,6 +18,10 @@ from ...application.dtos.collaboration_dtos import (
     is_queued_takeoff_preview_uid,
     queued_takeoff_preview_uid,
 )
+from ...application.dtos.collaboration_resource_catalog import (
+    annotation_resource_id,
+    parse_annotation_resource_id,
+)
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
 from ...domain.entities.annotation import (
@@ -134,7 +138,8 @@ class PlanViewActionHandler:
             annotation_write_svc, project_data_svc, event_bus
         )
         self._pending_takeoff_placements: dict[str, _PendingTakeoffPlacement] = {}
-        self._pending_plan_mutation_uids: set[str] = set()
+        self._pending_plan_takeoff_uids_by_database: dict[str, set[str]] = {}
+        self._pending_plan_annotations_by_database: dict[str, set[tuple[str, str]]] = {}
         self._completed_sql_mutation_ids: set[str] = set()
         self._geometry_edit_lease_handle: Optional[EditLeaseHandle] = None
         self._geometry_edit_lease_request_id = ""
@@ -162,12 +167,34 @@ class PlanViewActionHandler:
         plan_uids: set[str],
         takeoff_uids: set[str],
         pending: bool,
+        annotation_identities: set[tuple[str, str]] = frozenset(),
     ) -> None:
+        database_key = str(database_id)
+        pending_takeoffs = self._pending_plan_takeoff_uids_by_database.setdefault(
+            database_key, set()
+        )
+        pending_annotations = self._pending_plan_annotations_by_database.setdefault(
+            database_key, set()
+        )
+        pending_takeoff_uids = set(plan_uids).intersection(takeoff_uids)
         if pending:
-            self._pending_plan_mutation_uids.update(plan_uids)
+            pending_takeoffs.update(pending_takeoff_uids)
+            pending_annotations.update(annotation_identities)
         else:
-            self._pending_plan_mutation_uids.difference_update(plan_uids)
-        self._plan_view.set_pending_mutation_uids(set(self._pending_plan_mutation_uids))
+            pending_takeoffs.difference_update(pending_takeoff_uids)
+            pending_annotations.difference_update(annotation_identities)
+        if not pending_takeoffs:
+            self._pending_plan_takeoff_uids_by_database.pop(database_key, None)
+        if not pending_annotations:
+            self._pending_plan_annotations_by_database.pop(database_key, None)
+        active_bid = self._ui_state.get_selected_bid_ref()
+        active_database = str(active_bid.file_path) if active_bid is not None else ""
+        self._plan_view.set_pending_mutation_uids(
+            self._current_plan_keys_for_identities(
+                self._pending_plan_takeoff_uids_by_database.get(active_database, set()),
+                self._pending_plan_annotations_by_database.get(active_database, set()),
+            )
+        )
         self._event_bus.publish(
             AppEvents.PENDING_PLAN_MUTATIONS_CHANGED,
             database_id=database_id,
@@ -184,6 +211,31 @@ class PlanViewActionHandler:
         if not plan_uids or not self._plan_context_is_current(bid_ref, page_uids):
             return
         self._plan_view.set_selected_uids(set(plan_uids))
+
+    def _current_plan_keys_for_identities(
+        self,
+        takeoff_uids: set[str],
+        annotation_identities: set[tuple[str, str]],
+    ) -> set[str]:
+        return set(takeoff_uids).union(
+            self._plan_view.find_annotation_keys_by_uid_type(annotation_identities)
+        )
+
+    def _plan_identities_for_keys(
+        self, plan_uids: set[str]
+    ) -> tuple[set[str], set[tuple[str, str]]]:
+        takeoff_uids: set[str] = set()
+        annotation_identities: set[tuple[str, str]] = set()
+        for uid in plan_uids:
+            if self._current_plan_takeoff(uid) is not None:
+                takeoff_uids.add(uid)
+                continue
+            annotation = self._plan_view.get_annotation(uid)
+            if annotation is not None:
+                annotation_identities.add(
+                    (str(annotation.uid), str(annotation.annotation_type))
+                )
+        return takeoff_uids, annotation_identities
 
     def _plan_context_is_current(self, bid_ref, page_uids: tuple[str, ...]) -> bool:
         if self._ui_state.get_selected_bid_ref() != bid_ref:
@@ -706,6 +758,7 @@ class PlanViewActionHandler:
             plan_uids,
             takeoff_uids,
             True,
+            annotation_identities,
         )
         handler_ref = weakref.ref(self)
 
@@ -734,6 +787,11 @@ class PlanViewActionHandler:
                 plan_uids,
                 takeoff_uids,
                 False,
+                annotation_identities,
+            )
+            current_plan_uids = handler._current_plan_keys_for_identities(
+                takeoff_uids,
+                annotation_identities,
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 if handler._plan_context_is_current(bid_ref, page_uids):
@@ -741,13 +799,13 @@ class PlanViewActionHandler:
                 handler._restore_plan_selection_if_current(
                     bid_ref,
                     page_uids,
-                    plan_uids,
+                    current_plan_uids,
                 )
                 return
             handler._restore_plan_selection_if_current(
                 bid_ref,
                 page_uids,
-                plan_uids,
+                current_plan_uids,
             )
             handler._push_sql_geometry_history(
                 bid_ref,
@@ -825,6 +883,7 @@ class PlanViewActionHandler:
         old_updates: list = (),
         plan_uids: set[str],
         takeoff_uids: set[str] = frozenset(),
+        annotation_identities: set[tuple[str, str]] = frozenset(),
         page_uids: tuple[str, ...] = (),
         dependency_resources: tuple[ResourceRef, ...] = (),
         restore=None,
@@ -835,6 +894,7 @@ class PlanViewActionHandler:
             plan_uids,
             takeoff_uids,
             True,
+            annotation_identities,
         )
         handler_ref = weakref.ref(self)
 
@@ -854,6 +914,15 @@ class PlanViewActionHandler:
                 plan_uids,
                 takeoff_uids,
                 False,
+                annotation_identities,
+            )
+            current_plan_uids = (
+                handler._current_plan_keys_for_identities(
+                    takeoff_uids,
+                    annotation_identities,
+                )
+                if annotation_identities
+                else plan_uids
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 if restore is not None and handler._plan_context_is_current(
@@ -863,13 +932,13 @@ class PlanViewActionHandler:
                 handler._restore_plan_selection_if_current(
                     bid_ref,
                     page_uids,
-                    plan_uids,
+                    current_plan_uids,
                 )
                 return
             handler._restore_plan_selection_if_current(
                 bid_ref,
                 page_uids,
-                plan_uids,
+                current_plan_uids,
             )
             if old_updates:
                 handler._push_sql_property_history(
@@ -1570,6 +1639,7 @@ class PlanViewActionHandler:
                     if old_props is not None
                 ],
                 plan_uids=plan_uids,
+                annotation_identities=identities,
                 page_uids=page_uids,
                 restore=lambda: self._plan_view.restore_annotation_text_properties(
                     changes
@@ -1635,6 +1705,7 @@ class PlanViewActionHandler:
                     if old_style is not None
                 ],
                 plan_uids=plan_uids,
+                annotation_identities=identities,
                 page_uids=page_uids,
                 restore=lambda: self._plan_view.restore_annotation_styles(changes),
             )
@@ -2233,7 +2304,10 @@ class PlanViewActionHandler:
             for uid in placement.pending_uids
             if (
                 self._data_svc.get_takeoff(uid) is not None
-                or uid in self._pending_plan_mutation_uids
+                or uid
+                in self._pending_plan_takeoff_uids_by_database.get(
+                    placement.database_id, set()
+                )
             )
         ]
         if not removed_uids:
@@ -2448,7 +2522,10 @@ class PlanViewActionHandler:
         after_success=None,
     ) -> None:
         self._annotation_writes.apply_default_annotation_layer(specs)
-        source_uids = tuple(str(uuid.uuid4()) for _spec in specs)
+        source_uids = tuple(
+            annotation_resource_id(spec.annotation_type, str(uuid.uuid4()))
+            for spec in specs
+        )
         payload = PlanItemsPastePayload(
             source_bid_uid=str(bid_ref.bid_uid),
             destination_bid_uid=str(bid_ref.bid_uid),
@@ -2860,6 +2937,7 @@ class PlanViewActionHandler:
                 saved_annotations,
                 saved_takeoff_extras,
                 skipped_selection_keys,
+                set(annotation_selection_keys),
             )
             return
         if simple_takeoff_delete:
@@ -3023,11 +3101,13 @@ class PlanViewActionHandler:
         saved_annotations: list,
         saved_takeoff_extras: dict,
         skipped_selection_keys: set[str],
+        requested_annotation_identities: set[tuple[str, str]],
     ) -> None:
         takeoff_uids = [str(item.uid) for item in saved_takeoffs]
         annotations = [
             (str(item.uid), str(item.annotation_type)) for item in saved_annotations
         ]
+        pending_annotation_identities = set(annotations)
         page_uids = tuple(
             dict.fromkeys(
                 str(item.page_uid)
@@ -3048,11 +3128,22 @@ class PlanViewActionHandler:
         }
         plan_uids = set(requested_selection_uids).difference(skipped_selection_keys)
         takeoff_uid_set = set(takeoff_uids)
+        requested_takeoff_uids = set(requested_selection_uids).intersection(
+            takeoff_uid_set
+        )
+        skipped_annotation_identities = {
+            identity
+            for identity in requested_annotation_identities
+            if set(
+                self._plan_view.find_annotation_keys_by_uid_type({identity})
+            ).intersection(skipped_selection_keys)
+        }
         self._set_plan_items_pending(
             bid_ref.file_path,
             plan_uids,
             takeoff_uid_set,
             True,
+            pending_annotation_identities,
         )
         self._plan_view.set_selected_uids(set(skipped_selection_keys))
         handler_ref = weakref.ref(self)
@@ -3073,18 +3164,29 @@ class PlanViewActionHandler:
                 plan_uids,
                 takeoff_uid_set,
                 False,
+                pending_annotation_identities,
+            )
+            current_requested_annotations = set(
+                handler._plan_view.find_annotation_keys_by_uid_type(
+                    requested_annotation_identities
+                )
+            )
+            current_skipped_annotations = set(
+                handler._plan_view.find_annotation_keys_by_uid_type(
+                    skipped_annotation_identities
+                )
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 handler._restore_plan_selection_if_current(
                     bid_ref,
                     page_uids,
-                    set(requested_selection_uids).union(skipped_selection_keys),
+                    requested_takeoff_uids.union(current_requested_annotations),
                 )
                 return
             handler._restore_plan_selection_if_current(
                 bid_ref,
                 page_uids,
-                skipped_selection_keys,
+                current_skipped_annotations,
             )
             handler._push_sql_delete_history(
                 bid_ref,
@@ -3139,7 +3241,10 @@ class PlanViewActionHandler:
                 )
                 for item in saved_takeoffs
             ),
-            annotation_source_uids=tuple(str(item.uid) for item in saved_annotations),
+            annotation_source_uids=tuple(
+                annotation_resource_id(item.annotation_type, item.uid)
+                for item in saved_annotations
+            ),
             annotation_specs=tuple(
                 self._annotation_writes.annotation_specs_from_saved(saved_annotations)
             ),
@@ -3618,7 +3723,9 @@ class PlanViewActionHandler:
             ref_remap = PasteRefRemap(
                 takeoff_uids=dict(takeoff_map),
                 namedview_uids={
-                    source_uid: annotation_map[source_uid]
+                    parse_annotation_resource_id(source_uid)[1]: annotation_map[
+                        source_uid
+                    ]
                     for source_uid, spec in zip(
                         payload.annotation_source_uids,
                         payload.annotation_specs,
@@ -3711,6 +3818,9 @@ class PlanViewActionHandler:
         dependencies: tuple[ResourceRef, ...],
     ) -> None:
         previous_selection = set(self._plan_view.get_selected_uids())
+        previous_takeoff_selection, previous_annotation_selection = (
+            self._plan_identities_for_keys(previous_selection)
+        )
         self._plan_view.clear_selection()
         handler_ref = weakref.ref(self)
 
@@ -3730,7 +3840,12 @@ class PlanViewActionHandler:
                         active_bid == bid_ref
                         and handler._plan_view.current_page_uid == page_uid
                     ):
-                        handler._plan_view.set_selected_uids(previous_selection)
+                        handler._plan_view.set_selected_uids(
+                            handler._current_plan_keys_for_identities(
+                                previous_takeoff_selection,
+                                previous_annotation_selection,
+                            )
+                        )
                 return
             takeoff_map, annotation_map = handler._created_uid_maps(result)
             selected = handler._selection_keys_for_paste_maps(
@@ -3815,7 +3930,10 @@ class PlanViewActionHandler:
             destination_bid_uid=str(bid_ref.bid_uid),
             takeoff_source_uids=tuple(str(item.uid) for item in source_takeoffs),
             takeoff_specs=takeoff_specs,
-            annotation_source_uids=tuple(str(item.uid) for item in annotations),
+            annotation_source_uids=tuple(
+                annotation_resource_id(item.annotation_type, item.uid)
+                for item in annotations
+            ),
             annotation_specs=tuple(annotation_specs),
         )
         dependencies = tuple(

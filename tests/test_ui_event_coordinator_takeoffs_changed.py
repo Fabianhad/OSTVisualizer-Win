@@ -68,6 +68,9 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.managers.ui_state_manager import UIStateManager
+from ost_visualizer.presentation.services.bid_clipboard_service import (
+    BidClipboardService,
+)
 from ost_visualizer.presentation.utils.qt_callback_bridge import QtVoidCallback
 
 
@@ -218,6 +221,7 @@ class FakeMeshReceiver:
         self.scene_failures = []
         self.discarded_camera_states = []
         self.plan_texture_updates = 0
+        self.pending_mutation_uids = set()
 
     def apply_mesh_data(
         self,
@@ -260,6 +264,12 @@ class FakeMeshReceiver:
 
     def update_plan_texture(self):
         self.plan_texture_updates += 1
+
+    def set_pending_mutation_uids(self, takeoff_uids):
+        self.pending_mutation_uids = set(takeoff_uids)
+
+    def get_pending_mutation_uids(self):
+        return set(self.pending_mutation_uids)
 
     def isVisible(self):
         return self.visible
@@ -311,6 +321,7 @@ class FakeConstructedMeshWindow:
         self.redo_requested = FakeSignal()
         self.scene_refreshes = []
         self.scene_failures = []
+        self.pending_mutation_uids = set()
 
     def set_context_menu_command_handlers(self, *args):
         pass
@@ -365,6 +376,9 @@ class FakeConstructedMeshWindow:
 
     def set_overlay_display_mode(self, mode):
         pass
+
+    def set_pending_mutation_uids(self, takeoff_uids):
+        self.pending_mutation_uids = set(takeoff_uids)
 
 
 class FakeMeshPlanSignaler:
@@ -658,6 +672,7 @@ def configure_mesh_state(
     coordinator._dirty_mesh_page_uids = set()
     coordinator._pending_dirty_mesh_refresh = False
     coordinator._last_mesh_scene = last_mesh_scene
+    coordinator._pending_3d_takeoff_uids_by_database = {}
     coordinator._is_cleaning_up = False
     coordinator.ui_access_manager = FakeMeshAccess()
 
@@ -915,6 +930,42 @@ def navigation_status_coordinator(tab_index=TAB_INDEX_PROJECTS):
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_pending_3d_mutations_remain_scoped_across_database_switches(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        first_ref = BidRef("first.mdb", "bid-1")
+        second_ref = BidRef("second.mdb", "bid-2")
+        active_ref = [first_ref]
+        coordinator.ui_state_manager = FakeUiState(first_ref)
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref[0]
+        embedded = FakeMeshReceiver()
+        detached = FakeMeshReceiver()
+        configure_mesh_state(
+            coordinator,
+            opengl_viewer=embedded,
+            mesh_window=detached,
+        )
+        coordinator._on_pending_plan_mutations_changed(
+            "first.mdb", ["shared-takeoff"], True
+        )
+        self.assertEqual(embedded.pending_mutation_uids, {"shared-takeoff"})
+        self.assertEqual(detached.pending_mutation_uids, {"shared-takeoff"})
+        active_ref[0] = second_ref
+        coordinator._begin_mesh_views_for_bid_load(second_ref)
+        self.assertEqual(embedded.pending_mutation_uids, set())
+        self.assertEqual(detached.pending_mutation_uids, set())
+        coordinator._on_pending_plan_mutations_changed(
+            "second.mdb", ["shared-takeoff"], True
+        )
+        coordinator._on_pending_plan_mutations_changed(
+            "first.mdb", ["shared-takeoff"], False
+        )
+        self.assertEqual(embedded.pending_mutation_uids, {"shared-takeoff"})
+        self.assertEqual(detached.pending_mutation_uids, {"shared-takeoff"})
+        active_ref[0] = first_ref
+        coordinator._begin_mesh_views_for_bid_load(first_ref)
+        self.assertEqual(embedded.pending_mutation_uids, set())
+        self.assertEqual(detached.pending_mutation_uids, set())
+
     def test_rotate_takeoff_actions_dispatch_exact_left_and_right_quarter_turns(self):
         rotations = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -1188,6 +1239,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         select_mode_calls = []
         coordinator._set_plan_select_mode = lambda: select_mode_calls.append(True)
         coordinator._toolbar = FakeToolbar()
+        coordinator._bid_clipboard = None
         coordinator._on_conditions_changed(
             database_id=bid_ref.file_path,
             bid_uid=bid_ref.bid_uid,
@@ -1524,6 +1576,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.opengl_viewer = None
         coordinator._mesh_window = None
         coordinator._last_mesh_scene = None
+        coordinator._pending_3d_takeoff_uids_by_database = {}
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
@@ -1572,6 +1625,45 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(project_view.restored_file, database_id)
         self.assertEqual(project_view.selection_notifications, 1)
+
+    def test_remote_project_deletion_projects_tree_fallback_into_ui_state(self):
+        database_id = "sql-database"
+        project_view = FakeProjectView()
+        project_view.selected_node = {
+            "kind": "project",
+            "file_path": database_id,
+            "project_uid": "deleted-project",
+        }
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(project_view=project_view)
+        coordinator.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: None,
+            get_current_file_path=lambda: None,
+        )
+        ui_state = SimpleNamespace(
+            selected_file_path=database_id,
+            selected_project_uid="deleted-project",
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator.ui_state_manager = ui_state
+
+        def project_fallback_selection():
+            project_view.selection_notifications += 1
+            ui_state.selected_project_uid = None
+
+        project_view.notify_current_selection = project_fallback_selection
+
+        def rebuild_without_deleted_project():
+            project_view.selected_node = {
+                "kind": "database",
+                "file_path": database_id,
+                "project_uid": None,
+            }
+
+        coordinator._do_file_refresh = rebuild_without_deleted_project
+        coordinator._on_remote_hierarchy_changed(database_id)
+        self.assertEqual(project_view.selection_notifications, 1)
+        self.assertIsNone(ui_state.selected_project_uid)
 
     def test_delayed_sql_hierarchy_does_not_replace_active_access_bid(self):
         access_bid = BidRef("C:/projects/active.mdb", "bid-1")
@@ -2354,6 +2446,21 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._update_export_menu_state = lambda: None
         coordinator._sync_page_info_status = lambda: None
         return coordinator
+
+    def test_file_unload_clears_bid_clipboard_before_same_path_reopen(self):
+        coordinator = self._make_unload_coordinator(
+            selected_file="active.mdb",
+            current_file="active.mdb",
+        )
+        clipboard = BidClipboardService()
+        clipboard.cut([BidRef("C:/jobs/active.mdb", "bid-1")])
+        coordinator._bid_clipboard = clipboard
+        coordinator._on_file_unloaded(
+            file_path="C:\\jobs\\active.mdb",
+            active_context_removed=False,
+        )
+        self.assertFalse(clipboard.has_content())
+        self.assertFalse(clipboard.is_cut)
 
     def _make_3d_page_selection_coordinator(self):
         bid_ref = BidRef("active.mdb", "bid-1")
@@ -3324,6 +3431,41 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             ],
         )
         self.assertEqual(coordinator._viewer.plan_pages, ["active"])
+
+    def test_local_annotation_completion_preserves_type_scoped_identities(self):
+        bid_ref = BidRef("sql-db", "bid-1")
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = None
+        coordinator._plan_view_handler = None
+        coordinator.ui_state_manager = FakeUiState(bid_ref)
+        coordinator._placement = FakePlacement()
+        coordinator.project_data = SimpleNamespace()
+        coordinator._undo_service = None
+        coordinator._selected_takeoff_uids = ()
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+        coordinator._viewer = FakeViewer()
+        coordinator._sidebar = SimpleNamespace()
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+        coordinator._on_remote_bid_content_changed(
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            families=[CollaborationResourceFamily.ANNOTATIONS.value],
+            resource_uids_by_family={
+                CollaborationResourceFamily.ANNOTATIONS.value: [
+                    "rect/shared",
+                    "oval/shared",
+                ]
+            },
+            local_completion=True,
+        )
+        self.assertEqual(
+            coordinator._viewer.changed_annotation_uids, [["shared", "shared"]]
+        )
+        self.assertEqual(
+            coordinator._viewer.changed_annotation_types, [["rect", "oval"]]
+        )
 
     def test_local_layer_completion_preserves_newer_visual_revision(self):
         bid_ref = BidRef("sql-db", "bid-1")
@@ -5478,6 +5620,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._is_cleaning_up = False
         coordinator.visualization_service = visualization
         coordinator._last_mesh_scene = None
+        coordinator._pending_3d_takeoff_uids_by_database = {}
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
@@ -5532,6 +5675,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._is_cleaning_up = False
         coordinator.visualization_service = FakeVisualization()
         coordinator._last_mesh_scene = None
+        coordinator._pending_3d_takeoff_uids_by_database = {}
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
@@ -6306,6 +6450,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.visualization_service = FakeVisualization()
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._toolbar = FakeToolbar()
+        coordinator._bid_clipboard = None
+        coordinator._pending_3d_takeoff_uids_by_database = {}
         coordinator._nav = FakeNav()
         coordinator._bid_data_cache = {}
         coordinator._takeoff_workspace_bid_ref = None
@@ -6350,7 +6496,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             current_file=None,
         )
         embedded = FakeMeshReceiver()
+        embedded.pending_mutation_uids = {"shared-takeoff"}
         coordinator.opengl_viewer = embedded
+        coordinator._pending_3d_takeoff_uids_by_database = {
+            "active.mdb": {"shared-takeoff"}
+        }
         status_panel = _CollaborationStatusPanel()
         status_panel.set_page_info("Page One")
         status_panel.set_collaboration_state("healthy", "Connected")
@@ -6367,6 +6517,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.main_window.project_view.resets, 1)
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
         self.assertEqual(embedded.clear_calls, 1)
+        self.assertEqual(embedded.pending_mutation_uids, set())
+        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_database, {})
         self.assertEqual(
             embedded.discarded_camera_states,
             [(None, "active.mdb")],

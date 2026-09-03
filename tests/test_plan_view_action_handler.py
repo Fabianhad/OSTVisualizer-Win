@@ -19,8 +19,12 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseResult,
     MutationExecutionResult,
     MutationOutcomeStatus,
+    PlanItemsPastePayload,
     QueuedMutationResult,
     ResourceLock,
+)
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    parse_annotation_resource_id,
 )
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import (
@@ -892,7 +896,11 @@ class FakeWriteService:
                 )
                 for index, uid in zip(named_indexes, named_uids):
                     by_index[index] = uid
-                    remap.namedview_uids[payload.annotation_source_uids[index]] = uid
+                    remap.namedview_uids[
+                        parse_annotation_resource_id(
+                            payload.annotation_source_uids[index]
+                        )[1]
+                    ] = uid
             if other_indexes:
                 other_uids = self.annotation_write_service.insert_annotations(
                     database_id,
@@ -4332,6 +4340,200 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(plan_view.restored_condition_text_properties, [])
         self.assertEqual(plan_view.pending_mutation_uids, set())
 
+    def test_sql_annotation_failure_reselects_rekeyed_typed_annotation(self):
+        data = FakeProjectData()
+        annotation = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+            properties={"Text": "Old"},
+        )
+        data.annotations = [annotation]
+        plan_view = FakePlanView(data)
+        plan_view.annotation_key_map = {("shared", "text"): "shared"}
+        plan_view.annotations = {"shared": annotation}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        changes = [
+            (
+                "shared",
+                "text",
+                {"Text": "Old"},
+                {"Text": "New"},
+            )
+        ]
+        handler.on_annotation_text_properties_flushed(changes)
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        plan_view.annotation_key_map = {("shared", "text"): "shared_text"}
+        plan_view.annotations = {"shared_text": annotation}
+        write.queued_properties[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(plan_view.selected, {"shared_text"})
+
+    def test_sql_annotation_delete_failure_reselects_rekeyed_identity(self):
+        data = FakeProjectData()
+        annotation = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+            properties={"Text": "Old"},
+        )
+        data.annotations = [annotation]
+        plan_view = FakePlanView(data)
+        plan_view.annotation_key_map = {("shared", "text"): "shared"}
+        plan_view.annotations = {"shared": annotation}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_elements_deleted(["shared"])
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        plan_view.annotation_key_map = {("shared", "text"): "shared_text"}
+        plan_view.annotations = {"shared_text": annotation}
+        write.queued_deletes[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+        self.assertEqual(plan_view.selected, {"shared_text"})
+
+    def test_new_pending_mutation_preserves_rekeyed_annotation_pending_state(self):
+        data = FakeProjectData()
+        annotation = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+            properties={"Text": "Old"},
+        )
+        data.annotations = [annotation]
+        data.takeoffs["t2"] = Takeoff(
+            uid="t2",
+            condition_uid="c1",
+            page_uid="p1",
+            is_negative=False,
+        )
+        plan_view = FakePlanView(data)
+        plan_view.annotation_key_map = {("shared", "text"): "shared"}
+        plan_view.annotations = {"shared": annotation}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_annotation_text_properties_flushed(
+            [("shared", "text", {"Text": "Old"}, {"Text": "New"})]
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        plan_view.annotation_key_map = {("shared", "text"): "shared_text"}
+        plan_view.annotations = {"shared_text": annotation}
+        plan_view.pending_mutation_uids = {"shared_text"}
+        handler.on_set_negative(["t2"], True)
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared_text", "t2"})
+
+    def test_sql_paste_failure_restores_selection_by_authoritative_identity(self):
+        data = FakeProjectData()
+        annotation = BidAnnotation(
+            uid="shared",
+            annotation_type="text",
+            page_uid="p1",
+            properties={"Text": "Old"},
+        )
+        data.annotations = [annotation]
+        plan_view = FakePlanView(data)
+        plan_view.annotation_key_map = {("shared", "text"): "shared"}
+        plan_view.annotations = {"shared": annotation}
+        plan_view.selected = {"shared"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        payload = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            takeoff_source_uids=("source",),
+            takeoff_specs=(
+                InsertTakeoffSpec(
+                    condition_uid="c1",
+                    page_uid="p1",
+                    area_uid=None,
+                    position=[1.0, 2.0],
+                ),
+            ),
+        )
+        handler._queue_sql_plan_items_paste_payload(
+            BidRef("bid.mdb", "7"),
+            "p1",
+            payload,
+            (),
+        )
+        self.assertEqual(plan_view.selected, set())
+        data.takeoffs["shared"] = Takeoff(
+            uid="shared",
+            condition_uid="c1",
+            page_uid="p1",
+        )
+        plan_view.annotation_key_map = {("shared", "text"): "shared_text"}
+        plan_view.annotations = {"shared_text": annotation}
+        write.queued_pastes[0][3](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.selected, {"shared_text"})
+
+    def test_old_database_completion_cannot_clear_new_same_uid_pending_edit(self):
+        data = FakeProjectData()
+        data.takeoffs["shared"] = Takeoff(
+            uid="shared",
+            condition_uid="c1",
+            page_uid="p1",
+            is_negative=False,
+        )
+        selected_bid = [BidRef("first.mdb", "7")]
+        ui_state = FakeUiState()
+        ui_state.get_selected_bid_ref = lambda: selected_bid[0]
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=ui_state,
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_set_negative(["shared"], True)
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        selected_bid[0] = BidRef("second.mdb", "8")
+        plan_view.pending_mutation_uids = set()
+        handler.on_set_negative(["shared"], True)
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+        write.queued_properties[0][-1](
+            QueuedMutationResult(
+                database_id="first.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.pending_mutation_uids, {"shared"})
+
     def test_sql_takeoff_property_edit_uses_queue_not_qt_thread_writer(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -6173,6 +6375,60 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     },
                 )
             ],
+        )
+
+    def test_annotation_delete_history_accepts_table_scoped_duplicate_uids(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+        )
+        rect = BidAnnotation(
+            uid="shared",
+            annotation_type="rect",
+            page_uid="p1",
+            position=[1.0, 2.0, 3.0, 4.0],
+        )
+        oval = BidAnnotation(
+            uid="shared",
+            annotation_type="oval",
+            page_uid="p1",
+            position=[5.0, 6.0, 7.0, 8.0],
+        )
+        data.annotations = [rect, oval]
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {"rect-item": rect, "oval-item": oval}
+        plan_view.annotation_key_map = {
+            ("ann-rect", "rect"): "rect-item",
+            ("ann-oval", "oval"): "oval-item",
+        }
+        write = FakeWriteService()
+        write.next_uids = ["t2"]
+        write.next_annotation_uids = ["ann-rect", "ann-oval"]
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
+        )
+        handler.on_elements_deleted(["t1", "rect-item", "oval-item"])
+        self.assertEqual(undo.count, 1)
+        self.assertTrue(undo.undo())
+        self.assertEqual(
+            {
+                (annotation.uid, annotation.annotation_type)
+                for annotation in data.annotations
+            },
+            {("ann-rect", "rect"), ("ann-oval", "oval")},
         )
 
     def test_named_view_delete_with_linked_hotlink_deletes_hotlink_first(self):

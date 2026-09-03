@@ -6,21 +6,30 @@ from types import SimpleNamespace
 from ost_visualizer.infrastructure.pdf_metadata_provider import (
     NativePdfMetadataProvider,
 )
+
+
 class FailingRenderer:
     def open(self, file_path):
         raise RuntimeError(f"{file_path} failed")
+
     def close(self):
         raise AssertionError("close should not be called when open fails")
+
+
 class RecordingRenderer:
     page_info_calls = []
     text_run_calls = []
     vector_calls = []
+
     def open(self, _file_path):
         return True
+
     def close(self):
         pass
+
     def page_count(self):
         return 3
+
     def page_info(self, page_index):
         self.page_info_calls.append(page_index)
         return SimpleNamespace(
@@ -32,17 +41,22 @@ class RecordingRenderer:
             crop_height_pts=200.0,
             intrinsic_rotation=0,
         )
+
     def extract_text_runs(self, page_index):
         self.text_run_calls.append(page_index)
         return []
+
     def extract_path_segments(self, page_index):
         self.vector_calls.append(page_index)
         return []
+
+
 class PdfMetadataProviderTests(unittest.TestCase):
     def setUp(self):
         RecordingRenderer.page_info_calls = []
         RecordingRenderer.text_run_calls = []
         RecordingRenderer.vector_calls = []
+
     def test_pdf_failure_logs_do_not_include_source_path(self):
         logger = logging.getLogger("tests.pdf_metadata_provider")
         provider = NativePdfMetadataProvider(
@@ -56,6 +70,7 @@ class PdfMetadataProviderTests(unittest.TestCase):
         output = "\n".join(captured.output)
         self.assertIn("RuntimeError", output)
         self.assertNotIn(pdf_file.name, output)
+
     def test_pdf_metadata_cache_key_includes_file_signature(self):
         provider = NativePdfMetadataProvider(renderer_factory=RecordingRenderer)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_file:
@@ -75,6 +90,7 @@ class PdfMetadataProviderTests(unittest.TestCase):
         self.assertIs(first, negative_index)
         self.assertNotEqual(first.effective_width_pts, second.effective_width_pts)
         self.assertEqual(RecordingRenderer.page_info_calls, [0, 0])
+
     def test_pdf_metadata_caches_are_bounded_lru(self):
         provider = NativePdfMetadataProvider(renderer_factory=RecordingRenderer)
         provider.MAX_CACHE_ENTRIES = 2
@@ -102,5 +118,7 @@ class PdfMetadataProviderTests(unittest.TestCase):
             [key[0] for key in provider._segments_cache.keys()],
             ["a.pdf", "c.pdf"],
         )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,10 @@ from ...domain.services.takeoff_domain_service import (
 )
 from ...domain.entities.annotation import ANNOTATION_TYPE_NAMED_VIEW
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
-from ..dtos.collaboration_resource_catalog import CollaborationResourceType
+from ..dtos.collaboration_resource_catalog import (
+    CollaborationResourceType,
+    parse_annotation_resource_id,
+)
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
     CollaborationMutationType,
@@ -2447,7 +2450,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     for index, uid in zip(named_indexes, named_uids):
                         source_uid = payload.annotation_source_uids[index]
                         annotation_map[source_uid] = str(uid)
-                        ref_remap.namedview_uids[source_uid] = str(uid)
+                        ref_remap.namedview_uids[
+                            parse_annotation_resource_id(source_uid)[1]
+                        ] = str(uid)
                     other_uids = (
                         self._insert_annotations.execute(
                             database_id,
@@ -2753,7 +2758,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 for index, uid in zip(named_indexes, named_uids):
                     source_uid = payload.annotation_source_uids[index]
                     annotation_map[source_uid] = str(uid)
-                    ref_remap.namedview_uids[source_uid] = str(uid)
+                    ref_remap.namedview_uids[
+                        parse_annotation_resource_id(source_uid)[1]
+                    ] = str(uid)
                 other_uids = (
                     self._insert_annotations.execute(
                         database_id,
