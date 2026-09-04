@@ -2689,6 +2689,61 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(inserted[2][1]["BidPageViewUID"], 201)
         self.assertEqual(inserted[3][1]["BidPageViewUID"], 201)
 
+    def test_sql_import_reconstructs_takeoff_parent_identity(self):
+        class _Connection:
+            def cursor(self):
+                return _RawCursor()
+
+        writer = SqlProjectWriter(
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "Name": "Imported"},
+            bid_tables={
+                "BidPages": [{"UID": "20", "BidUID": "1", "Name": "Page"}],
+            },
+            page_tables={
+                "BidTakeoffs": [
+                    {
+                        "UID": "30",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "ParentUID": None,
+                    },
+                    {
+                        "UID": "31",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "ParentUID": "30",
+                    },
+                ]
+            },
+        )
+        inserted = []
+
+        def insert(_connection, table, row, _table_info):
+            inserted.append((table, row))
+            return len(inserted) * 100 + 1
+
+        def table_info(_connection, table):
+            columns = {"UID", "BidUID", "Name"}
+            if table == "BidPages":
+                columns.add("BidPageUID")
+            if table == "BidTakeoffs":
+                columns.update({"BidPageUID", "ParentUID"})
+            return columns, {}
+
+        with (
+            patch.object(writer, "_get_table_info", side_effect=table_info),
+            patch.object(writer, "_insert_identity_raw", side_effect=insert),
+        ):
+            writer._write_remapped_identity_graph(_Connection(), raw_data)
+        child_row = inserted[3]
+        self.assertEqual(child_row[0], "BidTakeoffs")
+        self.assertEqual(child_row[1]["ParentUID"], 301)
+
     def test_writer_guard_rejects_stale_database_metadata(self):
         class _StaleMetadataCursor(_WriterCursor):
             def fetchone(self):

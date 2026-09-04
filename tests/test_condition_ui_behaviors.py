@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainterPath
 from PySide6.QtTest import QTest
@@ -60,6 +60,7 @@ from ost_visualizer.presentation.handlers.condition_action_handler import (
     ConditionActionHandler,
 )
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
+from ost_visualizer.presentation.managers.shortcut_manager import ShortcutManager
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.utils.compact_context_menu import (
     COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS,
@@ -903,6 +904,56 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
 
+    def test_condition_delete_revalidates_access_after_confirmation(self):
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(1)
+        sidebar.load_conditions(conditions, {}, "Project")
+        delete_calls = []
+
+        class Access:
+            allowed = True
+
+            def is_allowed(self, feature):
+                return self.allowed and feature == Feature.DELETE_CONDITION
+
+        access = Access()
+        coordinator = SimpleNamespace(
+            ui_access_manager=access,
+            conditions_sidebar=sidebar,
+            placement=SimpleNamespace(force_exit=lambda: None),
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda _uids, reveal=True: None,
+            ensure_select_mode=lambda: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                delete_conditions=lambda *args: delete_calls.append(args) or True,
+            ),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+            ),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def confirm_and_revoke(_parent, names):
+            access.allowed = False
+            return [uid for uid, _name in names]
+
+        original_confirm = condition_action_handler.confirm_delete_conditions
+        condition_action_handler.confirm_delete_conditions = confirm_and_revoke
+        try:
+            handler.on_delete_requested(["c1"])
+        finally:
+            condition_action_handler.confirm_delete_conditions = original_confirm
+        self.assertEqual(delete_calls, [])
+
     def test_condition_delete_handler_selects_previous_after_multi_write_refresh(self):
         from ost_visualizer.presentation.handlers import condition_action_handler
 
@@ -972,11 +1023,12 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 _args
             ),
         )
+        bid = object()
         handler = ConditionActionHandler(
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(get_bid=lambda _ref: bid),
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: BidRef("database", "7")
             ),
@@ -1107,11 +1159,14 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             ensure_select_mode=lambda: None,
             present_queued_mutation_error=lambda *_args, **_kwargs: None,
         )
+        bid = object()
         handler = ConditionActionHandler(
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(
+                get_bid=lambda ref: bid if ref == active_bid[0] else None
+            ),
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: active_bid[0]
             ),
@@ -1185,11 +1240,14 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             _is_takeoff_2d_view_active=lambda: True,
             present_queued_mutation_error=lambda *_args, **_kwargs: None,
         )
+        bid = object()
         handler = ConditionActionHandler(
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(
+                get_bid=lambda ref: bid if ref == active_bid[0] else None
+            ),
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: active_bid[0]
             ),
@@ -1211,11 +1269,298 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(placement_calls, [])
 
+    def test_sql_condition_duplicate_completion_rejects_same_uid_bid_replacement(self):
+        queued = {}
+        bid_ref = BidRef("database", "7")
+        original_bid = object()
+        current_bid = [original_bid]
+        placement_calls = []
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_duplicate(
+                database_id,
+                bid_uid,
+                condition_uids,
+                callback,
+                **_options,
+            ):
+                queued["callback"] = callback
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=None,
+            placement=SimpleNamespace(
+                enter=lambda *args: placement_calls.append(args),
+            ),
+            flush_deferred_for_file=lambda _file_path: True,
+            _is_takeoff_2d_view_active=lambda: True,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        handler.on_duplicate_requested(["c1"])
+        current_bid[0] = object()
+        self.assertIsNot(current_bid[0], original_bid)
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000107",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("c1-copy",),
+                ),
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(placement_calls, [])
+
+    def test_sql_condition_duplicate_completion_does_not_restore_placement_after_access_revocation(
+        self,
+    ):
+        queued = {}
+        bid_ref = BidRef("database", "7")
+        bid = object()
+        placement_calls = []
+        access_allowed = [True]
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_duplicate(
+                database_id,
+                bid_uid,
+                condition_uids,
+                callback,
+                **_options,
+            ):
+                queued["callback"] = callback
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda _feature: access_allowed[0]
+            ),
+            conditions_sidebar=None,
+            placement=SimpleNamespace(
+                enter=lambda *args: placement_calls.append(args),
+            ),
+            flush_deferred_for_file=lambda _file_path: True,
+            _is_takeoff_2d_view_active=lambda: True,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(get_bid=lambda _ref: bid),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        handler.on_duplicate_requested(["c1"])
+        access_allowed[0] = False
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000108",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("c1-copy",),
+                ),
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(placement_calls, [])
+
+    def test_sql_condition_update_followups_reject_same_uid_bid_replacement(self):
+        callbacks = []
+        bid_ref = BidRef("database", "7")
+        current_bid = [object()]
+        highlighted = []
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_update(*args):
+                callbacks.append(args[-1])
+                return len(callbacks)
+
+        sidebar = SimpleNamespace(
+            set_pending_condition_selection=lambda _uid: None,
+        )
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=sidebar,
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda uids: highlighted.append(set(uids)),
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        handler.on_condition_renamed("c1", "Renamed")
+        handler.on_move_condition_to_folder("c2", "folder-1")
+        handler.on_condition_layer_change_requested(["c3"], "layer-1")
+        current_bid[0] = object()
+        for index, callback in enumerate(callbacks, start=1):
+            callback(
+                QueuedMutationResult(
+                    database_id="database",
+                    runtime_generation=1,
+                    operation_id=f"00000000-0000-0000-0000-{index:012d}",
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                    commit_attempted=True,
+                )
+            )
+        self.assertEqual(highlighted, [])
+
+    def test_sql_folder_create_completion_rejects_same_uid_bid_replacement(self):
+        queued = {}
+        bid_ref = BidRef("database", "7")
+        original_bid = object()
+        current_bid = [original_bid]
+        pending_edits = []
+        sidebar = SimpleNamespace(
+            set_pending_folder_edit=lambda uid: pending_edits.append(uid),
+            window=lambda: None,
+        )
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_condition_folder_create(
+                database_id,
+                bid_uid,
+                name,
+                parent_uid,
+                callback,
+            ):
+                queued["callback"] = callback
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=sidebar,
+            flush_deferred_for_file=lambda _file_path: True,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        handler.on_create_folder_requested("")
+        current_bid[0] = object()
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000109",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("folder-new",),
+                ),
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(pending_edits, [])
+
+    def test_sql_condition_delete_completion_rejects_same_uid_bid_replacement(self):
+        queued = {}
+        bid_ref = BidRef("database", "7")
+        current_bid = [object()]
+        placement_exits = []
+        sidebar = SimpleNamespace(
+            get_condition_name=lambda _uid: "Condition",
+            condition_selection_after_delete=lambda _uids: "c2",
+            window=lambda: None,
+        )
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_delete(
+                _database_id, _bid_uid, _condition_uids, callback
+            ):
+                queued["callback"] = callback
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=sidebar,
+            placement=SimpleNamespace(
+                force_exit=lambda: placement_exits.append(True),
+            ),
+            ensure_select_mode=lambda: None,
+            highlight_sidebar=lambda *_args, **_kwargs: None,
+            flush_deferred_for_file=lambda _file_path: True,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_delete_conditions",
+            return_value=["c1"],
+        ):
+            handler.on_delete_requested(["c1"])
+        current_bid[0] = object()
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000110",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(placement_exits, [])
+
     def test_sql_condition_cut_clipboard_clears_only_after_committed_move(self):
         callbacks = []
         completed = []
         highlighted = []
         bid_ref = BidRef("database", "7")
+        current_bid = [object()]
 
         class WriteService:
             @staticmethod
@@ -1250,7 +1595,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
             ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
             workspace_state_model=make_workspace_state_model(),
         )
@@ -1272,11 +1617,24 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(completed, [])
         handler.on_paste_requested(["c1"], target)
+        current_bid[0] = object()
         callbacks[1](
             QueuedMutationResult(
                 database_id="database",
                 runtime_generation=1,
                 operation_id="00000000-0000-0000-0000-000000000202",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(completed, [])
+        self.assertEqual(highlighted, [])
+        handler.on_paste_requested(["c1"], target)
+        callbacks[2](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000203",
                 outcome_status=MutationOutcomeStatus.COMMITTED,
                 commit_attempted=True,
             )
@@ -1567,6 +1925,34 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         next(action for action in menu.actions() if action.text() == "Delete").trigger()
         self.assertEqual(deleted, [["c1"]])
 
+    def test_condition_context_new_keeps_right_clicked_folder_target(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        created = []
+        sidebar.create_requested.connect(created.append)
+        sidebar.load_conditions(
+            {},
+            {
+                "f1": BidConditionFolder(uid="f1", name="First"),
+                "f2": BidConditionFolder(uid="f2", name="Second"),
+            },
+            "Project",
+        )
+        sidebar.set_create_enabled(True)
+        first = sidebar._folder_items["f1"]
+        second = sidebar._folder_items["f2"]
+        sidebar.tree.setCurrentItem(first)
+        first.setSelected(True)
+        menu = QtWidgets.QMenu(sidebar)
+        sidebar._add_new_submenu(menu, first)
+        sidebar.tree.setCurrentItem(second)
+        second.setSelected(True)
+        new_menu = menu.actions()[0].menu()
+        next(
+            action for action in new_menu.actions() if action.text() == "Condition"
+        ).trigger()
+        self.assertEqual(created, ["f1"])
+
     def test_condition_tree_rebuild_cancels_active_drag_identity(self):
         sidebar = ConditionsSidebar(None)
         sidebar.load_conditions(self._make_conditions(1), {}, "Project")
@@ -1577,6 +1963,35 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "Project",
         )
         self.assertIsNone(sidebar.tree._drag_uid)
+
+    def test_condition_drop_after_model_rebuild_is_ignored_without_mutation(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        moved = []
+        sidebar.condition_folder_move_requested.connect(
+            lambda condition_uid, folder_uid: moved.append((condition_uid, folder_uid))
+        )
+        sidebar.load_conditions(self._make_conditions(1), {}, "Project")
+        sidebar.set_create_folder_enabled(True)
+        sidebar.tree._drag_uid = "c1"
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Replacement", ref_no=1)},
+            {},
+            "Project",
+        )
+        target = sidebar.tree.topLevelItem(0)
+        sidebar.tree.itemAt = lambda _position: target
+        accepted = []
+        ignored = []
+        event = SimpleNamespace(
+            position=lambda: QtCore.QPointF(),
+            acceptProposedAction=lambda: accepted.append(True),
+            ignore=lambda: ignored.append(True),
+        )
+        sidebar.tree.dropEvent(event)
+        self.assertEqual(accepted, [])
+        self.assertEqual(ignored, [True])
+        self.assertEqual(moved, [])
 
     def test_condition_tree_rebuild_cancels_active_folder_editor(self):
         sidebar = ConditionsSidebar(None)
@@ -1705,6 +2120,12 @@ class ConditionUiBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = _app()
+        cls._quit_on_last_window_closed = cls.app.quitOnLastWindowClosed()
+        cls.app.setQuitOnLastWindowClosed(False)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.setQuitOnLastWindowClosed(cls._quit_on_last_window_closed)
 
     def tearDown(self):
         self.app.processEvents()
@@ -2040,6 +2461,77 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(deleted, [["c1"]])
         sidebar.close()
+
+    def test_condition_delete_shortcut_wins_over_enabled_window_action(self):
+        window = QtWidgets.QMainWindow()
+        self.addCleanup(self.app.processEvents)
+        self.addCleanup(window.close)
+        sidebar = ConditionsSidebar(window)
+        window.setCentralWidget(sidebar)
+        deleted = []
+        plan_delete_calls = []
+        sidebar.delete_requested.connect(lambda uids: deleted.append(list(uids)))
+        sidebar.load_conditions(self._make_conditions(1), {}, "Project")
+        sidebar.set_delete_enabled(True)
+        sidebar.highlight_conditions({"c1"})
+        shared_delete = QtGui.QAction("Delete", window)
+        ShortcutManager.apply_to_action(shared_delete, "delete")
+        shared_delete.triggered.connect(lambda: plan_delete_calls.append(True))
+        window.addAction(shared_delete)
+        window.show()
+        sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        QTest.keyClick(sidebar.tree, Qt.Key.Key_Delete)
+        self.app.processEvents()
+        self.assertEqual(deleted, [["c1"]])
+        self.assertEqual(plan_delete_calls, [])
+
+    def test_condition_duplicate_shortcut_wins_over_enabled_window_action(self):
+        window = QtWidgets.QMainWindow()
+        self.addCleanup(self.app.processEvents)
+        self.addCleanup(window.close)
+        sidebar = ConditionsSidebar(window)
+        window.setCentralWidget(sidebar)
+        duplicated = []
+        plan_duplicate_calls = []
+        sidebar.duplicate_requested.connect(lambda uids: duplicated.append(list(uids)))
+        sidebar.load_conditions(self._make_conditions(1), {}, "Project")
+        sidebar.set_duplicate_enabled(True)
+        sidebar.highlight_conditions({"c1"})
+        shared_duplicate = QtGui.QAction("Duplicate", window)
+        ShortcutManager.apply_to_action(shared_duplicate, "duplicate")
+        shared_duplicate.triggered.connect(lambda: plan_duplicate_calls.append(True))
+        window.addAction(shared_duplicate)
+        window.show()
+        sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        QTest.keyClick(
+            sidebar.tree,
+            Qt.Key.Key_D,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        QTest.keyRelease(sidebar.tree, Qt.Key.Key_Control)
+        self.app.processEvents()
+        self.assertEqual(duplicated, [["c1"]])
+        self.assertEqual(plan_duplicate_calls, [])
+
+    def test_condition_cut_shortcut_owns_condition_clipboard(self):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        self.addCleanup(self.app.processEvents)
+        self.addCleanup(sidebar.close)
+        sidebar.set_create_folder_enabled(True)
+        sidebar.show()
+        sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        QTest.keyClick(
+            sidebar.tree,
+            Qt.Key.Key_X,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        QTest.keyRelease(sidebar.tree, Qt.Key.Key_Control)
+        self.app.processEvents()
+        self.assertEqual(sidebar._copied_condition_uids, ["c1"])
+        self.assertTrue(sidebar._condition_clipboard_cut)
 
     def test_delete_key_is_ignored_while_text_input_has_focus(self):
         sidebar, deleted = self._make_sidebar_with_selected_condition()

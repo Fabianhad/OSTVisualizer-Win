@@ -5539,6 +5539,40 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(saved, [])
         warning.assert_called_once()
 
+    def test_overlay_file_dialog_cannot_write_after_access_revocation(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("sql-database", "8")
+        page = Page(uid="page-1", name="Original")
+        access_allowed = [True]
+        saved = []
+        coordinator._is_cleaning_up = False
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: access_allowed[0]
+        )
+        coordinator.project_data = SimpleNamespace(get_page=lambda _page_uid: page)
+        coordinator.main_window = object()
+        coordinator._save_page_overlay_image = (
+            lambda database_id, page_uid, path: saved.append(
+                (database_id, page_uid, path)
+            )
+        )
+
+        def revoke_access_while_dialog_is_open(_parent, _current_path):
+            access_allowed[0] = False
+            return "replacement-overlay.pdf"
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "select_overlay_image_path",
+            side_effect=revoke_access_while_dialog_is_open,
+        ):
+            coordinator.select_overlay_image()
+        self.assertEqual(saved, [])
+
     def test_overlay_file_dialog_return_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         bid_ref = BidRef("sql-database", "8")
@@ -6366,6 +6400,60 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         finally:
             ui_event_coordinator.show_critical = old_show_critical
 
+    def test_page_delete_revalidates_access_after_content_confirmation(self):
+        bid_ref = BidRef("bid.mdb", "bid-1")
+        page = Page(uid="p1", name="Page 1")
+        delete_calls = []
+
+        class Access:
+            allowed = True
+
+            def is_allowed(self, _feature):
+                return self.allowed
+
+        access = Access()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="p1",
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: page if uid == "p1" else Page(uid=uid, name=uid),
+            get_page_takeoffs=lambda _uid: [],
+            get_page_annotations=lambda _uid: [],
+        )
+        coordinator._project_read_service = SimpleNamespace(
+            get_pages_with_delete_content=lambda _file_path, _bid_uid: {"p1"}
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _file_path: False,
+            delete_pages=lambda *args: delete_calls.append(args) or True,
+        )
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["p1", "p2"]
+        )
+        coordinator.ui_access_manager = access
+        coordinator.main_window = SimpleNamespace(is_takeoff_tab_active=lambda: True)
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._pending_takeoff_active_page_uid = None
+        coordinator._pending_takeoff_selected_area_uid = ""
+        coordinator._pending_takeoff_place_condition_uid = None
+        coordinator._pending_takeoff_place_condition_uids = []
+        coordinator._deferred_persistence = FakeDeferredPersistence()
+
+        def confirm_and_revoke(*_args):
+            access.allowed = False
+            return True
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "confirm_delete_page_with_contents",
+            side_effect=confirm_and_revoke,
+        ):
+            coordinator.delete_current_page()
+        self.assertEqual(delete_calls, [])
+        self.assertIsNone(coordinator._pending_takeoff_page_uids)
+
     def test_sql_page_delete_queues_without_calling_synchronous_writer(self):
         bid_ref = BidRef("sql-database", "7")
 
@@ -6427,6 +6515,68 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             ("sql-database", "7", ["p1"]),
         )
         self.assertEqual(coordinator._pending_takeoff_page_uids, ["p2"])
+
+    def test_layer_insert_completion_rejects_same_uid_bid_replacement(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("sql-database", "7")
+        original_bid = object()
+        current_bid = [original_bid]
+        queued = {}
+        pending_selections = []
+        sidebar = SimpleNamespace(
+            set_pending_selection=lambda uid: pending_selections.append(uid),
+        )
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_layer_insert(
+                database_id,
+                bid_uid,
+                name,
+                after_sequence,
+                callback,
+            ):
+                queued["callback"] = callback
+                return 1
+
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.EDIT_PAGE_SETTINGS
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.project_data = SimpleNamespace(get_bid=lambda _ref: current_bid[0])
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=sidebar,
+            load_bid_layers_sidebar=lambda: None,
+            load_bid_layers_sidebar_from_memory=lambda: None,
+        )
+        coordinator._project_write_service = WriteService()
+        coordinator._flush_deferred_for_file = lambda _file_path: True
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = None
+        coordinator.present_queued_mutation_error = lambda *_args, **_kwargs: None
+        coordinator._on_layer_added("New Layer", 3)
+        current_bid[0] = object()
+        self.assertIsNot(current_bid[0], original_bid)
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="sql-database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000701",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("layer-new",),
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("layer-new",),
+                ),
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(pending_selections, [])
 
     def _make_unload_coordinator(
         self, selected_file="active.mdb", current_file="active.mdb"

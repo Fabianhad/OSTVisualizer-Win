@@ -122,6 +122,7 @@ RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
     RawBidRelationship("BidTakeoffs", "BidZoneUID", "BidZones"),
     RawBidRelationship("BidTakeoffs", "BidAreaUID", "BidAreas"),
     RawBidRelationship("BidTakeoffs", "BidTypAreaUID", "BidTypAreas"),
+    RawBidRelationship("BidTakeoffs", "ParentUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypGroupTakeoffUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypPageTakeoffUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypGroupMarkerUID", "BidTakeoffs"),
@@ -193,6 +194,7 @@ _RAW_TABLES = (
 _RAW_TABLE_SET = set(_RAW_TABLES)
 _GLOBAL_TABLE_SET = set(GLOBAL_SECTIONS)
 _CLEARABLE_EXPORT_REFERENCES = {("BidSettings", "BidPageSelectedUID")}
+_TAKEOFF_GRAPH_REFERENCES = {("BidTakeoffs", "ParentUID")}
 _NULL_REFERENCE_UID = "0"
 _ANNOTATION_TAKEOFF_REFERENCE_COLUMNS = {
     "BidDimensions": ("BidTakeoffFromUID", "BidTakeoffToUID"),
@@ -522,6 +524,8 @@ def _prune_rows(
         and relationship.parent_table not in _GLOBAL_TABLE_SET
         and (relationship.child_table, relationship.child_column)
         not in _CLEARABLE_EXPORT_REFERENCES
+        and (relationship.child_table, relationship.child_column)
+        not in _TAKEOFF_GRAPH_REFERENCES
     ]
     if not table_relationships:
         return rows

@@ -8,6 +8,7 @@ from .constants import (
     PAGE_DELETE_CHILD_TABLES,
     TAKEOFF_REFERENCE_TABLES,
 )
+from ..raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from .serialization import coerce_binary_column_value, encode_text_blob
 from .identity_allocation import AccessIdentityAllocationMixin
 from .sql_helpers import placeholders
@@ -259,6 +260,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     "duplicate_bid",
                 )
                 new_bid_uid = str(new_bid_uid_int)
+                duplicated_uid_maps: Dict[str, Dict[str, str]] = {}
                 _uid_map_tables = {
                     "BidConditions",
                     "BidConditionFolders",
@@ -268,7 +270,11 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     "BidNamedViews",
                 }
                 bid_tables = (
-                    [t for t in BID_SECTIONS if t not in HANDLED_SEPARATELY]
+                    [
+                        t
+                        for t in BID_SECTIONS
+                        if t not in HANDLED_SEPARATELY and t != "BidTypAreaCounts"
+                    ]
                     + list(HANDLED_SEPARATELY - _uid_map_tables)
                     + [t for t in BID_TAIL_SECTIONS if t not in HANDLED_SEPARATELY]
                     + [
@@ -286,27 +292,47 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     ]
                 )
                 for table in bid_tables:
-                    self._copy_bid_table_rows(
-                        cursor, table, "BidUID", bid_uid, new_bid_uid
+                    duplicated_uid_maps.setdefault(table, {}).update(
+                        self._copy_bid_table_rows(
+                            cursor, table, "BidUID", bid_uid, new_bid_uid
+                        )
+                        or {}
                     )
                 cond_folder_uid_map = self._copy_with_uid_map(
                     cursor, "BidConditionFolders", "BidUID", bid_uid, new_bid_uid
                 )
+                duplicated_uid_maps["BidConditionFolders"] = cond_folder_uid_map
                 cond_uid_map = self._copy_with_uid_map(
                     cursor, "BidConditions", "BidUID", bid_uid, new_bid_uid
                 )
+                duplicated_uid_maps["BidConditions"] = cond_uid_map
                 layer_uid_map = self._copy_with_uid_map(
                     cursor, "BidLayers", "BidUID", bid_uid, new_bid_uid
                 )
+                duplicated_uid_maps["BidLayers"] = layer_uid_map
                 area_uid_map = self._copy_with_uid_map(
                     cursor, "BidAreas", "BidUID", bid_uid, new_bid_uid
                 )
+                duplicated_uid_maps["BidAreas"] = area_uid_map
+                for old_area_uid, new_area_uid in area_uid_map.items():
+                    duplicated_uid_maps.setdefault("BidTypAreaCounts", {}).update(
+                        self._copy_bid_table_rows(
+                            cursor,
+                            "BidTypAreaCounts",
+                            "BidAreaUID",
+                            old_area_uid,
+                            new_area_uid,
+                        )
+                        or {}
+                    )
                 page_folder_uid_map = self._copy_with_uid_map(
                     cursor, "BidPageFolders", "BidUID", bid_uid, new_bid_uid
                 )
+                duplicated_uid_maps["BidPageFolders"] = page_folder_uid_map
                 named_view_uid_map = self._copy_with_uid_map(
                     cursor, "BidNamedViews", "BidUID", bid_uid, new_bid_uid
                 )
+                duplicated_uid_maps["BidNamedViews"] = named_view_uid_map
                 page_cols = sorted(schema.get_columns("BidPages"))
                 cursor.execute(
                     f"SELECT {', '.join(f'[{c}]' for c in page_cols)} "
@@ -338,145 +364,23 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     )
                     new_page_uid = str(new_page_uid_int)
                     page_uid_map[old_page_uid] = new_page_uid
+                duplicated_uid_maps["BidPages"] = page_uid_map
                 for table in PAGE_SECTIONS:
                     for old_page_uid, new_page_uid in page_uid_map.items():
-                        self._copy_bid_table_rows(
-                            cursor,
-                            table,
-                            "BidPageUID",
-                            old_page_uid,
-                            new_page_uid,
-                            extra_overrides={"BidUID": new_bid_uid},
-                        )
-                for old_page_uid, new_page_uid in page_uid_map.items():
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidHotLinks",
-                        "BidPageUID",
-                        new_page_uid,
-                        ("BidUID", "BidPageUID"),
-                        (new_bid_uid, old_page_uid),
-                    )
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidNamedViews",
-                        "BidPageUID",
-                        new_page_uid,
-                        ("BidUID", "BidPageUID"),
-                        (new_bid_uid, old_page_uid),
-                    )
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidSettings",
-                        "BidPageSelectedUID",
-                        new_page_uid,
-                        ("BidUID", "BidPageSelectedUID"),
-                        (new_bid_uid, old_page_uid),
-                    )
-                for old_area_uid, new_area_uid in area_uid_map.items():
-                    if (
-                        not schema.optional_table_missing("BidPageSettings")
-                        and not schema.optional_table_missing("BidPages")
-                        and schema.column_exists("BidPageSettings", "BidAreaUID")
-                        and schema.column_exists("BidPageSettings", "BidPageUID")
-                        and schema.column_exists("BidPages", "UID")
-                        and schema.column_exists("BidPages", "BidUID")
-                    ):
-                        cursor.execute(
-                            "UPDATE [BidPageSettings] SET [BidAreaUID]=? "
-                            "WHERE [BidAreaUID]=? AND [BidPageUID] IN "
-                            "(SELECT [UID] FROM [BidPages] WHERE [BidUID]=?)",
-                            new_area_uid,
-                            old_area_uid,
-                            new_bid_uid,
-                        )
-                for old_cond_uid, new_cond_uid in cond_uid_map.items():
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidTakeoffs",
-                        "BidConditionUID",
-                        new_cond_uid,
-                        ("BidUID", "BidConditionUID"),
-                        (new_bid_uid, old_cond_uid),
-                    )
-                _layer_ref_tables = [
-                    "BidConditions",
-                    "BidZones",
-                    "BidTakeoffs",
-                    "BidHighlights",
-                    "BidTexts",
-                    "BidDimensions",
-                    "BidArrows",
-                    "BidALines",
-                    "BidCallOuts",
-                    "BidAnnotationRects",
-                    "BidAnnotationOvals",
-                    "BidAnnotationPolygons",
-                    "BidAnnotationClouds",
-                    "BidAnnoInk",
-                    "BidLegends",
-                    "BidHotLinks",
-                    "BidNamedViews",
-                ]
-                for old_area_uid, new_area_uid in area_uid_map.items():
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidTakeoffs",
-                        "BidAreaUID",
-                        new_area_uid,
-                        ("BidUID", "BidAreaUID"),
-                        (new_bid_uid, old_area_uid),
-                    )
-                for old_cf_uid, new_cf_uid in cond_folder_uid_map.items():
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidConditions",
-                        "BidConditionFolderUID",
-                        new_cf_uid,
-                        ("BidUID", "BidConditionFolderUID"),
-                        (new_bid_uid, old_cf_uid),
-                    )
-                for old_pf_uid, new_pf_uid in page_folder_uid_map.items():
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidPages",
-                        "BidPageFolderUID",
-                        new_pf_uid,
-                        ("BidUID", "BidPageFolderUID"),
-                        (new_bid_uid, old_pf_uid),
-                    )
-                for old_nv_uid, new_nv_uid in named_view_uid_map.items():
-                    self._update_if_columns(
-                        cursor,
-                        schema,
-                        "BidHotLinks",
-                        "BidPageViewUID",
-                        new_nv_uid,
-                        ("BidUID", "BidPageViewUID"),
-                        (new_bid_uid, old_nv_uid),
-                    )
-                for old_layer_uid, new_layer_uid in layer_uid_map.items():
-                    for tbl in _layer_ref_tables:
-                        try:
-                            self._update_if_columns(
+                        duplicated_uid_maps.setdefault(table, {}).update(
+                            self._copy_bid_table_rows(
                                 cursor,
-                                schema,
-                                tbl,
-                                "BidLayerUID",
-                                new_layer_uid,
-                                ("BidUID", "BidLayerUID"),
-                                (new_bid_uid, old_layer_uid),
+                                table,
+                                "BidPageUID",
+                                old_page_uid,
+                                new_page_uid,
+                                extra_overrides={"BidUID": new_bid_uid},
                             )
-                        except pyodbc.Error as exc:
-                            if self._record_caught_mutation_error(exc):
-                                raise
+                            or {}
+                        )
+                self._remap_duplicated_relationships(
+                    cursor, schema, duplicated_uid_maps, new_bid_uid
+                )
                 if not schema.optional_table_missing(
                     "Settings"
                 ) and schema.column_exists("Settings", "NextBidNo"):
@@ -748,13 +652,14 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         old_uid: str,
         new_uid: str,
         extra_overrides: dict = None,
-    ) -> None:
+    ) -> Dict[str, str]:
+        uid_map: Dict[str, str] = {}
         schema = self._schema(cursor.connection)
         try:
             if schema.optional_table_missing(table) or not schema.column_exists(
                 table, uid_col
             ):
-                return
+                return uid_map
             cols = sorted(schema.get_columns(table))
             cursor.execute(
                 f"SELECT {', '.join(f'[{c}]' for c in cols)} "
@@ -764,7 +669,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             binary_cols = {d[0] for d in cursor.description if d[1] is bytearray}
             rows = cursor.fetchall()
             if not rows:
-                return
+                return uid_map
             has_uid = "UID" in cols
             insert_cols = cols
             for row in rows:
@@ -773,7 +678,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 if extra_overrides:
                     row_data.update(extra_overrides)
                 if has_uid:
-                    row_data["UID"] = self._next_uid(cursor, table)
+                    old_row_uid = str(int(row_data["UID"]))
+                    new_row_uid = self._next_uid(cursor, table)
+                    row_data["UID"] = new_row_uid
                 values = []
                 for c in insert_cols:
                     val = row_data[c]
@@ -788,9 +695,50 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     (uid_col,),
                     f"copy_{table}",
                 )
+                if has_uid:
+                    uid_map[old_row_uid] = str(new_row_uid)
         except pyodbc.Error as exc:
             if self._record_caught_mutation_error(exc):
                 raise
+        return uid_map
+
+    def _remap_duplicated_relationships(
+        self,
+        cursor,
+        schema,
+        duplicated_uid_maps: Dict[str, Dict[str, str]],
+        new_bid_uid: str,
+    ) -> None:
+        for relationship in RAW_BID_RELATIONSHIPS:
+            parent_uid_map = duplicated_uid_maps.get(relationship.parent_table, {})
+            child_uid_map = duplicated_uid_maps.get(relationship.child_table, {})
+            if not parent_uid_map or not child_uid_map:
+                continue
+            if schema.column_exists(relationship.child_table, "BidUID"):
+                where_columns = ("BidUID", relationship.child_column)
+                scopes = ((new_bid_uid,),)
+            elif schema.column_exists(relationship.child_table, "BidPageUID"):
+                where_columns = ("BidPageUID", relationship.child_column)
+                scopes = tuple(
+                    (new_page_uid,)
+                    for new_page_uid in duplicated_uid_maps.get("BidPages", {}).values()
+                )
+            else:
+                where_columns = ("UID", relationship.child_column)
+                scopes = tuple(
+                    (new_child_uid,) for new_child_uid in child_uid_map.values()
+                )
+            for old_parent_uid, new_parent_uid in parent_uid_map.items():
+                for scope in scopes:
+                    self._update_if_columns(
+                        cursor,
+                        schema,
+                        relationship.child_table,
+                        relationship.child_column,
+                        new_parent_uid,
+                        where_columns,
+                        (*scope, old_parent_uid),
+                    )
 
     def _copy_with_uid_map(
         self,

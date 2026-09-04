@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import uuid
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 from PySide6 import QtWidgets
@@ -176,6 +177,9 @@ class FakeAccess:
         self.allowed = allowed
 
     def is_allowed(self, _feature):
+        return self.allowed
+
+    def can_import_project_file(self, _database_id, _project_uid):
         return self.allowed
 
 
@@ -966,6 +970,51 @@ class ImportRefreshFlowTests(unittest.TestCase):
                     "Successfully imported 'source.ost' into the database.",
                 )
             ],
+        )
+
+    def test_import_handler_uses_explicit_context_destination(self):
+        service = FakeImportService()
+        other_project = HierarchyProjectInfo("Other")
+        hierarchy = HierarchyData(
+            [
+                HierarchyFileEntry(file_path="active.mdb"),
+                HierarchyFileEntry(
+                    file_path="other.mdb",
+                    bid_projects={"other-project": other_project},
+                ),
+            ]
+        )
+        project_data = SimpleNamespace(get_hierarchy=lambda: hierarchy)
+        ui_state = FakeUiState()
+        ui_state.selected_file_path = "active.mdb"
+        handler = ImportHandler(
+            window=object(),
+            project_data_service=project_data,
+            import_service=service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
+        )
+        original_dialog = import_handler_module.ProgressDialog
+        original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
+        original_show_info = import_handler_module.show_info
+        try:
+            FakeProgressDialog.instances = []
+            import_handler_module.ProgressDialog = FakeProgressDialog
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                lambda *_args: ("source.ost", "")
+            )
+            import_handler_module.show_info = lambda *_args: None
+            handler.import_project_file("ost", "other.mdb", "other-project")
+        finally:
+            import_handler_module.ProgressDialog = original_dialog
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                original_get_open
+            )
+            import_handler_module.show_info = original_show_info
+        self.assertEqual(
+            service.import_calls,
+            [("source.ost", "other.mdb", "other-project", False)],
         )
 
     def test_import_handler_keeps_project_target_that_opened_native_file_dialog(self):

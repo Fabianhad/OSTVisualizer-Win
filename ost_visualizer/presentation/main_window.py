@@ -28,6 +28,7 @@ from ..domain.entities.annotation import (
 )
 from ..domain.entities.font_definition import FontDefinition
 from ..domain.entities.file_state import normalize_path
+from ..domain.entities.identity_refs import BidRef
 from ..domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_NAME,
     DELETED_BIDS_PROJECT_UID,
@@ -403,9 +404,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.project_view = components.project_view
         self.project_view.on_restore_bid = self._restore_project_bids
         self.project_view.set_on_move_bids(self._move_project_bids)
+        self.project_view.set_on_can_move_bids(self._can_move_project_bids)
         self.project_view.on_copy_bids = self._copy_project_bids
         self.project_view.on_paste_bids = self._paste_project_bids
         self.project_view.on_can_paste_bids = self._can_paste_project_bids
+        self.project_view.on_duplicate_bid = self._duplicate_project_tree_bid
+        self.project_view.on_can_duplicate_bid = (
+            self.ui_access_manager.can_duplicate_bid
+        )
+        self.project_view.on_close_database = self.handlers.file_ops.unload_file_path
+        self.project_view.on_can_close_database = (
+            self.ui_access_manager.can_close_database
+        )
+        self.project_view.on_delete_bids = self.handlers.delete.delete_bids
+        self.project_view.on_can_delete_bids = self.ui_access_manager.can_delete_bids
+        self.project_view.on_delete_projects = self.handlers.delete.delete_projects
+        self.project_view.on_can_delete_projects = (
+            self.ui_access_manager.can_delete_projects
+        )
+        self.project_view.on_import_project_file = (
+            self.handlers.import_.import_project_file
+        )
+        self.project_view.on_can_import_project_file = (
+            lambda _format_key, file_path, project_uid: (
+                self.ui_access_manager.can_import_project_file(file_path, project_uid)
+            )
+        )
+        self.project_view.on_create_bid = self._create_project_tree_bid
+        self.project_view.on_can_create_bid = self.ui_access_manager.can_create_bid
+        self.project_view.on_create_project = self._create_project_tree_project
+        self.project_view.on_can_create_project = (
+            self.ui_access_manager.can_create_project
+        )
+        self.project_view.on_is_active_bid_context = (
+            self._project_tree_context_owns_active_bid
+        )
         self.project_view.on_empty_deleted_bids = self.handlers.delete.delete_bids
         self.project_view.on_multi_selection = self._on_project_multi_selection
         self.project_view.on_rename_project = self.handlers.delete.rename_project
@@ -417,6 +450,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.project_view.on_get_job_statuses = self._get_project_tree_job_statuses
         self.project_view.on_update_bid_job_status = (
             self._update_project_tree_bid_job_status
+        )
+        self.project_view.on_can_update_bid_job_status = (
+            self.ui_access_manager.can_edit_bid_job_status
         )
         self.project_view.on_renumber_conditions = (
             self.handlers.ui_event.renumber_conditions
@@ -1220,13 +1256,20 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.ui_access_manager.is_allowed(Feature.DELETE_CONDITION):
                 self._condition_summary_tab.delete_current_row()
         else:
-            feature = (
-                Feature.DELETE_BID
-                if self.ui_state_manager.get_selected_bid_refs()
-                else Feature.EDIT_PROJECT_TREE_STRUCTURE
-            )
-            if not self.ui_access_manager.is_allowed(feature):
-                return
+            bid_refs = self.ui_state_manager.get_selected_bid_refs()
+            if bid_refs:
+                if not self.ui_access_manager.can_delete_bids(bid_refs):
+                    return
+            else:
+                project_uids = self.ui_state_manager.selected_project_uids
+                project_file_path = self.ui_state_manager.selected_project_file_path
+                if not (
+                    project_file_path
+                    and self.ui_access_manager.can_delete_projects(
+                        project_file_path, project_uids
+                    )
+                ):
+                    return
             selection_after_delete = (
                 self.project_view.get_delete_replacement_selection_state()
             )
@@ -1270,9 +1313,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
             return
-        if not self.ui_access_manager.is_allowed(Feature.DELETE_BID):
-            return
         bid_refs = self.ui_state_manager.get_selected_bid_refs()
+        if not self.ui_access_manager.can_delete_bids(bid_refs):
+            return
         if not self._same_file_bid_refs(bid_refs):
             return
         self._bid_clipboard.cut(bid_refs)
@@ -1341,7 +1384,12 @@ class MainWindow(QtWidgets.QMainWindow):
         feature = (
             Feature.DELETE_BID if self._bid_clipboard.is_cut else Feature.DUPLICATE_BID
         )
-        return self.ui_access_manager.is_project_bid_clipboard_allowed(feature)
+        return self.ui_access_manager.is_project_bid_clipboard_allowed(
+            feature,
+            file_path,
+            self._bid_clipboard.bid_refs,
+            target_project_uid,
+        )
 
     def _select_all(self) -> None:
         if self.tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
@@ -1366,8 +1414,18 @@ class MainWindow(QtWidgets.QMainWindow):
         return BidClipboardService.refs_share_database(bid_refs)
 
     def _get_bid_paste_target(self):
+        project_uids = self.ui_state_manager.selected_project_uids
+        selected_bid_refs = self.ui_state_manager.get_selected_bid_refs()
+        if project_uids:
+            if len(project_uids) != 1 or selected_bid_refs:
+                return None
+            project_uid = project_uids[0]
+            if project_uid == DELETED_BIDS_PROJECT_UID:
+                return None
+            file_path = self.ui_state_manager.selected_project_file_path
+            return (file_path, project_uid) if file_path else None
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        if bid_ref:
+        if bid_ref and bid_ref in selected_bid_refs:
             target_project_uid = self._project_data_service.find_project_uid_for_bid(
                 bid_ref
             )
@@ -1377,18 +1435,43 @@ class MainWindow(QtWidgets.QMainWindow):
                 bid_ref.file_path,
                 target_project_uid,
             )
-        project_uid = self.ui_state_manager.selected_project_uid
-        if project_uid == DELETED_BIDS_PROJECT_UID:
-            return None
         file_path = self.ui_state_manager.selected_file_path
         if not file_path:
             return None
-        return file_path, project_uid
+        return file_path, None
 
-    def _on_project_multi_selection(self, bid_refs, project_uids) -> None:
+    def _on_project_multi_selection(
+        self, bid_refs, project_uids, project_file_path
+    ) -> None:
         self.ui_state_manager.set_bid_multi_selection(bid_refs)
-        self.ui_state_manager.set_project_multi_selection(project_uids)
+        self.ui_state_manager.set_project_multi_selection(
+            project_uids, project_file_path
+        )
         self.handlers.ui_event.refresh_toolbar()
+
+    def _duplicate_project_tree_bid(self, bid_ref: BidRef) -> None:
+        if self.ui_access_manager.can_duplicate_bid(bid_ref):
+            self.handlers.delete.duplicate_bid(bid_ref)
+
+    def _create_project_tree_bid(self, file_path: str, project_uid: str | None) -> None:
+        if self.menu_controller:
+            self.menu_controller.new_project_at(file_path, project_uid)
+
+    def _create_project_tree_project(self, file_path: str) -> None:
+        if self.menu_controller:
+            self.menu_controller.new_folder_in(file_path)
+
+    def _project_tree_context_owns_active_bid(self, bid_ref: BidRef) -> bool:
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        current = self._project_data_service.get_current_bid_ref()
+        return bool(
+            selected
+            and current
+            and selected.bid_uid == bid_ref.bid_uid == current.bid_uid
+            and normalize_path(selected.file_path)
+            == normalize_path(bid_ref.file_path)
+            == normalize_path(current.file_path)
+        )
 
     def _trigger_project_tree_menu_command(self, command_key: str) -> None:
         if self.menu_controller:
@@ -1410,17 +1493,27 @@ class MainWindow(QtWidgets.QMainWindow):
         return self._project_read_service.get_job_statuses(file_path)
 
     def _update_project_tree_bid_job_status(self, bid_ref, job_status_uid: str) -> None:
-        if not self.ui_access_manager.is_allowed(Feature.EDIT_BID_JOB_STATUS):
+        if not self.ui_access_manager.can_edit_bid_job_status(bid_ref):
             return
         self.handlers.delete.update_bid_job_status(bid_ref, job_status_uid)
 
     def _restore_project_bids(self, bid_refs) -> None:
-        if self.ui_access_manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
+        if self.ui_access_manager.can_edit_bid_structure(bid_refs):
             self.handlers.delete.restore_bids(bid_refs)
 
     def _move_project_bids(self, bid_refs, target_project_uid) -> None:
-        if self.ui_access_manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
+        if self._can_move_project_bids(bid_refs, target_project_uid):
             self.handlers.delete.move_bids(bid_refs, target_project_uid)
+
+    def _can_move_project_bids(self, bid_refs, target_project_uid) -> bool:
+        return bool(
+            bid_refs
+            and self.ui_access_manager.can_edit_bid_structure(bid_refs)
+            and self._same_file_bid_refs(bid_refs)
+            and self.ui_access_manager.can_create_bid(
+                bid_refs[0].file_path, target_project_uid
+            )
+        )
 
     def _on_tab_changed(self, index: int) -> None:
         self._apply_workspace_toolbar_visibility()

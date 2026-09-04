@@ -7,6 +7,7 @@ from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.config import Config
 from ...domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
 from ...domain.entities.database_descriptor import DatabaseBackend
+from ...domain.entities.file_state import normalize_path
 from ..actions.action_ids import (
     ACTION_ADJUST_IMAGES,
     ACTION_ANNOTATION_WINDOW,
@@ -754,11 +755,32 @@ class MenuController:
 
     def _new_project(self) -> None:
         file_path = self._resolve_project_tree_file_path()
-        if not self.ui_access_manager.can_create_project_tree_items(
-            file_path is not None
-        ):
-            return
         target_project_uid = self._resolve_target_project_uid()
+        if file_path is None:
+            return
+        self._new_project_at(
+            file_path,
+            target_project_uid,
+            require_current_context=True,
+        )
+
+    def new_project_at(self, file_path: str, target_project_uid: Optional[str]) -> None:
+        self._new_project_at(file_path, target_project_uid)
+
+    def _new_project_at(
+        self,
+        file_path: str,
+        target_project_uid: Optional[str],
+        *,
+        require_current_context: bool = False,
+    ) -> None:
+        if not self.ui_access_manager.can_create_bid(file_path, target_project_uid):
+            return
+        target_identity = self._resolve_project_tree_target_identity(
+            file_path, target_project_uid
+        )
+        if target_identity is None:
+            return
         uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
             file_path
         )
@@ -946,13 +968,17 @@ class MenuController:
                     return
                 if uses_sql_queue:
                     return
-                if (
+                if require_current_context and (
                     self._resolve_project_tree_file_path() != file_path
                     or self._resolve_target_project_uid() != target_project_uid
                 ):
                     return
-                if not self.ui_access_manager.can_create_project_tree_items(
-                    file_path is not None
+                if not self._project_tree_target_identity_is_current(
+                    file_path, target_project_uid, target_identity
+                ):
+                    return
+                if not self.ui_access_manager.can_create_bid(
+                    file_path, target_project_uid
                 ):
                     return
                 updates = dialog.get_updates()
@@ -1006,11 +1032,39 @@ class MenuController:
             return loaded_files[0].file_path
         return None
 
+    def _resolve_project_tree_target_identity(
+        self, file_path: str, project_uid: Optional[str]
+    ):
+        file_key = normalize_path(file_path)
+        for file_entry in self.project_data.get_hierarchy().loaded_files:
+            if normalize_path(file_entry.file_path) != file_key:
+                continue
+            if project_uid is None:
+                return file_entry, None
+            project = file_entry.bid_projects.get(project_uid)
+            if project is not None:
+                return file_entry, project
+            return None
+        return None
+
+    def _project_tree_target_identity_is_current(
+        self, file_path: str, project_uid: Optional[str], expected_identity
+    ) -> bool:
+        current = self._resolve_project_tree_target_identity(file_path, project_uid)
+        return bool(
+            current is not None
+            and current[0] is expected_identity[0]
+            and current[1] is expected_identity[1]
+        )
+
     def _new_folder(self) -> None:
         file_path = self._resolve_project_tree_file_path()
-        if not self.ui_access_manager.can_create_project_tree_items(
-            file_path is not None
-        ):
+        if file_path is None:
+            return
+        self.new_folder_in(file_path)
+
+    def new_folder_in(self, file_path: str) -> None:
+        if not self.ui_access_manager.can_create_project(file_path):
             return
         if not self._flush_deferred_for_file(file_path):
             return

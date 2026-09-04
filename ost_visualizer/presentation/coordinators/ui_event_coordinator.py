@@ -37,10 +37,12 @@ from ...application.condition_change_impact import (
 )
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
 from ...domain.entities.bid import Bid
+from ...domain.entities.condition import Condition
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
+from ...domain.entities.page import Page
 from ...domain.entities.project_factory import build_loaded_files
 from ...domain.services.page_image_plane_transform import (
     resolve_page_floor_elevations,
@@ -104,8 +106,11 @@ MeshRenderBuffers = Tuple[
 class _SuspendedLayerTool:
     layer_uid: str
     mode: str
+    bid_ref: BidRef
+    bid_owner: Bid
     annotation_type: Optional[str] = None
     condition_uid: Optional[str] = None
+    condition_owner: Optional[Condition] = None
 
 
 @dataclass(frozen=True)
@@ -1148,6 +1153,12 @@ class UIEventCoordinator:
     ) -> Optional[_SuspendedLayerTool]:
         if not self.plan_view:
             return None
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if bid_ref is None:
+            return None
+        bid_owner = self.project_data.get_bid(bid_ref)
+        if bid_owner is None:
+            return None
         layer_key = str(layer_uid) if layer_uid is not None else None
         if self.plan_view.cursor_mode == CURSOR_MODE_ANNOTATION_PLACE:
             annotation_layer_uid = self.project_data.get_annotation_layer_uid()
@@ -1159,6 +1170,8 @@ class UIEventCoordinator:
                         return _SuspendedLayerTool(
                             annotation_layer_key,
                             CURSOR_MODE_ANNOTATION_PLACE,
+                            bid_ref,
+                            bid_owner,
                             annotation_type=annotation_type,
                         )
         condition_uid = (
@@ -1174,7 +1187,10 @@ class UIEventCoordinator:
                     return _SuspendedLayerTool(
                         condition_layer_key,
                         CURSOR_MODE_PLACE,
+                        bid_ref,
+                        bid_owner,
                         condition_uid=condition_uid,
+                        condition_owner=condition,
                     )
         return None
 
@@ -1195,6 +1211,12 @@ class UIEventCoordinator:
         if self.plan_view.cursor_mode != CURSOR_MODE_SELECT:
             self._suspended_layer_tool = None
             return
+        if (
+            self.ui_state_manager.get_selected_bid_ref() != suspended.bid_ref
+            or self.project_data.get_bid(suspended.bid_ref) is not suspended.bid_owner
+        ):
+            self._suspended_layer_tool = None
+            return
         if suspended.mode == CURSOR_MODE_ANNOTATION_PLACE and suspended.annotation_type:
             if self.ui_access_manager.is_allowed(Feature.PLACE_ANNOTATIONS):
                 self.plan_view.activate_annotation_placement(suspended.annotation_type)
@@ -1203,7 +1225,7 @@ class UIEventCoordinator:
                 suspended.condition_uid
             )
             if (
-                condition
+                condition is suspended.condition_owner
                 and condition.layer_visible
                 and self._is_takeoff_2d_view_active()
                 and self.ui_access_manager.is_allowed(Feature.PLACE_PLAN_ITEMS)
@@ -4557,7 +4579,7 @@ class UIEventCoordinator:
             page.invert,
             page.bitonal,
             save_fn=lambda settings: self._save_image_adjustments(
-                bid_ref.file_path, page_uid, settings
+                bid_ref, page_uid, page, settings
             ),
             save_async_fn=(
                 (
@@ -4611,21 +4633,32 @@ class UIEventCoordinator:
             if uid and self.project_data.get_page(uid)
         ]
 
-    def _save_image_adjustments(
-        self, file_path: str, page_uid: str, settings: ImageAdjustmentSettings
+    def _page_dialog_context_is_current(
+        self, bid_ref: BidRef, page_uid: str, page: Page
     ) -> bool:
-        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+        return bool(
+            self.ui_state_manager.get_selected_bid_ref() == bid_ref
+            and self.ui_state_manager.active_page_uid == page_uid
+            and self.project_data.get_page(page_uid) is page
+            and self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+        )
+
+    def _save_image_adjustments(
+        self,
+        bid_ref: BidRef,
+        page_uid: str,
+        page: Page,
+        settings: ImageAdjustmentSettings,
+    ) -> bool:
+        if not self._page_dialog_context_is_current(bid_ref, page_uid, page):
             return False
         page_uids = self._page_setting_uids(page_uid, settings.apply_to_all_pages)
         if not page_uids:
             return False
-        if not self._flush_deferred_for_file(file_path):
+        if not self._flush_deferred_for_file(bid_ref.file_path):
             return False
-        bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        if (
-            bid_ref is not None
-            and bid_ref.file_path == file_path
-            and self._project_write_service.uses_sql_collaboration_mutations(file_path)
+        if self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
         ):
             updates = [
                 [
@@ -4640,7 +4673,7 @@ class UIEventCoordinator:
             ]
             return (
                 self._project_write_service.queue_page_settings(
-                    file_path,
+                    bid_ref.file_path,
                     bid_ref.bid_uid,
                     "image_adjustments",
                     updates,
@@ -4649,7 +4682,7 @@ class UIEventCoordinator:
                 >= 0
             )
         return self._project_write_service.save_page_image_adjustments(
-            file_path,
+            bid_ref.file_path,
             page_uids,
             settings.rotation,
             settings.flip_x,
@@ -4694,7 +4727,9 @@ class UIEventCoordinator:
         page_uid = page_uid or self.ui_state_manager.active_page_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         file_path = file_path or (bid_ref.file_path if bid_ref else None)
-        if not page_uid or not file_path:
+        if not page_uid or not file_path or not bid_ref:
+            return
+        if file_path != bid_ref.file_path:
             return
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return
@@ -4722,7 +4757,7 @@ class UIEventCoordinator:
             page.scale_factor1,
             page.scale_factor2,
             save_fn=lambda settings: self._save_scale_settings(
-                file_path, page_uid, settings
+                bid_ref, page_uid, page, settings
             ),
             save_async_fn=(
                 (
@@ -4757,24 +4792,25 @@ class UIEventCoordinator:
         )
 
     def _save_scale_settings(
-        self, file_path: str, page_uid: str, settings: ScaleSettings
+        self,
+        bid_ref: BidRef,
+        page_uid: str,
+        page: Page,
+        settings: ScaleSettings,
     ) -> bool:
-        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+        if not self._page_dialog_context_is_current(bid_ref, page_uid, page):
             return False
         page_uids = self._page_setting_uids(page_uid, settings.apply_to_all_pages)
         if not page_uids:
             return False
-        if not self._flush_deferred_for_file(file_path):
+        if not self._flush_deferred_for_file(bid_ref.file_path):
             return False
-        bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        if (
-            bid_ref is not None
-            and bid_ref.file_path == file_path
-            and self._project_write_service.uses_sql_collaboration_mutations(file_path)
+        if self._project_write_service.uses_sql_collaboration_mutations(
+            bid_ref.file_path
         ):
             return (
                 self._project_write_service.queue_page_settings(
-                    file_path,
+                    bid_ref.file_path,
                     bid_ref.bid_uid,
                     "scale",
                     [
@@ -4787,13 +4823,13 @@ class UIEventCoordinator:
             )
         if len(page_uids) == 1:
             return self._project_write_service.save_page_scale(
-                file_path,
+                bid_ref.file_path,
                 page_uids[0],
                 settings.scale_factor1,
                 settings.scale_factor2,
             )
         return self._project_write_service.save_page_scales(
-            file_path,
+            bid_ref.file_path,
             page_uids,
             settings.scale_factor1,
             settings.scale_factor2,
@@ -4877,6 +4913,12 @@ class UIEventCoordinator:
             return
         if not any(page.uid == page_uid for page in pages):
             return
+        active_page = self.project_data.get_page(page_uid)
+        if active_page is None:
+            return
+        page_owners = {
+            target.uid: self.project_data.get_page(target.uid) for target in pages
+        }
         uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
         )
@@ -4899,7 +4941,12 @@ class UIEventCoordinator:
             pages,
             page_uid,
             save_fn=lambda target_page_uid, new_name: self._save_page_name(
-                bid_ref.file_path, target_page_uid, new_name
+                bid_ref,
+                page_uid,
+                active_page,
+                page_owners,
+                target_page_uid,
+                new_name,
             ),
             save_async_fn=(
                 (
@@ -4943,20 +4990,38 @@ class UIEventCoordinator:
                 targets.append(PageRenameTarget(uid=page.uid, name=page.name))
         return targets
 
-    def _save_page_name(self, file_path: str, page_uid: str, new_name: str) -> bool:
-        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+    def _save_page_name(
+        self,
+        bid_ref: BidRef,
+        active_page_uid: str,
+        active_page: Page,
+        page_owners: Dict[str, Optional[Page]],
+        page_uid: str,
+        new_name: str,
+    ) -> bool:
+        if not self._page_dialog_context_is_current(
+            bid_ref, active_page_uid, active_page
+        ):
             return False
-        if not self._flush_deferred_for_file(file_path):
+        target_page = page_owners.get(page_uid)
+        if (
+            target_page is None
+            or self.project_data.get_page(page_uid) is not target_page
+        ):
+            return False
+        if not self._flush_deferred_for_file(bid_ref.file_path):
             return False
         queued = self._project_write_service.queue_page_setting_if_sql(
-            file_path,
+            bid_ref.file_path,
             page_uid,
             "name",
             [new_name],
         )
         if queued is not None:
             return queued
-        return self._project_write_service.save_page_name(file_path, page_uid, new_name)
+        return self._project_write_service.save_page_name(
+            bid_ref.file_path, page_uid, new_name
+        )
 
     def _save_page_name_async(
         self,
@@ -5050,6 +5115,13 @@ class UIEventCoordinator:
                 self.main_window, self._page_delete_display_name(page)
             ):
                 return
+            if not (
+                self.can_delete_current_page()
+                and self.ui_state_manager.get_selected_bid_ref() == bid_ref
+                and self.ui_state_manager.active_page_uid == page_uid
+                and self.project_data.get_page(page_uid) is page
+            ):
+                return
         if not self._stage_selection_after_page_delete(page_uid):
             return
         if not self._flush_deferred_for_file(bid_ref.file_path):
@@ -5130,6 +5202,8 @@ class UIEventCoordinator:
         if not path:
             return
         if self._is_cleaning_up or not isValid(self.main_window):
+            return
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return
         if (
             self.ui_state_manager.get_selected_bid_ref() != bid_ref
@@ -5546,12 +5620,20 @@ class UIEventCoordinator:
         if self._project_write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
         ):
+            bid_owner = self.project_data.get_bid(bid_ref)
+            if bid_owner is None:
+                return
             self._project_write_service.queue_layer_insert(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 name,
                 after_sequence,
-                lambda result: self._on_queued_layer_insert_complete(sidebar, result),
+                lambda result: self._on_queued_layer_insert_complete(
+                    sidebar,
+                    bid_ref,
+                    bid_owner,
+                    result,
+                ),
             )
             return
         try:
@@ -5575,16 +5657,27 @@ class UIEventCoordinator:
             self._sidebar.load_bid_layers_sidebar()
 
     def _on_queued_layer_insert_complete(
-        self, sidebar, result: QueuedMutationResult
+        self,
+        sidebar,
+        bid_ref: BidRef,
+        bid_owner,
+        result: QueuedMutationResult,
     ) -> None:
+        current_owner = self.project_data.get_bid(bid_ref)
+        owns_current_sidebar = bool(
+            self.ui_state_manager.get_selected_bid_ref() == bid_ref
+            and current_owner is bid_owner
+            and self._sidebar.bid_layers_sidebar is sidebar
+        )
         if (
             result.outcome_status == MutationOutcomeStatus.COMMITTED
             and result.created_resource_ids
         ):
-            sidebar.set_pending_selection(result.created_resource_ids[0])
+            if owns_current_sidebar:
+                sidebar.set_pending_selection(result.created_resource_ids[0])
             return
         logger.warning("Queued SQL layer insertion failed: %s", result.message)
-        if not self._is_cleaning_up:
+        if not self._is_cleaning_up and owns_current_sidebar:
             self._sidebar.load_bid_layers_sidebar_from_memory()
             self.present_queued_mutation_error(
                 result.database_id, "Layer Creation", result

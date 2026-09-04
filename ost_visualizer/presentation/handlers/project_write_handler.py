@@ -124,10 +124,13 @@ class ProjectWriteHandler:
         self._deferred_persistence.cancel_bid_selected_pages_for_file(file_path)
 
     def duplicate_selected(self) -> None:
-        if self._duplicate_in_progress:
-            return
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
+            return
+        self.duplicate_bid(bid_ref)
+
+    def duplicate_bid(self, bid_ref: BidRef) -> None:
+        if self._duplicate_in_progress:
             return
         bid_name = self._duplicate_bid_name(bid_ref)
         if not self._flush_deferred_for_file(bid_ref.file_path):
@@ -228,16 +231,7 @@ class ProjectWriteHandler:
             self._delete_bids(bid_refs, selection_after_delete)
             return
         if project_uids:
-            file_path = self.ui_state_manager.selected_file_path
-            if not file_path:
-                try:
-                    file_path = (
-                        self.project_data.get_hierarchy().find_file_path_for_project(
-                            project_uids[0]
-                        )
-                    )
-                except Exception:
-                    file_path = None
+            file_path = self.ui_state_manager.selected_project_file_path
             self._delete_projects(project_uids, file_path)
 
     def rename_project(
@@ -614,6 +608,9 @@ class ProjectWriteHandler:
     ) -> None:
         self._delete_bids(bid_refs, selection_after_delete)
 
+    def delete_projects(self, file_path: str, project_uids: List[str]) -> None:
+        self._delete_projects(project_uids, file_path)
+
     def _group_bids_by_file(self, bid_refs: List[BidRef]) -> Dict[str, List[str]]:
         grouped: Dict[str, tuple[str, List[str]]] = {}
         for ref in bid_refs:
@@ -656,6 +653,11 @@ class ProjectWriteHandler:
                     and selected_bid.bid_uid in uids
                 )
                 selection_owner = selected_bid if clears_active_bid else None
+                selection_bid_owner = (
+                    self.project_data.get_bid(selected_bid)
+                    if selection_owner is not None
+                    else None
+                )
                 if self._uses_sql_queue(file_path):
                     self._submit_sql_hierarchy_operation(
                         file_path,
@@ -668,11 +670,12 @@ class ProjectWriteHandler:
                                 callback,
                             )
                         ),
-                        lambda _result, fp=file_path, owner=selection_owner: (
+                        lambda _result, fp=file_path, owner=selection_owner, bid_owner=selection_bid_owner: (
                             self._finish_sql_bid_removal(
                                 fp,
                                 selection_after_delete,
                                 owner,
+                                bid_owner,
                             )
                         ),
                     )
@@ -728,6 +731,11 @@ class ProjectWriteHandler:
                         and selected_bid.bid_uid in uids
                     )
                     selection_owner = selected_bid if clears_active_bid else None
+                    selection_bid_owner = (
+                        self.project_data.get_bid(selected_bid)
+                        if selection_owner is not None
+                        else None
+                    )
                     if self._uses_sql_queue(file_path):
                         self._submit_sql_hierarchy_operation(
                             file_path,
@@ -742,11 +750,12 @@ class ProjectWriteHandler:
                                 callback,
                                 original_project_uid=orig,
                             ),
-                            lambda _result, fp=file_path, owner=selection_owner: (
+                            lambda _result, fp=file_path, owner=selection_owner, bid_owner=selection_bid_owner: (
                                 self._finish_sql_bid_removal(
                                     fp,
                                     selection_after_delete,
                                     owner,
+                                    bid_owner,
                                 )
                             ),
                         )
@@ -786,10 +795,17 @@ class ProjectWriteHandler:
         file_path: str,
         selection_after_delete: Optional[dict],
         selection_owner: Optional[BidRef],
+        selection_bid_owner,
     ) -> None:
         if (
             selection_owner is None
             or self.ui_state_manager.get_selected_bid_ref() != selection_owner
+        ):
+            return
+        current_bid_owner = self.project_data.get_bid(selection_owner)
+        if (
+            current_bid_owner is not None
+            and current_bid_owner is not selection_bid_owner
         ):
             return
         self.ui_state_manager.set_bid_selection(None)
@@ -801,14 +817,28 @@ class ProjectWriteHandler:
         self,
         file_path: str,
         project_uids: tuple[str, ...],
+        project_owners: tuple[tuple[str, object], ...],
     ) -> None:
         if (
             self.ui_state_manager.get_selected_bid_ref() is not None
-            or not self._same_file(file_path, self.ui_state_manager.selected_file_path)
+            or not self._same_file(
+                file_path, self.ui_state_manager.selected_project_file_path
+            )
             or set(self.ui_state_manager.selected_project_uids) != set(project_uids)
         ):
             return
+        for project_uid, project_owner in project_owners:
+            current_owner = self._hierarchy_project(file_path, project_uid)
+            if current_owner is not None and current_owner is not project_owner:
+                return
         self._apply_delete_selection_state(file_path, None)
+
+    def _hierarchy_project(self, file_path: str, project_uid: str):
+        target = normalize_path(file_path)
+        for entry in self.project_data.get_hierarchy().loaded_files:
+            if normalize_path(entry.file_path) == target:
+                return entry.bid_projects.get(project_uid)
+        return None
 
     def _apply_delete_selection_state(
         self, file_path: str, selection_state: Optional[dict]
@@ -924,6 +954,9 @@ class ProjectWriteHandler:
             return
         if self._uses_sql_queue(file_path):
             selected_project_uids = tuple(deletable)
+            project_owners = tuple(
+                (uid, self._hierarchy_project(file_path, uid)) for uid in deletable
+            )
             self._submit_sql_hierarchy_operation(
                 file_path,
                 ("delete_projects", *deletable),
@@ -936,6 +969,7 @@ class ProjectWriteHandler:
                 lambda _result: self._finish_sql_project_removal(
                     file_path,
                     selected_project_uids,
+                    project_owners,
                 ),
             )
             return

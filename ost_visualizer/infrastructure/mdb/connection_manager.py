@@ -80,11 +80,17 @@ class MdbConnectionManager:
                     wrapper.close_cursors()
                     if borrowed_write_connection:
                         conn.rollback()
-            except pyodbc.Error:
+            except pyodbc.Error as operation_error:
                 with self._lock:
                     _active_mode, active_depth = self._active_leases[abs_path]
                     if active_depth == 1:
-                        self._close_single(pool, abs_path)
+                        try:
+                            self._close_single(pool, abs_path)
+                        except pyodbc.Error as close_error:
+                            operation_error.add_note(
+                                f"The invalid MDB connection could not be closed: "
+                                f"{close_error}"
+                            )
                 raise
             finally:
                 with self._lock:
@@ -98,26 +104,37 @@ class MdbConnectionManager:
     def close_write_connections(self) -> None:
         with self._lock:
             paths = list(self._write_conns)
+        errors = []
         for abs_path in paths:
-            self._close_path_connection(self._write_conns, abs_path)
-
-    def close_read(self, db_path: str) -> None:
-        abs_path = os.path.abspath(db_path)
-        self._close_path_connection(self._read_conns, abs_path)
+            try:
+                self._close_path_connection(self._write_conns, abs_path)
+            except pyodbc.Error as exc:
+                errors.append(exc)
+        self._raise_close_errors(errors)
 
     def close_database(self, db_path: str) -> None:
         abs_path = os.path.abspath(db_path)
         path_lock = self._get_path_lock(abs_path)
         with path_lock:
             with self._lock:
-                self._close_single(self._read_conns, abs_path)
-                self._close_single(self._write_conns, abs_path)
+                errors = []
+                for pool in (self._read_conns, self._write_conns):
+                    try:
+                        self._close_single(pool, abs_path)
+                    except pyodbc.Error as exc:
+                        errors.append(exc)
+                self._raise_close_errors(errors)
 
     def close(self) -> None:
         with self._lock:
             paths = set(self._read_conns) | set(self._write_conns)
+        errors = []
         for abs_path in paths:
-            self.close_database(abs_path)
+            try:
+                self.close_database(abs_path)
+            except (pyodbc.Error, ExceptionGroup) as exc:
+                errors.append(exc)
+        self._raise_close_errors(errors)
         with self._lock:
             self._path_locks.clear()
 
@@ -133,9 +150,16 @@ class MdbConnectionManager:
 
     @staticmethod
     def _close_single(pool: dict, abs_path: str) -> None:
-        conn = pool.pop(abs_path, None)
+        conn = pool.get(abs_path)
         if conn is not None:
-            try:
-                conn.close()
-            except pyodbc.Error:
-                pass
+            conn.close()
+            if pool.get(abs_path) is conn:
+                pool.pop(abs_path)
+
+    @staticmethod
+    def _raise_close_errors(errors: list[BaseException]) -> None:
+        if not errors:
+            return
+        if len(errors) == 1:
+            raise errors[0]
+        raise ExceptionGroup("Failed to close MDB connections", errors)

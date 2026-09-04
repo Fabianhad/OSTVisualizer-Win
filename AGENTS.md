@@ -96,8 +96,22 @@ Threading and events:
 - Context menus and internal Qt drags also run nested event loops. Bind delayed
   actions to the exact model or surface revision, selection, and authoritative
   object identities; cancel active tree drags and inline editors before deleting
-  their items during a model reset. Clipboard payloads remain detached data, and
-  database ownership comparisons use canonical path normalization.
+  their items during a model reset. Menus opened by an embedded native render
+  surface use its real top-level widget as their transient owner; a child
+  `QWidgetWindow` is not a valid top-level owner. Clipboard payloads remain
+  detached data, and database ownership comparisons use canonical path
+  normalization. Project Tree multi-selection does not replace the active bid:
+  toolbar and shortcut duplication target that one active bid, while context-menu
+  duplication captures and revalidates the exact right-clicked bid. Other
+  Project Tree context mutations likewise retain their captured database and
+  resource identities; active-bid-only exports and condition renumbering are not
+  offered for a different right-clicked bid. Selection-wide project commands
+  carry the owning database alongside project UIDs.
+- Accepted native 3D scene and texture completions may update a hidden surface's
+  retained scene, but only `showEvent` may resume its renderer. Hide and cleanup
+  own the suspended state even while regeneration is pending; the canonical
+  renderer-resume operation must enforce that invariant for both success and
+  failure completions.
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
@@ -185,8 +199,19 @@ Persistence:
   Replacing an overlay resets its prior rectangle, offsets, rotation, deskew,
   and resized state. Removing it clears that same complete overlay-owned state
   and makes the original image the authoritative page display mode.
+- MDB and SQL bid duplication remap layer foreign keys through the shared
+  `LAYER_REFERENCE_TABLES` contract. Tables such as takeoffs, dimensions,
+  arrows, annotation lines, ink, and legends do not own `BidLayerUID`; takeoffs
+  inherit their layer through their condition, and layerless annotation tables
+  project to the canonical annotation layer.
 
 Database backends:
+
+- Explicit MDB refresh closes both cached read and write handles for the target
+  path before reparsing, so a replaced file cannot leave reads and writes bound
+  to different Access file instances. A handle that fails to close remains owned
+  by the connection manager and the failure stays explicit so cleanup can retry;
+  partial cleanup must not drop the only reference to that handle.
 
 - A saved SQL descriptor's `DatabaseGuid` is the logical database identity.
   Collaboration startup must compare it with live `DatabaseMetadata` before
@@ -339,7 +364,11 @@ Database backends:
   feed.
 - Takeoffs inherit bid-layer membership through their condition; `Takeoff` does
   not own a layer UID. SQL and Access share the canonical takeoff hydrator, and
-  remote takeoff graphs must be validated before main-thread projection.
+  remote takeoff graphs must be validated before main-thread projection. Bid
+  duplication and SQL import reconstruct every copied internal reference from
+  the canonical raw-bid relationship graph; regenerated row identities must not
+  retain source-bid references. Plan clipboard snapshots use the current typed
+  takeoff label-font state as authoritative over older raw storage extras.
 - Unchecking or removing a SQL descriptor always detaches local state even when
   the server is unavailable. Remote session and lock cleanup is best effort for
   this path; connection-owned leases are allowed to expire after local runtime
@@ -381,6 +410,12 @@ State and identity:
   refresh removes the detached surface's bid, clear its undo history before
   refreshing or retargeting the window. Exact remote annotation ownership on an
   unrelated page must not clear that detached page's local undo history.
+- Active multi-Condition placement captures the authoritative Condition
+  instances selected on entry. A remote delete, retype, visibility change, or
+  same-UID authoritative replacement of any captured Condition exits placement.
+  Layer-visibility suspension retains the exact Bid and Condition owners of the
+  interrupted tool as well; showing a layer must not resume interaction against
+  a replacement object that merely reuses those UIDs.
 - Plan View scene bands live in `presentation/scene/plan_view_z_order.py`.
   Overlay-only imagery owns the primary page-image band, while Show Both may
   project its overlay into the foreground-image band. Base, overlay, composite,

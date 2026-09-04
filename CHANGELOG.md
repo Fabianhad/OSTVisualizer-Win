@@ -4,6 +4,53 @@
 
 ### Fixed
 
+- Fixed Duplicate Bid regenerating takeoff, annotation, comment, folder, page,
+  and area identities without reconstructing all references between the copied
+  rows. The duplicate now owns an independent reference graph, including
+  takeoff parent/annotation attachments and typical-area counts, and SQL OST/OSP
+  import now resolves takeoff `ParentUID` through the generated SQL identities.
+- Fixed persisted Conditions with no layer reloading with the literal layer UID
+  `"None"`, and fixed Plan clipboard snapshots losing current takeoff label-font
+  state by retaining stale raw extras after the source was edited.
+- Fixed delayed SQL Plan leases and mutation completions accepting a deleted and
+  recreated page solely because its UID matched. Main and detached Plan
+  geometry, properties, deletion, insertion, placement selection, preview
+  restoration, and undo attachment now retain the authoritative page instance;
+  failed mutations also cannot restore editable previews after access is
+  revoked. Active takeoff placement similarly exits when one of its captured
+  Conditions is authoritatively replaced with the same UID, and a placement
+  suspended by layer visibility can no longer resume against a replacement
+  Condition or Bid.
+- Fixed a hidden detached 3D surface resuming its native renderer when a pending
+  scene, texture, or failed same-scene refresh completed. Explicit MDB reload now
+  closes routed read and write handles to the previous database file at the same
+  path, retains ownership when a close fails, and reports that failure so cleanup
+  can retry.
+- Fixed delayed SQL Condition, folder, layer, bid-delete, and project-delete UI
+  follow-ups applying placement, selection, inline-edit, or navigation state to
+  a newly loaded authoritative Bid or Project that reused the original UID.
+  Placement-producing completions also revalidate current edit access.
+- Fixed Condition Tree and Project Tree keyboard commands competing with shared
+  Plan shortcuts, Condition context creation losing its right-clicked folder,
+  and tree context submenus losing their Qt ownership before execution. Nested
+  Condition/page confirmations and native page dialogs now revalidate their
+  captured authoritative target and edit access before writing. Project Tree
+  drag indicators now use the same exact source/destination authorization as
+  the eventual bid move.
+- Fixed Duplicate from a Project Tree context menu acting on the previously
+  active bid when the user right-clicked a different bid in a multi-selection.
+  Toolbar and Ctrl+D duplication remain singular active-bid actions.
+- Fixed Project Tree Close, Import, New, Delete, Rename, and Job Status context
+  actions checking or mutating the active database instead of their captured
+  right-click target. Export and Renumber are now disabled when the context bid
+  is not the loaded active bid, and selection-wide Delete/Paste authorization
+  checks every captured database/resource rather than only the active one.
+- Fixed native 3D context menus transient-parenting themselves to the embedded
+  render surface instead of its real top-level window, which caused Qt
+  `QWidgetWindow ... must be a top level window` warnings.
+- Fixed bid duplication probing nonexistent `BidLayerUID` columns and leaving
+  copied comments linked to the source bid's layers. Layer references now use
+  the shared MDB/SQL schema contract.
 - Fixed deleting an Overlay Only page's overlay from Cover Sheet leaving the
   original image unavailable from Plan View; overlay deletion now selects the
   original image and clears all saved overlay placement and rotation data, and

@@ -8,6 +8,10 @@ from ost_visualizer.infrastructure.mdb.connection_manager import (
 )
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
+)
+from ost_visualizer.infrastructure.database.reader_router import DatabaseProjectReader
 from ost_visualizer.infrastructure.persistence.repositories.file_project_repository import (
     MdbFileParser,
 )
@@ -346,13 +350,13 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         manager.close()
         self.assert_all_resources_released()
 
-    def test_refresh_closes_only_requested_cached_read_connection(self):
+    def test_database_close_releases_only_requested_database(self):
         manager = MdbConnectionManager()
         with manager.connection("old.mdb"):
             pass
         with manager.connection("new.mdb"):
             pass
-        manager.close_read("old.mdb")
+        manager.close_database("old.mdb")
         self.assertEqual(self.connect.counts.active_connections, 1)
         self.assertEqual(len(manager._read_conns), 1)
         manager.close()
@@ -370,6 +374,78 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(self.connect.counts.active_connections, 1)
         self.assertNotIn("old.mdb", " ".join(manager._read_conns))
         self.assertNotIn("old.mdb", " ".join(manager._write_conns))
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_database_close_failure_retains_connection_for_retry(self):
+        manager = MdbConnectionManager()
+        with manager.connection("retry-close.mdb"):
+            pass
+        abs_path = next(iter(manager._read_conns))
+        connection = manager._read_conns[abs_path]
+        original_close = connection.close
+        close_attempts = []
+
+        def fail_once():
+            close_attempts.append(True)
+            if len(close_attempts) == 1:
+                raise pyodbc.OperationalError("close failed")
+            original_close()
+
+        connection.close = fail_once
+        with self.assertRaisesRegex(pyodbc.OperationalError, "close failed"):
+            manager.close_database("retry-close.mdb")
+        self.assertIs(manager._read_conns[abs_path], connection)
+        self.assertFalse(connection.closed)
+        manager.close_database("retry-close.mdb")
+        self.assertNotIn(abs_path, manager._read_conns)
+        self.assertTrue(connection.closed)
+        self.assertEqual(len(close_attempts), 2)
+        self.assert_all_resources_released()
+
+    def test_reader_refresh_reopens_write_handle_for_same_path_replacement(self):
+        manager = MdbConnectionManager()
+        reader = MdbReader(conn_manager=manager)
+        writer = MdbWriter(conn_manager=manager)
+        with writer._connection("replacement.mdb"):
+            pass
+        original_write_connection = manager._write_conns[
+            next(iter(manager._write_conns))
+        ]
+        reader.refresh_connection("replacement.mdb")
+        self.assertTrue(original_write_connection.closed)
+        self.assertEqual(manager._write_conns, {})
+        with writer._connection("replacement.mdb"):
+            pass
+        replacement_write_connection = manager._write_conns[
+            next(iter(manager._write_conns))
+        ]
+        self.assertIsNot(replacement_write_connection, original_write_connection)
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_routed_reader_refresh_reopens_write_handle_for_same_path_replacement(self):
+        manager = MdbConnectionManager()
+        reader = DatabaseProjectReader(
+            manager,
+            DatabaseDescriptorRegistry(),
+            object(),
+        )
+        writer = MdbWriter(conn_manager=manager)
+        with writer._connection("routed-replacement.mdb"):
+            pass
+        original_write_connection = manager._write_conns[
+            next(iter(manager._write_conns))
+        ]
+        reader.refresh_connection("routed-replacement.mdb")
+        self.assertTrue(original_write_connection.closed)
+        self.assertEqual(manager._write_conns, {})
+        with writer._connection("routed-replacement.mdb"):
+            pass
+        replacement_write_connection = manager._write_conns[
+            next(iter(manager._write_conns))
+        ]
+        self.assertIsNot(replacement_write_connection, original_write_connection)
         manager.close()
         self.assert_all_resources_released()
 
@@ -391,8 +467,8 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         lease.__exit__(None, None, None)
         self.assert_all_resources_released()
 
-    def test_post_write_refreshes_reuse_committed_write_connection(self):
-        self.connect.max_opens = 32
+    def test_post_write_full_refresh_reopens_connection_incarnation(self):
+        self.connect.max_opens = 2000
         manager = MdbConnectionManager()
         writer = MdbWriter(conn_manager=manager)
         parser = MdbFileParser(parser=_MaterializingRawBidReader(conn_manager=manager))
@@ -401,14 +477,14 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         for _index in range(500):
             with writer._connection("refresh.mdb"):
                 pass
-            manager.close_read("refresh.mdb")
+            manager.close_database("refresh.mdb")
             raw_data = parser.get_raw_bid_data("refresh.mdb", "bid-1")
             self.assertEqual(raw_data.bid_row["UID"], "bid-1")
-        self.assertEqual(self.connect.counts.connections_opened, 2)
+        self.assertEqual(self.connect.counts.connections_opened, 1001)
         self.assertEqual(self.connect.counts.active_connections, 1)
-        self.assertEqual(len(manager._read_conns), 0)
-        self.assertEqual(len(manager._write_conns), 1)
-        self.assertEqual(self.connect.counts.rollbacks, 500)
+        self.assertEqual(len(manager._read_conns), 1)
+        self.assertEqual(len(manager._write_conns), 0)
+        self.assertEqual(self.connect.counts.rollbacks, 0)
         manager.close()
         self.assert_all_resources_released()
 

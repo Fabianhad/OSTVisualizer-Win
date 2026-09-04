@@ -3,16 +3,24 @@ import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtTest, QtWidgets
-from shiboken6 import delete
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from shiboken6 import delete, isValid
 from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.loaded_file import LoadedFile
 from ost_visualizer.domain.entities.project import Project
 from ost_visualizer.presentation.components.project_tree_view import (
     _DELETED_PROJECT_UID,
     ProjectView,
 )
+from ost_visualizer.presentation.handlers.project_write_handler import (
+    ProjectWriteHandler,
+)
+from ost_visualizer.presentation.handlers.file_operation_handler import (
+    FileOperationHandler,
+)
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
+from ost_visualizer.presentation.managers.ui_state_manager import UIStateManager
 
 
 def _app():
@@ -39,7 +47,16 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
     def setUp(self):
         self.view = ProjectView(None, _EventBus())
         self.view.set_ui_access_manager(
-            SimpleNamespace(is_allowed=lambda _feature: True)
+            SimpleNamespace(
+                is_allowed=lambda _feature: True,
+                can_edit_project=lambda _file_path, _project_uid: True,
+                can_delete_bids=lambda refs: bool(refs),
+                can_edit_bid_structure=lambda refs: bool(refs),
+            )
+        )
+        self.view.on_can_delete_bids = lambda refs: bool(refs)
+        self.view.on_can_delete_projects = lambda _file_path, project_uids: bool(
+            project_uids
         )
 
     def _loaded_file(
@@ -152,6 +169,48 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         state = self.view.get_delete_replacement_selection_state()
         self.assertEqual(state["kind"], "project")
         self.assertEqual(state["project_uid"], "project-1")
+
+    def test_project_copy_shortcut_wins_over_enabled_window_action(self):
+        window = QtWidgets.QMainWindow()
+        self.addCleanup(window.close)
+        window.setCentralWidget(self.view)
+        copied = []
+        plan_copy_calls = []
+        self.view.on_copy_bids = lambda refs: copied.append(list(refs))
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        self._select_bid_items("bid-1")
+        shared_copy = QtGui.QAction("Copy", window)
+        shared_copy.setShortcut(QtGui.QKeySequence("Ctrl+C"))
+        shared_copy.triggered.connect(lambda: plan_copy_calls.append(True))
+        window.addAction(shared_copy)
+        window.show()
+        self.view.top_tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        QtTest.QTest.keyClick(
+            self.view.top_tree,
+            QtCore.Qt.Key.Key_C,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        QtTest.QTest.keyRelease(self.view.top_tree, QtCore.Qt.Key.Key_Control)
+        self.app.processEvents()
+        self.assertEqual(copied, [[BidRef("C:/jobs/test.mdb", "bid-1")]])
+        self.assertEqual(plan_copy_calls, [])
+
+    def test_project_context_submenus_remain_owned_until_menu_execution(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        item = self._select_bid_items("bid-1")[0]
+        context = self.view._context_for_item(item)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        submenus = {
+            action.text(): action.menu()
+            for action in menu.actions()
+            if action.text() in {"New", "Import", "Export", "Change Job Status"}
+        }
+        self.assertEqual(
+            set(submenus), {"New", "Import", "Export", "Change Job Status"}
+        )
+        self.assertTrue(all(isValid(submenu) for submenu in submenus.values()))
 
     def test_delete_replacement_selects_orphan_sibling_in_same_database(self):
         self.view.build_complete_structure(
@@ -285,8 +344,10 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         bid_selections = []
         multi_selections = []
         self.view.on_bid_selection = lambda bid_ref: bid_selections.append(bid_ref)
-        self.view.on_multi_selection = lambda bids, projects: multi_selections.append(
-            (list(bids), list(projects))
+        self.view.on_multi_selection = (
+            lambda bids, projects, file_path: multi_selections.append(
+                (list(bids), list(projects), file_path)
+            )
         )
         self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
         bid_1 = self._find_item("bid-1")
@@ -311,8 +372,11 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         project_two, _ = self.view._find_project_item("project-two", "C:/jobs/two.mdb")
         project_one.setSelected(True)
         project_two.setSelected(True)
-        _bid_refs, project_uids = self.view._collect_multi_selection()
+        _bid_refs, project_uids, project_file_path = (
+            self.view._collect_multi_selection()
+        )
         self.assertEqual(project_uids, [])
+        self.assertIsNone(project_file_path)
 
     def test_grouped_project_multi_selection_deduplicates_project_uid(self):
         loaded_file = LoadedFile(
@@ -346,8 +410,11 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(len(project_items), 2)
         for item in project_items:
             item.setSelected(True)
-        _bid_refs, project_uids = self.view._collect_multi_selection()
+        _bid_refs, project_uids, project_file_path = (
+            self.view._collect_multi_selection()
+        )
         self.assertEqual(project_uids, ["project-shared"])
+        self.assertEqual(project_file_path, "C:/jobs/test.mdb")
 
     def test_scheduled_rename_targets_matching_database_for_duplicate_project_uid(self):
         loaded_files = self._loaded_file([], file_path="C:/jobs/one.mdb")
@@ -452,6 +519,396 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         self.assertEqual(len(emitted_positions), 1)
 
+    def test_context_duplicate_targets_right_clicked_bid_in_multi_selection(self):
+        config = SimpleNamespace(
+            display_modes_synced=True,
+            display_mode_3d="solid",
+            display_mode_2d="solid",
+            grayscale_enabled=False,
+        )
+        ui_state = UIStateManager(config)
+        duplicate_calls = []
+        write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _path: False,
+            duplicate_bid=lambda file_path, bid_uid, reload=False: (
+                duplicate_calls.append((file_path, bid_uid, reload)) or "new-bid"
+            ),
+            reload_database=lambda _path: True,
+            notify_database_refreshed=lambda _path: None,
+        )
+        handler = ProjectWriteHandler(
+            window=self.view,
+            project_data_service=SimpleNamespace(
+                get_hierarchy=lambda: SimpleNamespace(
+                    find_bid_info=lambda ref: SimpleNamespace(name=ref.bid_uid)
+                )
+            ),
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _path: True
+            ),
+        )
+        handler._run_progress_dialog = lambda _title, work, **_options: (
+            QtWidgets.QDialog.DialogCode.Accepted,
+            work(),
+            None,
+        )
+        self.view.on_bid_selection = ui_state.set_bid_selection
+        self.view.on_multi_selection = (
+            lambda bids, _projects, _file_path: ui_state.set_bid_multi_selection(bids)
+        )
+        self.view.on_duplicate_bid = handler.duplicate_bid
+        self.view.on_can_duplicate_bid = lambda _bid_ref: True
+        self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
+        bid_1 = self._find_item("bid-1")
+        bid_2 = self._find_item("bid-2")
+        self.view.top_tree.setCurrentItem(bid_1)
+        bid_1.setSelected(True)
+        bid_2.setSelected(True)
+        self.view._prepare_context_menu_selection(bid_2)
+        context = self.view._context_for_item(bid_2)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        duplicate_action = next(
+            action for action in menu.actions() if action.text() == "Duplicate"
+        )
+        duplicate_action.trigger()
+        self.assertEqual(
+            duplicate_calls,
+            [("C:/jobs/test.mdb", "bid-2", False)],
+        )
+        duplicate_calls.clear()
+        handler.duplicate_selected()
+        self.assertEqual(
+            duplicate_calls,
+            [("C:/jobs/test.mdb", "bid-1", False)],
+        )
+
+    def test_context_duplicate_rejects_rebuilt_tree_owner(self):
+        duplicate_calls = []
+        self.view.on_duplicate_bid = duplicate_calls.append
+        self.view.on_can_duplicate_bid = lambda _bid_ref: True
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        bid_item = self._find_item("bid-1")
+        self.view._prepare_context_menu_selection(bid_item)
+        context = self.view._context_for_item(bid_item)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        duplicate_action = next(
+            action for action in menu.actions() if action.text() == "Duplicate"
+        )
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        duplicate_action.trigger()
+        self.assertEqual(duplicate_calls, [])
+
+    def test_context_close_targets_right_clicked_database(self):
+        unloaded = []
+        ui_state = SimpleNamespace(selected_file_path="C:/jobs/active.mdb")
+        handler = FileOperationHandler(
+            window=self.view,
+            icon_provider=SimpleNamespace(),
+            event_bus=_EventBus(),
+            file_state_model=SimpleNamespace(
+                file_entries=[], update_entries=lambda _entries: None
+            ),
+            cleanup_deleted_files_use_case=SimpleNamespace(),
+            file_loading_service=SimpleNamespace(),
+            working_directory_service=SimpleNamespace(),
+            unload_file_fn=lambda file_path: unloaded.append(file_path) or True,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _path: True,
+                cancel_for_file=lambda _path: None,
+            ),
+            ui_access_manager=SimpleNamespace(),
+            sql_collaboration_coordinator=SimpleNamespace(),
+            workspace_state_model=SimpleNamespace(),
+            ui_state_manager=ui_state,
+        )
+        self.view.on_close_database = handler.unload_file_path
+        self.view.on_can_close_database = lambda _file_path: True
+        self.view.on_menu_command = lambda command: (
+            handler.unload_file() if command == "unload_file" else None
+        )
+        self.view.on_menu_command_enabled = lambda _command: True
+        files = self._loaded_file([], file_path="C:/jobs/active.mdb")
+        files.extend(self._loaded_file([], file_path="C:/jobs/other.mdb"))
+        self.view.build_complete_structure(files)
+        active_root = self.view._find_file_item("C:/jobs/active.mdb")
+        other_root = self.view._find_file_item("C:/jobs/other.mdb")
+        active_root.setSelected(True)
+        other_root.setSelected(True)
+        self.view._prepare_context_menu_selection(other_root)
+        context = self.view._context_for_item(other_root)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        close_action = next(
+            action for action in menu.actions() if action.text() == "Close"
+        )
+        close_action.trigger()
+        self.assertEqual(unloaded, ["C:/jobs/other.mdb"])
+
+    def test_context_import_targets_right_clicked_project(self):
+        imports = []
+        active_target = ("C:/jobs/active.mdb", "active-project")
+        self.view.on_import_project_file = (
+            lambda format_key, file_path, project_uid: imports.append(
+                (format_key, file_path, project_uid)
+            )
+        )
+        self.view.on_can_import_project_file = (
+            lambda _format_key, _file_path, _project_uid: True
+        )
+        self.view.on_menu_command = lambda command: (
+            imports.append((command, *active_target))
+            if command == "import_ost"
+            else None
+        )
+        self.view.on_menu_command_enabled = lambda _command: True
+        files = self._loaded_file([], file_path="C:/jobs/active.mdb")
+        files[0].projects[0].uid = "active-project"
+        other_files = self._loaded_file([], file_path="C:/jobs/other.mdb")
+        other_files[0].projects[0].uid = "other-project"
+        files.extend(other_files)
+        self.view.build_complete_structure(files)
+        other_project, _ = self.view._find_project_item(
+            "other-project", "C:/jobs/other.mdb"
+        )
+        self.view._prepare_context_menu_selection(other_project)
+        context = self.view._context_for_item(other_project)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        import_menu = next(
+            submenu
+            for submenu in menu.findChildren(QtWidgets.QMenu)
+            if submenu.title() == "Import"
+        )
+        import_ost_action = next(
+            action
+            for action in import_menu.actions()
+            if action.text() == ".ost File..."
+        )
+        import_ost_action.trigger()
+        self.assertEqual(
+            imports,
+            [("ost", "C:/jobs/other.mdb", "other-project")],
+        )
+
+    def test_context_new_commands_use_right_clicked_database_and_project(self):
+        creates = []
+        active_target = ("C:/jobs/active.mdb", "active-project")
+        self.view.on_create_bid = lambda file_path, project_uid: creates.append(
+            ("bid", file_path, project_uid)
+        )
+        self.view.on_create_project = lambda file_path: creates.append(
+            ("project", file_path, None)
+        )
+        self.view.on_can_create_bid = lambda _file_path, _project_uid: True
+        self.view.on_can_create_project = lambda _file_path: True
+        self.view.on_menu_command = lambda command: (
+            creates.append(
+                (
+                    "bid" if command == "new_project" else "project",
+                    *active_target,
+                )
+            )
+            if command in {"new_project", "new_folder"}
+            else None
+        )
+        self.view.on_menu_command_enabled = lambda _command: True
+        files = self._loaded_file([], file_path="C:/jobs/active.mdb")
+        files[0].projects[0].uid = "active-project"
+        other_files = self._loaded_file([], file_path="C:/jobs/other.mdb")
+        other_files[0].projects[0].uid = "other-project"
+        files.extend(other_files)
+        self.view.build_complete_structure(files)
+        other_project, _ = self.view._find_project_item(
+            "other-project", "C:/jobs/other.mdb"
+        )
+        self.view._prepare_context_menu_selection(other_project)
+        context = self.view._context_for_item(other_project)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        new_menu = next(
+            submenu
+            for submenu in menu.findChildren(QtWidgets.QMenu)
+            if submenu.title() == "New"
+        )
+        next(
+            action for action in new_menu.actions() if action.text() == "Project"
+        ).trigger()
+        next(
+            action for action in new_menu.actions() if action.text() == "Folder"
+        ).trigger()
+        self.assertEqual(
+            creates,
+            [
+                ("bid", "C:/jobs/other.mdb", "other-project"),
+                ("project", "C:/jobs/other.mdb", None),
+            ],
+        )
+
+    def test_nonactive_bid_context_disables_active_only_export_and_renumber(self):
+        active_ref = ("C:/jobs/test.mdb", "bid-1")
+        self.view.on_is_active_bid_context = (
+            lambda bid_ref: (
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+            )
+            == active_ref
+        )
+        self.view.on_menu_command_enabled = lambda _command: True
+        self.view.on_export_formats = lambda: ["html"]
+        self.view.on_can_renumber_conditions = lambda: True
+        self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
+        bid_1 = self._find_item("bid-1")
+        bid_2 = self._find_item("bid-2")
+        bid_1.setSelected(True)
+        bid_2.setSelected(True)
+        self.view._prepare_context_menu_selection(bid_2)
+        context = self.view._context_for_item(bid_2)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        export_menu = next(
+            submenu
+            for submenu in menu.findChildren(QtWidgets.QMenu)
+            if submenu.title() == "Export"
+        )
+        renumber_action = next(
+            action
+            for action in menu.actions()
+            if action.text() == "Renumber Conditions"
+        )
+        self.assertFalse(export_menu.isEnabled())
+        self.assertFalse(renumber_action.isEnabled())
+
+    def test_active_bid_export_rechecks_owner_before_trigger(self):
+        active = {"uid": "bid-1"}
+        commands = []
+        self.view.on_is_active_bid_context = (
+            lambda bid_ref: bid_ref.bid_uid == active["uid"]
+        )
+        self.view.on_menu_command_enabled = lambda _command: True
+        self.view.on_menu_command = commands.append
+        self.view.on_export_formats = lambda: []
+        self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
+        bid_1 = self._find_item("bid-1")
+        self.view._prepare_context_menu_selection(bid_1)
+        context = self.view._context_for_item(bid_1)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        export_menu = next(
+            submenu
+            for submenu in menu.findChildren(QtWidgets.QMenu)
+            if submenu.title() == "Export"
+        )
+        pdf_action = next(
+            action
+            for action in export_menu.actions()
+            if action.text() == "To .pdf File"
+        )
+        self.assertTrue(pdf_action.isEnabled())
+        active["uid"] = "bid-2"
+        pdf_action.trigger()
+        self.assertEqual(commands, [])
+
+    def test_project_context_delete_is_disabled_for_mixed_bid_selection(self):
+        self.view.on_menu_command_enabled = lambda _command: True
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        project, _ = self.view._find_project_item("project-1", "C:/jobs/test.mdb")
+        bid = self._find_item("bid-1")
+        project.setSelected(True)
+        bid.setSelected(True)
+        self.view._prepare_context_menu_selection(project)
+        context = self.view._context_for_item(project)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        delete_action = next(
+            action for action in menu.actions() if action.text() == "Delete"
+        )
+        self.assertFalse(delete_action.isEnabled())
+
+    def test_project_context_delete_is_disabled_across_databases(self):
+        self.view.on_menu_command_enabled = lambda _command: True
+        files = self._loaded_file([], file_path="C:/jobs/active.mdb")
+        files[0].projects[0].uid = "active-project"
+        other = self._loaded_file([], file_path="C:/jobs/other.mdb")
+        other[0].projects[0].uid = "other-project"
+        files.extend(other)
+        self.view.build_complete_structure(files)
+        active_project, _ = self.view._find_project_item(
+            "active-project", "C:/jobs/active.mdb"
+        )
+        other_project, _ = self.view._find_project_item(
+            "other-project", "C:/jobs/other.mdb"
+        )
+        active_project.setSelected(True)
+        other_project.setSelected(True)
+        self.view._prepare_context_menu_selection(other_project)
+        context = self.view._context_for_item(other_project)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        delete_action = next(
+            action for action in menu.actions() if action.text() == "Delete"
+        )
+        self.assertFalse(delete_action.isEnabled())
+
+    def test_project_context_delete_uses_captured_database_and_projects(self):
+        deletes = []
+        self.view.on_delete_projects = lambda file_path, project_uids: deletes.append(
+            (file_path, list(project_uids))
+        )
+        self.view.on_can_delete_projects = lambda _file_path, _project_uids: True
+        self.view.on_menu_command = lambda command: (
+            deletes.append(("C:/jobs/active.mdb", ["active-project"]))
+            if command == "delete"
+            else None
+        )
+        self.view.on_menu_command_enabled = lambda _command: True
+        files = self._loaded_file([], file_path="C:/jobs/active.mdb")
+        other = self._loaded_file([], file_path="C:/jobs/other.mdb")
+        other[0].projects[0].uid = "other-project-1"
+        other[0].projects[1].uid = "other-project-2"
+        files.extend(other)
+        self.view.build_complete_structure(files)
+        first, _ = self.view._find_project_item("other-project-1", "C:/jobs/other.mdb")
+        second, _ = self.view._find_project_item("other-project-2", "C:/jobs/other.mdb")
+        first.setSelected(True)
+        second.setSelected(True)
+        self.view._prepare_context_menu_selection(second)
+        context = self.view._context_for_item(second)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        next(action for action in menu.actions() if action.text() == "Delete").trigger()
+        self.assertEqual(
+            deletes,
+            [
+                (
+                    "C:/jobs/other.mdb",
+                    ["other-project-1", "other-project-2"],
+                )
+            ],
+        )
+
+    def test_project_multi_selection_carries_owning_database(self):
+        selections = []
+        self.view.on_multi_selection = lambda *args: selections.append(args)
+        files = self._loaded_file([], file_path="C:/jobs/active.mdb")
+        other = self._loaded_file([], file_path="C:/jobs/other.mdb")
+        other[0].projects[0].uid = "other-project-1"
+        other[0].projects[1].uid = "other-project-2"
+        files.extend(other)
+        self.view.build_complete_structure(files)
+        first, _ = self.view._find_project_item("other-project-1", "C:/jobs/other.mdb")
+        second, _ = self.view._find_project_item("other-project-2", "C:/jobs/other.mdb")
+        first.setSelected(True)
+        second.setSelected(True)
+        self.view._on_top_selection_change()
+        self.assertEqual(
+            selections[-1],
+            ([], ["other-project-1", "other-project-2"], "C:/jobs/other.mdb"),
+        )
+
     def test_right_click_empty_space_preserves_selection_and_emits_context_menu(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         self.view.top_tree.expandAll()
@@ -546,6 +1003,26 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertIsNone(self.view._rename_item)
         self.assertEqual(self._find_item("project-1").text(0), "Replacement")
 
+    def test_context_rename_uses_right_clicked_project_permission(self):
+        self.view.set_ui_access_manager(
+            SimpleNamespace(
+                is_allowed=lambda _feature: True,
+                can_edit_project=lambda file_path, _project_uid: (
+                    file_path == "C:/jobs/active.mdb"
+                ),
+            )
+        )
+        files = self._loaded_file([], file_path="C:/jobs/active.mdb")
+        other_files = self._loaded_file([], file_path="C:/jobs/other.mdb")
+        other_files[0].projects[0].uid = "other-project"
+        files.extend(other_files)
+        self.view.build_complete_structure(files)
+        other_project, _ = self.view._find_project_item(
+            "other-project", "C:/jobs/other.mdb"
+        )
+        context = self.view._context_for_item(other_project)
+        self.assertFalse(self.view._can_rename_context(context))
+
     def test_project_tree_rebuild_cancels_active_drag_items(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         self.view.top_tree._drag_items = [self._find_item("bid-1")]
@@ -553,6 +1030,33 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         self.assertEqual(self.view.top_tree._drag_items, [])
         self.assertIsNone(self.view.top_tree._drag_file_path)
+
+    def test_project_drop_after_model_rebuild_is_ignored_without_mutation(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        tree = self.view.top_tree
+        tree._drag_items = [self._find_item("bid-1")]
+        tree._drag_file_path = "C:/jobs/test.mdb"
+        moved = []
+        tree.on_move_bids = lambda refs, project_uid: moved.append(
+            (list(refs), project_uid)
+        )
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        target, _file_item = self.view._find_project_item(
+            "project-2",
+            "C:/jobs/test.mdb",
+        )
+        tree.itemAt = lambda _position: target
+        accepted = []
+        ignored = []
+        event = SimpleNamespace(
+            position=lambda: QtCore.QPointF(),
+            acceptProposedAction=lambda: accepted.append(True),
+            ignore=lambda: ignored.append(True),
+        )
+        tree.dropEvent(event)
+        self.assertEqual(accepted, [])
+        self.assertEqual(ignored, [True])
+        self.assertEqual(moved, [])
 
     def test_project_context_command_rejects_replaced_tree_owner(self):
         commands = []

@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtTest import QTest
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.services.page_image_plane_transform import (
     resolve_page_floor_elevations,
@@ -11,6 +12,7 @@ from ost_visualizer.application.dtos.mesh_geometry_dto import (
     MeshSceneIdentity,
 )
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer, ost_renderer
+from ost_visualizer.presentation.managers.shortcut_manager import ShortcutManager
 from ost_visualizer.presentation.modes.cursor import CURSOR_MODE_DEFAULT
 from ost_visualizer.presentation.visualization.native_page_plane import (
     NativePageImagePlaneData,
@@ -212,6 +214,83 @@ class TestMeshViewLifecycle(unittest.TestCase):
     def _app():
         return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
+    def test_window_shortcuts_follow_active_detached_window(self):
+        app = self._app()
+        main = QtWidgets.QMainWindow()
+        main_target = QtWidgets.QPushButton(main)
+        main.setCentralWidget(main_target)
+        main_calls = []
+        main_action = QtGui.QAction("Main Undo", main)
+        ShortcutManager.apply_to_action(main_action, "undo")
+        main_action.triggered.connect(lambda: main_calls.append(True))
+        main.addAction(main_action)
+        detached = QtWidgets.QMainWindow(main)
+        detached.setWindowFlags(QtCore.Qt.WindowType.Window)
+        detached_target = QtWidgets.QPushButton(detached)
+        detached.setCentralWidget(detached_target)
+        detached_calls = []
+        ShortcutManager.register_shortcut(
+            detached,
+            "undo",
+            lambda: detached_calls.append(True),
+        )
+        self.addCleanup(app.processEvents)
+        self.addCleanup(main.close)
+        self.addCleanup(detached.close)
+        main.show()
+        detached.show()
+        detached.activateWindow()
+        detached_target.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        app.processEvents()
+        QTest.keyClick(
+            detached_target,
+            QtCore.Qt.Key.Key_Z,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        app.processEvents()
+        self.assertEqual(detached_calls, [True])
+        self.assertEqual(main_calls, [])
+        main.activateWindow()
+        main_target.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        app.processEvents()
+        QTest.keyClick(
+            main_target,
+            QtCore.Qt.Key.Key_Z,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        app.processEvents()
+        self.assertEqual(detached_calls, [True])
+        self.assertEqual(main_calls, [True])
+
+    def test_detached_editable_control_keeps_native_undo(self):
+        app = self._app()
+        detached = QtWidgets.QMainWindow()
+        editor = QtWidgets.QLineEdit(detached)
+        detached.setCentralWidget(editor)
+        shortcut_calls = []
+        ShortcutManager.register_shortcut(
+            detached,
+            "undo",
+            lambda: shortcut_calls.append(True),
+        )
+        self.addCleanup(app.processEvents)
+        self.addCleanup(detached.close)
+        detached.show()
+        detached.activateWindow()
+        editor.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        editor.setText("before")
+        editor.selectAll()
+        QTest.keyClicks(editor, "after")
+        app.processEvents()
+        QTest.keyClick(
+            editor,
+            QtCore.Qt.Key.Key_Z,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        app.processEvents()
+        self.assertEqual(editor.text(), "before")
+        self.assertEqual(shortcut_calls, [])
+
     @staticmethod
     def _page_texture(page_uid="p1", visible=True, plane_z=-0.01):
         return NativePageImagePlaneData(
@@ -253,6 +332,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._current_plan_texture = self._page_texture("existing")
         viewer._has_visible_plan_texture = True
         viewer._render_suspended = False
+        viewer._surface_hidden = False
         viewer._zoom_reference_distance = 77.0
         viewer._color_service = SimpleNamespace(
             convert_to_rgba=lambda _color: (1, 1, 1, 1)
@@ -1457,6 +1537,40 @@ class TestMeshViewLifecycle(unittest.TestCase):
         )
         self.assertFalse(renderer.camera.has_velocity())
         self.assertEqual(self._camera_state(viewer, renderer)[:7], before)
+
+    def test_hidden_view_stays_suspended_when_pending_scene_completes(self):
+        bid_ref = BidRef("a.mdb", "bid-1")
+        viewer, renderer = self._make_page_plane_viewer([self._page_texture("page-1")])
+        viewer._render_suspended = True
+        viewer._surface_hidden = True
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [],
+            [],
+            [],
+            [],
+            self._scene_identity(bid_ref, 1),
+            {"page-1": 0.0},
+        )
+        self.assertEqual(renderer.resume_calls, 0)
+        self.assertTrue(viewer._render_suspended)
+
+    def test_hidden_view_stays_suspended_when_same_scene_refresh_fails(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        renderer.scene.takeoff_uids = ["takeoff-existing"]
+        renderer.scene.condition_uids = ["condition-existing"]
+        bid_ref = viewer._current_bid_ref
+        viewer._render_suspended = True
+        viewer._surface_hidden = True
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer.apply_scene_failure(
+            viewer,
+            self._scene_identity(bid_ref, 15, ("page-1",)),
+        )
+        self.assertEqual(renderer.resume_calls, 0)
+        self.assertTrue(viewer._render_suspended)
+        self.assertFalse(viewer._scene_refresh_pending)
+        self.assertEqual(renderer.scene.takeoff_uids, ["takeoff-existing"])
 
     def test_begin_scene_load_stops_native_camera_inertia_while_suspended(self):
         viewer, renderer = self._make_page_plane_viewer([])

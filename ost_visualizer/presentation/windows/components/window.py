@@ -1356,6 +1356,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             for resource in dependencies
             if resource.resource_type == "page"
         )
+        page_identities = self._capture_page_identities(page_uids)
         window_ref = weakref.ref(self)
         write_service = self._project_write_svc
 
@@ -1374,7 +1375,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 not result.granted
                 or set(window.plan_view.get_selected_uids()) != selection
                 or not window._editing_enabled()
-                or not window._annotation_context_is_current(bid_ref, page_uids)
+                or not window._annotation_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                )
             ):
                 if result.handle is not None:
                     window._project_write_svc.end_plan_edit_lease(result.handle)
@@ -1459,13 +1464,57 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
         )
 
+    def _page_entity_for_uid(self, page_uid: str):
+        if self.page_data is None:
+            return None
+        pages = []
+        if self.page_data.page is not None:
+            pages.append(self.page_data.page)
+        pages.extend(self.page_data.ordered_pages)
+        return next(
+            (page for page in pages if str(page.uid) == str(page_uid)),
+            None,
+        )
+
+    def _capture_page_identities(
+        self,
+        page_uids: tuple[str, ...],
+    ) -> tuple[tuple[str, object], ...]:
+        identities = []
+        for page_uid in dict.fromkeys(str(uid) for uid in page_uids):
+            page = self._page_entity_for_uid(page_uid)
+            if page is not None:
+                identities.append((page_uid, page))
+        return tuple(identities)
+
+    def _page_identities_are_current(
+        self,
+        page_uids: tuple[str, ...],
+        page_identities: tuple[tuple[str, object], ...],
+    ) -> bool:
+        expected_uids = tuple(dict.fromkeys(str(uid) for uid in page_uids))
+        return bool(
+            len(page_identities) == len(expected_uids)
+            and all(
+                self._page_entity_for_uid(page_uid) is page
+                for page_uid, page in page_identities
+            )
+        )
+
     def _annotation_context_is_current(
-        self, bid_ref, page_uids: tuple[str, ...]
+        self,
+        bid_ref,
+        page_uids: tuple[str, ...],
+        page_identities: Optional[tuple[tuple[str, object], ...]] = None,
     ) -> bool:
         return bool(
             self.view is not None
             and self.view.bid_ref == bid_ref
             and self.plan_view is not None
+            and (
+                page_identities is None
+                or self._page_identities_are_current(page_uids, page_identities)
+            )
             and (
                 not page_uids or str(self.plan_view.current_page_uid or "") in page_uids
             )
@@ -1489,6 +1538,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         }
         keys = self._annotation_keys_for_identities(identities)
         page_uids = self._annotation_page_uids_for_keys(keys)
+        page_identities = self._capture_page_identities(page_uids)
         resources, dependencies = self._annotation_edit_resources(bid_ref, keys)
         edit_lease_handle = self._geometry_edit_lease_handle
         if edit_lease_handle is not None and (
@@ -1516,18 +1566,30 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             current_keys = window._annotation_keys_for_identities(identities)
             window._set_annotation_items_pending(bid_ref, identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if window._annotation_context_is_current(bid_ref, page_uids):
+                if (
+                    window._annotation_context_is_current(
+                        bid_ref,
+                        page_uids,
+                        page_identities,
+                    )
+                    and window._editing_enabled()
+                ):
                     window.plan_view.restore_flushed_positions([], ann_changes)
                     window.plan_view.set_selected_uids(current_keys)
                 return
-            if window._annotation_context_is_current(bid_ref, page_uids):
-                window.plan_view.set_selected_uids(current_keys)
-            window._push_sql_annotation_geometry_history(
+            if window._annotation_context_is_current(
                 bid_ref,
-                old_changes,
-                new_changes,
                 page_uids,
-            )
+                page_identities,
+            ):
+                window.plan_view.set_selected_uids(current_keys)
+            if window._page_identities_are_current(page_uids, page_identities):
+                window._push_sql_annotation_geometry_history(
+                    bid_ref,
+                    old_changes,
+                    new_changes,
+                    page_uids,
+                )
             window._mark_sql_completion_applied(result)
 
         self._project_write_svc.queue_plan_geometry(
@@ -1592,6 +1654,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         }
         keys = self._annotation_keys_for_identities(identities)
         page_uids = self._annotation_page_uids_for_keys(keys)
+        page_identities = self._capture_page_identities(page_uids)
         self._set_annotation_items_pending(bid_ref, identities, True)
         window_ref = weakref.ref(self)
 
@@ -1606,19 +1669,28 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             current_keys = window._annotation_keys_for_identities(identities)
             window._set_annotation_items_pending(bid_ref, identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if window._annotation_context_is_current(bid_ref, page_uids):
+                if window._editing_enabled() and window._annotation_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                ):
                     restore()
                     window.plan_view.set_selected_uids(current_keys)
                 return
-            if window._annotation_context_is_current(bid_ref, page_uids):
-                window.plan_view.set_selected_uids(current_keys)
-            window._push_sql_annotation_property_history(
+            if window._annotation_context_is_current(
                 bid_ref,
-                property_kind,
-                old_updates,
-                new_updates,
                 page_uids,
-            )
+                page_identities,
+            ):
+                window.plan_view.set_selected_uids(current_keys)
+            if window._page_identities_are_current(page_uids, page_identities):
+                window._push_sql_annotation_property_history(
+                    bid_ref,
+                    property_kind,
+                    old_updates,
+                    new_updates,
+                    page_uids,
+                )
             window._mark_sql_completion_applied(result)
 
         self._project_write_svc.queue_plan_properties(
@@ -1697,6 +1769,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             annotation_source_uids=sources,
             annotation_specs=tuple(specs),
         )
+        page_uids = tuple(dict.fromkeys(str(spec.page_uid) for spec in specs))
+        page_identities = self._capture_page_identities(page_uids)
         window_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1719,9 +1793,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 for source_uid, uid in uid_map.items()
             }
             keys = window._annotation_keys_for_identities(identities)
-            page_uids = tuple(dict.fromkeys(str(spec.page_uid) for spec in specs))
             context_is_current = window._annotation_context_is_current(
-                bid_ref, page_uids
+                bid_ref,
+                page_uids,
+                page_identities,
             )
             if keys and context_is_current:
                 window.plan_view.set_selected_uids(keys)
@@ -1733,11 +1808,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 window.plan_view.activate_annotation_placement(
                     reactivate_annotation_type
                 )
-            window._push_sql_annotation_insert_history(
-                bid_ref,
-                payload,
-                uid_map,
-            )
+            if window._page_identities_are_current(page_uids, page_identities):
+                window._push_sql_annotation_insert_history(
+                    bid_ref,
+                    payload,
+                    uid_map,
+                )
             window._mark_sql_completion_applied(result)
 
         self._project_write_svc.queue_plan_items_paste(
@@ -1828,6 +1904,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 if annotation.page_uid
             )
         )
+        page_identities = self._capture_page_identities(page_uids)
         self._set_annotation_items_pending(bid_ref, pending_identities, True)
         self.plan_view.set_selected_uids(set(skipped_selection_keys))
         window_ref = weakref.ref(self)
@@ -1842,24 +1919,33 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             window._set_annotation_items_pending(bid_ref, pending_identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if window._annotation_context_is_current(bid_ref, page_uids):
+                if window._annotation_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                ):
                     window.plan_view.set_selected_uids(
                         window._annotation_keys_for_identities(
                             requested_annotation_identities
                         )
                     )
                 return
-            if window._annotation_context_is_current(bid_ref, page_uids):
+            if window._annotation_context_is_current(
+                bid_ref,
+                page_uids,
+                page_identities,
+            ):
                 window.plan_view.set_selected_uids(
                     window._annotation_keys_for_identities(
                         skipped_annotation_identities
                     )
                 )
-            window._push_sql_annotation_delete_history(
-                bid_ref,
-                saved_annotations,
-                identities,
-            )
+            if window._page_identities_are_current(page_uids, page_identities):
+                window._push_sql_annotation_delete_history(
+                    bid_ref,
+                    saved_annotations,
+                    identities,
+                )
             window._mark_sql_completion_applied(result)
 
         self._project_write_svc.queue_plan_items_delete(

@@ -61,6 +61,7 @@ from ost_visualizer.presentation.managers.ui_access_manager import (
     UIAccessManager,
     _DATABASE_EDIT_FEATURES,
 )
+from ost_visualizer.presentation.managers.ui_state_manager import UIStateManager
 from ost_visualizer.presentation.services.bid_clipboard_service import (
     BidClipboardService,
 )
@@ -343,9 +344,23 @@ class _FakeAccess:
         self.checked.append(feature)
         return feature in self.allowed
 
-    def is_project_bid_clipboard_allowed(self, feature):
+    def is_project_bid_clipboard_allowed(
+        self, feature, _database_id, _bid_refs, _target_project_uid
+    ):
         self.checked.append(feature)
         return feature in self.allowed
+
+    def can_delete_bids(self, _bid_refs):
+        self.checked.append(Feature.DELETE_BID)
+        return Feature.DELETE_BID in self.allowed
+
+    def can_edit_bid_structure(self, _bid_refs):
+        self.checked.append(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+        return Feature.EDIT_PROJECT_TREE_STRUCTURE in self.allowed
+
+    def can_delete_projects(self, _database_id, _project_uids):
+        self.checked.append(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+        return Feature.EDIT_PROJECT_TREE_STRUCTURE in self.allowed
 
     def subscribe_access_state_changed(self, _callback):
         pass
@@ -548,6 +563,7 @@ class _DeleteBidUiState:
         self.selected_file_path = bid_ref.file_path
         self.selected_project_uid = None
         self.selected_project_uids = []
+        self.selected_project_file_path = bid_ref.file_path
 
     def get_selected_bid_ref(self):
         return self._bid_ref
@@ -560,6 +576,7 @@ class _DeleteBidUiState:
 
     def set_file_path(self, file_path):
         self.selected_file_path = file_path
+        self.selected_project_file_path = file_path
 
     def set_project_uid(self, project_uid):
         self.selected_project_uid = project_uid
@@ -833,6 +850,202 @@ class BidLockPermissionTests(unittest.TestCase):
             [ResourceRef("bid", "7", 7)],
         )
 
+    def test_context_duplicate_permission_uses_captured_bid_database_and_resource(self):
+        project_data = _ProjectData()
+        checks = []
+
+        class _TargetCapability:
+            def is_editable(self, locator, resource=None):
+                checks.append((locator, resource))
+                return locator == "C:/jobs/target.mdb"
+
+        manager = self._access_manager(
+            project_data,
+            capability=_TargetCapability(),
+        )
+        target = BidRef("C:/jobs/target.mdb", "9")
+        self.assertTrue(manager.can_duplicate_bid(target))
+        self.assertEqual(
+            checks,
+            [("C:/jobs/target.mdb", ResourceRef("bid", "9", 9))],
+        )
+
+    def test_context_job_status_does_not_use_active_bid_permission_for_other_target(
+        self,
+    ):
+        project_data = _ProjectData()
+
+        class _ActiveOnlyCapability:
+            @staticmethod
+            def is_editable(locator, _resource=None):
+                return locator == project_data.bid_ref.file_path
+
+        manager = self._access_manager(
+            project_data,
+            capability=_ActiveOnlyCapability(),
+        )
+        updates = []
+        window = MainWindow.__new__(MainWindow)
+        window.ui_access_manager = manager
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(
+                update_bid_job_status=lambda *args: updates.append(args)
+            )
+        )
+        MainWindow._update_project_tree_bid_job_status(
+            window,
+            BidRef("C:/jobs/other.mdb", "9"),
+            "status-2",
+        )
+        self.assertEqual(updates, [])
+
+    def test_project_tree_delete_rejects_selection_with_inaccessible_bid(self):
+        project_data = _ProjectData()
+        active_ref = project_data.bid_ref
+        other_ref = BidRef("C:/jobs/other.mdb", "9")
+
+        class _SelectedBidsState(_UiState):
+            def get_selected_bid_refs(self):
+                return [active_ref, other_ref]
+
+        class _ActiveOnlyCapability:
+            @staticmethod
+            def is_editable(locator, _resource=None):
+                return locator == active_ref.file_path
+
+        ui_state = _SelectedBidsState(active_ref)
+        manager = self._access_manager(
+            project_data,
+            ui_state=ui_state,
+            capability=_ActiveOnlyCapability(),
+        )
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _command: False
+        window.tab_widget = _FakeTabWidget(0)
+        window.ui_state_manager = ui_state
+        window.ui_access_manager = manager
+        window.project_view = SimpleNamespace(
+            get_delete_replacement_selection_state=lambda: {"kind": "file_root"}
+        )
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(
+                delete_selected=lambda selection: calls.append(selection)
+            )
+        )
+        MainWindow._delete_selected(window)
+        self.assertEqual(calls, [])
+
+    def test_project_delete_resolves_multi_selection_database_not_active_bid(self):
+        ui_state = UIStateManager(
+            SimpleNamespace(
+                display_modes_synced=True,
+                display_mode_3d="solid",
+                display_mode_2d="solid",
+                grayscale_enabled=False,
+            )
+        )
+        ui_state.set_bid_selection(BidRef("C:/jobs/active.mdb", "7"))
+        ui_state.set_bid_multi_selection([])
+        ui_state.set_project_multi_selection(
+            ["project-8", "project-9"], "C:/jobs/other.mdb"
+        )
+        calls = []
+        handler = ProjectWriteHandler.__new__(ProjectWriteHandler)
+        handler.ui_state_manager = ui_state
+        handler._delete_projects = lambda project_uids, file_path: calls.append(
+            (list(project_uids), file_path)
+        )
+        ProjectWriteHandler.delete_selected(handler)
+        self.assertEqual(
+            calls,
+            [
+                (
+                    ["project-8", "project-9"],
+                    "C:/jobs/other.mdb",
+                )
+            ],
+        )
+
+    def test_shared_paste_has_no_target_for_multi_project_selection(self):
+        ui_state = UIStateManager(
+            SimpleNamespace(
+                display_modes_synced=True,
+                display_mode_3d="solid",
+                display_mode_2d="solid",
+                grayscale_enabled=False,
+            )
+        )
+        active_ref = BidRef("C:/jobs/active.mdb", "7")
+        ui_state.set_bid_selection(active_ref)
+        ui_state.set_bid_multi_selection([])
+        ui_state.set_project_multi_selection(
+            ["project-8", "project-9"], "C:/jobs/other.mdb"
+        )
+        window = MainWindow.__new__(MainWindow)
+        window.ui_state_manager = ui_state
+        window._project_data_service = SimpleNamespace(
+            find_project_uid_for_bid=lambda _ref: "active-project"
+        )
+        self.assertIsNone(MainWindow._get_bid_paste_target(window))
+
+    def test_project_tree_cut_checks_every_selected_bid_resource(self):
+        project_data = _ProjectData()
+        active_ref = project_data.bid_ref
+        blocked_ref = BidRef(active_ref.file_path, "9")
+
+        class _SelectedBidsState(_UiState):
+            def get_selected_bid_refs(self):
+                return [active_ref, blocked_ref]
+
+        class _SecondBidLockedCapability:
+            @staticmethod
+            def is_editable(_locator, resource=None):
+                return resource is None or resource.resource_id != "9"
+
+        ui_state = _SelectedBidsState(active_ref)
+        manager = self._access_manager(
+            project_data,
+            ui_state=ui_state,
+            capability=_SecondBidLockedCapability(),
+        )
+        cut_calls = []
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _command: False
+        window.tab_widget = _FakeTabWidget(0)
+        window.ui_state_manager = ui_state
+        window.ui_access_manager = manager
+        window._bid_clipboard = SimpleNamespace(cut=cut_calls.append)
+        MainWindow._cut_selected(window)
+        self.assertEqual(cut_calls, [])
+
+    def test_context_paste_checks_captured_destination_database(self):
+        project_data = _ProjectData()
+
+        class _ActiveOnlyCapability:
+            @staticmethod
+            def is_editable(locator, _resource=None):
+                return locator == project_data.bid_ref.file_path
+
+        manager = self._access_manager(
+            project_data,
+            capability=_ActiveOnlyCapability(),
+        )
+        window = MainWindow.__new__(MainWindow)
+        window.ui_access_manager = manager
+        window._project_data_service = SimpleNamespace(get_hierarchy=lambda: object())
+        window._bid_clipboard = SimpleNamespace(
+            is_cut=False,
+            bid_refs=[BidRef("C:/jobs/other.mdb", "9")],
+            reconcile=lambda _hierarchy: None,
+            has_content=lambda: True,
+            source_matches_file=lambda path: path == "C:/jobs/other.mdb",
+        )
+        allowed = MainWindow._can_paste_project_bids(
+            window, "C:/jobs/other.mdb", "project-9"
+        )
+        self.assertFalse(allowed)
+
     def test_revoked_database_capability_blocks_deferred_write_execution(self):
         service, *_unused = _write_service(
             _ProjectData(), database_capability=_DatabaseCapability(editable=False)
@@ -1071,6 +1284,7 @@ class BidLockPermissionTests(unittest.TestCase):
             [
                 Feature.EDIT_CONDITION_STRUCTURE,
                 Feature.EDIT_CONDITION_STRUCTURE,
+                Feature.EDIT_CONDITION_STRUCTURE,
             ],
         )
 
@@ -1307,7 +1521,10 @@ class BidLockPermissionTests(unittest.TestCase):
         access = _FakeAccess({Feature.EDIT_PROJECT_TREE_STRUCTURE})
         tree = _BidTreeWidget()
         tree.set_ui_access_manager(access)
-        tree._drag_items = [object()]
+        item = QtWidgets.QTreeWidgetItem(["Bid"])
+        item.setData(0, tree._ITEM_ROLE, ("bid", "bid-1", "db.mdb"))
+        tree.addTopLevelItem(item)
+        tree._drag_items = [item]
         self.assertTrue(tree._move_bids_allowed())
         self.assertEqual(access.checked, [Feature.EDIT_PROJECT_TREE_STRUCTURE])
         tree.deleteLater()
@@ -1323,6 +1540,52 @@ class BidLockPermissionTests(unittest.TestCase):
         MainWindow._restore_project_bids(window, ["bid-1"])
         MainWindow._move_project_bids(window, ["bid-1"], "project-2")
         self.assertEqual(calls, [])
+
+    def test_project_tree_drag_affordance_uses_exact_source_authorization(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertIsNotNone(app)
+
+        class Access:
+            @staticmethod
+            def is_allowed(_feature):
+                return True
+
+            @staticmethod
+            def can_edit_bid_structure(_bid_refs):
+                return False
+
+        tree = _BidTreeWidget()
+        self.addCleanup(tree.deleteLater)
+        tree.set_ui_access_manager(Access())
+        item = QtWidgets.QTreeWidgetItem(["Bid"])
+        item.setData(0, tree._ITEM_ROLE, ("bid", "bid-1", "db.mdb"))
+        tree.addTopLevelItem(item)
+        tree._drag_items = [item]
+        tree._drag_file_path = "db.mdb"
+        self.assertFalse(tree._move_bids_allowed())
+
+    def test_project_tree_drop_affordance_uses_exact_destination_authorization(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertIsNotNone(app)
+        tree = _BidTreeWidget()
+        self.addCleanup(tree.deleteLater)
+        tree.set_ui_access_manager(_FakeAccess({Feature.EDIT_PROJECT_TREE_STRUCTURE}))
+        source = QtWidgets.QTreeWidgetItem(["Bid"])
+        source.setData(0, tree._ITEM_ROLE, ("bid", "bid-1", "db.mdb"))
+        target = QtWidgets.QTreeWidgetItem(["Project"])
+        target.setData(0, tree._ITEM_ROLE, ("project", "project-2", "db.mdb"))
+        tree.addTopLevelItems([source, target])
+        tree._drag_items = [source]
+        tree._drag_file_path = "db.mdb"
+        checked = []
+        tree.on_can_move_bids = lambda refs, project_uid: (
+            checked.append((refs, project_uid)) or False
+        )
+        self.assertFalse(tree._move_bids_allowed(target))
+        self.assertEqual(
+            checked,
+            [([BidRef("db.mdb", "bid-1")], "project-2")],
+        )
 
     def test_shared_menu_callback_respects_enabled_state(self):
         controller = MenuController.__new__(MenuController)
@@ -1628,7 +1891,10 @@ class BidLockPermissionTests(unittest.TestCase):
         ui_state = SimpleNamespace(
             selected_file_path="C:\\jobs\\test.mdb",
             selected_project_uid="project-2",
+            selected_project_uids=["project-2"],
+            selected_project_file_path="C:\\jobs\\test.mdb",
             get_selected_bid_ref=lambda: None,
+            get_selected_bid_refs=lambda: [],
         )
         toolbar = ToolbarStateCoordinator(
             ui_state,
@@ -1649,7 +1915,10 @@ class BidLockPermissionTests(unittest.TestCase):
         ui_state = SimpleNamespace(
             selected_file_path="C:/jobs/test.mdb",
             selected_project_uid="project-2",
+            selected_project_uids=["project-2"],
+            selected_project_file_path="C:/jobs/test.mdb",
             get_selected_bid_ref=lambda: None,
+            get_selected_bid_refs=lambda: [],
         )
         toolbar = ToolbarStateCoordinator(
             ui_state,
@@ -1683,7 +1952,10 @@ class BidLockPermissionTests(unittest.TestCase):
         ui_state = SimpleNamespace(
             selected_file_path="C:/jobs/test.mdb",
             selected_project_uid="project-2",
+            selected_project_uids=["project-2"],
+            selected_project_file_path="C:/jobs/test.mdb",
             get_selected_bid_ref=lambda: None,
+            get_selected_bid_refs=lambda: [],
         )
         toolbar = ToolbarStateCoordinator(
             ui_state,
@@ -1704,6 +1976,8 @@ class BidLockPermissionTests(unittest.TestCase):
         ui_state = SimpleNamespace(
             selected_file_path="C:/jobs/test.mdb",
             selected_project_uid="project-2",
+            selected_project_uids=["project-2"],
+            selected_project_file_path="C:/jobs/test.mdb",
             place_condition_uid=None,
             get_selected_bid_ref=lambda: None,
             get_selected_bid_refs=lambda: [],
@@ -2174,6 +2448,7 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         project_data = SimpleNamespace(
             clear_bid_calls=[],
+            current_bid=object(),
             find_project_uid_for_bid=lambda _ref: selected_project_uid,
             get_hierarchy=lambda: hierarchy,
             get_current_file_path=lambda: "C:/jobs/test.mdb",
@@ -2182,7 +2457,13 @@ class BidLockPermissionTests(unittest.TestCase):
                 for entry in hierarchy.loaded_files
             ),
         )
-        project_data.clear_bid = lambda: project_data.clear_bid_calls.append(True)
+        project_data.get_bid = lambda _ref: project_data.current_bid
+
+        def clear_bid():
+            project_data.clear_bid_calls.append(True)
+            project_data.current_bid = None
+
+        project_data.clear_bid = clear_bid
         return project_data
 
     def test_project_delete_identity_checks_are_scoped_to_database(self):
@@ -2317,6 +2598,7 @@ class BidLockPermissionTests(unittest.TestCase):
         ui_state = SimpleNamespace(
             selected_project_uids=["project-empty"],
             selected_file_path="C:/jobs/test.mdb",
+            selected_project_file_path="C:/jobs/test.mdb",
             get_selected_bid_refs=lambda: [],
         )
         delete_calls = []
@@ -2465,6 +2747,52 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(ui_state.get_selected_bid_ref(), replacement)
         self.assertEqual(project_data.clear_bid_calls, [])
 
+    def test_sql_bid_delete_completion_rejects_same_uid_bid_replacement(self):
+        original = BidRef("C:/jobs/test.mdb", "bid-1")
+        replacement = BidRef("C:/jobs/test.mdb", "bid-2")
+        ui_state = _DeleteBidUiState(original)
+        project_data = self._delete_project_data(remaining_uids=["bid-2"])
+        original_bid = project_data.current_bid
+        write_service = _QueuedHierarchyDeleteWriteService()
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler.delete_selected(
+                {
+                    "kind": "bid",
+                    "file_path": original.file_path,
+                    "bid_uid": replacement.bid_uid,
+                    "project_uid": None,
+                }
+            )
+        self.assertEqual(len(write_service.callbacks), 1)
+        project_data.current_bid = object()
+        self.assertIsNot(project_data.current_bid, original_bid)
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=original.file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000107",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(ui_state.get_selected_bid_ref(), original)
+        self.assertEqual(project_data.clear_bid_calls, [])
+
     def test_sql_duplicate_completion_recomputes_current_toolbar_state(self):
         bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
         ui_state = _DeleteBidUiState(bid_ref)
@@ -2605,6 +2933,63 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         self.assertEqual(ui_state.selected_file_path, file_path)
         self.assertEqual(ui_state.selected_project_uid, "project-keep")
+
+    def test_sql_project_delete_completion_rejects_same_uid_project_replacement(self):
+        file_path = "C:/jobs/test.mdb"
+        original_project = HierarchyProjectInfo(name="Delete", bids=[])
+        file_entry = HierarchyFileEntry(
+            file_path=file_path,
+            display_name="test.mdb",
+            bid_projects={"project-delete": original_project},
+        )
+        hierarchy = HierarchyData(loaded_files=[file_entry])
+        project_data = SimpleNamespace(
+            get_hierarchy=lambda: hierarchy,
+            project_has_bids=lambda _project_uid, _file_path=None: False,
+            project_exists=lambda project_uid, _file_path: project_uid
+            in file_entry.bid_projects,
+        )
+        ui_state = _DeleteBidUiState(BidRef(file_path, "unused"))
+        ui_state.set_bid_selection(None)
+        ui_state.set_file_path(file_path)
+        ui_state.set_project_uid("project-delete")
+        write_service = _QueuedHierarchyDeleteWriteService()
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler.delete_selected()
+        self.assertEqual(len(write_service.callbacks), 1)
+        file_entry.bid_projects["project-delete"] = HierarchyProjectInfo(
+            name="Replacement",
+            bids=[],
+        )
+        self.assertIsNot(
+            file_entry.bid_projects["project-delete"],
+            original_project,
+        )
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000108",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(ui_state.selected_project_uid, "project-delete")
 
     def test_sql_project_delete_completion_clears_unchanged_deleted_selection(self):
         file_path = "C:/jobs/test.mdb"
@@ -3295,7 +3680,8 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         controller.ui_access_manager = SimpleNamespace(
-            can_create_project_tree_items=lambda has_file: has_file
+            can_create_project_tree_items=lambda has_file: has_file,
+            can_create_project=lambda file_path: file_path == "db.mdb",
         )
         controller.ui_state_manager = SimpleNamespace(
             selected_file_path="db.mdb",
@@ -3336,7 +3722,8 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         controller.ui_access_manager = SimpleNamespace(
-            can_create_project_tree_items=lambda has_file: has_file
+            can_create_project_tree_items=lambda has_file: has_file,
+            can_create_project=lambda file_path: file_path == "db.mdb",
         )
         controller.ui_state_manager = SimpleNamespace(
             selected_file_path="db.mdb",

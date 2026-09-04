@@ -119,4 +119,4 @@ class DatabaseProjectReader(SqlProjectReader):
 
     def refresh_connection(self, locator: str) -> None:
         if not self._is_sql(locator):
-            self._access_connections.close_read(locator)
+            self._access_connections.close_database(locator)

@@ -19,7 +19,10 @@ from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.dialogs.adjust_images_dialog import (
     AdjustImagesDialog,
 )
-from ost_visualizer.presentation.dialogs.set_scale_dialog import SetScaleDialog
+from ost_visualizer.presentation.dialogs.set_scale_dialog import (
+    ScaleSettings,
+    SetScaleDialog,
+)
 from ost_visualizer.presentation.dialogs.rename_page_dialog import (
     PageRenameTarget,
     RenamePageDialog,
@@ -150,6 +153,35 @@ class PageSettingsModalLifecycleTests(unittest.TestCase):
         finally:
             dialog.close()
             dialog.deleteLater()
+
+    def test_mdb_set_scale_rejects_dialog_save_after_bid_context_changes(self):
+        save_calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            get_selected_bid_ref=lambda: BidRef("other.mdb", "bid-2"),
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.takeoff_sidebar = SimpleNamespace(get_page_order=lambda: ["page-1"])
+        coordinator.project_data = SimpleNamespace(get_page=lambda _uid: object())
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda _file_path: True
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
+            save_page_scale=lambda *args: save_calls.append(args) or True,
+            save_page_scales=lambda *args: save_calls.append(args) or True,
+        )
+        saved = coordinator._save_scale_settings(
+            BidRef("database.mdb", "bid-1"),
+            "page-1",
+            object(),
+            ScaleSettings(1.0, 48.0, False),
+        )
+        self.assertFalse(saved)
+        self.assertEqual(save_calls, [])
 
     def test_rename_page_focus_timer_is_dropped_after_dialog_destruction(self):
         dialog = RenamePageDialog(

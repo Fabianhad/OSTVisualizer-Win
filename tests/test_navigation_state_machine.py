@@ -555,6 +555,71 @@ class NavigationStateMachineTests(unittest.TestCase):
         self.assertEqual(ui_state.place_condition_uids, [])
         self.assertEqual(plan_view.cancel_calls, 1)
 
+    def test_placement_reconciliation_exits_for_same_uid_condition_replacement(self):
+        class UiState:
+            active_page_uid = "p1"
+            place_condition_uid = None
+            state = SimpleNamespace(
+                display_mode_2d="condition",
+                grayscale_enabled=False,
+            )
+
+            def __init__(self):
+                self.place_condition_uids = []
+
+            def set_place_condition_uids(self, uids):
+                self.place_condition_uids = list(uids)
+
+            def clear_place_condition(self):
+                self.place_condition_uid = None
+                self.place_condition_uids = []
+
+        class PlanView:
+            def __init__(self):
+                self.cancel_calls = 0
+
+            def activate_place_for_condition(self, _condition_uid, _condition_uids):
+                return True
+
+            def update_color_map(self, _color_map):
+                pass
+
+            def cancel_place_mode(self):
+                self.cancel_calls += 1
+
+        conditions = {
+            "c1": Condition(
+                uid="c1",
+                layer_visible=True,
+                condition_type=Condition.TYPE_AREA,
+            )
+        }
+        ui_state = UiState()
+        plan_view = PlanView()
+        placement = PlacementCoordinator(
+            ui_state_manager=ui_state,
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
+                set_area_placement_active=lambda _active, *, surface_id: None,
+            ),
+            color_service=SimpleNamespace(get_color_mapping=_empty_color_mapping),
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions,
+                get_page_takeoffs=lambda _page_uid: [],
+            ),
+        )
+        placement._plan_view = plan_view
+        self.assertTrue(placement.enter("c1", ["c1"]))
+        conditions["c1"] = Condition(
+            uid="c1",
+            layer_visible=True,
+            condition_type=Condition.TYPE_AREA,
+        )
+        self.assertFalse(placement.reconcile_authoritative_conditions())
+        self.assertEqual(placement.state, PlacementState.IDLE)
+        self.assertIsNone(ui_state.place_condition_uid)
+        self.assertEqual(plan_view.cancel_calls, 1)
+
     def test_placement_reconciliation_exits_when_secondary_condition_is_hidden(self):
         class UiState:
             active_page_uid = "p1"

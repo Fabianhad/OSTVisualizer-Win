@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -13,7 +14,13 @@ import pyodbc
 
 pyodbc.pooling = False
 from ost_visualizer.infrastructure.mdb import schema_contract
-from ost_visualizer.infrastructure.mdb.database_creator import DatabaseCreator
+from ost_visualizer.infrastructure.mdb.components.constants import (
+    LAYER_REFERENCE_TABLES,
+)
+from ost_visualizer.infrastructure.mdb.database_creator import (
+    DatabaseCreator,
+    get_reference_schema_model,
+)
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
@@ -504,6 +511,444 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         self.assertIn("BidNamedViews", schema_contract.RAW_BID_TABLES)
         self.assertIn("Employees", schema_contract.RAW_GLOBAL_TABLES)
         self.assertEqual(schema_contract.singular("BidLayers"), "BidLayer")
+
+    def test_layer_reference_tables_match_the_shared_mdb_and_sql_schema(self):
+        schema = get_reference_schema_model()
+        schema_layer_tables = {
+            table.name
+            for table in schema.tables
+            if any(column.name == "BidLayerUID" for column in table.columns)
+        }
+        self.assertEqual(schema_layer_tables, set(LAYER_REFERENCE_TABLES))
+        self.assertTrue(
+            {
+                "BidTakeoffs",
+                "BidDimensions",
+                "BidArrows",
+                "BidALines",
+                "BidAnnoInk",
+                "BidLegends",
+            }.isdisjoint(schema_layer_tables)
+        )
+
+    def test_duplicate_bid_remaps_only_canonical_layer_reference_tables(self):
+        class Cursor:
+            description = ()
+
+            def execute(self, sql, *_params):
+                if "FROM [Bids]" in sql:
+                    self.description = (("UID",), ("BidNo",))
+                return self
+
+            @staticmethod
+            def fetchone():
+                return (1, 7)
+
+            @staticmethod
+            def fetchall():
+                return []
+
+        class Connection:
+            @staticmethod
+            def cursor():
+                return Cursor()
+
+        class Schema:
+            @staticmethod
+            def get_columns(table):
+                if table == "Bids":
+                    return {"UID", "BidNo"}
+                if table == "BidPages":
+                    return {"UID", "BidUID"}
+                return set()
+
+            @staticmethod
+            def optional_table_missing(table):
+                return table == "Settings"
+
+            @staticmethod
+            def column_exists(_table, _column):
+                return True
+
+        class RecordingWriter(MdbWriter):
+            def __init__(self):
+                super().__init__()
+                self.layer_remap_tables = []
+
+            @contextmanager
+            def _connection(self, _db_path):
+                yield Connection()
+
+            @staticmethod
+            def _schema(_connection):
+                return Schema()
+
+            @staticmethod
+            def _require_write_columns(_schema, _table, _columns):
+                pass
+
+            @staticmethod
+            def _next_uid(_cursor, _table):
+                return 2
+
+            @staticmethod
+            def _execute_insert_values(
+                _cursor, _schema, _table, _values, _required_columns, _operation
+            ):
+                pass
+
+            @staticmethod
+            def _copy_bid_table_rows(
+                _cursor,
+                _table,
+                _uid_column,
+                _old_uid,
+                _new_uid,
+                extra_overrides=None,
+            ):
+                del extra_overrides
+
+            @staticmethod
+            def _copy_with_uid_map(_cursor, table, _uid_column, _old_uid, _new_uid):
+                return {"10": "20"} if table == "BidLayers" else {}
+
+            def _update_if_columns(
+                self,
+                _cursor,
+                _schema,
+                table,
+                set_column,
+                _set_value,
+                _where_columns,
+                _where_values,
+            ):
+                if set_column == "BidLayerUID":
+                    self.layer_remap_tables.append(table)
+
+        writer = RecordingWriter()
+        duplicated_uid_maps = {
+            "BidLayers": {"10": "20"},
+            **{
+                table: {str(index): str(index + 100)}
+                for index, table in enumerate(LAYER_REFERENCE_TABLES, start=1)
+            },
+        }
+        writer._remap_duplicated_relationships(
+            Cursor(), Schema(), duplicated_uid_maps, "2"
+        )
+        self.assertEqual(set(writer.layer_remap_tables), set(LAYER_REFERENCE_TABLES))
+
+    def test_duplicate_bid_reconstructs_internal_child_references(self):
+        class Cursor:
+            description = ()
+
+            def __init__(self):
+                self._selected_table = ""
+
+            def execute(self, sql, *_params):
+                if "FROM [Bids]" in sql:
+                    self.description = (("UID",), ("BidNo",))
+                    self._selected_table = "Bids"
+                elif "FROM [BidPages]" in sql:
+                    self.description = (("UID",), ("BidUID",))
+                    self._selected_table = "BidPages"
+                return self
+
+            def fetchone(self):
+                if self._selected_table == "Bids":
+                    return (1, 7)
+                return None
+
+            def fetchall(self):
+                if self._selected_table == "BidPages":
+                    return [(10, 1)]
+                return []
+
+        cursor = Cursor()
+
+        class Connection:
+            @staticmethod
+            def cursor():
+                return cursor
+
+        class Schema:
+            @staticmethod
+            def get_columns(table):
+                if table == "Bids":
+                    return {"UID", "BidNo"}
+                if table == "BidPages":
+                    return {"UID", "BidUID"}
+                return {"UID"}
+
+            @staticmethod
+            def optional_table_missing(table):
+                return table == "Settings"
+
+            @staticmethod
+            def column_exists(_table, _column):
+                return True
+
+        class RecordingWriter(MdbWriter):
+            def __init__(self):
+                super().__init__()
+                self.reference_updates = []
+                self.copy_calls = []
+
+            @contextmanager
+            def _connection(self, _db_path):
+                yield Connection()
+
+            @staticmethod
+            def _schema(_connection):
+                return Schema()
+
+            @staticmethod
+            def _require_write_columns(_schema, _table, _columns):
+                pass
+
+            @staticmethod
+            def _next_uid(_cursor, _table):
+                return 2
+
+            @staticmethod
+            def _execute_insert_values(
+                _cursor, _schema, _table, _values, _required_columns, _operation
+            ):
+                pass
+
+            def _copy_bid_table_rows(
+                self,
+                _cursor,
+                table,
+                uid_column,
+                old_uid,
+                new_uid,
+                extra_overrides=None,
+            ):
+                del extra_overrides
+                self.copy_calls.append((table, uid_column, old_uid, new_uid))
+                return {
+                    "BidTakeoffs": {"30": "130", "31": "131"},
+                    "BidDimensions": {"40": "140"},
+                    "BidComments": {"50": "150", "51": "151"},
+                }.get(table, {})
+
+            def _copy_with_uid_map(
+                self, _cursor, table, _uid_column, _old_uid, _new_uid
+            ):
+                del self
+                return {
+                    "BidAreas": {"60": "160"},
+                    "BidTypAreas": {"70": "170"},
+                }.get(table, {})
+
+            def _update_if_columns(
+                self,
+                _cursor,
+                _schema,
+                table,
+                set_column,
+                set_value,
+                where_columns,
+                where_values,
+            ):
+                self.reference_updates.append(
+                    (table, set_column, set_value, where_columns, where_values)
+                )
+
+        writer = RecordingWriter()
+        self.assertEqual(writer.duplicate_bid("example.mdb", "1"), "2")
+        self.assertIn(
+            (
+                "BidTakeoffs",
+                "ParentUID",
+                "130",
+                ("BidUID", "ParentUID"),
+                ("2", "30"),
+            ),
+            writer.reference_updates,
+        )
+        self.assertIn(
+            ("BidTypAreaCounts", "BidAreaUID", "60", "160"),
+            writer.copy_calls,
+        )
+        self.assertIn(
+            (
+                "BidDimensions",
+                "BidTakeoffFromUID",
+                "130",
+                ("BidUID", "BidTakeoffFromUID"),
+                ("2", "30"),
+            ),
+            writer.reference_updates,
+        )
+        self.assertIn(
+            (
+                "BidComments",
+                "ParentCommentUID",
+                "150",
+                ("BidUID", "ParentCommentUID"),
+                ("2", "50"),
+            ),
+            writer.reference_updates,
+        )
+
+    def _run_duplicate_bid_round_trip_reference_graph(self):
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX metadata is not available")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            db_path = Path(temp_dir) / "duplicate_graph.mdb"
+            self.assertTrue(DatabaseCreator().create_database(db_path, "Duplicate"))
+            connection = _connect_mdb(db_path)
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO [Bids] ([UID], [BidNo], [JobName]) "
+                    "VALUES (100, 1, 'Source')"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidPages] ([UID], [BidUID], [Name]) "
+                    "VALUES (200, 100, 'Page')"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidConditions] ([UID], [BidUID], [Name]) "
+                    "VALUES (300, 100, 'Condition')"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidTakeoffs] "
+                    "([UID], [BidUID], [BidConditionUID], [BidPageUID], [ParentUID]) "
+                    "VALUES (400, 100, 300, 200, NULL)"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidTakeoffs] "
+                    "([UID], [BidUID], [BidConditionUID], [BidPageUID], [ParentUID]) "
+                    "VALUES (401, 100, 300, 200, 400)"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidDimensions] "
+                    "([UID], [BidUID], [BidPageUID], [BidTakeoffFromUID], "
+                    "[BidTakeoffToUID]) VALUES (500, 100, 200, 400, 401)"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidComments] "
+                    "([UID], [BidUID], [BidPageUID], [ParentCommentUID]) "
+                    "VALUES (600, 100, 200, NULL)"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidComments] "
+                    "([UID], [BidUID], [BidPageUID], [ParentCommentUID]) "
+                    "VALUES (601, 100, 200, 600)"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidAreas] ([UID], [BidUID], [Name]) "
+                    "VALUES (700, 100, 'Area')"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidTypAreas] ([UID], [BidUID], [Name]) "
+                    "VALUES (800, 100, 'Typical Area')"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidTypAreaCounts] "
+                    "([UID], [BidAreaUID], [BidTypAreaUID], [Count]) "
+                    "VALUES (900, 700, 800, 3)"
+                )
+                connection.commit()
+            finally:
+                cursor.close()
+                connection.close()
+            writer = MdbWriter()
+            try:
+                duplicate_uid = writer.duplicate_bid(str(db_path), "100")
+            finally:
+                writer._conn_manager.close()
+            self.assertIsNotNone(duplicate_uid)
+            connection = _connect_mdb(db_path)
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    "UPDATE [BidTakeoffs] SET [ParentUID]=NULL WHERE [UID]=401"
+                )
+                cursor.execute("DELETE FROM [BidDimensions] WHERE [UID]=500")
+                cursor.execute("DELETE FROM [BidComments] WHERE [UID]=601")
+                cursor.execute(
+                    "UPDATE [BidTypAreaCounts] SET [Count]=9 WHERE [UID]=900"
+                )
+                takeoffs = _fetch_dicts(
+                    cursor,
+                    "SELECT [UID], [ParentUID] FROM [BidTakeoffs] "
+                    "WHERE [BidUID]=? ORDER BY [UID]",
+                    int(duplicate_uid),
+                )
+                self.assertEqual(len(takeoffs), 2)
+                parent_uid = takeoffs[0]["UID"]
+                child_uid = takeoffs[1]["UID"]
+                self.assertEqual(takeoffs[1]["ParentUID"], parent_uid)
+                self.assertNotIn(parent_uid, {400, 401})
+                dimensions = _fetch_dicts(
+                    cursor,
+                    "SELECT [BidTakeoffFromUID], [BidTakeoffToUID] "
+                    "FROM [BidDimensions] WHERE [BidUID]=?",
+                    int(duplicate_uid),
+                )
+                self.assertEqual(
+                    dimensions,
+                    [
+                        {
+                            "BidTakeoffFromUID": parent_uid,
+                            "BidTakeoffToUID": child_uid,
+                        }
+                    ],
+                )
+                comments = _fetch_dicts(
+                    cursor,
+                    "SELECT [UID], [ParentCommentUID] FROM [BidComments] "
+                    "WHERE [BidUID]=? ORDER BY [UID]",
+                    int(duplicate_uid),
+                )
+                self.assertEqual(len(comments), 2)
+                self.assertEqual(comments[1]["ParentCommentUID"], comments[0]["UID"])
+                self.assertNotEqual(comments[0]["UID"], 600)
+                counts = _fetch_dicts(
+                    cursor,
+                    "SELECT c.[BidAreaUID], c.[BidTypAreaUID], c.[Count] "
+                    "FROM ([BidTypAreaCounts] c INNER JOIN [BidAreas] a "
+                    "ON c.[BidAreaUID]=a.[UID]) INNER JOIN [BidTypAreas] t "
+                    "ON c.[BidTypAreaUID]=t.[UID] "
+                    "WHERE a.[BidUID]=? AND t.[BidUID]=?",
+                    int(duplicate_uid),
+                    int(duplicate_uid),
+                )
+                self.assertEqual(len(counts), 1)
+                self.assertEqual(counts[0]["Count"], 3)
+                self.assertNotEqual(counts[0]["BidAreaUID"], 700)
+                self.assertNotEqual(counts[0]["BidTypAreaUID"], 800)
+            finally:
+                connection.rollback()
+                cursor.close()
+                connection.close()
+            reader = MdbReader()
+            try:
+                conditions = reader.get_bid_data(str(db_path), duplicate_uid)[0]
+            finally:
+                reader.close_connection()
+            self.assertEqual(len(conditions), 1)
+            self.assertIsNone(next(iter(conditions.values())).layer_uid)
+
+    def test_zz_duplicate_bid_round_trip_owns_its_complete_reference_graph(self):
+        code = (
+            "import sys; sys.path.insert(0, 'tests'); "
+            "from test_mdb_schema_compatibility import "
+            "MdbSchemaCompatibilityTests as Tests; "
+            "Tests()._run_duplicate_bid_round_trip_reference_graph()"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_optional_column_uses_existing_column(self):
         inspector = MdbSchemaInspector(

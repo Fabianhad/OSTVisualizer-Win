@@ -106,6 +106,7 @@ class _PendingTakeoffPlacement:
     bid_uid: str
     pending_uids: tuple[str, ...]
     specs: tuple[InsertTakeoffSpec, ...]
+    page_identities: tuple[tuple[str, object], ...]
     runtime_generation: Optional[int]
     deleted_pending_uids: frozenset[str] = frozenset()
 
@@ -207,8 +208,13 @@ class PlanViewActionHandler:
         bid_ref,
         page_uids: tuple[str, ...],
         plan_uids: set[str],
+        page_identities: Optional[tuple[tuple[str, object], ...]] = None,
     ) -> None:
-        if not plan_uids or not self._plan_context_is_current(bid_ref, page_uids):
+        if not plan_uids or not self._plan_context_is_current(
+            bid_ref,
+            page_uids,
+            page_identities,
+        ):
             return
         self._plan_view.set_selected_uids(set(plan_uids))
 
@@ -237,8 +243,43 @@ class PlanViewActionHandler:
                 )
         return takeoff_uids, annotation_identities
 
-    def _plan_context_is_current(self, bid_ref, page_uids: tuple[str, ...]) -> bool:
+    def _capture_page_identities(
+        self,
+        page_uids: tuple[str, ...],
+    ) -> tuple[tuple[str, object], ...]:
+        identities = []
+        for page_uid in dict.fromkeys(str(uid) for uid in page_uids):
+            page = self._data_svc.get_page(page_uid)
+            if page is not None:
+                identities.append((page_uid, page))
+        return tuple(identities)
+
+    def _page_identities_are_current(
+        self,
+        page_uids: tuple[str, ...],
+        page_identities: tuple[tuple[str, object], ...],
+    ) -> bool:
+        expected_uids = tuple(dict.fromkeys(str(uid) for uid in page_uids))
+        return bool(
+            len(page_identities) == len(expected_uids)
+            and all(
+                self._data_svc.get_page(page_uid) is page
+                for page_uid, page in page_identities
+            )
+        )
+
+    def _plan_context_is_current(
+        self,
+        bid_ref,
+        page_uids: tuple[str, ...],
+        page_identities: Optional[tuple[tuple[str, object], ...]] = None,
+    ) -> bool:
         if self._ui_state.get_selected_bid_ref() != bid_ref:
+            return False
+        if page_identities is not None and not self._page_identities_are_current(
+            page_uids,
+            page_identities,
+        ):
             return False
         current_page_uid = str(
             self._plan_view.current_page_uid or self._ui_state.active_page_uid or ""
@@ -415,6 +456,7 @@ class PlanViewActionHandler:
             for resource in dependencies
             if resource.resource_type == "page"
         )
+        page_identities = self._capture_page_identities(page_uids)
         handler_ref = weakref.ref(self)
         write_service = self._write_svc
 
@@ -434,7 +476,11 @@ class PlanViewActionHandler:
                 not result.granted
                 or current_selection != selection
                 or not handler._is_allowed(Feature.EDIT_PLAN_ITEMS)
-                or not handler._plan_context_is_current(bid_ref, page_uids)
+                or not handler._plan_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                )
             ):
                 if result.handle is not None:
                     handler._write_svc.end_plan_edit_lease(result.handle)
@@ -737,6 +783,7 @@ class PlanViewActionHandler:
                 if item is not None and item.page_uid
             )
         )
+        page_identities = self._capture_page_identities(page_uids)
         resources, dependencies = self._geometry_resources_for_selection(
             bid_ref,
             plan_uids,
@@ -794,29 +841,36 @@ class PlanViewActionHandler:
                 annotation_identities,
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if handler._plan_context_is_current(bid_ref, page_uids):
+                if handler._plan_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                ) and handler._is_allowed(Feature.EDIT_PLAN_ITEMS):
                     restore_preview(handler)
                 handler._restore_plan_selection_if_current(
                     bid_ref,
                     page_uids,
                     current_plan_uids,
+                    page_identities,
                 )
                 return
             handler._restore_plan_selection_if_current(
                 bid_ref,
                 page_uids,
                 current_plan_uids,
+                page_identities,
             )
-            handler._push_sql_geometry_history(
-                bid_ref,
-                takeoff_old,
-                takeoff_new,
-                annotation_old,
-                annotation_new,
-                rotation_old,
-                rotation_new,
-                page_uids,
-            )
+            if handler._page_identities_are_current(page_uids, page_identities):
+                handler._push_sql_geometry_history(
+                    bid_ref,
+                    takeoff_old,
+                    takeoff_new,
+                    annotation_old,
+                    annotation_new,
+                    rotation_old,
+                    rotation_new,
+                    page_uids,
+                )
             handler._mark_sql_completion_applied(result)
 
         self._write_svc.queue_plan_geometry(
@@ -889,6 +943,7 @@ class PlanViewActionHandler:
         restore=None,
     ) -> None:
         self._release_geometry_edit_lease()
+        page_identities = self._capture_page_identities(page_uids)
         self._set_plan_items_pending(
             bid_ref.file_path,
             plan_uids,
@@ -925,22 +980,33 @@ class PlanViewActionHandler:
                 else plan_uids
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if restore is not None and handler._plan_context_is_current(
-                    bid_ref, page_uids
+                if (
+                    restore is not None
+                    and handler._is_allowed(Feature.EDIT_PLAN_ITEMS)
+                    and handler._plan_context_is_current(
+                        bid_ref,
+                        page_uids,
+                        page_identities,
+                    )
                 ):
                     restore()
                 handler._restore_plan_selection_if_current(
                     bid_ref,
                     page_uids,
                     current_plan_uids,
+                    page_identities,
                 )
                 return
             handler._restore_plan_selection_if_current(
                 bid_ref,
                 page_uids,
                 current_plan_uids,
+                page_identities,
             )
-            if old_updates:
+            if old_updates and handler._page_identities_are_current(
+                page_uids,
+                page_identities,
+            ):
                 handler._push_sql_property_history(
                     bid_ref,
                     property_kind,
@@ -1949,6 +2015,9 @@ class PlanViewActionHandler:
             bid_uid=bid_ref.bid_uid,
             pending_uids=pending_uids,
             specs=tuple(specs),
+            page_identities=self._capture_page_identities(
+                tuple(self._takeoff_spec_page_uids(specs))
+            ),
             runtime_generation=None,
         )
         self._pending_takeoff_placements[operation_id] = pending
@@ -2095,6 +2164,12 @@ class PlanViewActionHandler:
             bid_ref is None
             or bid_ref.file_path != pending.database_id
             or bid_ref.bid_uid != pending.bid_uid
+        ):
+            self._mark_sql_completion_applied(result)
+            return
+        if not self._page_identities_are_current(
+            tuple(page_uids),
+            pending.page_identities,
         ):
             self._mark_sql_completion_applied(result)
             return
@@ -2548,7 +2623,10 @@ class PlanViewActionHandler:
                 if spec.properties.get("BidPageViewUID")
             ),
         }
-        originating_page_uids = {str(spec.page_uid) for spec in specs if spec.page_uid}
+        originating_page_uids = tuple(
+            dict.fromkeys(str(spec.page_uid) for spec in specs if spec.page_uid)
+        )
+        page_identities = self._capture_page_identities(originating_page_uids)
         handler_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -2567,21 +2645,25 @@ class PlanViewActionHandler:
                 if source_uid in annotation_map
             }
             keys = handler._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
-            active_bid = handler._ui_state.get_selected_bid_ref()
-            originating_page_is_current = (
-                handler._plan_view.current_page_uid in originating_page_uids
-            )
-            if active_bid == bid_ref and originating_page_is_current and keys:
-                handler._plan_view.set_selected_uids(keys)
-            handler._push_sql_paste_history(
+            originating_page_is_current = handler._plan_context_is_current(
                 bid_ref,
-                payload,
-                {},
-                annotation_map,
+                originating_page_uids,
+                page_identities,
             )
+            if originating_page_is_current and keys:
+                handler._plan_view.set_selected_uids(keys)
+            if handler._page_identities_are_current(
+                originating_page_uids,
+                page_identities,
+            ):
+                handler._push_sql_paste_history(
+                    bid_ref,
+                    payload,
+                    {},
+                    annotation_map,
+                )
             if (
                 after_success is not None
-                and active_bid == bid_ref
                 and originating_page_is_current
                 and handler._is_allowed(Feature.PLACE_ANNOTATIONS)
             ):
@@ -3115,6 +3197,7 @@ class PlanViewActionHandler:
                 if item.page_uid
             )
         )
+        page_identities = self._capture_page_identities(page_uids)
         dependencies = {
             *(
                 self._condition_resource(bid_ref, item.condition_uid)
@@ -3181,21 +3264,24 @@ class PlanViewActionHandler:
                     bid_ref,
                     page_uids,
                     requested_takeoff_uids.union(current_requested_annotations),
+                    page_identities,
                 )
                 return
             handler._restore_plan_selection_if_current(
                 bid_ref,
                 page_uids,
                 current_skipped_annotations,
+                page_identities,
             )
-            handler._push_sql_delete_history(
-                bid_ref,
-                saved_takeoffs,
-                saved_annotations,
-                saved_takeoff_extras,
-                takeoff_uids,
-                annotations,
-            )
+            if handler._page_identities_are_current(page_uids, page_identities):
+                handler._push_sql_delete_history(
+                    bid_ref,
+                    saved_takeoffs,
+                    saved_annotations,
+                    saved_takeoff_extras,
+                    takeoff_uids,
+                    annotations,
+                )
             handler._mark_sql_completion_applied(result)
 
         self._write_svc.queue_plan_items_delete(

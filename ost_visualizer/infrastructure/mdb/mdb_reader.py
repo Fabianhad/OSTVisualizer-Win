@@ -50,7 +50,7 @@ class MdbReader(
             self._conn_manager.close()
 
     def refresh_connection(self, db_path: str) -> None:
-        self._conn_manager.close_read(db_path)
+        self._conn_manager.close_database(db_path)
 
     @staticmethod
     def _record_caught_read_error(

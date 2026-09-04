@@ -244,7 +244,7 @@ class ToolbarStateCoordinator:
                 self._cut_action.setEnabled(
                     bool(selected_bid_refs)
                     and selected_bids_same_file
-                    and self._access.is_allowed(Feature.DELETE_BID)
+                    and self._access.can_delete_bids(selected_bid_refs)
                 )
         if self._paste_action:
             if on_takeoff_tab:
@@ -272,17 +272,22 @@ class ToolbarStateCoordinator:
                         and self.condition_summary_tab.can_delete_current_row()
                     )
                 )
-            elif self._ui_state.get_selected_bid_ref():
+            elif selected_bid_refs:
                 self._delete_action.setEnabled(
-                    self._access.is_allowed(Feature.DELETE_BID)
+                    self._access.can_delete_bids(selected_bid_refs)
                 )
-            elif self._ui_state.selected_project_uid:
-                uid = self._ui_state.selected_project_uid
+            elif self._ui_state.selected_project_uids:
+                project_uids = self._ui_state.selected_project_uids
+                project_file_path = self._ui_state.selected_project_file_path
                 self._delete_action.setEnabled(
-                    self._access.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
-                    and uid != "1"
-                    and not self._project_data.project_has_bids(
-                        uid, self._ui_state.selected_file_path
+                    bool(project_file_path)
+                    and all(uid != "1" for uid in project_uids)
+                    and all(
+                        not self._project_data.project_has_bids(uid, project_file_path)
+                        for uid in project_uids
+                    )
+                    and self._access.can_delete_projects(
+                        project_file_path, project_uids
                     )
                 )
             else:
@@ -517,20 +522,37 @@ class ToolbarStateCoordinator:
         self.bid_clipboard.reconcile(self._project_data.get_hierarchy())
         if not self.bid_clipboard.has_content():
             return False
-        target_file_path = self._ui_state.selected_file_path
+        selected_bid_refs = self._ui_state.get_selected_bid_refs()
+        project_uids = self._ui_state.selected_project_uids
+        if project_uids:
+            if len(project_uids) != 1 or selected_bid_refs:
+                return False
+            target_file_path = self._ui_state.selected_project_file_path
+            target_project_uid = project_uids[0]
+        else:
+            target_file_path = self._ui_state.selected_file_path
+            bid_ref = self._ui_state.get_selected_bid_ref()
+            if bid_ref and bid_ref not in selected_bid_refs:
+                return False
+            target_project_uid = (
+                self._project_data.find_project_uid_for_bid(bid_ref)
+                if bid_ref
+                else None
+            )
         if not target_file_path:
             return False
         if not self.bid_clipboard.source_matches_file(target_file_path):
             return False
-        bid_ref = self._ui_state.get_selected_bid_ref()
-        target_project_uid = (
-            self._project_data.find_project_uid_for_bid(bid_ref) if bid_ref else None
-        )
         if target_project_uid == "1":
             return False
         feature = (
             Feature.DELETE_BID if self.bid_clipboard.is_cut else Feature.DUPLICATE_BID
         )
-        if not self._access.is_project_bid_clipboard_allowed(feature):
+        if not self._access.is_project_bid_clipboard_allowed(
+            feature,
+            target_file_path,
+            self.bid_clipboard.bid_refs,
+            target_project_uid,
+        ):
             return False
-        return self._ui_state.selected_project_uid != "1"
+        return True

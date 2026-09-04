@@ -2471,6 +2471,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             SimpleNamespace(uid="annotation-layer", name="Annotation", show=True),
         ]
         annotation_layer_uid = "annotation-layer"
+        bid_owner = object()
         coordinator.quantity_update_calls = []
         quantity_calls = coordinator.quantity_update_calls
 
@@ -2500,7 +2501,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_hidden_layer_uids=lambda: set(),
             is_annotation_layer_visible=lambda: True,
             get_selected_page_uids=lambda: list(selected_page_uids),
-            get_bid=lambda _bid_ref: None,
+            get_bid=lambda _bid_ref: bid_owner,
             get_page=lambda page_uid: pages.get(page_uid),
             get_bid_layer_snapshot=lambda: list(layers),
             get_bid_conditions=lambda: conditions,
@@ -2862,6 +2863,21 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", True))
         self.assertEqual(coordinator.plan_view.cursor_mode, "place")
         self.assertEqual(coordinator.plan_view.place_condition_uid, "c1")
+
+    def test_showing_layer_rejects_suspended_same_uid_condition_replacement(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        coordinator.plan_view.cursor_mode = "place"
+        coordinator.plan_view.place_condition_uid = "c1"
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        coordinator.project_data.get_bid_conditions()["c1"] = Condition(
+            uid="c1",
+            name="Replacement",
+            layer_uid="l1",
+            layer_visible=True,
+        )
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", True))
+        self.assertEqual(coordinator.plan_view.cursor_mode, "select")
+        self.assertIsNone(coordinator.plan_view.place_condition_uid)
 
     def test_hide_all_temporarily_selects_then_show_all_restores_annotation_tool(self):
         coordinator = self._make_visibility_coordinator(

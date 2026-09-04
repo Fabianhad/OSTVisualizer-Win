@@ -127,6 +127,32 @@ class ConditionActionHandler:
     def _is_current_bid(self, bid_ref) -> bool:
         return self._ui_state.get_selected_bid_ref() == bid_ref
 
+    def _capture_bid_owner(self, bid_ref):
+        return self._project_data.get_bid(bid_ref)
+
+    def _bid_owner_is_current(self, bid_ref, bid_owner) -> bool:
+        return bool(
+            bid_owner is not None
+            and self._is_current_bid(bid_ref)
+            and self._project_data.get_bid(bid_ref) is bid_owner
+        )
+
+    def _bid_interaction_still_allowed(
+        self,
+        bid_ref,
+        bid_owner,
+        feature: Feature,
+    ) -> bool:
+        return self._bid_owner_is_current(
+            bid_ref,
+            bid_owner,
+        ) and self._coordinator.ui_access_manager.is_allowed(feature)
+
+    def _action_still_allowed(self, bid_ref, feature: Feature) -> bool:
+        return self._is_current_bid(
+            bid_ref
+        ) and self._coordinator.ui_access_manager.is_allowed(feature)
+
     def _layer_dialog_callbacks(self, bid_ref, write_service) -> dict:
         uses_sql_queue = self._uses_sql_queue(bid_ref)
         callbacks = {
@@ -475,6 +501,11 @@ class ConditionActionHandler:
             return spec
 
         def save_new_condition(_cond_uid, dto):
+            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+                return UpdateConditionResultDto(
+                    success=False,
+                    error="The active bid or edit access changed.",
+                )
             if not self._flush_deferred_for_bid(bid_ref):
                 return UpdateConditionResultDto(
                     success=False, error="Failed to save pending visual state."
@@ -493,6 +524,14 @@ class ConditionActionHandler:
             )
 
         def save_new_condition_async(_cond_uid, dto, completed) -> bool:
+            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+                completed(
+                    UpdateConditionResultDto(
+                        success=False,
+                        error="The active bid or edit access changed.",
+                    )
+                )
+                return False
             if not self._flush_deferred_for_bid(bid_ref):
                 completed(
                     UpdateConditionResultDto(
@@ -612,13 +651,20 @@ class ConditionActionHandler:
         if self._uses_sql_queue(bid_ref):
             if not self._flush_deferred_for_bid(bid_ref):
                 return
+            bid_owner = self._capture_bid_owner(bid_ref)
+            if bid_owner is None:
+                return
 
             def committed(result: QueuedMutationResult) -> None:
                 authoritative = result.authoritative_result
                 new_uids = list(
                     authoritative.created_resource_ids if authoritative else ()
                 )
-                if new_uids and self._is_current_bid(bid_ref):
+                if new_uids and self._bid_interaction_still_allowed(
+                    bid_ref,
+                    bid_owner,
+                    Feature.DUPLICATE_CONDITION,
+                ):
                     self._finish_condition_duplicate(new_uids, sidebar)
 
             self._submit_sql_condition_operation(
@@ -666,13 +712,16 @@ class ConditionActionHandler:
         if self._uses_sql_queue(bid_ref):
             if not self._flush_deferred_for_bid(bid_ref):
                 return
+            bid_owner = self._capture_bid_owner(bid_ref)
+            if bid_owner is None:
+                return
             target_changes = {"folder_uid": target.get("folder_uid") or None}
             if target_kind == "cdn_type":
                 target_changes["cdn_type_uid"] = target.get("cdn_type_uid") or None
             if is_cut:
 
                 def committed_cut(_result: QueuedMutationResult) -> None:
-                    if sidebar and self._is_current_bid(bid_ref):
+                    if sidebar and self._bid_owner_is_current(bid_ref, bid_owner):
                         sidebar.complete_cut_paste(
                             condition_uids,
                             clipboard_revision,
@@ -699,7 +748,11 @@ class ConditionActionHandler:
                 new_uids = list(
                     authoritative.created_resource_ids if authoritative else ()
                 )
-                if new_uids and self._is_current_bid(bid_ref):
+                if new_uids and self._bid_interaction_still_allowed(
+                    bid_ref,
+                    bid_owner,
+                    Feature.DUPLICATE_CONDITION,
+                ):
                     self._finish_condition_duplicate(new_uids, sidebar)
 
             self._submit_sql_condition_operation(
@@ -866,10 +919,15 @@ class ConditionActionHandler:
         confirmed_uids = confirm_delete_conditions(sidebar.window(), names)
         if not confirmed_uids:
             return
+        if not self._action_still_allowed(bid_ref, Feature.DELETE_CONDITION):
+            return
         replacement_uid = sidebar.condition_selection_after_delete(confirmed_uids)
         if not self._flush_deferred_for_bid(bid_ref):
             return
         if self._uses_sql_queue(bid_ref):
+            bid_owner = self._capture_bid_owner(bid_ref)
+            if bid_owner is None:
+                return
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("delete", *confirmed_uids),
@@ -882,6 +940,7 @@ class ConditionActionHandler:
                 ),
                 lambda _result: self._finish_queued_condition_delete(
                     bid_ref,
+                    bid_owner,
                     replacement_uid,
                 ),
             )
@@ -901,9 +960,10 @@ class ConditionActionHandler:
     def _finish_queued_condition_delete(
         self,
         bid_ref,
+        bid_owner,
         replacement_uid: Optional[str],
     ) -> None:
-        if not self._is_current_bid(bid_ref):
+        if not self._bid_owner_is_current(bid_ref, bid_owner):
             return
         self._coordinator.placement.force_exit()
         self._coordinator.ensure_select_mode()
@@ -934,6 +994,8 @@ class ConditionActionHandler:
             "Renumber all the conditions using the current sort order?\n"
             "This cannot be undone",
         ):
+            return
+        if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
             return
         if not self._flush_deferred_for_bid(bid_ref):
             return
@@ -975,6 +1037,9 @@ class ConditionActionHandler:
         if not self._flush_deferred_for_bid(bid_ref):
             return
         if self._uses_sql_queue(bid_ref):
+            bid_owner = self._capture_bid_owner(bid_ref)
+            if bid_owner is None:
+                return
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("create_folder", str(parent or "root")),
@@ -988,7 +1053,11 @@ class ConditionActionHandler:
                 ),
                 lambda result: (
                     self._finish_queued_folder_create(result, sidebar)
-                    if self._is_current_bid(bid_ref)
+                    if self._bid_interaction_still_allowed(
+                        bid_ref,
+                        bid_owner,
+                        Feature.EDIT_CONDITION_STRUCTURE,
+                    )
                     else None
                 ),
             )
@@ -1056,6 +1125,9 @@ class ConditionActionHandler:
         if not self._flush_deferred_for_bid(bid_ref):
             return
         if self._uses_sql_queue(bid_ref):
+            bid_owner = self._capture_bid_owner(bid_ref)
+            if bid_owner is None:
+                return
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("rename_condition", str(condition_uid)),
@@ -1069,7 +1141,7 @@ class ConditionActionHandler:
                 ),
                 lambda _result: (
                     self._coordinator.highlight_sidebar({condition_uid})
-                    if self._is_current_bid(bid_ref)
+                    if self._bid_owner_is_current(bid_ref, bid_owner)
                     else None
                 ),
             )
@@ -1118,6 +1190,8 @@ class ConditionActionHandler:
         )
         if not to_delete:
             return
+        if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION_STRUCTURE):
+            return
         delete_uids = [uid for _, uid in to_delete]
         if self._uses_sql_queue(bid_ref):
             self._submit_sql_condition_operation(
@@ -1151,6 +1225,9 @@ class ConditionActionHandler:
         if not self._flush_deferred_for_bid(bid_ref):
             return
         if self._uses_sql_queue(bid_ref):
+            bid_owner = self._capture_bid_owner(bid_ref)
+            if bid_owner is None:
+                return
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("move_condition", str(condition_uid)),
@@ -1164,7 +1241,7 @@ class ConditionActionHandler:
                 ),
                 lambda _result: (
                     self._coordinator.highlight_sidebar({condition_uid})
-                    if self._is_current_bid(bid_ref)
+                    if self._bid_owner_is_current(bid_ref, bid_owner)
                     else None
                 ),
             )
@@ -1204,6 +1281,9 @@ class ConditionActionHandler:
         if not self._flush_deferred_for_bid(bid_ref):
             return
         if self._uses_sql_queue(bid_ref):
+            bid_owner = self._capture_bid_owner(bid_ref)
+            if bid_owner is None:
+                return
             self._submit_sql_condition_operation(
                 bid_ref,
                 ("bulk_update", field_name, *condition_uids),
@@ -1217,7 +1297,7 @@ class ConditionActionHandler:
                 ),
                 lambda _result: (
                     self._coordinator.highlight_sidebar(set(condition_uids))
-                    if sidebar and self._is_current_bid(bid_ref)
+                    if sidebar and self._bid_owner_is_current(bid_ref, bid_owner)
                     else None
                 ),
             )
@@ -1341,6 +1421,11 @@ class ConditionActionHandler:
             return cond_uid in cond_uids_with_takeoffs
 
         def save_condition(cond_uid, dto):
+            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+                return UpdateConditionResultDto(
+                    success=False,
+                    error="The active bid or edit access changed.",
+                )
             if not self._flush_deferred_for_bid(bid_ref):
                 return UpdateConditionResultDto(
                     success=False, error="Failed to save pending visual state."
@@ -1361,6 +1446,14 @@ class ConditionActionHandler:
             return result
 
         def save_condition_async(cond_uid, dto, completed) -> bool:
+            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+                completed(
+                    UpdateConditionResultDto(
+                        success=False,
+                        error="The active bid or edit access changed.",
+                    )
+                )
+                return False
             if not self._flush_deferred_for_bid(bid_ref):
                 completed(
                     UpdateConditionResultDto(

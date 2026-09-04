@@ -2120,8 +2120,10 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
 
 def FakeDetachedPageData(*, annotation_layer_hidden: bool = False):
     annotation_layer_uid = "detached-annotation-layer"
+    page = Page(uid="p1", name="Page 1")
     return PageViewDto(
-        page=None,
+        page=page,
+        ordered_pages=[page],
         hidden_layer_uids=(
             {annotation_layer_uid} if annotation_layer_hidden else set()
         ),
@@ -2915,6 +2917,119 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertIsNone(window._geometry_edit_lease_handle)
         self.assertEqual(plan_view.geometry_lease_granted, set())
 
+    def test_detached_late_geometry_lease_grant_rejects_same_uid_page_replacement(
+        self,
+    ):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            page_uid="p1",
+            layer_uid="layer-1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        original_page = Page(uid="p1", name="Original")
+        window.page_data = PageViewDto(
+            page=original_page,
+            ordered_pages=[original_page],
+        )
+        plan_view.selected_uids = {"a1"}
+        window._on_geometry_edit_lease_requested(["a1"])
+        database_id, resources, dependencies, options, lease_callback = (
+            queued_write.edit_lease_requests[0]
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-replaced-page",
+            runtime_generation=2,
+            operation_id=options["operation_id"],
+            owning_surface="detached-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+        )
+        replacement_page = Page(uid="p1", name="Replacement")
+        window.page_data = PageViewDto(
+            page=replacement_page,
+            ordered_pages=[replacement_page],
+        )
+        lease_callback(EditLeaseResult(True, handle=handle))
+        self.assertEqual(queued_write.ended_edit_leases, [handle])
+        self.assertIsNone(window._geometry_edit_lease_handle)
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+
+    def test_detached_failed_geometry_does_not_restore_same_uid_replacement_page(
+        self,
+    ):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        original_page = Page(uid="p1", name="Original")
+        window.page_data = PageViewDto(
+            page=original_page,
+            ordered_pages=[original_page],
+        )
+        plan_view.annotation_key_map[("a1", "text")] = "a1"
+        window._on_positions_flushed(
+            [],
+            [("a1", "text", [1.0, 1.0], [2.0, 2.0])],
+        )
+        callback = queued_write.geometry_calls[0][0][2]
+        replacement_page = Page(uid="p1", name="Replacement")
+        window.page_data = PageViewDto(
+            page=replacement_page,
+            ordered_pages=[replacement_page],
+        )
+        plan_view.selected_uids = {"replacement-selection"}
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=2,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.restored_positions, [])
+        self.assertEqual(plan_view.selected_uids, {"replacement-selection"})
+
+    def test_detached_failed_geometry_does_not_restore_after_access_revocation(self):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        plan_view.annotation_key_map[("a1", "text")] = "a1"
+        window._on_positions_flushed(
+            [],
+            [("a1", "text", [1.0, 1.0], [2.0, 2.0])],
+        )
+        callback = queued_write.geometry_calls[0][0][2]
+        window._access_state = PlanSurfaceAccessState()
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=2,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.restored_positions, [])
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+
     def test_detached_sql_annotation_delete_failure_restores_selection(self):
         annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
         queued_write = FakeQueuedProjectWriteService()
@@ -2966,6 +3081,35 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.pending_mutation_uids, set())
         self.assertEqual(plan_view.selected_uids, {"shared_text"})
+
+    def test_detached_delete_failure_rejects_same_uid_page_replacement(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        original_page = window.page_data.page
+        plan_view.annotation_key_map[("a1", "text")] = "a1"
+        plan_view.selected_uids = {"a1"}
+        window._on_elements_deleted(["a1"])
+        replacement_page = Page(uid="p1", name="Replacement")
+        window.page_data = PageViewDto(
+            page=replacement_page,
+            ordered_pages=[replacement_page],
+        )
+        plan_view.selected_uids = {"replacement-selection"}
+        self.assertIsNot(replacement_page, original_page)
+        queued_write.delete_calls[0][0][4](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.selected_uids, {"replacement-selection"})
+        self.assertEqual(plan_view.pending_mutation_uids, set())
 
     def test_detached_sql_failure_does_not_restore_old_page_after_navigation(self):
         annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
@@ -3051,6 +3195,46 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.selected_uids, set())
         self.assertEqual(plan_view.activate_calls, [])
+
+    def test_detached_sql_insert_completion_rejects_same_uid_page_replacement(self):
+        queued_write = FakeQueuedProjectWriteService()
+        undo = FakeUndoService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            project_write_service=queued_write,
+            undo_service=undo,
+        )
+        original_page = window.page_data.page
+        plan_view.annotation_key_map[("ann-sql", "text")] = "ann-sql_text"
+        plan_view.selected_uids = {"replacement-selection"}
+        window._on_text_annotation_created(
+            [7.0, 8.0, 12.0, 12.0],
+            "p1",
+            {"Text": "Hello"},
+        )
+        args, _kwargs = queued_write.paste_calls[0]
+        payload = args[1]
+        source_uid = payload.annotation_source_uids[0]
+        replacement_page = Page(uid="p1", name="Replacement")
+        window.page_data = PageViewDto(
+            page=replacement_page,
+            ordered_pages=[replacement_page],
+        )
+        self.assertIsNot(replacement_page, original_page)
+        args[2](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("ann-sql",),
+                    created_uid_maps=(("annotations", ((source_uid, "ann-sql"),)),),
+                ),
+            )
+        )
+        self.assertEqual(plan_view.selected_uids, {"replacement-selection"})
+        self.assertEqual(plan_view.activate_calls, [])
+        self.assertEqual(undo.async_pushes, [])
 
     def test_annotation_window_uses_shared_annotation_tool_specs_only(self):
         self.assertEqual(

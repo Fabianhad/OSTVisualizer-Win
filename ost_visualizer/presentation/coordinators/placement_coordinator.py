@@ -23,6 +23,7 @@ class PlacementCoordinator:
         self._nav = None
         self._area_placement_in_progress = False
         self._condition_type: Optional[int] = None
+        self._condition_identities: tuple[tuple[str, object], ...] = ()
 
     def set_nav(self, nav) -> None:
         self._nav = nav
@@ -72,8 +73,12 @@ class PlacementCoordinator:
             self._ui_state.clear_place_condition()
             return False
         self._ui_state.place_condition_uid = condition_uid
-        condition = self._project_data.get_bid_conditions().get(condition_uid)
+        conditions = self._project_data.get_bid_conditions()
+        condition = conditions.get(condition_uid)
         self._condition_type = condition.condition_type if condition else None
+        self._condition_identities = tuple(
+            (uid, conditions[uid]) for uid in condition_uids
+        )
         self._state = PlacementState.READY
         if self._nav:
             self._nav.transition_to(NavState.PLACE_MODE)
@@ -108,6 +113,7 @@ class PlacementCoordinator:
         )
 
     def _finalize_exit(self) -> None:
+        self._condition_identities = ()
         if self._state == PlacementState.IDLE:
             return
         self._state = PlacementState.IDLE
@@ -160,10 +166,17 @@ class PlacementCoordinator:
         conditions = self._project_data.get_bid_conditions()
         active_uid = self._ui_state.place_condition_uid
         active = conditions.get(active_uid) if active_uid else None
+        current_uids = tuple(self._ui_state.place_condition_uids)
         if (
             active is None
             or not active.layer_visible
             or active.condition_type != self._condition_type
+            or current_uids
+            != tuple(uid for uid, _condition in self._condition_identities)
+            or any(
+                conditions.get(uid) is not condition
+                for uid, condition in self._condition_identities
+            )
         ):
             self.force_exit()
             return False

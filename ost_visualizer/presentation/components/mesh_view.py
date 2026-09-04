@@ -68,6 +68,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._saved_camera_states: dict[BidRef, _CameraState] = {}
         self._pending_camera_reset = False
         self._render_suspended = True
+        self._surface_hidden = True
         self._color_service = color_service
         self.setAttribute(QtCore.Qt.WA_PaintOnScreen)
         self.setAttribute(QtCore.Qt.WA_DontCreateNativeAncestors)
@@ -670,7 +671,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             event.accept()
             return
         owner = self._context_menu_owner()
-        menu = QtWidgets.QMenu(self)
+        menu = QtWidgets.QMenu(self.window())
         selected_state = (
             self._selected_takeoff_context_state()
             if self._pick_enabled and self._selected_takeoff_uids
@@ -840,7 +841,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._renderer.suspend()
 
     def resume_rendering(self) -> None:
-        if not self._has_renderable_content():
+        if self._surface_hidden or not self._has_renderable_content():
             return
         self._render_suspended = False
         self._renderer.resume()
@@ -1075,13 +1076,21 @@ class OpenGLViewer(QtWidgets.QWidget):
             self.update()
             return
         if is_same_bid and self._camera_initialized_for_scene:
+            if self._surface_hidden:
+                self.suspend_rendering()
+                self.update()
+                return
             if self._render_suspended:
                 self.resume_rendering()
             else:
                 self.update()
             return
         self._initialize_camera_for_current_scene()
-        self.resume_rendering()
+        if self._surface_hidden:
+            self.suspend_rendering()
+            self.update()
+        else:
+            self.resume_rendering()
 
     def begin_scene_load(self, bid_ref: BidRef) -> None:
         if self._destroyed:
@@ -1272,6 +1281,10 @@ class OpenGLViewer(QtWidgets.QWidget):
             self.update()
             return
         self._initialize_camera_for_current_scene()
+        if self._surface_hidden:
+            self.suspend_rendering()
+            self.update()
+            return
         if self._render_suspended:
             self.resume_rendering()
         else:
@@ -1341,6 +1354,7 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
+        self._surface_hidden = False
         if not self._ensure_renderer():
             return
         self._connect_surface_notifications()
@@ -1354,10 +1368,10 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._renderer.render()
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        self._surface_hidden = True
         self._cancel_scene_pointer_interaction()
         self._stop_native_camera_inertia()
-        if self._renderer:
-            self._renderer.suspend()
+        self.suspend_rendering()
         super().hideEvent(event)
 
     def cleanup(self) -> None:
@@ -1375,6 +1389,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._saved_camera_states = {}
         self._pending_camera_reset = False
         self._render_suspended = True
+        self._surface_hidden = True
         self._negative_check_fn = lambda _uids: False
         self._curved_check_fn = lambda _uids: (False, False)
         self._selected_context_state_fn = None

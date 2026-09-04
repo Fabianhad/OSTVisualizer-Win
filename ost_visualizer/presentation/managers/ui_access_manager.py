@@ -4,6 +4,7 @@ from typing import Callable, FrozenSet, List, Optional, Tuple
 from ...application.dtos.collaboration_dtos import ResourceRef
 from ...application.events.app_events import AppEvents
 from ...domain.entities.identity_refs import BidRef
+from ...domain.entities.file_state import normalize_path
 
 MAIN_PLAN_SURFACE_ID = "main-plan"
 
@@ -315,6 +316,50 @@ class UIAccessManager:
             return False
         return self.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
 
+    def can_create_bid(self, database_id: str, project_uid: str | None) -> bool:
+        if not database_id:
+            return False
+        if project_uid and self._feature_blocked(
+            Feature.EDIT_PROJECT_TREE_STRUCTURE,
+            require_current_selection=False,
+            resource=ResourceRef("project", str(project_uid)),
+            database_id=database_id,
+        ):
+            return False
+        return not self._feature_blocked(
+            Feature.EDIT_PROJECT_TREE_STRUCTURE,
+            require_current_selection=False,
+            resource=ResourceRef("project_bids", project_uid or "orphan"),
+            database_id=database_id,
+        )
+
+    def can_create_project(self, database_id: str) -> bool:
+        return bool(database_id) and not self._feature_blocked(
+            Feature.EDIT_PROJECT_TREE_STRUCTURE,
+            require_current_selection=False,
+            resource=ResourceRef("projects_collection", "database"),
+            database_id=database_id,
+        )
+
+    def can_import_project_file(
+        self, database_id: str, project_uid: str | None
+    ) -> bool:
+        if not database_id:
+            return False
+        if project_uid and self._feature_blocked(
+            Feature.IMPORT,
+            require_current_selection=False,
+            resource=ResourceRef("project", str(project_uid)),
+            database_id=database_id,
+        ):
+            return False
+        return not self._feature_blocked(
+            Feature.IMPORT,
+            require_current_selection=False,
+            resource=ResourceRef("project_bids", project_uid or "orphan"),
+            database_id=database_id,
+        )
+
     def set_area_placement_active(self, active: bool, *, surface_id: str) -> None:
         self._update_surface_interaction(surface_id, area_placement_active=bool(active))
 
@@ -435,6 +480,83 @@ class UIAccessManager:
             resource=resource,
         )
 
+    def can_duplicate_bid(self, bid_ref: BidRef) -> bool:
+        return self._is_bid_action_allowed(Feature.DUPLICATE_BID, bid_ref)
+
+    def can_edit_bid_job_status(self, bid_ref: BidRef) -> bool:
+        return self._is_bid_action_allowed(Feature.EDIT_BID_JOB_STATUS, bid_ref)
+
+    def can_delete_bids(self, bid_refs: List[BidRef]) -> bool:
+        return bool(bid_refs) and all(
+            self._is_bid_action_allowed(Feature.DELETE_BID, bid_ref)
+            for bid_ref in bid_refs
+        )
+
+    def can_edit_bid_structure(self, bid_refs: List[BidRef]) -> bool:
+        return bool(bid_refs) and all(
+            not self._feature_blocked(
+                Feature.EDIT_PROJECT_TREE_STRUCTURE,
+                require_current_selection=False,
+                resource=ResourceRef(
+                    "bid",
+                    str(bid_ref.bid_uid),
+                    (
+                        int(bid_ref.bid_uid)
+                        if str(bid_ref.bid_uid).isdecimal()
+                        else None
+                    ),
+                ),
+                database_id=bid_ref.file_path,
+            )
+            for bid_ref in bid_refs
+        )
+
+    def can_edit_project(self, file_path: str, project_uid: str) -> bool:
+        storage_uid = int(project_uid) if str(project_uid).isdecimal() else None
+        return not self._feature_blocked(
+            Feature.EDIT_PROJECT_TREE_STRUCTURE,
+            require_current_selection=False,
+            resource=ResourceRef("project", str(project_uid), storage_uid),
+            database_id=file_path,
+        )
+
+    def can_delete_projects(self, database_id: str, project_uids: List[str]) -> bool:
+        if not database_id or not project_uids:
+            return False
+        if any(
+            self._feature_blocked(
+                Feature.EDIT_PROJECT_TREE_STRUCTURE,
+                require_current_selection=False,
+                resource=ResourceRef("project", str(project_uid)),
+                database_id=database_id,
+            )
+            for project_uid in project_uids
+        ):
+            return False
+        return not self._feature_blocked(
+            Feature.EDIT_PROJECT_TREE_STRUCTURE,
+            require_current_selection=False,
+            resource=ResourceRef("projects_collection", "database"),
+            database_id=database_id,
+        )
+
+    def can_close_database(self, database_id: str) -> bool:
+        return bool(database_id) and not self._feature_blocked(
+            Feature.UNLOAD_FILE,
+            require_current_selection=False,
+            resource=None,
+            database_id=database_id,
+        )
+
+    def _is_bid_action_allowed(self, feature: Feature, bid_ref: BidRef) -> bool:
+        bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
+        return not self._feature_blocked(
+            feature,
+            require_current_selection=False,
+            resource=ResourceRef("bid", str(bid_ref.bid_uid), bid_uid),
+            database_id=bid_ref.file_path,
+        )
+
     def is_allowed_for_active_placement(
         self,
         feature: Feature,
@@ -500,13 +622,39 @@ class UIAccessManager:
             return self._database_capability_service.is_editable(locator)
         return self._database_capability_service.is_editable(locator, resource)
 
-    def is_project_bid_clipboard_allowed(self, feature: Feature) -> bool:
+    def is_project_bid_clipboard_allowed(
+        self,
+        feature: Feature,
+        database_id: str,
+        bid_refs: List[BidRef],
+        target_project_uid: str | None,
+    ) -> bool:
         if feature not in (Feature.DELETE_BID, Feature.DUPLICATE_BID):
-            return self.is_allowed(feature)
+            return False
+        database_key = normalize_path(database_id)
+        if not bid_refs or any(
+            normalize_path(ref.file_path) != database_key for ref in bid_refs
+        ):
+            return False
+        if any(
+            self._feature_blocked(
+                feature,
+                require_current_selection=False,
+                resource=ResourceRef(
+                    "bid",
+                    str(ref.bid_uid),
+                    int(ref.bid_uid) if str(ref.bid_uid).isdecimal() else None,
+                ),
+                database_id=database_id,
+            )
+            for ref in bid_refs
+        ):
+            return False
         return not self._feature_blocked(
             feature,
             require_current_selection=False,
-            resource=None,
+            resource=ResourceRef("project_bids", target_project_uid or "orphan"),
+            database_id=database_id,
         )
 
     def _feature_blocked(
@@ -515,6 +663,7 @@ class UIAccessManager:
         *,
         require_current_selection: bool,
         resource: ResourceRef | None,
+        database_id: str | None = None,
         ignore_area_placement: bool = False,
         context: PlanSurfaceAccessContext | None = None,
         ignore_area_surface_id: str | None = None,
@@ -540,7 +689,12 @@ class UIAccessManager:
             and feature is not Feature.CREATE_DATABASE
         ):
             if context is None:
-                editable = self.is_database_editable(resource)
+                editable = (
+                    self._database_capability_service.is_editable(database_id, resource)
+                    if database_id is not None
+                    and self._database_capability_service is not None
+                    else self.is_database_editable(resource)
+                )
             else:
                 editable = self._is_context_database_editable(context, resource)
             if not editable:

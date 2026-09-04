@@ -48,9 +48,12 @@ class ProjectTreeContext:
     bid_ref: Optional[BidRef]
     bid_status: str
     paste_target: Optional[Tuple[str, Optional[str]]]
+    selected_bid_refs: List[BidRef]
+    selected_project_uids: List[str]
     copy_refs: List[BidRef]
     selected_deleted_refs: List[BidRef]
     empty_deleted_refs: List[BidRef]
+    delete_selection_state: Optional[dict]
 
 
 class _BidTreeWidget(QtWidgets.QTreeWidget):
@@ -58,15 +61,46 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._project_view = parent
         self._drag_items: List[QtWidgets.QTreeWidgetItem] = []
         self._drag_file_path: Optional[str] = None
         self.on_move_bids: Optional[Callable] = None
+        self.on_can_move_bids: Optional[Callable] = None
         self._ui_access_manager = None
         self._context_menu_press_pos: Optional[QtCore.QPoint] = None
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DragDrop)
+
+    def event(self, event: QtCore.QEvent) -> bool:
+        if (
+            event.type() == QtCore.QEvent.Type.ShortcutOverride
+            and not ShortcutManager.should_ignore_for_text_input()
+            and self._shortcut_action_key(event) is not None
+        ):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        action_key = self._shortcut_action_key(event)
+        if action_key == ACTION_COPY and self._project_view is not None:
+            self._project_view._copy_selected_bids()
+        elif action_key == ACTION_PASTE and self._project_view is not None:
+            self._project_view._paste_to_current_target()
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
+
+    @staticmethod
+    def _shortcut_action_key(event: QtGui.QKeyEvent) -> Optional[str]:
+        sequence = QtGui.QKeySequence(event.keyCombination())
+        for action_key in (ACTION_COPY, ACTION_PASTE):
+            if sequence == ShortcutManager.sequence(action_key):
+                return action_key
+        return None
 
     def set_ui_access_manager(self, access_manager) -> None:
         self._ui_access_manager = access_manager
@@ -148,12 +182,8 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
         return out
 
     def startDrag(self, supported_actions) -> None:
-        if not self._ui_access_manager or not self._ui_access_manager.is_allowed(
-            Feature.EDIT_PROJECT_TREE_STRUCTURE
-        ):
-            return
         items = self._eligible_drag_items()
-        if not items:
+        if not items or not self._source_move_allowed(items):
             return
         self._drag_items = items
         self._drag_file_path = items[0].data(0, self._ITEM_ROLE)[2]
@@ -177,17 +207,14 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
 
     def dragMoveEvent(self, event) -> None:
         target = self.itemAt(event.position().toPoint())
-        if self._move_bids_allowed() and self._is_valid_target(target):
+        if self._is_valid_target(target) and self._move_bids_allowed(target):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event) -> None:
-        if not self._move_bids_allowed():
-            event.ignore()
-            return
         target = self.itemAt(event.position().toPoint())
-        if not self._is_valid_target(target):
+        if not self._is_valid_target(target) or not self._move_bids_allowed(target):
             event.ignore()
             return
         target_data = target.data(0, self._ITEM_ROLE)
@@ -205,11 +232,41 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
         ]
         self.on_move_bids(refs, target_project_uid)
 
-    def _move_bids_allowed(self) -> bool:
+    def _drag_bid_refs(
+        self, items: Optional[List[QtWidgets.QTreeWidgetItem]] = None
+    ) -> List[BidRef]:
+        refs = []
+        for item in items if items is not None else self._drag_items:
+            if not isValid(item):
+                return []
+            data = item.data(0, self._ITEM_ROLE)
+            if not data or data[0] != "bid" or not data[2]:
+                return []
+            refs.append(BidRef(file_path=data[2], bid_uid=data[1]))
+        return refs
+
+    def _source_move_allowed(
+        self, items: Optional[List[QtWidgets.QTreeWidgetItem]] = None
+    ) -> bool:
+        refs = self._drag_bid_refs(items)
         return bool(
-            self._drag_items
+            refs
             and self._ui_access_manager
-            and self._ui_access_manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+            and self._ui_access_manager.can_edit_bid_structure(refs)
+        )
+
+    def _move_bids_allowed(
+        self, target: Optional[QtWidgets.QTreeWidgetItem] = None
+    ) -> bool:
+        refs = self._drag_bid_refs()
+        if not refs or not self._source_move_allowed():
+            return False
+        if target is None:
+            return True
+        data = target.data(0, self._ITEM_ROLE)
+        target_project_uid = data[1] if data and data[0] == "project" else None
+        return bool(
+            self.on_can_move_bids and self.on_can_move_bids(refs, target_project_uid)
         )
 
     def _is_valid_target(self, target: Optional[QtWidgets.QTreeWidgetItem]) -> bool:
@@ -263,7 +320,9 @@ class ProjectView(QtWidgets.QWidget):
         event_bus,
         on_bid_selection: Optional[Callable[[Optional[BidRef]], None]] = None,
         on_bid_activated: Optional[Callable[[BidRef], None]] = None,
-        on_multi_selection: Optional[Callable[[List[BidRef], List[str]], None]] = None,
+        on_multi_selection: Optional[
+            Callable[[List[BidRef], List[str], Optional[str]], None]
+        ] = None,
     ):
         super().__init__(parent)
         self.event_bus = event_bus
@@ -274,6 +333,27 @@ class ProjectView(QtWidgets.QWidget):
         self.on_copy_bids: Optional[Callable[[List[BidRef]], None]] = None
         self.on_paste_bids: Optional[Callable[[str, Optional[str]], None]] = None
         self.on_can_paste_bids: Optional[Callable[[str, Optional[str]], bool]] = None
+        self.on_duplicate_bid: Optional[Callable[[BidRef], None]] = None
+        self.on_can_duplicate_bid: Optional[Callable[[BidRef], bool]] = None
+        self.on_close_database: Optional[Callable[[str], None]] = None
+        self.on_can_close_database: Optional[Callable[[str], bool]] = None
+        self.on_delete_bids: Optional[
+            Callable[[List[BidRef], Optional[dict]], None]
+        ] = None
+        self.on_can_delete_bids: Optional[Callable[[List[BidRef]], bool]] = None
+        self.on_delete_projects: Optional[Callable[[str, List[str]], None]] = None
+        self.on_can_delete_projects: Optional[Callable[[str, List[str]], bool]] = None
+        self.on_import_project_file: Optional[
+            Callable[[str, str, Optional[str]], None]
+        ] = None
+        self.on_can_import_project_file: Optional[
+            Callable[[str, str, Optional[str]], bool]
+        ] = None
+        self.on_create_bid: Optional[Callable[[str, Optional[str]], None]] = None
+        self.on_can_create_bid: Optional[Callable[[str, Optional[str]], bool]] = None
+        self.on_create_project: Optional[Callable[[str], None]] = None
+        self.on_can_create_project: Optional[Callable[[str], bool]] = None
+        self.on_is_active_bid_context: Optional[Callable[[BidRef], bool]] = None
         self.on_empty_deleted_bids: Optional[Callable[[List[BidRef]], None]] = None
         self.on_rename_project: Optional[Callable] = None
         self.on_menu_command: Optional[Callable[[str], None]] = None
@@ -281,6 +361,7 @@ class ProjectView(QtWidgets.QWidget):
         self.on_export_formats: Optional[Callable[[], List[str]]] = None
         self.on_get_job_statuses: Optional[Callable[[str], list]] = None
         self.on_update_bid_job_status: Optional[Callable[[BidRef, str], None]] = None
+        self.on_can_update_bid_job_status: Optional[Callable[[BidRef], bool]] = None
         self.on_renumber_conditions: Optional[Callable[[], None]] = None
         self.on_can_renumber_conditions: Optional[Callable[[], bool]] = None
         self.on_project_view_options_changed: Optional[Callable[[], None]] = None
@@ -300,6 +381,9 @@ class ProjectView(QtWidgets.QWidget):
 
     def set_on_move_bids(self, callback: Optional[Callable]) -> None:
         self.top_tree.on_move_bids = callback
+
+    def set_on_can_move_bids(self, callback: Optional[Callable]) -> None:
+        self.top_tree.on_can_move_bids = callback
 
     def set_ui_access_manager(self, access_manager) -> None:
         self.top_tree.set_ui_access_manager(access_manager)
@@ -375,20 +459,6 @@ class ProjectView(QtWidgets.QWidget):
             QtCore.Qt.ContextMenuPolicy.CustomContextMenu
         )
         self.top_tree.customContextMenuRequested.connect(self._on_context_menu)
-        ShortcutManager.register_shortcut(
-            self.top_tree,
-            ACTION_COPY,
-            self._copy_selected_bids,
-            context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
-            ignore_when_text_input=True,
-        )
-        ShortcutManager.register_shortcut(
-            self.top_tree,
-            ACTION_PASTE,
-            self._paste_to_current_target,
-            context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
-            ignore_when_text_input=True,
-        )
 
     def build_complete_structure(self, loaded_files: List[LoadedFile]) -> None:
         selection_snapshot = self.get_selected_node_state() or self._selected_node_state
@@ -678,7 +748,7 @@ class ProjectView(QtWidgets.QWidget):
         uid: str,
         file_path: Optional[str],
     ) -> None:
-        if not self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
+        if not self._project_write_allowed(file_path, uid):
             return
         original_name = item.text(0)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
@@ -727,7 +797,7 @@ class ProjectView(QtWidgets.QWidget):
             return
         if new_name == original_name:
             return
-        if not self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
+        if not self._project_write_allowed(file_path, uid):
             item.setText(0, original_name)
             return
         if self.on_rename_project:
@@ -899,7 +969,7 @@ class ProjectView(QtWidgets.QWidget):
 
     def _collect_multi_selection(
         self,
-    ) -> Tuple[List[BidRef], List[str]]:
+    ) -> Tuple[List[BidRef], List[str], Optional[str]]:
         bid_refs: List[BidRef] = []
         project_uids: List[str] = []
         project_uid_keys: set[str] = set()
@@ -920,13 +990,25 @@ class ProjectView(QtWidgets.QWidget):
                     project_uids.append(uid)
         if projects_span_files:
             project_uids = []
-        return bid_refs, project_uids
+            project_file_key = None
+        project_file_path = None
+        if project_uids and project_file_key is not None:
+            for item in self.top_tree.selectedItems():
+                kind, _uid, file_path = self._get_item_info(item)
+                if (
+                    kind == "project"
+                    and file_path
+                    and normalize_path(file_path) == project_file_key
+                ):
+                    project_file_path = file_path
+                    break
+        return bid_refs, project_uids, project_file_path
 
     def _on_top_selection_change(self):
-        bid_refs, project_uids = self._collect_multi_selection()
+        bid_refs, project_uids, project_file_path = self._collect_multi_selection()
         if len(self.top_tree.selectedItems()) > 1:
             if self.on_multi_selection:
-                self.on_multi_selection(bid_refs, project_uids)
+                self.on_multi_selection(bid_refs, project_uids, project_file_path)
             return
         item = self._current_selected_item()
         if item is None:
@@ -935,7 +1017,7 @@ class ProjectView(QtWidgets.QWidget):
             if self.on_bid_selection:
                 self.on_bid_selection(None)
             if self.on_multi_selection:
-                self.on_multi_selection(bid_refs, project_uids)
+                self.on_multi_selection(bid_refs, project_uids, project_file_path)
             return
         kind, uid, file_path = self._get_item_info(item)
         self._selected_node_state = self._selection_state_for_item(item)
@@ -962,7 +1044,7 @@ class ProjectView(QtWidgets.QWidget):
         else:
             self.current_bid_ref = None
         if self.on_multi_selection:
-            self.on_multi_selection(bid_refs, project_uids)
+            self.on_multi_selection(bid_refs, project_uids, project_file_path)
 
     def _current_selected_item(self) -> Optional[QtWidgets.QTreeWidgetItem]:
         items = self.top_tree.selectedItems()
@@ -1141,6 +1223,11 @@ class ProjectView(QtWidgets.QWidget):
             if kind == "bid" and uid and file_path
             else None
         )
+        (
+            selected_bid_refs,
+            selected_project_uids,
+            _selected_project_file_path,
+        ) = self._collect_multi_selection()
         return ProjectTreeContext(
             item=item,
             kind=kind,
@@ -1150,34 +1237,51 @@ class ProjectView(QtWidgets.QWidget):
             bid_ref=bid_ref,
             bid_status=item.text(2) if kind == "bid" else "",
             paste_target=self._paste_target_for_item(item),
+            selected_bid_refs=selected_bid_refs,
+            selected_project_uids=selected_project_uids,
             copy_refs=self._copy_bid_refs_for_context(item),
             selected_deleted_refs=self._selected_deleted_bid_refs(),
             empty_deleted_refs=self._deleted_bid_refs_for_context(item),
+            delete_selection_state=self.get_delete_replacement_selection_state(),
         )
 
     def _build_project_context_menu(
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
-        self._add_new_submenu(menu)
+        self._add_new_submenu(menu, context)
         self._add_command_action(menu, "Open...", ACTION_OPEN_FILES)
-        self._add_command_action(
+        ContextMenuManager.add_command_action(
             menu,
             "Close",
             "unload_file",
-            enabled=context.kind != "project" and self._command_enabled("unload_file"),
+            self._guard_context_callback(
+                lambda ctx=context: self._close_context_database(ctx)
+            ),
+            enabled=self._can_close_context_database(context),
         )
-        self._add_import_submenu(menu)
-        self._add_export_submenu(menu)
+        self._add_import_submenu(menu, context)
+        self._add_export_submenu(menu, context)
         menu.addSeparator()
         self._add_copy_paste_actions(menu, context)
-        self._add_command_action(
+        ContextMenuManager.add_command_action(
             menu,
             "Duplicate",
             ACTION_DUPLICATE,
-            enabled=context.kind == "bid" and self._command_enabled(ACTION_DUPLICATE),
+            self._guard_context_callback(
+                lambda ctx=context: self._duplicate_context_bid(ctx)
+            ),
+            enabled=self._can_duplicate_context_bid(context),
         )
         delete_enabled = self._can_delete_context(context)
-        self._add_command_action(menu, "Delete", ACTION_DELETE, enabled=delete_enabled)
+        ContextMenuManager.add_command_action(
+            menu,
+            "Delete",
+            ACTION_DELETE,
+            self._guard_context_callback(
+                lambda ctx=context: self._delete_context_target(ctx)
+            ),
+            enabled=delete_enabled,
+        )
         rename_action = menu.addAction("Rename")
         rename_action.setEnabled(self._can_rename_context(context))
         rename_action.triggered.connect(
@@ -1187,10 +1291,14 @@ class ProjectView(QtWidgets.QWidget):
         )
         menu.addSeparator()
         renumber_action = menu.addAction("Renumber Conditions")
-        renumber_action.setEnabled(self._can_renumber_conditions())
+        renumber_action.setEnabled(
+            self._context_owns_active_bid(context) and self._can_renumber_conditions()
+        )
         renumber_action.triggered.connect(
             self._guard_context_callback(
-                lambda _checked=False: self._renumber_conditions()
+                lambda _checked=False, ctx=context: self._trigger_active_bid_command(
+                    "renumber_conditions", ctx
+                )
             )
         )
         self._add_job_status_submenu(menu, context)
@@ -1222,30 +1330,98 @@ class ProjectView(QtWidgets.QWidget):
             )
         )
 
-    def _add_new_submenu(self, menu: QtWidgets.QMenu) -> None:
-        new_menu = menu.addMenu("New")
-        self._add_command_action(new_menu, "Project", ACTION_NEW_PROJECT)
+    def _add_new_submenu(
+        self, menu: QtWidgets.QMenu, context: ProjectTreeContext
+    ) -> None:
+        new_menu = QtWidgets.QMenu("New", menu)
+        menu.addMenu(new_menu)
+        ContextMenuManager.add_command_action(
+            new_menu,
+            "Project",
+            ACTION_NEW_PROJECT,
+            self._guard_context_callback(
+                lambda ctx=context: self._create_context_bid(ctx)
+            ),
+            enabled=self._can_create_context_bid(context),
+        )
         new_menu.addSeparator()
-        self._add_command_action(new_menu, "Folder", ACTION_NEW_FOLDER)
+        ContextMenuManager.add_command_action(
+            new_menu,
+            "Folder",
+            ACTION_NEW_FOLDER,
+            self._guard_context_callback(
+                lambda ctx=context: self._create_context_project(ctx)
+            ),
+            enabled=self._can_create_context_project(context),
+        )
         self._add_command_action(new_menu, "Database", ACTION_NEW_DATABASE)
 
-    def _add_import_submenu(self, menu: QtWidgets.QMenu) -> None:
-        import_menu = menu.addMenu("Import")
-        self._add_command_action(import_menu, ".ost File...", "import_ost")
-        self._add_command_action(import_menu, ".osp File...", "import_osp")
+    def _add_import_submenu(
+        self, menu: QtWidgets.QMenu, context: ProjectTreeContext
+    ) -> None:
+        import_menu = QtWidgets.QMenu("Import", menu)
+        menu.addMenu(import_menu)
+        for format_key in ("ost", "osp"):
+            ContextMenuManager.add_command_action(
+                import_menu,
+                f".{format_key} File...",
+                f"import_{format_key}",
+                self._guard_context_callback(
+                    lambda key=format_key, ctx=context: self._import_context_file(
+                        key, ctx
+                    )
+                ),
+                enabled=self._can_import_context_file(format_key, context),
+            )
         import_menu.setEnabled(
-            self._command_enabled("import_ost") or self._command_enabled("import_osp")
+            any(action.isEnabled() for action in import_menu.actions())
         )
 
-    def _add_export_submenu(self, menu: QtWidgets.QMenu) -> None:
-        export_menu = menu.addMenu("Export")
+    def _add_export_submenu(
+        self, menu: QtWidgets.QMenu, context: ProjectTreeContext
+    ) -> None:
+        export_menu = QtWidgets.QMenu("Export", menu)
+        menu.addMenu(export_menu)
+        owns_active_bid = self._context_owns_active_bid(context)
         for fmt in self._export_formats():
-            self._add_command_action(export_menu, f"To .{fmt} File", f"export_as_{fmt}")
-        self._add_command_action(export_menu, "To .pdf File", "export_as_pdf")
-        self._add_command_action(export_menu, "To .ost File", "export_as_ost")
-        self._add_command_action(export_menu, "To .osp File", "export_as_osp")
+            self._add_active_bid_command_action(
+                export_menu,
+                f"To .{fmt} File",
+                f"export_as_{fmt}",
+                context,
+                owns_active_bid,
+            )
+        self._add_active_bid_command_action(
+            export_menu, "To .pdf File", "export_as_pdf", context, owns_active_bid
+        )
+        self._add_active_bid_command_action(
+            export_menu, "To .ost File", "export_as_ost", context, owns_active_bid
+        )
+        self._add_active_bid_command_action(
+            export_menu, "To .osp File", "export_as_osp", context, owns_active_bid
+        )
         export_menu.setEnabled(
             any(action.isEnabled() for action in export_menu.actions())
+        )
+
+    def _add_active_bid_command_action(
+        self,
+        menu: QtWidgets.QMenu,
+        label: str,
+        command_key: str,
+        context: ProjectTreeContext,
+        owns_active_bid: bool,
+    ) -> None:
+        ContextMenuManager.add_command_action(
+            menu,
+            label,
+            command_key,
+            self._guard_context_callback(
+                lambda key=command_key, ctx=context: self._trigger_active_bid_command(
+                    key, ctx
+                )
+            ),
+            enabled=owns_active_bid and self._command_enabled(command_key),
         )
 
     def _add_copy_paste_actions(
@@ -1281,8 +1457,14 @@ class ProjectView(QtWidgets.QWidget):
                 else f"Restore {len(context.selected_deleted_refs)} bids"
             )
             restore_action = menu.addAction(label)
+            access_manager = self.top_tree._ui_access_manager
             restore_action.setEnabled(
-                self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+                bool(
+                    access_manager
+                    and access_manager.can_edit_bid_structure(
+                        context.selected_deleted_refs
+                    )
+                )
             )
             restore_action.triggered.connect(
                 self._guard_context_callback(
@@ -1295,7 +1477,8 @@ class ProjectView(QtWidgets.QWidget):
     def _add_job_status_submenu(
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
-        status_menu = menu.addMenu("Change Job Status")
+        status_menu = QtWidgets.QMenu("Change Job Status", menu)
+        menu.addMenu(status_menu)
         statuses = self._job_statuses(context.file_path)
         can_edit_status = self._can_change_job_status(context)
         group = QtGui.QActionGroup(status_menu)
@@ -1385,7 +1568,8 @@ class ProjectView(QtWidgets.QWidget):
     ) -> None:
         if (
             bid_ref
-            and self._job_status_write_allowed()
+            and self.on_can_update_bid_job_status
+            and self.on_can_update_bid_job_status(bid_ref)
             and self.on_update_bid_job_status
         ):
             self.on_update_bid_job_status(bid_ref, job_status_uid)
@@ -1394,8 +1578,113 @@ class ProjectView(QtWidgets.QWidget):
         return (
             context.kind == "bid"
             and context.bid_ref is not None
-            and self._job_status_write_allowed()
+            and self.on_can_update_bid_job_status
+            and self.on_can_update_bid_job_status(context.bid_ref)
         )
+
+    def _can_duplicate_context_bid(self, context: ProjectTreeContext) -> bool:
+        return bool(
+            context.kind == "bid"
+            and context.bid_ref is not None
+            and self.on_can_duplicate_bid
+            and self.on_can_duplicate_bid(context.bid_ref)
+        )
+
+    def _can_close_context_database(self, context: ProjectTreeContext) -> bool:
+        return bool(
+            context.kind in {"file_root", "bid"}
+            and context.file_path
+            and self.on_can_close_database
+            and self.on_can_close_database(context.file_path)
+        )
+
+    def _close_context_database(self, context: ProjectTreeContext) -> None:
+        if (
+            self._can_close_context_database(context)
+            and context.file_path
+            and self.on_close_database
+        ):
+            self.on_close_database(context.file_path)
+
+    def _duplicate_context_bid(self, context: ProjectTreeContext) -> None:
+        if (
+            self._can_duplicate_context_bid(context)
+            and context.bid_ref is not None
+            and self.on_duplicate_bid
+        ):
+            self.on_duplicate_bid(context.bid_ref)
+
+    def _context_owns_active_bid(self, context: ProjectTreeContext) -> bool:
+        return bool(
+            context.kind == "bid"
+            and context.bid_ref is not None
+            and self.on_is_active_bid_context
+            and self.on_is_active_bid_context(context.bid_ref)
+        )
+
+    def _trigger_active_bid_command(
+        self, command_key: str, context: ProjectTreeContext
+    ) -> None:
+        if not self._context_owns_active_bid(context):
+            return
+        if command_key == "renumber_conditions":
+            self._renumber_conditions()
+            return
+        if self._command_enabled(command_key):
+            self._trigger_command(command_key)
+
+    def _can_create_context_bid(self, context: ProjectTreeContext) -> bool:
+        target = context.paste_target
+        return bool(
+            target is not None
+            and self.on_can_create_bid
+            and self.on_can_create_bid(*target)
+        )
+
+    def _create_context_bid(self, context: ProjectTreeContext) -> None:
+        target = context.paste_target
+        if (
+            target is not None
+            and self._can_create_context_bid(context)
+            and self.on_create_bid
+        ):
+            self.on_create_bid(*target)
+
+    def _can_create_context_project(self, context: ProjectTreeContext) -> bool:
+        return bool(
+            context.file_path
+            and self.on_can_create_project
+            and self.on_can_create_project(context.file_path)
+        )
+
+    def _create_context_project(self, context: ProjectTreeContext) -> None:
+        if (
+            context.file_path
+            and self._can_create_context_project(context)
+            and self.on_create_project
+        ):
+            self.on_create_project(context.file_path)
+
+    def _can_import_context_file(
+        self, format_key: str, context: ProjectTreeContext
+    ) -> bool:
+        target = context.paste_target
+        return bool(
+            target is not None
+            and self.on_can_import_project_file
+            and self.on_can_import_project_file(format_key, *target)
+        )
+
+    def _import_context_file(
+        self, format_key: str, context: ProjectTreeContext
+    ) -> None:
+        target = context.paste_target
+        if (
+            target is not None
+            and self._can_import_context_file(format_key, context)
+            and self.on_import_project_file
+        ):
+            self.on_import_project_file(format_key, *target)
 
     def _can_renumber_conditions(self) -> bool:
         return bool(
@@ -1406,26 +1695,47 @@ class ProjectView(QtWidgets.QWidget):
         if self._can_renumber_conditions() and self.on_renumber_conditions:
             self.on_renumber_conditions()
 
-    def _job_status_write_allowed(self) -> bool:
-        return self._project_tree_write_allowed(Feature.EDIT_BID_JOB_STATUS)
-
     def _can_delete_context(self, context: ProjectTreeContext) -> bool:
         if context.kind == "bid":
-            return self._command_enabled(
-                ACTION_DELETE
-            ) and self._project_tree_write_allowed(Feature.DELETE_BID)
+            return bool(
+                context.selected_bid_refs
+                and self.on_can_delete_bids
+                and self.on_can_delete_bids(context.selected_bid_refs)
+            )
         if context.kind == "project":
-            return self._command_enabled(
-                ACTION_DELETE
-            ) and self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+            return bool(
+                not context.selected_bid_refs
+                and bool(context.selected_project_uids)
+                and context.file_path
+                and self.on_can_delete_projects
+                and self.on_can_delete_projects(
+                    context.file_path, context.selected_project_uids
+                )
+            )
         return False
+
+    def _delete_context_target(self, context: ProjectTreeContext) -> None:
+        if context.kind == "bid":
+            if self._can_delete_context(context) and self.on_delete_bids:
+                self.on_delete_bids(
+                    context.selected_bid_refs,
+                    context.delete_selection_state,
+                )
+            return
+        if (
+            context.kind == "project"
+            and context.file_path
+            and self._can_delete_context(context)
+            and self.on_delete_projects
+        ):
+            self.on_delete_projects(context.file_path, context.selected_project_uids)
 
     def _can_rename_context(self, context: ProjectTreeContext) -> bool:
         return (
             context.kind == "project"
             and bool(context.project_uid)
             and context.project_uid != _DELETED_PROJECT_UID
-            and self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+            and self._project_write_allowed(context.file_path, context.project_uid)
         )
 
     def _rename_context(self, context: ProjectTreeContext) -> None:
@@ -1442,14 +1752,18 @@ class ProjectView(QtWidgets.QWidget):
             )
 
     def _can_empty_deleted_bids(self, context: ProjectTreeContext) -> bool:
-        return bool(context.empty_deleted_refs) and self._project_tree_write_allowed(
-            Feature.DELETE_BID
+        access_manager = self.top_tree._ui_access_manager
+        return bool(
+            context.empty_deleted_refs
+            and access_manager
+            and access_manager.can_delete_bids(context.empty_deleted_refs)
         )
 
     def _empty_deleted_bids(self, refs: List[BidRef]) -> None:
         if (
             refs
-            and self._project_tree_write_allowed(Feature.DELETE_BID)
+            and self.top_tree._ui_access_manager
+            and self.top_tree._ui_access_manager.can_delete_bids(refs)
             and self.on_empty_deleted_bids
         ):
             self.on_empty_deleted_bids(refs)
@@ -1457,14 +1771,21 @@ class ProjectView(QtWidgets.QWidget):
     def _restore_bids(self, refs: List[BidRef]) -> None:
         if (
             refs
-            and self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+            and self.top_tree._ui_access_manager
+            and self.top_tree._ui_access_manager.can_edit_bid_structure(refs)
             and self.on_restore_bid
         ):
             self.on_restore_bid(refs)
 
-    def _project_tree_write_allowed(self, feature: Feature) -> bool:
+    def _project_write_allowed(
+        self, file_path: Optional[str], project_uid: str
+    ) -> bool:
         access_manager = self.top_tree._ui_access_manager
-        return bool(access_manager and access_manager.is_allowed(feature))
+        return bool(
+            file_path
+            and access_manager
+            and access_manager.can_edit_project(file_path, project_uid)
+        )
 
     def _selected_deleted_bid_refs(self) -> List[BidRef]:
         refs: List[BidRef] = []
@@ -1732,14 +2053,31 @@ class ProjectView(QtWidgets.QWidget):
         self.on_copy_bids = None
         self.on_paste_bids = None
         self.on_can_paste_bids = None
+        self.on_duplicate_bid = None
+        self.on_can_duplicate_bid = None
+        self.on_close_database = None
+        self.on_can_close_database = None
+        self.on_delete_bids = None
+        self.on_can_delete_bids = None
+        self.on_delete_projects = None
+        self.on_can_delete_projects = None
+        self.on_import_project_file = None
+        self.on_can_import_project_file = None
+        self.on_create_bid = None
+        self.on_can_create_bid = None
+        self.on_create_project = None
+        self.on_can_create_project = None
+        self.on_is_active_bid_context = None
         self.on_empty_deleted_bids = None
         self.set_on_move_bids(None)
+        self.set_on_can_move_bids(None)
         self.on_rename_project = None
         self.on_menu_command = None
         self.on_menu_command_enabled = None
         self.on_export_formats = None
         self.on_get_job_statuses = None
         self.on_update_bid_job_status = None
+        self.on_can_update_bid_job_status = None
         self.on_renumber_conditions = None
         self.on_can_renumber_conditions = None
         self.on_project_view_options_changed = None

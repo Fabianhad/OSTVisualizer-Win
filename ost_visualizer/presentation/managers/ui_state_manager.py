@@ -26,6 +26,7 @@ class UIStateManager:
         self._database_file_path: Optional[str] = None
         self._selected_project_uid: Optional[str] = None
         self._selected_project_uids: List[str] = []
+        self._selected_project_file_path: Optional[str] = None
         self._active_page_uid: Optional[str] = None
         self._place_condition_uid: Optional[str] = None
         self._place_condition_uids: List[str] = []
@@ -49,6 +50,10 @@ class UIStateManager:
     @property
     def selected_project_uids(self) -> List[str]:
         return self._selected_project_uids[:]
+
+    @property
+    def selected_project_file_path(self) -> Optional[str]:
+        return self._selected_project_file_path
 
     def get_selected_bid_ref(self) -> Optional[BidRef]:
         return self._selected_bid_ref
@@ -110,6 +115,7 @@ class UIStateManager:
         self._selected_page_uids = []
         self._selected_project_uid = None
         self._selected_project_uids = []
+        self._selected_project_file_path = None
         self._active_page_uid = None
         self._database_file_path = None
         self._highlighted_condition_uids = set()
@@ -124,6 +130,7 @@ class UIStateManager:
         self._selected_bid_refs = [bid_ref] if bid_ref else []
         self._selected_project_uid = None
         self._selected_project_uids = []
+        self._selected_project_file_path = None
         self._selected_page_uids = []
         self._active_page_uid = None
         self._highlighted_condition_uids = set()
@@ -132,8 +139,11 @@ class UIStateManager:
     def set_bid_multi_selection(self, bid_refs: List[BidRef]) -> None:
         self._selected_bid_refs = list(bid_refs)
 
-    def set_project_multi_selection(self, project_uids: List[str]) -> None:
+    def set_project_multi_selection(
+        self, project_uids: List[str], file_path: Optional[str]
+    ) -> None:
         self._selected_project_uids = list(project_uids)
+        self._selected_project_file_path = file_path if project_uids else None
 
     def set_file_path(self, file_path: Optional[str]) -> None:
         if file_path and self._selected_bid_ref:
@@ -145,6 +155,9 @@ class UIStateManager:
     def set_project_uid(self, project_uid: Optional[str]) -> None:
         self._selected_project_uid = project_uid
         self._selected_project_uids = [project_uid] if project_uid else []
+        self._selected_project_file_path = (
+            self._database_file_path if project_uid else None
+        )
 
     def set_database_selected(
         self, selected: bool, file_path: Optional[str] = None
@@ -153,6 +166,9 @@ class UIStateManager:
             self._selected_bid_ref = None
             self._selected_bid_refs = []
             self._selected_page_uids = []
+            self._selected_project_uid = None
+            self._selected_project_uids = []
+            self._selected_project_file_path = None
         self._database_file_path = file_path
 
     def is_database_selected(self) -> bool:

@@ -41,6 +41,12 @@ class _Access:
     def is_allowed_for_active_placement(self, _feature: Feature) -> bool:
         return True
 
+    def can_delete_bids(self, _bid_refs) -> bool:
+        return self.is_allowed(Feature.DELETE_BID)
+
+    def can_delete_projects(self, _database_id, _project_uids) -> bool:
+        return self.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+
     def current_plan_surface_context(self):
         return object()
 
@@ -80,6 +86,8 @@ class _SelectiveAccess:
 
     current_plan_surface_context = _Access.current_plan_surface_context
     get_plan_surface_access = _Access.get_plan_surface_access
+    can_delete_bids = _Access.can_delete_bids
+    can_delete_projects = _Access.can_delete_projects
     subscribe_access_state_changed = _Access.subscribe_access_state_changed
     unsubscribe_access_state_changed = _Access.unsubscribe_access_state_changed
 
@@ -97,7 +105,13 @@ class _UiState:
         self._selected_bid_refs = selected_bid_refs or []
         self._selected_bid_ref = selected_bid_ref
         self.selected_project_uid = selected_project_uid
+        self.selected_project_uids = (
+            [selected_project_uid] if selected_project_uid else []
+        )
         self.selected_file_path = selected_file_path
+        self.selected_project_file_path = (
+            selected_file_path if selected_project_uid else None
+        )
         self.selected_page_uids = selected_page_uids or []
         self.active_page_uid = active_page_uid
 

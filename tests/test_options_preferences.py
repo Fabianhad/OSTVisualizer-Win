@@ -2182,8 +2182,13 @@ class OptionsPreferencesTests(unittest.TestCase):
         controller = MenuController.__new__(MenuController)
         controller._resolve_project_tree_file_path = lambda: "projects.mdb"
         controller._resolve_target_project_uid = lambda: "project-1"
+        target_identity = (object(), object())
+        controller._resolve_project_tree_target_identity = (
+            lambda _file_path, _project_uid: target_identity
+        )
         controller.ui_access_manager = SimpleNamespace(
             can_create_project_tree_items=lambda _has_file: True,
+            can_create_bid=lambda _file_path, _project_uid: True,
             has_license=lambda: True,
             is_allowed=lambda _feature: True,
         )
@@ -2234,8 +2239,13 @@ class OptionsPreferencesTests(unittest.TestCase):
         controller = MenuController.__new__(MenuController)
         controller._resolve_project_tree_file_path = lambda: "projects.mdb"
         controller._resolve_target_project_uid = lambda: "project-1"
+        target_identity = (object(), object())
+        controller._resolve_project_tree_target_identity = (
+            lambda _file_path, _project_uid: target_identity
+        )
         controller.ui_access_manager = SimpleNamespace(
             can_create_project_tree_items=lambda _has_file: True,
+            can_create_bid=lambda _file_path, _project_uid: True,
             has_license=lambda: True,
             is_allowed=lambda _feature: True,
         )
@@ -2343,8 +2353,13 @@ class OptionsPreferencesTests(unittest.TestCase):
         controller = MenuController.__new__(MenuController)
         controller._resolve_project_tree_file_path = lambda: "sql-database"
         controller._resolve_target_project_uid = lambda: "project-1"
+        target_identity = (object(), object())
+        controller._resolve_project_tree_target_identity = (
+            lambda _file_path, _project_uid: target_identity
+        )
         controller.ui_access_manager = SimpleNamespace(
             can_create_project_tree_items=lambda _has_file: True,
+            can_create_bid=lambda _file_path, _project_uid: True,
             has_license=lambda: True,
             is_allowed=lambda _feature: True,
         )

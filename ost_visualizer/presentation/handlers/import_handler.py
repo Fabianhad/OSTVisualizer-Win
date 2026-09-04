@@ -3,6 +3,7 @@ from typing import Optional
 from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.dtos.collaboration_dtos import MutationOutcomeStatus
+from ...domain.entities.file_state import normalize_path
 from ..managers.ui_access_manager import Feature
 from ..components.progress_dialog import ProgressDialog
 from ..utils.dialog import delete_later_if_valid
@@ -29,20 +30,45 @@ class ImportHandler:
         self._ui_access_manager = ui_access_manager
 
     def import_ost(self) -> None:
-        self._import_file(
+        self._import_current_target(
             format_name="OST",
             extension="ost",
             import_fn=self._import_service.import_ost,
         )
 
     def import_osp(self) -> None:
-        self._import_file(
+        self._import_current_target(
             format_name="OSP",
             extension="osp",
             import_fn=self._import_service.import_osp,
         )
 
-    def _import_file(self, format_name: str, extension: str, import_fn) -> None:
+    def import_project_file(
+        self,
+        format_key: str,
+        target_db: str,
+        target_project_uid: Optional[str],
+    ) -> None:
+        if format_key == "ost":
+            self._import_file(
+                "OST",
+                "ost",
+                self._import_service.import_ost,
+                target_db,
+                target_project_uid,
+            )
+        elif format_key == "osp":
+            self._import_file(
+                "OSP",
+                "osp",
+                self._import_service.import_osp,
+                target_db,
+                target_project_uid,
+            )
+
+    def _import_current_target(
+        self, format_name: str, extension: str, import_fn
+    ) -> None:
         if not self._ui_access_manager.is_allowed(Feature.IMPORT):
             return
         target_db = self._resolve_target_db()
@@ -54,6 +80,26 @@ class ImportHandler:
             )
             return
         target_project_uid = self._resolve_target_project_uid()
+        self._import_file(
+            format_name,
+            extension,
+            import_fn,
+            target_db,
+            target_project_uid,
+        )
+
+    def _import_file(
+        self,
+        format_name: str,
+        extension: str,
+        import_fn,
+        target_db: str,
+        target_project_uid: Optional[str],
+    ) -> None:
+        if not self._ui_access_manager.can_import_project_file(
+            target_db, target_project_uid
+        ):
+            return
         target_identity = self._resolve_target_identity(target_db, target_project_uid)
         if target_identity is None:
             show_warning(
@@ -82,6 +128,10 @@ class ImportHandler:
                 "The selected database or project changed while the file dialog "
                 "was open. Select the destination again before importing.",
             )
+            return
+        if not self._ui_access_manager.can_import_project_file(
+            target_db, target_project_uid
+        ):
             return
         if not self._deferred_persistence.flush_for_file(target_db):
             return
@@ -201,8 +251,9 @@ class ImportHandler:
         self, target_db: str, target_project_uid: Optional[str]
     ):
         hierarchy = self.project_data.get_hierarchy()
+        target_key = normalize_path(target_db)
         for file_entry in hierarchy.loaded_files:
-            if file_entry.file_path != target_db:
+            if normalize_path(file_entry.file_path) != target_key:
                 continue
             if target_project_uid is None:
                 return file_entry, None

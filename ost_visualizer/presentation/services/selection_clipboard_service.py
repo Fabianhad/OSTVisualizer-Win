@@ -33,15 +33,42 @@ class SelectionClipboardService:
                 curve=t.curve,
                 parent_uid=t.parent_uid,
                 is_negative=t.is_negative,
+                dimension_font_name=t.dimension_font_name,
+                dimension_font_color=t.dimension_font_color,
+                dimension_font_size=t.dimension_font_size,
+                dimension_font_bold=t.dimension_font_bold,
+                dimension_font_italic=t.dimension_font_italic,
+                dimension_font_underline=t.dimension_font_underline,
+                name_font_name=t.name_font_name,
+                name_font_color=t.name_font_color,
+                name_font_size=t.name_font_size,
+                name_font_bold=t.name_font_bold,
+                name_font_italic=t.name_font_italic,
+                name_font_underline=t.name_font_underline,
             )
             for t in takeoffs
         ]
-        if takeoff_extras:
-            self._takeoff_extras = {
-                str(uid): dict(extras) for uid, extras in takeoff_extras.items()
-            }
-        else:
-            self._takeoff_extras = {}
+        self._takeoff_extras = {
+            str(uid): dict(extras) for uid, extras in (takeoff_extras or {}).items()
+        }
+        for takeoff in takeoffs:
+            extras = self._takeoff_extras.setdefault(str(takeoff.uid), {})
+            extras.update(
+                {
+                    "FontName": takeoff.dimension_font_name,
+                    "FontColor": takeoff.dimension_font_color,
+                    "FontSize": takeoff.dimension_font_size,
+                    "FontBold": takeoff.dimension_font_bold,
+                    "FontItalic": takeoff.dimension_font_italic,
+                    "FontUnderline": takeoff.dimension_font_underline,
+                    "NameFontName": takeoff.name_font_name,
+                    "NameFontColor": takeoff.name_font_color,
+                    "NameFontSize": takeoff.name_font_size,
+                    "NameFontBold": takeoff.name_font_bold,
+                    "NameFontItalic": takeoff.name_font_italic,
+                    "NameFontUnderline": takeoff.name_font_underline,
+                }
+            )
         self._annotations = [
             BidAnnotation(
                 uid=a.uid,

@@ -755,7 +755,9 @@ class BidDataReaderMixin:
                 display_size = self._normalize_display_size(row.DisplaySize)
                 drop_run = int(row.DropRun) if row.DropRun is not None else 0
                 drop_value = float(row.DropValue) if row.DropValue is not None else 0.0
-                bid_layer_uid = str(row.BidLayerUID)
+                bid_layer_uid = (
+                    str(row.BidLayerUID) if row.BidLayerUID is not None else None
+                )
                 layer_visible = is_layer_visible(bid_layers, bid_layer_uid)
                 folder_uid = (
                     str(row.BidConditionFolderUID)

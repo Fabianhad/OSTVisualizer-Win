@@ -45,6 +45,33 @@ class _ConditionsTree(QtWidgets.QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DragDrop)
 
+    def event(self, event: QtCore.QEvent) -> bool:
+        if (
+            event.type() == QtCore.QEvent.Type.ShortcutOverride
+            and not ShortcutManager.should_ignore_for_text_input()
+            and self._sidebar._tree_shortcut_action_key(event) is not None
+        ):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        action_key = self._sidebar._tree_shortcut_action_key(event)
+        if action_key == "copy":
+            self._sidebar._copy_selected_conditions()
+        elif action_key == "cut":
+            self._sidebar._cut_selected_conditions()
+        elif action_key == "paste":
+            self._sidebar._paste_copied_conditions()
+        elif action_key == "duplicate":
+            self._sidebar._on_duplicate_clicked()
+        elif action_key == "delete":
+            self._sidebar._on_delete_clicked()
+        else:
+            super().keyPressEvent(event)
+            return
+        event.accept()
+
     def startDrag(self, supported_actions) -> None:
         if not self._sidebar._structure_edit_allowed:
             return
@@ -242,27 +269,14 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
-        ShortcutManager.register_shortcut(
-            self.tree,
-            "copy",
-            self._copy_selected_conditions,
-            context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
-            ignore_when_text_input=True,
-        )
-        ShortcutManager.register_shortcut(
-            self.tree,
-            "paste",
-            self._paste_copied_conditions,
-            context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
-            ignore_when_text_input=True,
-        )
-        ShortcutManager.register_shortcut(
-            self.tree,
-            "delete",
-            self._on_delete_clicked,
-            context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
-            ignore_when_text_input=True,
-        )
+
+    @staticmethod
+    def _tree_shortcut_action_key(event: QtGui.QKeyEvent) -> Optional[str]:
+        sequence = QtGui.QKeySequence(event.keyCombination())
+        for action_key in ("copy", "cut", "paste", "duplicate", "delete"):
+            if sequence == ShortcutManager.sequence(action_key):
+                return action_key
+        return None
 
     def _on_selection_changed(self) -> None:
         if self._block_selection_signal:
@@ -866,7 +880,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         can_copy_conditions = (
             is_condition_target and self._can_copy_selected_conditions()
         )
-        self._add_new_submenu(menu)
+        self._add_new_submenu(menu, item)
         self._add_change_properties_action(
             menu, kind, condition_uids, can_edit_condition
         )
@@ -892,22 +906,39 @@ class ConditionsSidebar(QtWidgets.QWidget):
         item.setSelected(True)
         self._sync_button_states()
 
-    def _add_new_submenu(self, menu: QtWidgets.QMenu) -> None:
-        new_menu = menu.addMenu("New")
+    def _add_new_submenu(
+        self, menu: QtWidgets.QMenu, item: QtWidgets.QTreeWidgetItem
+    ) -> None:
+        new_menu = QtWidgets.QMenu("New", menu)
+        menu.addMenu(new_menu)
         self._add_context_action(
             new_menu,
             "Condition",
-            self._on_new_clicked,
+            lambda: self._request_create_in_context(item, folder=False),
             self._create_allowed,
             action_key="add",
         )
         self._add_context_action(
             new_menu,
             "Folder",
-            self._on_new_folder_clicked,
+            lambda: self._request_create_in_context(item, folder=True),
             self._create_folder_allowed,
             action_key="new_folder",
         )
+
+    def _request_create_in_context(
+        self, item: QtWidgets.QTreeWidgetItem, *, folder: bool
+    ) -> None:
+        if not self._is_current_tree_item(item):
+            return
+        allowed = self._create_folder_allowed if folder else self._create_allowed
+        if not allowed:
+            return
+        parent_uid = self._resolve_folder_context_uid(item) or ""
+        if folder:
+            self.create_folder_requested.emit(parent_uid)
+        else:
+            self.create_requested.emit(parent_uid)
 
     def _add_change_properties_action(
         self,
@@ -1087,10 +1118,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._copied_condition_uids = current_uids
             self._condition_clipboard_cut = True
             self._condition_clipboard_revision += 1
-
-    def _delete_selected_conditions(self) -> None:
-        if self._delete_allowed and self._selected_condition_uids:
-            self.delete_requested.emit(self._selected_condition_uids[:])
 
     def _can_rename_context_target(
         self, kind: Optional[str], condition_uids: List[str]
@@ -1388,8 +1415,11 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 return True
         return False
 
-    def _resolve_folder_context_uid(self) -> Optional[str]:
-        item = self.tree.currentItem()
+    def _resolve_folder_context_uid(
+        self, item: Optional[QtWidgets.QTreeWidgetItem] = None
+    ) -> Optional[str]:
+        if item is None:
+            item = self.tree.currentItem()
         if item is None:
             selected = self.tree.selectedItems()
             if selected:

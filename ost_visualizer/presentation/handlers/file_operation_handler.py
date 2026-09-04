@@ -601,13 +601,16 @@ class FileOperationHandler:
             )
 
     def unload_file(self) -> None:
+        file_path = (
+            self.ui_state_manager.selected_file_path if self.ui_state_manager else None
+        )
+        self.unload_file_path(file_path)
+
+    def unload_file_path(self, file_path) -> None:
         if self._file_operation_pending:
             self._warn_file_operation_pending()
             return
-        file_path = None
         selected_entry = None
-        if self.ui_state_manager and self.ui_state_manager.selected_file_path:
-            file_path = self.ui_state_manager.selected_file_path
         original_entries: list[FileEntry] = []
         if file_path:
             original_entries = self._file_state_model.file_entries

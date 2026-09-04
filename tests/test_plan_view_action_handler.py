@@ -60,6 +60,9 @@ from ost_visualizer.presentation.services.selection_commands import (
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
 )
+from ost_visualizer.presentation.services.selection_clipboard_service import (
+    SelectionClipboardService,
+)
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
 from ost_visualizer.presentation.utils.annotation_defaults import (
     apply_config_owned_annotation_defaults,
@@ -91,6 +94,37 @@ def _hotlink_annotation(uid: str, target_named_view_uid: str) -> BidAnnotation:
 
 
 class SelectionCommandIdentityTests(unittest.TestCase):
+    def test_takeoff_clipboard_snapshots_current_typed_font_state(self):
+        source = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-1",
+            name_font_name="Segoe UI",
+            name_font_size=24,
+            name_font_bold=True,
+        )
+        clipboard = SelectionClipboardService()
+        clipboard.copy(
+            [source],
+            takeoff_extras={
+                "takeoff-1": {
+                    "NameFontName": "Arial",
+                    "NameFontSize": 9,
+                    "NameFontBold": False,
+                }
+            },
+        )
+        source.name_font_name = "Tahoma"
+        source.name_font_size = 30
+        source.name_font_bold = False
+        copied = clipboard.items[0]
+        self.assertEqual(copied.name_font_name, "Segoe UI")
+        self.assertEqual(copied.name_font_size, 24)
+        self.assertTrue(copied.name_font_bold)
+        self.assertEqual(clipboard.get_extras("takeoff-1")["NameFontName"], "Segoe UI")
+        self.assertEqual(clipboard.get_extras("takeoff-1")["NameFontSize"], 24)
+        self.assertTrue(clipboard.get_extras("takeoff-1")["NameFontBold"])
+
     def test_takeoff_redo_rejects_incomplete_authoritative_identity_result(self):
         plan_view = SimpleNamespace(
             set_selected_uids=lambda _uids: self.fail(
@@ -330,7 +364,13 @@ class FakeProjectData:
                 overlay_rect=None,
                 scale_factor1=1.0,
                 scale_factor2=1.0,
-            )
+            ),
+            "9": SimpleNamespace(
+                uid="9",
+                overlay_rect=None,
+                scale_factor1=1.0,
+                scale_factor2=1.0,
+            ),
         }
         self.conditions = {
             "42": Condition(
@@ -1529,6 +1569,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ann_write=None,
         allowed_features=None,
         data=None,
+        undo=None,
     ):
         plan_view = FakePlanView() if plan_view is None else plan_view
         write = FakeWriteService() if write is None else write
@@ -1541,7 +1582,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             project_write_svc=write,
             annotation_write_svc=ann_write,
             page_settings_bar=FakePageSettingsBar(),
-            undo_svc=FakeUndoService(),
+            undo_svc=FakeUndoService() if undo is None else undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(
@@ -1905,6 +1946,54 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             )
         )
         self.assertEqual(plan_view.activated_annotations, [])
+
+    def test_sql_text_annotation_completion_rejects_same_uid_page_replacement(self):
+        data = FakeProjectData()
+        original_page = data.pages["p1"]
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"replacement-selection"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            write=write,
+            data=data,
+            undo=undo,
+        )
+        handler.on_text_annotation_created(
+            [1.0, 2.0, 5.0, 6.0],
+            "p1",
+            {"Text": "Delayed"},
+        )
+        payload = write.queued_pastes[0][1]
+        callback = write.queued_pastes[0][3]
+        source_uid = payload.annotation_source_uids[0]
+        plan_view.annotation_key_map[("annotation-1", "text")] = "annotation-1"
+        data.pages["p1"] = SimpleNamespace(
+            uid="p1",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        self.assertIsNot(data.pages["p1"], original_page)
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("annotation-1",),
+                    created_uid_maps=(
+                        ("annotations", ((source_uid, "annotation-1"),)),
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(plan_view.selected, {"replacement-selection"})
+        self.assertEqual(plan_view.activated_annotations, [])
+        self.assertEqual(undo.count, 0)
 
     def test_sql_text_annotation_completion_does_not_reactivate_after_access_loss(self):
         data = FakeProjectData()
@@ -3140,6 +3229,58 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(plan_view.selected, set())
         self.assertEqual(undo.count, 1)
 
+    def test_sql_placement_completion_rejects_same_uid_page_replacement(self):
+        plan_view = FakePlanView()
+        plan_view.current_page_uid = "9"
+        plan_view.selected = {"replacement-selection"}
+        data = FakeProjectData()
+        original_page = data.pages["9"]
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        data.pages["9"] = SimpleNamespace(
+            uid="9",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        self.assertIsNot(data.pages["9"], original_page)
+        data.add_takeoffs(
+            [
+                Takeoff(
+                    uid="501",
+                    condition_uid="42",
+                    page_uid="9",
+                    position=[1.0, 2.0],
+                )
+            ]
+        )
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertEqual(plan_view.selected, {"replacement-selection"})
+        self.assertEqual(undo.count, 0)
+
     def test_committed_placement_projection_failure_waits_for_recovery(self):
         plan_view = FakePlanView()
         plan_view.current_page_uid = "9"
@@ -4212,6 +4353,46 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertIsNone(handler._geometry_edit_lease_handle)
         self.assertEqual(plan_view.geometry_lease_granted, set())
 
+    def test_sql_geometry_lease_late_grant_rejects_same_uid_page_replacement(self):
+        data = FakeProjectData()
+        original_page = data.pages["p1"]
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_geometry_edit_lease_requested(["t1"])
+        database_id, resources, dependencies, options, lease_callback = (
+            write.edit_lease_requests[0]
+        )
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft-replaced-page",
+            runtime_generation=3,
+            operation_id=options["operation_id"],
+            owning_surface="main-plan",
+            resources=resources,
+            dependency_resources=dependencies,
+            locks=tuple(
+                ResourceLock(database_id, resource, f"lock-{index}")
+                for index, resource in enumerate(resources)
+            ),
+        )
+        data.pages["p1"] = SimpleNamespace(
+            uid="p1",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        self.assertIsNot(data.pages["p1"], original_page)
+        lease_callback(EditLeaseResult(True, handle=handle))
+        self.assertEqual(write.ended_edit_leases, [handle])
+        self.assertIsNone(handler._geometry_edit_lease_handle)
+        self.assertEqual(plan_view.geometry_lease_granted, set())
+
     def test_sql_geometry_lease_loss_requires_a_fresh_lease_for_same_selection(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -4302,6 +4483,73 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(plan_view.restored_positions, [])
         self.assertEqual(plan_view.pending_mutation_uids, set())
 
+    def test_sql_position_failure_does_not_restore_same_uid_replacement_page(self):
+        data = FakeProjectData()
+        original_page = data.pages["p1"]
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        handler.on_positions_flushed(changes, [])
+        data.pages["p1"] = SimpleNamespace(
+            uid="p1",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        self.assertIsNot(data.pages["p1"], original_page)
+        write.queued_geometry[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            )
+        )
+        self.assertEqual(plan_view.restored_positions, [])
+        self.assertEqual(plan_view.selected, {"t1"})
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+
+    def test_sql_position_failure_does_not_restore_after_edit_access_revocation(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        access = FakeAccess(set(Feature))
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=access,
+        )
+        changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        handler.on_positions_flushed(changes, [])
+        access.allowed_features.discard(Feature.EDIT_PLAN_ITEMS)
+        write.queued_geometry[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.restored_positions, [])
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+
     def test_sql_property_failure_does_not_restore_editor_state_after_bid_switch(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -4329,6 +4577,36 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_condition_text_properties_flushed(changes)
         selected_bid[0] = BidRef("other.mdb", "9")
         plan_view.current_page_uid = "other-page"
+        write.queued_properties[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.restored_condition_text_properties, [])
+        self.assertEqual(plan_view.pending_mutation_uids, set())
+
+    def test_sql_property_failure_rejects_same_uid_page_replacement(self):
+        data = FakeProjectData()
+        original_page = data.pages["p1"]
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        changes = [("t1", "name", {"FontBold": False}, {"FontBold": True})]
+        handler.on_condition_text_properties_flushed(changes)
+        data.pages["p1"] = SimpleNamespace(
+            uid="p1",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        self.assertIsNot(data.pages["p1"], original_page)
         write.queued_properties[0][-1](
             QueuedMutationResult(
                 database_id="bid.mdb",
@@ -4407,6 +4685,37 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.pending_mutation_uids, set())
         self.assertEqual(plan_view.selected, {"shared_text"})
+
+    def test_sql_delete_failure_rejects_same_uid_page_replacement(self):
+        data = FakeProjectData()
+        original_page = data.pages["p1"]
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"t1"}
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        handler = self._paste_handler(plan_view=plan_view, write=write, data=data)
+        handler.on_elements_deleted(["t1"])
+        plan_view.selected = {"replacement-selection"}
+        data.pages["p1"] = SimpleNamespace(
+            uid="p1",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        self.assertIsNot(data.pages["p1"], original_page)
+        write.queued_deletes[0][-1](
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.CONFLICT,
+            )
+        )
+        self.assertEqual(plan_view.selected, {"replacement-selection"})
+        self.assertEqual(plan_view.pending_mutation_uids, set())
 
     def test_new_pending_mutation_preserves_rekeyed_annotation_pending_state(self):
         data = FakeProjectData()
