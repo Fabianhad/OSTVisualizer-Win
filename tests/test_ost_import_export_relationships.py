@@ -12,6 +12,10 @@ import pyodbc
 from ost_visualizer.application.interfaces.i_uom_service import IUOMService
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.mdb import database_creator
+from ost_visualizer.infrastructure.database.settings_cardinality import (
+    BidNumberAllocationUnavailableError,
+    GlobalSettingsCardinalityError,
+)
 from ost_visualizer.infrastructure.mdb.components.import_operations import (
     ImportOperationsMixin,
 )
@@ -25,6 +29,10 @@ from ost_visualizer.infrastructure.mdb.importers import (
 from ost_visualizer.infrastructure.mdb.importers.osp_importer import OspImporter
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+from ost_visualizer.infrastructure.mdb.schema_compatibility import (
+    UnsupportedMdbSchemaError,
+)
 from ost_visualizer.infrastructure.mdb.raw_bid_integrity import (
     RAW_BID_RELATIONSHIPS,
     prepare_raw_bid_data_for_export,
@@ -160,7 +168,10 @@ class _SqliteSchema:
 
     def require_table(self, table_name):
         if self.optional_table_missing(table_name):
-            raise RuntimeError(f"Missing table {table_name}")
+            raise UnsupportedMdbSchemaError(
+                f"This OST database is missing required table {table_name} "
+                "and cannot be loaded."
+            )
 
     def column_exists(self, table_name, column_name):
         return any(
@@ -170,7 +181,10 @@ class _SqliteSchema:
 
     def require_column(self, table_name, column_name):
         if not self.column_exists(table_name, column_name):
-            raise RuntimeError(f"Missing column {table_name}.{column_name}")
+            raise UnsupportedMdbSchemaError(
+                "This OST database is missing required column "
+                f"{table_name}.{column_name} and cannot be loaded."
+            )
 
     def get_columns(self, table_name):
         return {
@@ -240,15 +254,21 @@ class _CapturingImportWriter:
         return True
 
 
-def _create_import_schema(connection, *, unique_page_selected=False):
+def _create_import_schema(
+    connection, *, unique_page_selected=False, next_bid_numbers=(1,)
+):
     connection.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
-    connection.execute("INSERT INTO Settings (NextBidNo) VALUES (1)")
+    connection.executemany(
+        "INSERT INTO Settings (NextBidNo) VALUES (?)",
+        ((value,) for value in next_bid_numbers),
+    )
     connection.execute(
         """
         CREATE TABLE Bids (
             UID INTEGER PRIMARY KEY,
             BidProjectUID INTEGER,
             EstimatorUID INTEGER,
+            JobStatusUID INTEGER,
             JobName TEXT,
             BidNo INTEGER
         )
@@ -524,6 +544,151 @@ def _raw_data_with_row(table_name, row):
 
 
 class OstImportExportRelationshipTests(unittest.TestCase):
+    def test_page_area_reader_uses_import_export_duplicate_row_precedence(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (30, 20, 10, 2)"
+        )
+        connection.execute(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (31, 20, 11, 2)"
+        )
+        selected = MdbReader()._parse_selected_area_for_page(
+            _SqliteConnection(connection),
+            "20",
+            _SqliteSchema(connection),
+        )
+        self.assertEqual(selected, "11")
+
+    def test_page_area_save_retains_highest_uid_when_duplicates_tie(self):
+        class _Cursor:
+            def __init__(self):
+                self.executed = []
+
+            def execute(self, sql, *params):
+                self.executed.append((sql, params))
+                return self
+
+            @staticmethod
+            def fetchall():
+                return [
+                    SimpleNamespace(UID=31, BidAreaSelected=2),
+                    SimpleNamespace(UID=30, BidAreaSelected=2),
+                ]
+
+        cursor = _Cursor()
+        _SqliteMdbWriter(sqlite3.connect(":memory:"))._replace_page_area_selection(
+            cursor,
+            SimpleNamespace(column_exists=lambda _table, _column: True),
+            20,
+            11,
+            2,
+        )
+        update = next(
+            params for sql, params in cursor.executed if sql.startswith("UPDATE")
+        )
+        self.assertEqual(update[-1], 31)
+
+    def test_bid_number_assignment_initializes_missing_global_settings_once(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection, next_bid_numbers=())
+        writer = _SqliteMdbWriter(connection)
+        first = RawBidData(bid_row={})
+        second = RawBidData(bid_row={})
+        writer._assign_next_bid_no(_SqliteConnection(connection), first)
+        writer._assign_next_bid_no(_SqliteConnection(connection), second)
+        self.assertEqual(first.bid_row["BidNo"], "1")
+        self.assertEqual(second.bid_row["BidNo"], "2")
+        self.assertEqual(
+            connection.execute("SELECT NextBidNo FROM Settings").fetchall(),
+            [(3,)],
+        )
+
+    def test_bid_number_assignment_rejects_multiple_global_settings_rows(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection, next_bid_numbers=(7, 12))
+        writer = _SqliteMdbWriter(connection)
+        remapped = RawBidData(bid_row={})
+        with self.assertRaisesRegex(
+            GlobalSettingsCardinalityError,
+            "Settings has multiple rows; expected at most one",
+        ):
+            writer._assign_next_bid_no(_SqliteConnection(connection), remapped)
+        self.assertNotIn("BidNo", remapped.bid_row)
+        self.assertEqual(
+            connection.execute(
+                "SELECT NextBidNo FROM Settings ORDER BY NextBidNo"
+            ).fetchall(),
+            [(7,), (12,)],
+        )
+
+    def test_bid_number_assignment_normalizes_zero_to_the_documented_default(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection, next_bid_numbers=(0,))
+        writer = _SqliteMdbWriter(connection)
+        remapped = RawBidData(bid_row={})
+        writer._assign_next_bid_no(_SqliteConnection(connection), remapped)
+        self.assertEqual(remapped.bid_row["BidNo"], "1")
+        self.assertEqual(
+            connection.execute("SELECT NextBidNo FROM Settings").fetchall(),
+            [(2,)],
+        )
+
+    def test_bid_number_assignment_rejects_nonnumeric_legacy_value(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection, next_bid_numbers=("not-a-number",))
+        writer = _SqliteMdbWriter(connection)
+        remapped = RawBidData(bid_row={})
+        with self.assertRaises(ValueError):
+            writer._assign_next_bid_no(_SqliteConnection(connection), remapped)
+        self.assertNotIn("BidNo", remapped.bid_row)
+        self.assertEqual(
+            connection.execute("SELECT NextBidNo FROM Settings").fetchall(),
+            [("not-a-number",)],
+        )
+
+    def test_bid_number_assignment_does_not_swallow_sequence_write_failure(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            "CREATE TRIGGER fail_settings_update BEFORE UPDATE ON Settings "
+            "BEGIN SELECT RAISE(FAIL, 'sequence write failed'); END"
+        )
+        writer = _SqliteMdbWriter(connection)
+        with self.assertRaisesRegex(pyodbc.Error, "sequence write failed"):
+            writer._assign_next_bid_no(
+                _SqliteConnection(connection), RawBidData(bid_row={})
+            )
+
+    def test_bid_number_assignment_rejects_missing_settings_table(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute("DROP TABLE Settings")
+        writer = _SqliteMdbWriter(connection)
+        with self.assertRaisesRegex(
+            BidNumberAllocationUnavailableError,
+            "Settings table is unavailable",
+        ):
+            writer._assign_next_bid_no(
+                _SqliteConnection(connection), RawBidData(bid_row={})
+            )
+
+    def test_bid_number_assignment_rejects_missing_next_bid_number_column(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute("DROP TABLE Settings")
+        connection.execute("CREATE TABLE Settings (Name TEXT)")
+        writer = _SqliteMdbWriter(connection)
+        with self.assertRaisesRegex(
+            BidNumberAllocationUnavailableError,
+            "Settings.NextBidNo is unavailable",
+        ):
+            writer._assign_next_bid_no(
+                _SqliteConnection(connection), RawBidData(bid_row={})
+            )
+
     def test_sql_import_mutation_records_every_authoritative_family(self):
         value = {
             "project_uids": {"target": "9"},
@@ -611,6 +776,55 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                     ),
                     issues,
                 )
+
+    def test_raw_bid_integrity_rejects_multiple_bid_settings_rows(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            bid_tables={
+                "BidSettings": [
+                    {"UID": "10", "BidUID": "1"},
+                    {"UID": "11", "BidUID": "1"},
+                ]
+            },
+        )
+        issues = validate_raw_bid_integrity(raw_data)
+        self.assertTrue(
+            any(
+                issue.format()
+                == "BidSettings has 2 rows for Bids.UID=1; expected at most 1"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_ost_import_rejects_multiple_bid_settings_rows(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidSettings>
+              <BidSetting UID="30" BidUID="1" BidPageSelectedUID="20"/>
+              <BidSetting UID="31" BidUID="1" BidPageSelectedUID="21"/>
+            </BidSettings>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="First" Sequence="1"/>
+              <BidPage UID="21" BidUID="1" Name="Second" Sequence="2"/>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "duplicate_settings.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertFalse(
+                OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+            )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM BidSettings").fetchone()[0],
+            0,
+        )
 
     def test_prepare_export_prunes_named_views_and_hotlinks_for_missing_pages(self):
         prepared = prepare_raw_bid_data_for_export(
@@ -1353,6 +1567,226 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertIsNotNone(imported_pay_class)
         self.assertEqual(imported_employee[1], imported_pay_class[0])
         self.assertEqual(imported_bid, (5, imported_employee[0]))
+
+    def test_access_import_rejects_ambiguous_job_status_name(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.executemany(
+            "INSERT INTO JobStatuses (UID, Name, Locked, Sequence) "
+            "VALUES (?, 'Open', ?, ?)",
+            ((10, 0, 1), (11, 1, 2)),
+        )
+        connection.commit()
+        writer = _SqliteMdbWriter(connection)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "JobStatuses": [
+                    {"UID": "90", "Name": "Open", "Locked": "0", "Sequence": "1"}
+                ]
+            },
+        )
+        with self.assertRaisesRegex(RuntimeError, "ambiguous.*JobStatuses.Name"):
+            writer._resolve_job_statuses(
+                _SqliteConnection(connection), raw_data, max_uid=100
+            )
+
+    def test_access_import_rolls_back_ambiguous_master_reconciliation(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.executemany(
+            "INSERT INTO JobStatuses (UID, Name, Locked, Sequence) "
+            "VALUES (?, 'Open', ?, ?)",
+            ((10, 0, 1), (11, 1, 2)),
+        )
+        connection.commit()
+        writer = _SqliteMdbWriter(connection)
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobStatusUID="90" JobName="Imported">
+            <BidAreas/>
+            <BidPages/>
+          </Bid>
+          <JobStatuses>
+            <JobStatuse UID="90" Name="Open" Locked="0" Sequence="1"/>
+          </JobStatuses>
+        </XML_ROOT>
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "ambiguous.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertFalse(
+                OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+            )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
+        )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM JobStatuses").fetchone()[0], 2
+        )
+
+    def test_access_import_rejects_ambiguous_pay_class_name(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.executemany(
+            "INSERT INTO PayClasses (UID, Name) VALUES (?, 'Regular')",
+            ((20,), (21,)),
+        )
+        writer = _SqliteMdbWriter(connection)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={"PayClasses": [{"UID": "91", "Name": "Regular"}]},
+        )
+        with self.assertRaisesRegex(RuntimeError, "ambiguous.*PayClasses.Name"):
+            writer._resolve_pay_classes(_SqliteConnection(connection), raw_data)
+
+    def test_access_import_rejects_ambiguous_access_level_description(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute("DROP TABLE AccessLevels")
+        connection.execute(
+            "CREATE TABLE AccessLevels "
+            "(UID INTEGER PRIMARY KEY, Description TEXT, Privileges INTEGER)"
+        )
+        connection.executemany(
+            "INSERT INTO AccessLevels (UID, Description) VALUES (?, 'Full')",
+            ((15,), (16,)),
+        )
+        writer = _SqliteMdbWriter(connection)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={"AccessLevels": [{"UID": "96", "Description": "Full"}]},
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "ambiguous.*AccessLevels.Description"
+        ):
+            writer._resolve_access_levels(_SqliteConnection(connection), raw_data)
+
+    def test_access_import_rejects_duplicate_incoming_pay_class_name(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "PayClasses": [
+                    {"UID": "91", "Name": "Regular"},
+                    {"UID": "92", "Name": "Regular"},
+                ]
+            },
+        )
+        with self.assertRaisesRegex(RuntimeError, "ambiguous.*PayClasses.Name"):
+            writer._resolve_pay_classes(_SqliteConnection(connection), raw_data)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM PayClasses").fetchone()[0], 0
+        )
+
+    def test_access_import_rejects_ambiguous_employee_business_key(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.executemany(
+            "INSERT INTO Employees "
+            "(UID, EmployeeNo, FirstName, LastName) VALUES (?, 'E100', ?, ?)",
+            ((30, "Alice", "One"), (31, "Alex", "Two")),
+        )
+        writer = _SqliteMdbWriter(connection)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "Employees": [
+                    {
+                        "UID": "92",
+                        "EmployeeNo": "e100",
+                        "FirstName": "Imported",
+                        "LastName": "Employee",
+                    }
+                ]
+            },
+        )
+        with self.assertRaisesRegex(RuntimeError, "ambiguous.*Employees"):
+            writer._resolve_employees(_SqliteConnection(connection), raw_data, {}, {})
+
+    def test_access_import_uses_condition_type_name_contract(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            "INSERT INTO CdnTypes (UID, Name, ExpandState) "
+            "VALUES (40, ' Concrete ', 0)"
+        )
+        writer = _SqliteMdbWriter(connection)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "CdnTypes": [{"UID": "93", "Name": "concrete", "ExpandState": "0"}]
+            },
+        )
+        uid_map, _max_uid = writer._resolve_cdn_types(
+            _SqliteConnection(connection), raw_data, max_uid=100
+        )
+        self.assertEqual(uid_map, {"93": "40"})
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM CdnTypes").fetchone()[0], 1
+        )
+
+    def test_access_import_rejects_ambiguous_condition_type_name_contract(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.executemany(
+            "INSERT INTO CdnTypes (UID, Name, ExpandState) VALUES (?, ?, 0)",
+            ((40, "Concrete"), (41, " concrete ")),
+        )
+        writer = _SqliteMdbWriter(connection)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "CdnTypes": [{"UID": "93", "Name": "CONCRETE", "ExpandState": "0"}]
+            },
+        )
+        with self.assertRaisesRegex(RuntimeError, "ambiguous.*CdnTypes.Name"):
+            writer._resolve_cdn_types(
+                _SqliteConnection(connection), raw_data, max_uid=100
+            )
+
+    def test_sql_import_rejects_ambiguous_master_name(self):
+        cursor = SimpleNamespace(
+            execute=lambda *_args: None,
+            fetchall=lambda: [(50, "Open"), (51, "Open")],
+            close=lambda: None,
+        )
+        connection = SimpleNamespace(cursor=lambda: cursor)
+        writer = SqlProjectWriter.__new__(SqlProjectWriter)
+        writer._get_table_info = lambda *_args: (set(), {})
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={"JobStatuses": [{"UID": "94", "Name": "Open"}]},
+        )
+        with self.assertRaisesRegex(RuntimeError, "ambiguous.*JobStatuses.Name"):
+            writer._resolve_global_by_column(
+                connection, raw_data, "JobStatuses", "Name"
+            )
+
+    def test_sql_import_rejects_ambiguous_employee_business_key(self):
+        cursor = SimpleNamespace(
+            execute=lambda *_args: None,
+            fetchall=lambda: [
+                (60, "E100", "Alice", "One", ""),
+                (61, "e100", "Alex", "Two", ""),
+            ],
+            close=lambda: None,
+        )
+        connection = SimpleNamespace(cursor=lambda: cursor)
+        writer = SqlProjectWriter.__new__(SqlProjectWriter)
+        writer._get_table_info = lambda *_args: (set(), {})
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={
+                "Employees": [
+                    {"UID": "95", "EmployeeNo": "E100", "FirstName": "Imported"}
+                ]
+            },
+        )
+        with self.assertRaisesRegex(RuntimeError, "ambiguous.*Employees"):
+            writer._resolve_sql_employees(connection, raw_data, {}, {})
 
     def test_ost_import_remaps_bid_settings_selected_page_to_imported_page(self):
         xml = """
@@ -2156,6 +2590,138 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             "WHERE BidPageUID=20 ORDER BY UID"
         ).fetchall()
         self.assertEqual(rows, [(11, 2)])
+
+    def test_save_page_area_normalizes_duplicate_physical_uids(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute("DROP TABLE BidPageSettings")
+        connection.execute(
+            "CREATE TABLE BidPageSettings ("
+            "UID INTEGER, BidPageUID INTEGER, BidAreaUID INTEGER, "
+            "BidTypAreaUID INTEGER, BidAreaSelected INTEGER)"
+        )
+        connection.execute("INSERT INTO Bids (UID, JobName) VALUES (1, 'Bid')")
+        connection.execute(
+            "INSERT INTO BidPages (UID, BidUID, Name) VALUES (20, 1, 'Sheet')"
+        )
+        connection.execute(
+            "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (10, 1, 'Area 1')"
+        )
+        connection.execute(
+            "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (11, 1, 'Area 2')"
+        )
+        connection.execute(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (5, 20, 10, 1)"
+        )
+        connection.execute(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (5, 20, 11, 2)"
+        )
+        self.assertTrue(
+            _SqliteMdbWriter(connection).save_page_area("target.mdb", "20", "11")
+        )
+        selected_rows = connection.execute(
+            "SELECT UID, BidAreaUID, BidAreaSelected FROM BidPageSettings "
+            "WHERE BidPageUID=20 AND BidAreaSelected > 0"
+        ).fetchall()
+        self.assertEqual(len(selected_rows), 1)
+        self.assertEqual(selected_rows[0][1:], (11, 2))
+
+    def test_clear_page_area_preserves_nonselected_page_settings_rows(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute("INSERT INTO Bids (UID, JobName) VALUES (1, 'Bid')")
+        connection.execute(
+            "INSERT INTO BidPages (UID, BidUID, Name) VALUES (20, 1, 'Sheet')"
+        )
+        connection.execute(
+            "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (10, 1, 'Area')"
+        )
+        connection.execute(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidTypAreaUID, BidAreaSelected) "
+            "VALUES (1, 20, 10, 77, 0)"
+        )
+        connection.execute(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidTypAreaUID, BidAreaSelected) "
+            "VALUES (2, 20, 10, NULL, 2)"
+        )
+        self.assertTrue(
+            _SqliteMdbWriter(connection).save_page_area("target.mdb", "20", "")
+        )
+        rows = connection.execute(
+            "SELECT UID, BidAreaUID, BidTypAreaUID, BidAreaSelected "
+            "FROM BidPageSettings WHERE BidPageUID=20 ORDER BY UID"
+        ).fetchall()
+        self.assertEqual(rows, [(1, 10, 77, 0)])
+
+    def test_duplicate_page_settings_copies_only_canonical_selected_row(self):
+        class Cursor:
+            connection = object()
+            description = (
+                ("UID", int),
+                ("BidPageUID", int),
+                ("BidAreaUID", int),
+                ("BidAreaSelected", int),
+            )
+
+            @staticmethod
+            def execute(_sql, *_params):
+                pass
+
+            @staticmethod
+            def fetchall():
+                return [
+                    (None, 8, 20, 28),
+                    (0, 9, 20, 29),
+                    (2, 10, 20, 30),
+                    (2, 11, 20, 31),
+                ]
+
+        class Schema:
+            @staticmethod
+            def optional_table_missing(_table):
+                return False
+
+            @staticmethod
+            def column_exists(_table, _column):
+                return True
+
+            @staticmethod
+            def get_columns(_table):
+                return {"UID", "BidPageUID", "BidAreaUID", "BidAreaSelected"}
+
+        class RecordingWriter(MdbWriter):
+            def __init__(self):
+                super().__init__()
+                self.inserted = []
+                self._next = 100
+
+            @staticmethod
+            def _schema(_connection):
+                return Schema()
+
+            def _next_uid(self, _cursor, _table):
+                value = self._next
+                self._next += 1
+                return value
+
+            def _execute_insert_values(
+                self, _cursor, _schema, _table, values, _required, _operation
+            ):
+                self.inserted.append(dict(values))
+
+        writer = RecordingWriter()
+        uid_map = writer._copy_bid_table_rows(
+            Cursor(), "BidPageSettings", "BidPageUID", "20", "120"
+        )
+        self.assertEqual(
+            [(row["BidAreaUID"], row["BidAreaSelected"]) for row in writer.inserted],
+            [(8, None), (9, 0), (11, 2)],
+        )
+        self.assertEqual(set(uid_map), {"28", "29", "31"})
 
     def test_import_canonicalizes_duplicate_page_area_selection_then_save_succeeds(
         self,

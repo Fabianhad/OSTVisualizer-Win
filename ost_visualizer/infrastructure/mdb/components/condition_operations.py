@@ -293,6 +293,63 @@ class ConditionOperationsMixin:
                         f"{takeoff_subquery}",
                         *sub_params,
                     )
+                if (
+                    not schema.optional_table_missing("BidPercents")
+                    and not schema.optional_table_missing("BidLaborActivity")
+                    and schema.column_exists("BidPercents", "BidLaborActivityUID")
+                    and schema.column_exists("BidLaborActivity", "UID")
+                    and schema.column_exists("BidLaborActivity", "BidConditionUID")
+                    and schema.column_exists("BidLaborActivity", "BidUID")
+                ):
+                    cursor.execute(
+                        "DELETE FROM [BidPercents] WHERE [BidLaborActivityUID] IN "
+                        "(SELECT [UID] FROM [BidLaborActivity] "
+                        f"WHERE [BidConditionUID] IN ({placeholders}) "
+                        "AND [BidUID]=?)",
+                        *sub_params,
+                    )
+                if (
+                    not schema.optional_table_missing("AffectDPCTypGroupViews")
+                    and not schema.optional_table_missing("BidTypGroupViews")
+                    and schema.column_exists(
+                        "AffectDPCTypGroupViews", "BidTypGroupViewUID"
+                    )
+                    and schema.column_exists("BidTypGroupViews", "UID")
+                    and schema.column_exists("BidTypGroupViews", "BidConditionUID")
+                    and schema.column_exists("BidTypGroupViews", "BidUID")
+                ):
+                    cursor.execute(
+                        "DELETE FROM [AffectDPCTypGroupViews] "
+                        "WHERE [BidTypGroupViewUID] IN "
+                        "(SELECT [UID] FROM [BidTypGroupViews] "
+                        f"WHERE [BidConditionUID] IN ({placeholders}) "
+                        "AND [BidUID]=?)",
+                        *sub_params,
+                    )
+                if (
+                    not schema.optional_table_missing("BidTypGroupViews")
+                    and schema.column_exists("BidTypGroupViews", "BidConditionUID")
+                    and schema.column_exists("BidTypGroupViews", "BidUID")
+                ):
+                    cursor.execute(
+                        "DELETE FROM [BidTypGroupViews] "
+                        f"WHERE [BidConditionUID] IN ({placeholders}) "
+                        "AND [BidUID]=?",
+                        *sub_params,
+                    )
+                for table in ("BidTakeoffTotals", "BidTypicalGroupTotals"):
+                    if (
+                        schema.optional_table_missing(table)
+                        or not schema.column_exists(table, "BidConditionUID")
+                        or not schema.column_exists(table, "BidUID")
+                    ):
+                        continue
+                    cursor.execute(
+                        f"DELETE FROM [{table}] "
+                        f"WHERE [BidConditionUID] IN ({placeholders}) "
+                        "AND [BidUID]=?",
+                        *sub_params,
+                    )
                 if not schema.optional_table_missing("BidTakeoffs"):
                     self._require_write_columns(
                         schema, "BidTakeoffs", ("BidConditionUID", "BidUID")

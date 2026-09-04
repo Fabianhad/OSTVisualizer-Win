@@ -3,6 +3,9 @@ from dataclasses import dataclass
 from typing import Optional
 from ...domain.entities.database_descriptor import SqlServerDatabaseLocation
 from .connection_manager import SqlConnectionManager, SqlConnectionRequest
+from .database_metadata_contract import (
+    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
+)
 
 
 @dataclass(frozen=True)
@@ -137,7 +140,7 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
             "FROM [ostv].[DatabaseMetadata] m "
             "JOIN [ostv].[SchemaMigrations] s "
             "ON s.[Version]=m.[SchemaVersion] "
-            "WHERE m.[Product]=N'OST Visualizer'"
+            "WHERE " + DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
         )
         schema_row = cursor.fetchone()
         if schema_row is not None:

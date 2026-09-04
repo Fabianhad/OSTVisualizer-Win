@@ -1,5 +1,6 @@
 import unittest
 from ost_visualizer.application.services.project_read_service import ProjectReadService
+from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.domain.entities.layer import BidLayer
 
 
@@ -48,6 +49,16 @@ class ProjectReadServiceLayerTests(unittest.TestCase):
             [layer.name for layer in layers],
             ["Image", "Annotation", "Default", "Comments"],
         )
+
+    def test_bid_lock_lookup_preserves_authoritative_status_uid(self):
+        reader = FakeLayerReader()
+        reader.get_job_statuses = lambda _file_path: [
+            JobStatus(uid="status-unlocked", name="Duplicate", locked=False),
+            JobStatus(uid="status-locked", name="Duplicate", locked=True),
+        ]
+        service = ProjectReadService(reader)
+        self.assertTrue(service.is_bid_locked("a.mdb", "status-locked"))
+        self.assertFalse(service.is_bid_locked("a.mdb", "status-unlocked"))
 
 
 if __name__ == "__main__":

@@ -462,7 +462,8 @@ class PageOperationsMixin:
                     )
                 else:
                     cursor.execute(
-                        "DELETE FROM [BidPageSettings] WHERE [BidPageUID]=?",
+                        "DELETE FROM [BidPageSettings] "
+                        "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0",
                         int(page_uid),
                     )
                 return True
@@ -494,17 +495,31 @@ class PageOperationsMixin:
             return
         cursor.execute(
             "SELECT [UID], [BidAreaSelected] FROM [BidPageSettings] "
-            "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0",
+            "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0 "
+            "ORDER BY [BidAreaSelected] DESC, [UID] DESC",
             page_uid,
         )
         selected_rows = cursor.fetchall()
+        selected_uids = [int(row.UID) for row in selected_rows]
+        if len(selected_uids) != len(set(selected_uids)):
+            cursor.execute(
+                "DELETE FROM [BidPageSettings] "
+                "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0",
+                page_uid,
+            )
+            self._insert_page_area_selection(
+                cursor, schema, page_uid, area_uid, selected_value
+            )
+            return
         target_uid = None
         fallback_uid = None
         for row in selected_rows:
             row_uid = int(row.UID)
-            fallback_uid = row_uid
+            if fallback_uid is None:
+                fallback_uid = row_uid
             if (
-                row.BidAreaSelected is not None
+                target_uid is None
+                and row.BidAreaSelected is not None
                 and int(row.BidAreaSelected) == selected_value
             ):
                 target_uid = row_uid

@@ -2,8 +2,22 @@ import datetime
 from typing import Any, Callable, Dict, Optional, Set, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
+from ...database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+    persist_next_bid_number,
+    require_writable_bid_number_allocator,
+)
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
 from ...database.connection_wrapper import ConnectionWrapper
+from ...database.master_data_identity import (
+    MasterDataCandidateIndex,
+    add_master_data_candidate,
+    build_master_data_candidate_index,
+    master_data_identity_key,
+    require_unambiguous_incoming_identities,
+    resolve_master_data_candidate,
+)
 from .constants import BID_TABLES_WRITE_ORDER, NUMERIC_TYPE_SUBSTRINGS
 from .serialization import encode_text_blob
 
@@ -86,24 +100,13 @@ class ImportOperationsMixin:
     ) -> None:
         next_bid_no = 1
         schema = self._schema(connection)
-        if schema.optional_table_missing("Settings"):
-            remapped.bid_row["BidNo"] = str(next_bid_no)
-            return
-        if not schema.column_exists("Settings", "NextBidNo"):
-            schema.log_optional_write_skip(
-                "Settings", "NextBidNo", "assign_next_bid_no"
-            )
-            remapped.bid_row["BidNo"] = str(next_bid_no)
-            return
+        require_writable_bid_number_allocator(schema)
         cursor = connection.cursor()
         try:
-            cursor.execute("SELECT [NextBidNo] FROM [Settings]")
-            row = cursor.fetchone()
-            if row and row[0] is not None:
-                next_bid_no = int(row[0])
-            cursor.execute("UPDATE [Settings] SET [NextBidNo] = ?", next_bid_no + 1)
-        except pyodbc.Error:
-            pass
+            row = fetch_optional_global_settings_row(cursor, "[NextBidNo]")
+            if row is not None:
+                next_bid_no = normalize_next_bid_number(row[0])
+            persist_next_bid_number(cursor, row, next_bid_no + 1)
         finally:
             cursor.close()
         remapped.bid_row["BidNo"] = str(next_bid_no)
@@ -118,19 +121,31 @@ class ImportOperationsMixin:
         incoming = raw_data.global_tables.get("CdnTypes", [])
         if not incoming:
             return cdn_uid_map, max_uid
-        existing_by_name = self._load_existing_uid_by_name(connection, "CdnTypes")
+        require_unambiguous_incoming_identities(
+            incoming,
+            lambda row: master_data_identity_key(
+                "CdnTypes", "Name", row.get("Name", "")
+            ),
+            "CdnTypes.Name",
+        )
+        existing_by_name = self._load_existing_uid_candidates_by_column(
+            connection, "CdnTypes", "Name"
+        )
         next_uid = max_uid + 1
         table_info = self._get_table_info(connection, "CdnTypes")
         for cdn_row in incoming:
             old_uid = cdn_row.get("UID", "")
-            name = cdn_row.get("Name", "")
-            if name in existing_by_name:
-                cdn_uid_map[old_uid] = existing_by_name[name]
+            name = master_data_identity_key("CdnTypes", "Name", cdn_row.get("Name", ""))
+            existing_uid = resolve_master_data_candidate(
+                existing_by_name, name, "CdnTypes.Name"
+            )
+            if existing_uid is not None:
+                cdn_uid_map[old_uid] = existing_uid
             else:
                 new_uid = str(next_uid)
                 next_uid += 1
                 cdn_uid_map[old_uid] = new_uid
-                existing_by_name[name] = new_uid
+                add_master_data_candidate(existing_by_name, name, new_uid)
                 insert_row = dict(cdn_row)
                 insert_row["UID"] = new_uid
                 self._insert_raw_row(connection, "CdnTypes", insert_row, table_info)
@@ -146,19 +161,33 @@ class ImportOperationsMixin:
         incoming = raw_data.global_tables.get("JobStatuses", [])
         if not incoming:
             return job_status_uid_map, max_uid
-        existing_by_name = self._load_existing_uid_by_name(connection, "JobStatuses")
+        require_unambiguous_incoming_identities(
+            incoming,
+            lambda row: master_data_identity_key(
+                "JobStatuses", "Name", row.get("Name", "")
+            ),
+            "JobStatuses.Name",
+        )
+        existing_by_name = self._load_existing_uid_candidates_by_column(
+            connection, "JobStatuses", "Name"
+        )
         next_uid = max_uid + 1
         table_info = self._get_table_info(connection, "JobStatuses")
         for js_row in incoming:
             old_uid = js_row.get("UID", "")
-            name = js_row.get("Name", "")
-            if name in existing_by_name:
-                job_status_uid_map[old_uid] = existing_by_name[name]
+            name = master_data_identity_key(
+                "JobStatuses", "Name", js_row.get("Name", "")
+            )
+            existing_uid = resolve_master_data_candidate(
+                existing_by_name, name, "JobStatuses.Name"
+            )
+            if existing_uid is not None:
+                job_status_uid_map[old_uid] = existing_uid
             else:
                 new_uid = str(next_uid)
                 next_uid += 1
                 job_status_uid_map[old_uid] = new_uid
-                existing_by_name[name] = new_uid
+                add_master_data_candidate(existing_by_name, name, new_uid)
                 insert_row = dict(js_row)
                 insert_row["UID"] = new_uid
                 self._insert_raw_row(connection, "JobStatuses", insert_row, table_info)
@@ -176,22 +205,41 @@ class ImportOperationsMixin:
         schema = self._schema(connection)
         if schema.optional_table_missing("AccessLevels"):
             return access_level_uid_map
-        existing_by_description = self._load_existing_uid_by_column(
+        require_unambiguous_incoming_identities(
+            incoming,
+            lambda row: master_data_identity_key(
+                "AccessLevels", "Description", row.get("Description", "")
+            ),
+            "AccessLevels.Description",
+            ignore_empty=True,
+        )
+        existing_by_description = self._load_existing_uid_candidates_by_column(
             connection, "AccessLevels", "Description"
         )
         next_uid = self._next_table_uid(connection, "AccessLevels")
         table_info = self._get_table_info(connection, "AccessLevels")
         for row in incoming:
             old_uid = row.get("UID", "")
-            description = row.get("Description", "")
-            if description and description in existing_by_description:
-                access_level_uid_map[old_uid] = existing_by_description[description]
+            description = master_data_identity_key(
+                "AccessLevels", "Description", row.get("Description", "")
+            )
+            existing_uid = (
+                resolve_master_data_candidate(
+                    existing_by_description,
+                    description,
+                    "AccessLevels.Description",
+                )
+                if description
+                else None
+            )
+            if existing_uid is not None:
+                access_level_uid_map[old_uid] = existing_uid
                 continue
             new_uid = str(next_uid)
             next_uid += 1
             access_level_uid_map[old_uid] = new_uid
             if description:
-                existing_by_description[description] = new_uid
+                add_master_data_candidate(existing_by_description, description, new_uid)
             insert_row = dict(row)
             insert_row["UID"] = new_uid
             self._insert_raw_row(connection, "AccessLevels", insert_row, table_info)
@@ -209,20 +257,35 @@ class ImportOperationsMixin:
         schema = self._schema(connection)
         if schema.optional_table_missing("PayClasses"):
             return pay_class_uid_map
-        existing_by_name = self._load_existing_uid_by_name(connection, "PayClasses")
+        require_unambiguous_incoming_identities(
+            incoming,
+            lambda row: master_data_identity_key(
+                "PayClasses", "Name", row.get("Name", "")
+            ),
+            "PayClasses.Name",
+            ignore_empty=True,
+        )
+        existing_by_name = self._load_existing_uid_candidates_by_column(
+            connection, "PayClasses", "Name"
+        )
         next_uid = self._next_table_uid(connection, "PayClasses")
         table_info = self._get_table_info(connection, "PayClasses")
         for row in incoming:
             old_uid = row.get("UID", "")
-            name = row.get("Name", "")
-            if name and name in existing_by_name:
-                pay_class_uid_map[old_uid] = existing_by_name[name]
+            name = master_data_identity_key("PayClasses", "Name", row.get("Name", ""))
+            existing_uid = (
+                resolve_master_data_candidate(existing_by_name, name, "PayClasses.Name")
+                if name
+                else None
+            )
+            if existing_uid is not None:
+                pay_class_uid_map[old_uid] = existing_uid
                 continue
             new_uid = str(next_uid)
             next_uid += 1
             pay_class_uid_map[old_uid] = new_uid
             if name:
-                existing_by_name[name] = new_uid
+                add_master_data_candidate(existing_by_name, name, new_uid)
             insert_row = dict(row)
             insert_row["UID"] = new_uid
             self._insert_raw_row(connection, "PayClasses", insert_row, table_info)
@@ -242,20 +305,33 @@ class ImportOperationsMixin:
         schema = self._schema(connection)
         if schema.optional_table_missing("Employees"):
             return employee_uid_map
-        existing_by_key = self._load_existing_employee_uid_by_key(connection)
+        require_unambiguous_incoming_identities(
+            incoming,
+            self._employee_identity_key,
+            "Employees business key",
+            ignore_empty=True,
+        )
+        existing_by_key = self._load_existing_employee_uid_candidates_by_key(connection)
         next_uid = self._next_table_uid(connection, "Employees")
         table_info = self._get_table_info(connection, "Employees")
         for row in incoming:
             old_uid = row.get("UID", "")
             employee_key = self._employee_identity_key(row)
-            if employee_key and employee_key in existing_by_key:
-                employee_uid_map[old_uid] = existing_by_key[employee_key]
+            existing_uid = (
+                resolve_master_data_candidate(
+                    existing_by_key, employee_key, "Employees business key"
+                )
+                if employee_key
+                else None
+            )
+            if existing_uid is not None:
+                employee_uid_map[old_uid] = existing_uid
                 continue
             new_uid = str(next_uid)
             next_uid += 1
             employee_uid_map[old_uid] = new_uid
             if employee_key:
-                existing_by_key[employee_key] = new_uid
+                add_master_data_candidate(existing_by_key, employee_key, new_uid)
             insert_row = dict(row)
             insert_row["UID"] = new_uid
             pay_class_uid = insert_row.get("PayClassUID", "")
@@ -311,14 +387,9 @@ class ImportOperationsMixin:
                     )
                     raise
 
-    def _load_existing_uid_by_name(
-        self, connection: ConnectionWrapper, table: str
-    ) -> Dict[str, str]:
-        return self._load_existing_uid_by_column(connection, table, "Name")
-
-    def _load_existing_uid_by_column(
+    def _load_existing_uid_candidates_by_column(
         self, connection: ConnectionWrapper, table: str, column: str
-    ) -> Dict[str, str]:
+    ) -> MasterDataCandidateIndex:
         schema = self._schema(connection)
         if schema.optional_table_missing(table):
             return {}
@@ -326,23 +397,19 @@ class ImportOperationsMixin:
             table, column
         ):
             return {}
-        existing_by_value: Dict[str, str] = {}
         cursor = connection.cursor()
         try:
             cursor.execute(f"SELECT [UID], [{column}] FROM [{table}]")
-            for row in cursor.fetchall():
-                uid_val = str(row[0]) if row[0] is not None else ""
-                column_val = str(row[1]) if row[1] is not None else ""
-                existing_by_value[column_val] = uid_val
+            rows = cursor.fetchall()
         except pyodbc.Error:
-            pass
+            rows = []
         finally:
             cursor.close()
-        return existing_by_value
+        return build_master_data_candidate_index(rows, table, column)
 
-    def _load_existing_employee_uid_by_key(
+    def _load_existing_employee_uid_candidates_by_key(
         self, connection: ConnectionWrapper
-    ) -> Dict[str, str]:
+    ) -> MasterDataCandidateIndex:
         schema = self._schema(connection)
         if schema.optional_table_missing("Employees"):
             return {}
@@ -355,7 +422,7 @@ class ImportOperationsMixin:
         ]
         if "UID" not in columns:
             return {}
-        existing_by_key: Dict[str, str] = {}
+        existing_by_key: MasterDataCandidateIndex = {}
         cursor = connection.cursor()
         try:
             cursor.execute(
@@ -369,7 +436,7 @@ class ImportOperationsMixin:
                 }
                 key = self._employee_identity_key(row_data)
                 if key:
-                    existing_by_key[key] = row_data["UID"]
+                    add_master_data_candidate(existing_by_key, key, row_data["UID"])
         except pyodbc.Error:
             pass
         finally:

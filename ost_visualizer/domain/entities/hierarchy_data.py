@@ -39,6 +39,7 @@ class HierarchyBidInfo:
     bid_date: Optional[Any] = None
     notes: str = ""
     status: str = ""
+    status_uid: Optional[str] = None
     estimator: str = ""
     page_count: int = 0
     condition_count: int = 0

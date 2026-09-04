@@ -1,6 +1,8 @@
 from typing import List, Set
 from ..schema_contract import BID_SECTIONS
 
+COVER_SHEET_PAGE_SELECTION_TYPE = 1
+
 
 def hex_to_color_int(color: str) -> int:
     color = color.lstrip("#")
@@ -44,6 +46,18 @@ HANDLED_SEPARATELY: Set[str] = {
     "BidPageFolders",
     "BidNamedViews",
 }
+LEGACY_BID_TABLES_COPIED_BY_DUPLICATION = (
+    "AffectDPCTypGroupViews",
+    "BidLaborCostCodeTotals",
+    "BidTypicalGroupTotals",
+    "Boost",
+    "DPCCalcFilter",
+    "BidLaborActivity",
+    "BidLaborCostCodes",
+    "BidDPCSubscribers",
+    "BidNotes",
+    "BidTimeCardStates",
+)
 TAKEOFF_REFERENCE_TABLES = (
     "BidDimensions",
     "BidALines",
@@ -68,6 +82,13 @@ PAGE_AUXILIARY_CHILD_TABLES = (
     "BidPageSettings",
     "BidAreaTranslations",
     "BidMarkedPages",
+    "BidPercents",
+    "BidTakeoffTotals",
+    "BidLaborCostCodeTotals",
+    "BidTypicalGroupTotals",
+    "BidTypGroupViews",
+    "Boost",
+    "DPCCalcFilter",
 )
 PAGE_DELETE_CHILD_TABLES = PAGE_ANNOTATION_TABLES + PAGE_AUXILIARY_CHILD_TABLES
 PAGE_CONTENT_TABLES = (

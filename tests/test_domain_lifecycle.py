@@ -4,6 +4,12 @@ from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.cdn_type import CdnType
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+)
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.layer import BidLayer
@@ -22,6 +28,50 @@ from ost_visualizer.domain.entities.workspace_state import (
 
 
 class DomainLifecycleTests(unittest.TestCase):
+    def test_hierarchy_reconstruction_refreshes_condition_type_label_by_uid(self):
+        condition = Condition(
+            uid="condition-1",
+            cdn_type_uid="type-a",
+            cdn_type_name="Old name",
+        )
+
+        class _Repository:
+            active_file_path = "C:/Data/Test.mdb"
+            cdn_types = {}
+
+            @classmethod
+            def get_cdn_types(cls, _file_path):
+                return dict(cls.cdn_types)
+
+        class _FileManager:
+            project_repository = _Repository()
+
+            @staticmethod
+            def register_loaded_hierarchy(_file_entry, cdn_types):
+                _Repository.cdn_types = dict(cdn_types)
+                return HierarchyData()
+
+        model = SimpleNamespace(
+            file_manager=_FileManager(),
+            cdn_types={},
+            current_bid_ref=BidRef("c:\\data\\test.mdb", "bid-1"),
+            bid_conditions={condition.uid: condition},
+            set_hierarchy=lambda _hierarchy: None,
+            projects=[],
+        )
+        ProjectDataService(model).replace_database_hierarchy(
+            HierarchyFileEntry(file_path="C:/Data/Test.mdb"),
+            {"type-b": CdnType(uid="type-b", name="Old name")},
+        )
+        self.assertEqual(condition.cdn_type_uid, "type-a")
+        self.assertEqual(condition.cdn_type_name, "Unknown")
+        ProjectDataService(model).replace_database_hierarchy(
+            HierarchyFileEntry(file_path="C:/Data/Test.mdb"),
+            {"type-a": CdnType(uid="type-a", name="Renamed")},
+        )
+        self.assertEqual(condition.cdn_type_uid, "type-a")
+        self.assertEqual(condition.cdn_type_name, "Renamed")
+
     def test_sql_projection_snapshots_do_not_expose_authoritative_mutable_state(self):
         service = ProjectDataService(SimpleNamespace())
         layer = BidLayer(

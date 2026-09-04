@@ -32,6 +32,7 @@ _DELETED_PROJECT_UID = "1"
 _BID_COLUMN_COUNT = 11
 _RIGHT_ALIGNED_BID_COLS = frozenset({0, 6, 7})
 _UNASSIGNED_STATUS_LABEL = "(unassigned)"
+_BID_STATUS_UID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 
 
 def _same_file_path(left: Optional[str], right: Optional[str]) -> bool:
@@ -46,7 +47,7 @@ class ProjectTreeContext:
     file_path: Optional[str]
     project_uid: Optional[str]
     bid_ref: Optional[BidRef]
-    bid_status: str
+    bid_status_uid: Optional[str]
     paste_target: Optional[Tuple[str, Optional[str]]]
     selected_bid_refs: List[BidRef]
     selected_project_uids: List[str]
@@ -517,14 +518,19 @@ class ProjectView(QtWidgets.QWidget):
         parent_item: QtWidgets.QTreeWidgetItem,
         loaded_file: LoadedFile,
     ) -> None:
-        status_items: dict[str, QtWidgets.QTreeWidgetItem] = {}
+        status_items: dict[tuple[str, str], QtWidgets.QTreeWidgetItem] = {}
 
         def status_label(status: str) -> str:
             return self._display_status(status)
 
-        def status_item_for(status: str) -> QtWidgets.QTreeWidgetItem:
+        def status_item_for(
+            status: str, status_uid: Optional[str]
+        ) -> QtWidgets.QTreeWidgetItem:
             label = status_label(status)
-            item = status_items.get(label)
+            identity = (
+                ("uid", str(status_uid)) if status_uid else ("legacy-label", label)
+            )
+            item = status_items.get(identity)
             if item is None:
                 item = QtWidgets.QTreeWidgetItem(
                     [label, "", "", "", "", "", "", "", "", "", ""]
@@ -532,25 +538,28 @@ class ProjectView(QtWidgets.QWidget):
                 self._set_item_info(
                     item,
                     "status_group",
-                    f"{loaded_file.file_path}|{label}",
+                    f"{loaded_file.file_path}|{identity[0]}|{identity[1]}",
                     loaded_file.file_path,
                 )
                 self._apply_item_icon(item, IconId.FOLDER)
                 parent_item.addChild(item)
-                status_items[label] = item
+                status_items[identity] = item
             return item
 
         for project in loaded_file.projects:
-            bids_by_status: dict[str, List[Bid]] = {}
+            bids_by_status: dict[tuple[str, Optional[str]], List[Bid]] = {}
             for bid in project.bids:
-                bids_by_status.setdefault(status_label(bid.status), []).append(bid)
+                status_identity = str(bid.status_uid) if bid.status_uid else None
+                bids_by_status.setdefault(
+                    (status_label(bid.status), status_identity), []
+                ).append(bid)
             if not bids_by_status:
                 project_item = self._create_project_item(project, loaded_file)
-                status_item_for("").addChild(project_item)
+                status_item_for("", None).addChild(project_item)
                 continue
-            for label, bids in bids_by_status.items():
+            for (label, status_uid), bids in bids_by_status.items():
                 project_item = self._create_project_item(project, loaded_file)
-                status_item_for(label).addChild(project_item)
+                status_item_for(label, status_uid).addChild(project_item)
                 for bid in bids:
                     self._add_bid_item(
                         project_item,
@@ -560,7 +569,7 @@ class ProjectView(QtWidgets.QWidget):
                     )
         for bid in loaded_file.orphan_bids:
             self._add_bid_item(
-                status_item_for(bid.status),
+                status_item_for(bid.status, bid.status_uid),
                 bid,
                 loaded_file.file_path,
                 is_orphan=True,
@@ -610,6 +619,7 @@ class ProjectView(QtWidgets.QWidget):
         self._apply_bid_sort_values(bid_item, bid)
         self._apply_bid_alignments(bid_item)
         self._set_item_info(bid_item, "bid", bid.uid, file_path)
+        bid_item.setData(0, _BID_STATUS_UID_ROLE, bid.status_uid)
         self._apply_item_icon(bid_item, IconId.PROJECT_TREE_BID)
         parent_item.addChild(bid_item)
 
@@ -1235,7 +1245,9 @@ class ProjectView(QtWidgets.QWidget):
             file_path=file_path,
             project_uid=project_uid,
             bid_ref=bid_ref,
-            bid_status=item.text(2) if kind == "bid" else "",
+            bid_status_uid=(
+                item.data(0, _BID_STATUS_UID_ROLE) if kind == "bid" else None
+            ),
             paste_target=self._paste_target_for_item(item),
             selected_bid_refs=selected_bid_refs,
             selected_project_uids=selected_project_uids,
@@ -1487,9 +1499,11 @@ class ProjectView(QtWidgets.QWidget):
             action = status_menu.addAction(status.name)
             action.setCheckable(True)
             action.setChecked(
-                context.kind == "bid" and status.name == context.bid_status
+                context.kind == "bid" and str(status.uid) == str(context.bid_status_uid)
             )
-            action.setEnabled(can_edit_status and status.name != context.bid_status)
+            action.setEnabled(
+                can_edit_status and str(status.uid) != str(context.bid_status_uid)
+            )
             group.addAction(action)
             action.triggered.connect(
                 self._guard_context_callback(

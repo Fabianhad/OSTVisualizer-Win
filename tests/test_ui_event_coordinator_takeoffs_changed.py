@@ -1686,6 +1686,34 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_remote_hierarchy_changed("sql-database")
         self.assertIsNone(project_view.restored_bid)
 
+    def test_remote_hierarchy_refresh_recomputes_active_bid_lock_by_uid(self):
+        bid_ref = BidRef("sql-database", "bid-1")
+        project_view = FakeProjectView()
+        resolved = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(project_view=project_view)
+        coordinator.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: bid_ref,
+            get_current_file_path=lambda: bid_ref.file_path,
+            get_bid=lambda requested: object() if requested == bid_ref else None,
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=bid_ref.file_path,
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator._sidebar = SimpleNamespace(
+            refresh_conditions_from_memory=lambda: None
+        )
+        coordinator._viewer = SimpleNamespace(update_plan_view_for_active=lambda: None)
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._update_menu_state = lambda: None
+        coordinator._do_file_refresh = lambda: None
+        coordinator._resolve_bid_lock_state = resolved.append
+        coordinator._on_remote_hierarchy_changed(bid_ref.file_path)
+        self.assertEqual(resolved, [bid_ref])
+        self.assertEqual(coordinator.ui_access_manager.refreshes, 1)
+        self.assertEqual(project_view.restored_bid, bid_ref)
+
     def test_stale_sql_failure_does_not_replace_active_access_selection(self):
         panel = _CollaborationStatusPanel()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

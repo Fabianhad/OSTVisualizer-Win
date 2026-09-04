@@ -112,7 +112,7 @@ class BidDataReaderTests(unittest.TestCase):
     def test_cover_sheet_stops_when_content_verification_is_unavailable(self):
         read_service = SimpleNamespace(
             get_cover_sheet_data=lambda _file_path, _bid_uid: object(),
-            get_estimator_uids_in_use=lambda _file_path: set(),
+            get_employee_uids_in_use=lambda _file_path: set(),
             get_pages_with_takeoffs=lambda _file_path, _bid_uid: set(),
             get_pages_with_delete_content=lambda _file_path, _bid_uid: None,
         )

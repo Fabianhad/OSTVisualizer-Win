@@ -2186,6 +2186,38 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         dialog.close()
 
+    def test_edit_condition_preserves_duplicate_named_condition_type_uid(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            cdn_type_uid="type-2",
+            cdn_type_name="Concrete",
+            ref_no=1,
+        )
+        dialog = EditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {
+                "type-1": CdnType(uid="type-1", name="Concrete"),
+                "type-2": CdnType(uid="type-2", name="Concrete"),
+            },
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: True,
+            read_service=FakeReadService(),
+        )
+        try:
+            dto = dialog._validate_and_build_dto()
+            self.assertIsNotNone(dto)
+            self.assertNotIn("cdn_type_uid", dto.get_changes())
+        finally:
+            dialog._dirty = False
+            dialog.close()
+
     def test_condition_type_dialog_return_stops_after_parent_is_destroyed(self):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
         dialog = self._make_dialog(condition)

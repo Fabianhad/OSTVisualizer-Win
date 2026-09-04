@@ -1,10 +1,15 @@
 import uuid
 from typing import Any, Dict, Optional
 import pyodbc
+from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ....domain.entities.area import BidAreaChangeset
 from ....domain.services.uom_service import normalize_uom_for_system
 from ...parsers.position_parser import convert_elevation_in_name
-from .constants import PAGE_DELETE_CHILD_TABLES, TAKEOFF_REFERENCE_TABLES
+from .constants import (
+    COVER_SHEET_PAGE_SELECTION_TYPE,
+    PAGE_DELETE_CHILD_TABLES,
+    TAKEOFF_REFERENCE_TABLES,
+)
 from .overlay_rect import (
     overlay_path_storage_identity,
     replacement_overlay_storage_values,
@@ -416,6 +421,19 @@ class SettingsOperationsMixin:
                     "(SELECT [UID] FROM [BidTakeoffs] WHERE [BidPageUID] = ?)",
                     page_int,
                 )
+        if (
+            not schema.optional_table_missing("AffectDPCTypGroupViews")
+            and not schema.optional_table_missing("BidTypGroupViews")
+            and schema.column_exists("AffectDPCTypGroupViews", "BidTypGroupViewUID")
+            and schema.column_exists("BidTypGroupViews", "UID")
+            and schema.column_exists("BidTypGroupViews", "BidPageUID")
+        ):
+            cursor.execute(
+                "DELETE FROM [AffectDPCTypGroupViews] "
+                "WHERE [BidTypGroupViewUID] IN "
+                "(SELECT [UID] FROM [BidTypGroupViews] WHERE [BidPageUID]=?)",
+                page_int,
+            )
         for table in PAGE_DELETE_CHILD_TABLES:
             try:
                 if schema.optional_table_missing(table) or not schema.column_exists(
@@ -457,27 +475,22 @@ class SettingsOperationsMixin:
             cursor.execute(
                 "DELETE FROM [BidNamedViews] WHERE [BidPageUID] = ?", page_int
             )
-        for table in ("BidTakeoffTotals", "BidTypicalGroupTotals"):
-            try:
-                if schema.optional_table_missing(table) or not schema.column_exists(
-                    table, "BidPageUID"
-                ):
-                    continue
-                cursor.execute(
-                    f"DELETE FROM [{table}] WHERE [BidPageUID] = ?", page_int
-                )
-            except pyodbc.Error as exc:
-                if self._record_caught_mutation_error(exc):
-                    raise
-                self.logger.warning(
-                    "Failed to delete from %s for page %s: %s", table, page_int, exc
-                )
         if not schema.optional_table_missing("BidSettings") and schema.column_exists(
             "BidSettings", "BidPageSelectedUID"
         ):
             cursor.execute(
                 "UPDATE [BidSettings] SET [BidPageSelectedUID]=NULL "
                 "WHERE [BidPageSelectedUID]=?",
+                page_int,
+            )
+        if all(
+            schema.column_exists("Bids", column)
+            for column in ("CoverSheetSelItemType", "CoverSheetSelItemUID")
+        ):
+            cursor.execute(
+                "UPDATE [Bids] SET [CoverSheetSelItemUID]=NULL "
+                "WHERE [CoverSheetSelItemType]=? AND [CoverSheetSelItemUID]=?",
+                COVER_SHEET_PAGE_SELECTION_TYPE,
                 page_int,
             )
         self._require_write_columns(schema, "BidPages", ("UID",))
@@ -574,13 +587,32 @@ class SettingsOperationsMixin:
                 for uid in changes.get("deleted_uids", []):
                     try:
                         uid_int = int(uid)
-                        if not schema.optional_table_missing(
-                            "BidDPCSubscribers"
-                        ) and schema.column_exists(
-                            "BidDPCSubscribers", "BidEmployeeUID"
+                        if not schema.optional_table_missing("Bids"):
+                            for role_column in (
+                                "EstimatorUID",
+                                "PrManagerUID",
+                                "JobSiteManagerUID",
+                            ):
+                                if schema.column_exists("Bids", role_column):
+                                    cursor.execute(
+                                        f"UPDATE [Bids] SET [{role_column}]=NULL "
+                                        f"WHERE [{role_column}]=?",
+                                        uid_int,
+                                    )
+                        if (
+                            not schema.optional_table_missing("BidDPCSubscribers")
+                            and not schema.optional_table_missing("BidEmployees")
+                            and schema.column_exists(
+                                "BidDPCSubscribers", "BidEmployeeUID"
+                            )
+                            and schema.column_exists("BidEmployees", "UID")
+                            and schema.column_exists("BidEmployees", "EmployeeUID")
                         ):
                             cursor.execute(
-                                "DELETE FROM [BidDPCSubscribers] WHERE [BidEmployeeUID]=?",
+                                "DELETE FROM [BidDPCSubscribers] "
+                                "WHERE [BidEmployeeUID] IN "
+                                "(SELECT [UID] FROM [BidEmployees] "
+                                "WHERE [EmployeeUID]=?)",
                                 uid_int,
                             )
                         if (
@@ -917,6 +949,36 @@ class SettingsOperationsMixin:
                                 "UPDATE [BidTakeoffs] SET [BidAreaUID]=NULL WHERE [BidAreaUID]=?",
                                 uid_int,
                             )
+                        if not schema.optional_table_missing("BidAreaTranslations"):
+                            translation_columns = tuple(
+                                column
+                                for column in ("MasterAreaUID", "TranslateAreaUID")
+                                if schema.column_exists("BidAreaTranslations", column)
+                            )
+                        else:
+                            translation_columns = ()
+                        if translation_columns:
+                            cursor.execute(
+                                "DELETE FROM [BidAreaTranslations] "
+                                "WHERE "
+                                + " OR ".join(
+                                    f"[{column}]=?" for column in translation_columns
+                                ),
+                                *(uid_int for _column in translation_columns),
+                            )
+                        for table in (
+                            "BidTakeoffTotals",
+                            "BidLaborCostCodeTotals",
+                            "BidTypicalGroupTotals",
+                        ):
+                            if schema.optional_table_missing(
+                                table
+                            ) or not schema.column_exists(table, "BidAreaUID"):
+                                continue
+                            cursor.execute(
+                                f"DELETE FROM [{table}] WHERE [BidAreaUID]=?",
+                                uid_int,
+                            )
                         try:
                             if not schema.optional_table_missing(
                                 "BidTimeCards"
@@ -1021,6 +1083,7 @@ class SettingsOperationsMixin:
                     schema, "BidSettings", ("BidUID", "BidPageSelectedUID")
                 )
                 cursor = conn.cursor()
+                fetch_optional_bid_settings_row(cursor, int(bid_uid), ("BidUID",))
                 if page_val is not None:
                     self._require_write_columns(schema, "BidPages", ("UID", "BidUID"))
                     cursor.execute(

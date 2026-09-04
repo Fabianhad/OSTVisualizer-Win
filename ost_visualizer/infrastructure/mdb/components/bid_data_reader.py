@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 import pyodbc
+from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID, BidArea
 from ....domain.entities.cdn_type import CdnType
@@ -125,11 +126,11 @@ class BidDataReaderMixin:
             return None
         try:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT [BidPageSelectedUID] FROM [BidSettings] WHERE [BidUID]=?",
+                row = fetch_optional_bid_settings_row(
+                    cursor,
                     bid_uid,
+                    ("BidPageSelectedUID",),
                 )
-                row = cursor.fetchone()
                 if row and row[0]:
                     return str(row[0])
         except pyodbc.Error as exc:
@@ -634,13 +635,16 @@ class BidDataReaderMixin:
         schema.require_column("BidPageSettings", "BidPageUID")
         schema.require_column("BidPageSettings", "BidAreaUID")
         schema.require_column("BidPageSettings", "BidAreaSelected")
+        order_by = "BidAreaSelected DESC"
+        if schema.column_exists("BidPageSettings", "UID"):
+            order_by += ", UID DESC"
         with connection.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT BidAreaUID, BidAreaSelected
                 FROM BidPageSettings
                 WHERE BidPageUID = ? AND BidAreaSelected > 0
-                ORDER BY BidAreaSelected DESC
+                ORDER BY {order_by}
                 """,
                 page_uid,
             )

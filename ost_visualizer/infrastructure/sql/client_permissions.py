@@ -8,6 +8,9 @@ from .schema_definition import (
     SQL_CHANGE_TRACKING_RETENTION_DAYS,
     schema_record_is_canonical,
 )
+from .database_metadata_contract import (
+    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
+)
 
 SQL_CLIENT_DATABASE_ROLES = ("db_datareader", "db_datawriter")
 SQL_CLIENT_SCHEMA_VISIBILITY = ("dbo", "ostv")
@@ -121,7 +124,7 @@ def require_sql_client_editability(
         "AS [ProtectedWriteCount] FROM sys.tables t JOIN sys.schemas s "
         "ON s.[schema_id]=t.[schema_id] WHERE s.[name]=N'ostv' AND "
         f"t.[name] IN ({writable_placeholders}, {protected_placeholders})) "
-        "permissions WHERE m.[Product]=N'OST Visualizer'",
+        "permissions WHERE " + DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
         *context_parameters,
         *SQL_CLIENT_DATABASE_ROLES,
         *SQL_CLIENT_SCHEMA_VISIBILITY,

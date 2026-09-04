@@ -80,8 +80,10 @@ class HierarchyReaderMixin:
             folders, pages_without_folder = self._get_bid_folder_page_structure(
                 connection, bid_uid, schema
             )
-            raw_status_uid = str(bid_row.JobStatusUID)
-            status_value = status_map.get(raw_status_uid, "")
+            raw_status_uid = (
+                str(bid_row.JobStatusUID) if bid_row.JobStatusUID is not None else None
+            )
+            status_value = status_map.get(raw_status_uid, "") if raw_status_uid else ""
             raw_estimator_uid = (
                 str(bid_row.EstimatorUID) if bid_row.EstimatorUID else None
             )
@@ -106,6 +108,7 @@ class HierarchyReaderMixin:
                 bid_date=bid_row.BidDate,
                 notes=decode_text_blob(bid_row.Notes),
                 status=status_value,
+                status_uid=raw_status_uid,
                 estimator=estimator_value,
                 page_count=page_count,
                 condition_count=condition_count,

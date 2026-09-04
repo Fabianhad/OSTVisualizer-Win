@@ -4,6 +4,43 @@
 
 ### Fixed
 
+- Fixed loaded bids discarding their authoritative Job Status UID and later
+  using duplicate display names for lock checks, Project Tree status actions,
+  and status grouping. Remote master-data projection now refreshes hierarchy
+  labels and active-bid locking, Condition Type renames refresh cached Condition
+  labels by UID, and Employee deletion/use checks cover every direct bid role.
+  Employee deletion also follows `BidEmployees` identity when removing DPC
+  subscribers, preventing orphaned subscriber rows when the two UIDs differ.
+- Fixed OST/OSP master-data reconciliation and editors so duplicate display
+  names or employee keys cannot silently bind imported bids, Cover Sheet fields,
+  Employees, or Conditions to an arbitrary same-label master record.
+- Fixed bid creation, import, and Duplicate Bid reusing bid number 1 when a
+  readable legacy MDB lacked the durable `Settings.NextBidNo` allocator. Those
+  write paths now reject the unsupported writable schema without modifying the
+  bid graph. Clearing a page's area filter now preserves inactive
+  `BidPageSettings` records, while save and Duplicate Bid normalize malformed
+  competing selected rows, including duplicate physical UIDs. Duplicate Bid
+  also remaps area and typical-area ownership for legacy page-setting tables
+  that have no row UID.
+- Fixed global `Settings` rows being selected nondeterministically and updated
+  as a group when malformed duplicates existed. Empty legacy settings tables now
+  persist the first bid-number allocation, sequence-write failures abort import,
+  and MDB/SQL normalize the zero sequence consistently. SQL now rejects missing,
+  duplicated, or wrong-incarnation `DatabaseMetadata` at every identity consumer.
+  Duplicate selected page-area rows reconstruct and normalize with the existing
+  import/export precedence, and Duplicate Bid clears a known page-typed Cover
+  Sheet selector when its referenced source page is missing.
+- Fixed malformed bids with multiple `BidSettings` rows being loaded
+  nondeterministically, updated as a group, imported, or multiplied by Duplicate
+  Bid. Duplicate Bid also remaps the known page-based Cover Sheet selection, and
+  Cover Sheet nested pickers now restore duplicate-named statuses and employees
+  by UID instead of display text. Duplicated bids now receive their own creation
+  timestamp, and deleting a page clears only Cover Sheet selectors whose type is
+  page.
+- Fixed Duplicate Bid copying bid-employee assignments twice, reusing source
+  GUIDs, and leaving ancillary labor, total, typical-group, Boost, and DPC rows
+  linked to source-bid entities. Page, Condition, and area deletion now removes
+  every schema-declared ancillary dependent before deleting its owner.
 - Fixed Duplicate Bid regenerating takeoff, annotation, comment, folder, page,
   and area identities without reconstructing all references between the copied
   rows. The duplicate now owns an independent reference graph, including

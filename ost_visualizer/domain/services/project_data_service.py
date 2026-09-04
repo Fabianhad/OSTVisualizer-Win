@@ -6,6 +6,7 @@ from ...domain.entities.area import BidArea, is_unassigned_area_uid, normalize_a
 from ...domain.entities.bid import Bid
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
+from ...domain.entities.file_state import normalize_path
 from ...domain.entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.file_results import BidLoadResult
@@ -210,6 +211,19 @@ class ProjectDataService:
         )
         repository = self.model.file_manager.project_repository
         self.model.cdn_types = repository.get_cdn_types(repository.active_file_path)
+        current_bid_ref = self.model.current_bid_ref
+        if current_bid_ref is not None and normalize_path(
+            current_bid_ref.file_path
+        ) == normalize_path(file_entry.file_path):
+            for condition in self.model.bid_conditions.values():
+                condition_type = (
+                    self.model.cdn_types.get(str(condition.cdn_type_uid))
+                    if condition.cdn_type_uid is not None
+                    else None
+                )
+                condition.cdn_type_name = (
+                    condition_type.name if condition_type is not None else "Unknown"
+                )
         self.model.set_hierarchy(hierarchy)
         self.model.projects = build_projects(hierarchy)
 

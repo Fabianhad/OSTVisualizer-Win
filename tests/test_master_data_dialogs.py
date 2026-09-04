@@ -1893,6 +1893,123 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_employee_detail_preserves_selected_duplicate_pay_class_uid(self):
+        employees = [
+            EmployeeRecord(
+                uid="emp-1",
+                employee_no="1",
+                first_name="Ava",
+                last_name="Lee",
+                pay_class_uid="pay-2",
+            )
+        ]
+        dialog = EmployeeDetailDialog(
+            FakeIconProvider(),
+            employees,
+            0,
+            make_workspace_state_model(),
+            pay_classes=[
+                PayClass(uid="pay-1", name="Regular"),
+                PayClass(uid="pay-2", name="Regular"),
+            ],
+        )
+        try:
+            self.assertEqual(dialog.combo_pay_class.currentData(), "pay-2")
+            dialog._save_current()
+            self.assertEqual(dialog.get_results()[0].pay_class_uid, "pay-2")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_detail_rejects_case_colliding_employee_number(self):
+        employees = [
+            EmployeeRecord(
+                uid="emp-1",
+                employee_no="E100",
+                first_name="Ava",
+                last_name="Lee",
+            ),
+            EmployeeRecord(
+                uid="emp-2",
+                employee_no="e100",
+                first_name="Mia",
+                last_name="Ray",
+            ),
+        ]
+        dialog = EmployeeDetailDialog(
+            FakeIconProvider(), employees, 1, make_workspace_state_model()
+        )
+        try:
+            with patch(
+                "ost_visualizer.presentation.dialogs.employee_detail_dialog."
+                "show_warning"
+            ) as warning:
+                self.assertFalse(dialog._validate_current())
+            warning.assert_called_once_with(
+                dialog,
+                "Employee Detail",
+                "Employee Number is already in use by another employee.",
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_detail_rejects_typed_ambiguous_pay_class_name(self):
+        employees = [
+            EmployeeRecord(
+                uid="emp-1",
+                employee_no="1",
+                first_name="Ava",
+                last_name="Lee",
+            )
+        ]
+        dialog = EmployeeDetailDialog(
+            FakeIconProvider(),
+            employees,
+            0,
+            make_workspace_state_model(),
+            pay_classes=[
+                PayClass(uid="pay-1", name="Regular"),
+                PayClass(uid="pay-2", name="Regular"),
+            ],
+        )
+        try:
+            dialog.combo_pay_class.setCurrentIndex(-1)
+            dialog.combo_pay_class.setEditText("Regular")
+            with patch(
+                "ost_visualizer.presentation.dialogs.employee_detail_dialog."
+                "show_warning"
+            ) as warning:
+                self.assertFalse(dialog._validate_current())
+            warning.assert_called_once()
+            self.assertIn("matches more than one item", warning.call_args.args[2])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_condition_type_picker_uses_uid_for_duplicate_name_selection(self):
+        dialog = ConditionTypesDialog(
+            FakeIconProvider(),
+            condition_types=[
+                CdnType(uid="type-1", name="Concrete"),
+                CdnType(uid="type-2", name="Concrete"),
+            ],
+            current_name="Concrete",
+            current_uid="type-2",
+        )
+        try:
+            self.assertEqual(
+                dialog.tree.currentItem().data(0, dialog._UID_ROLE), "type-2"
+            )
+            dialog._on_select()
+            self.assertEqual(dialog.selected_uid(), "type-2")
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_employee_detail_stops_after_payroll_dialog_destroys_parent(self):
         dialog = EmployeeDetailDialog(
             FakeIconProvider(),
@@ -2791,7 +2908,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 ],
                 [PayClass(uid="pay-1", name="Regular")],
             ),
-            get_estimator_uids_in_use=lambda _file_path: set(),
+            get_employee_uids_in_use=lambda _file_path: set(),
             get_job_statuses=lambda _file_path: [
                 JobStatus(uid="status-1", name="Bidding", locked=False, sequence=1)
             ],

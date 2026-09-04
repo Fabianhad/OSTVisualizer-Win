@@ -151,8 +151,15 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             if change.resource.bid_uid is not None
             and change.resource.resource_type in BID_CONTENT_RESOURCE_TYPES
         }
+        hierarchy_display_master_types = {
+            CollaborationResourceType.JOB_STATUS.value,
+            CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+            CollaborationResourceType.EMPLOYEE.value,
+            CollaborationResourceType.EMPLOYEES_COLLECTION.value,
+        }
         needs_hierarchy = any(
             change.resource.resource_type in HIERARCHY_RESOURCE_TYPES
+            or change.resource.resource_type in hierarchy_display_master_types
             for change in batch.changes
         )
         cover_sheet_bids = {

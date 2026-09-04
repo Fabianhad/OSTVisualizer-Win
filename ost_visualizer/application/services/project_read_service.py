@@ -67,11 +67,11 @@ class ProjectReadService:
             self.logger.warning("Failed to load job statuses", exc_info=True)
             return []
 
-    def is_bid_locked(self, file_path: str, bid_status: Optional[str]) -> bool:
-        if not bid_status:
+    def is_bid_locked(self, file_path: str, bid_status_uid: Optional[str]) -> bool:
+        if not bid_status_uid:
             return False
         for s in self.get_job_statuses(file_path):
-            if s.name == bid_status:
+            if str(s.uid) == str(bid_status_uid):
                 return s.locked
         return False
 
@@ -84,11 +84,11 @@ class ProjectReadService:
             self.logger.warning("Failed to load cover sheet data", exc_info=True)
             return None
 
-    def get_estimator_uids_in_use(self, file_path: str) -> set:
+    def get_employee_uids_in_use(self, file_path: str) -> set:
         try:
-            return self._reader.get_estimator_uids_in_use(file_path)
+            return self._reader.get_employee_uids_in_use(file_path)
         except Exception:
-            self.logger.warning("Failed to load estimator UIDs", exc_info=True)
+            self.logger.warning("Failed to load employee UIDs", exc_info=True)
             return set()
 
     def get_condition_type_uids_in_use(self, file_path: str) -> set:

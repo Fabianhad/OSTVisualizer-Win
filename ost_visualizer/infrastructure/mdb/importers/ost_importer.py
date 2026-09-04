@@ -6,6 +6,7 @@ from ....application.dtos.collaboration_dtos import (
     ResourceRef,
 )
 from ....domain.dtos.raw_bid_data_dto import RawBidData
+from ...database.page_area_selection import canonicalize_page_area_settings
 from ..raw_bid_integrity import (
     clear_missing_annotation_takeoff_references,
     clear_missing_selected_page_references,
@@ -381,38 +382,7 @@ class OstImporter:
     def _canonicalize_page_area_settings(
         self, rows: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
-        if not rows:
-            return rows
-        unselected_rows: List[Dict[str, str]] = []
-        selected_by_page: Dict[str, Dict[str, str]] = {}
-        for row in rows:
-            page_uid = row.get("BidPageUID", "")
-            try:
-                selected_value = int(row.get("BidAreaSelected", "0") or "0")
-            except ValueError:
-                selected_value = 0
-            if selected_value <= 0:
-                unselected_rows.append(row)
-                continue
-            current = selected_by_page.get(page_uid)
-            if current is None:
-                selected_by_page[page_uid] = row
-                continue
-            try:
-                current_selected = int(current.get("BidAreaSelected", "0") or "0")
-            except ValueError:
-                current_selected = 0
-            try:
-                current_uid = int(current.get("UID", "0") or "0")
-            except ValueError:
-                current_uid = 0
-            try:
-                row_uid = int(row.get("UID", "0") or "0")
-            except ValueError:
-                row_uid = 0
-            if (selected_value, row_uid) >= (current_selected, current_uid):
-                selected_by_page[page_uid] = row
-        return unselected_rows + list(selected_by_page.values())
+        return canonicalize_page_area_settings(rows)
 
     def _parse_ost_xml(self, ost_path: str) -> RawBidData:
         tree = ET.parse(ost_path)

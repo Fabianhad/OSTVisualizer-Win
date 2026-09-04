@@ -1,5 +1,9 @@
 from typing import Dict, List, Optional, Tuple
 import pyodbc
+from ...database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+)
 from ....domain.entities.area import BidArea
 from ....domain.entities.cover_sheet import (
     CoverSheetData,
@@ -32,16 +36,24 @@ class SettingsReaderMixin:
 
     def _parse_used_employee_uids(self, connection) -> set[str]:
         schema = self._schema(connection)
-        if schema.optional_table_missing("Bids") or not schema.column_exists(
-            "Bids", "EstimatorUID"
-        ):
+        if schema.optional_table_missing("Bids"):
             return set()
+        role_columns = tuple(
+            column
+            for column in ("EstimatorUID", "PrManagerUID", "JobSiteManagerUID")
+            if schema.column_exists("Bids", column)
+        )
+        if not role_columns:
+            return set()
+        selected_columns = ", ".join(f"[{column}]" for column in role_columns)
         with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT DISTINCT [EstimatorUID] FROM [Bids] "
-                "WHERE [EstimatorUID] IS NOT NULL"
-            )
-            return {str(row[0]) for row in cursor.fetchall() if row[0] is not None}
+            cursor.execute(f"SELECT {selected_columns} FROM [Bids]")
+            return {
+                str(row[index])
+                for row in cursor.fetchall()
+                for index in range(len(role_columns))
+                if row[index] is not None
+            }
 
     def _parse_job_statuses(self, connection) -> List[JobStatus]:
         rows = self._select_all_unfiltered(connection, "JobStatuses")
@@ -281,8 +293,7 @@ class SettingsReaderMixin:
             ]
         )
         with connection.cursor() as cursor:
-            cursor.execute(f"SELECT {settings_select} FROM [Settings]")
-            row = cursor.fetchone()
+            row = fetch_optional_global_settings_row(cursor, settings_select)
             if row:
                 defaults["scale_style"] = row.ScaleStyle or 1
                 defaults["scale_factor1"] = row.ScaleFactor1 or 0.125
@@ -291,7 +302,7 @@ class SettingsReaderMixin:
                 defaults["page_height"] = row.PageHeight or 30.0
                 defaults["measure_base"] = row.MeasureBase or 0
                 defaults["takeoff_increments"] = row.TakeoffIncrements or 1.0
-                defaults["next_bid_no"] = int(row.NextBidNo) if row.NextBidNo else 1
+                defaults["next_bid_no"] = normalize_next_bid_number(row.NextBidNo)
         return defaults
 
     def get_job_statuses(self, file_path: str) -> List[JobStatus]:
@@ -333,18 +344,14 @@ class SettingsReaderMixin:
             )
             return []
 
-    def get_estimator_uids_in_use(self, file_path: str) -> set:
+    def get_employee_uids_in_use(self, file_path: str) -> set:
         try:
             with self._connection(file_path) as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT EstimatorUID FROM Bids WHERE EstimatorUID IS NOT NULL"
-                    )
-                    return {str(row.EstimatorUID) for row in cursor.fetchall()}
+                return self._parse_used_employee_uids(connection)
         except (pyodbc.Error, TypeError, ValueError) as e:
             if self._record_caught_read_error(e, file_path):
                 raise
-            self.logger.warning("Could not query estimator UIDs in use: %s", e)
+            self.logger.warning("Could not query employee UIDs in use: %s", e)
             return set()
 
     def get_condition_type_uids_in_use(self, file_path: str) -> set:

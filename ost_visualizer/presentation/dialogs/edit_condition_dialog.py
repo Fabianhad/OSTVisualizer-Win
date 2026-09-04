@@ -302,6 +302,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._allow_apply = True
         self._saved_form_state = ()
         self._active_sub_dialog: Optional[QtWidgets.QDialog] = None
+        self._type_edit_identity_uid: Optional[str] = None
         self._general_tab_built = False
         self._height_edit: Optional[_DimensionLineEdit] = None
         self._width_edit: Optional[_DimensionLineEdit] = None
@@ -863,6 +864,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._set_combo_by_data(self._style_combo, cond.condition_type)
             self._update_style_combo_state()
             self._type_edit.setText(self._cdn_type_name_for_condition(cond))
+            self._type_edit_identity_uid = cond.cdn_type_uid
             parts = parse_elevation(cond.name)
             self._name_edit.setText(parts.base_name)
             if parts.type == 1:
@@ -993,19 +995,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             return self._cdn_types[cond.cdn_type_uid].name
         return "" if cond.cdn_type_name == "Unknown" else cond.cdn_type_name
 
-    def _find_cdn_type_uid_by_name(self, name: str) -> Optional[str]:
-        target = name.strip().lower()
-        if not target:
-            return None
-        return next(
-            (
-                uid
-                for uid, cdn_type in self._cdn_types.items()
-                if cdn_type.name.strip().lower() == target
-            ),
-            None,
-        )
-
     def _reload_condition_types(self) -> List[CdnType]:
         values = self._condition_type_reload_fn()
         self._cdn_types = {cdn.uid: cdn for cdn in values}
@@ -1018,6 +1007,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             parent=self,
             condition_types=list(self._cdn_types.values()),
             current_name=current_name,
+            current_uid=self._type_edit_identity_uid or "",
             save_fn=self._condition_type_save_fn,
             save_async_fn=self._condition_type_save_async_fn,
             blocked_delete_uids_fn=self._condition_type_blocked_delete_uids_fn,
@@ -1035,6 +1025,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._reload_condition_types()
             if accepted:
                 selected_name = dialog.selected_name()
+                self._type_edit_identity_uid = dialog.selected_uid() or None
                 self._type_edit.setText(selected_name)
         finally:
             self._active_sub_dialog = None
@@ -1055,6 +1046,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         created_uid = result.get(temp_uid) if result else None
         self._reload_condition_types()
         if created_uid:
+            self._type_edit_identity_uid = str(created_uid)
             self._type_edit.setText(name)
             return created_uid
         show_warning(self, "Condition Types", "Failed to create condition type.")
@@ -1064,9 +1056,28 @@ class EditConditionDialog(QtWidgets.QDialog):
         type_name = self._type_edit.text().strip()
         if not type_name:
             return None
-        uid = self._find_cdn_type_uid_by_name(type_name)
-        if uid:
-            return uid
+        target = type_name.lower()
+        if self._type_edit_identity_uid:
+            selected = self._cdn_types.get(self._type_edit_identity_uid)
+            if selected is not None and selected.name.strip().lower() == target:
+                return self._type_edit_identity_uid
+        matching = [
+            uid
+            for uid, cdn_type in self._cdn_types.items()
+            if cdn_type.name.strip().lower() == target
+        ]
+        if len(matching) > 1:
+            show_warning(
+                self,
+                "Ambiguous Condition Type",
+                f'"{type_name}" matches more than one condition type. '
+                "Select the intended item from the list.",
+            )
+            self._type_edit.setFocus()
+            return False
+        if matching:
+            self._type_edit_identity_uid = matching[0]
+            return matching[0]
         if confirm_not_found(self, type_name):
             created_uid = self._create_condition_type(type_name)
             if created_uid:

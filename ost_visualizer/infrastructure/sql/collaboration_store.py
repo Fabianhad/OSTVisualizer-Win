@@ -29,6 +29,9 @@ from ...application.interfaces.i_database_descriptor_registry import (
 from .connection_manager import SqlConnectionManager, begin_snapshot_transaction
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
+from .database_metadata_contract import (
+    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
+)
 from .schema_lock import (
     acquire_operation_transaction_lock,
 )
@@ -70,11 +73,16 @@ class SqlCollaborationStore(ICollaborationStore):
             try:
                 with lease.cursor() as cursor:
                     cursor.execute(
-                        "SELECT [DatabaseGuid] FROM [ostv].[DatabaseMetadata]"
+                        "SELECT m.[DatabaseGuid] "
+                        "FROM [ostv].[DatabaseMetadata] m WHERE "
+                        + DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
                     )
                     guid_row = cursor.fetchone()
                     if guid_row is None or guid_row[0] is None:
-                        raise _session_error("SQL collaboration metadata is missing.")
+                        raise _database_identity_error(
+                            "SQL collaboration metadata is missing, duplicated, or "
+                            "does not identify the current database."
+                        )
                     database_guid = _canonical_uuid_text(guid_row[0])
                     try:
                         expected_database_guid = _canonical_uuid_text(

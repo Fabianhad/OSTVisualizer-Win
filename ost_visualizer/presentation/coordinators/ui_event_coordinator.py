@@ -1782,7 +1782,7 @@ class UIEventCoordinator:
             employees, pay_classes = (
                 self._project_read_service.get_employees_and_pay_classes(file_path)
             )
-            used_employee_uids = self._project_read_service.get_estimator_uids_in_use(
+            used_employee_uids = self._project_read_service.get_employee_uids_in_use(
                 file_path
             )
         resources = (
@@ -3363,6 +3363,9 @@ class UIEventCoordinator:
         if active_bid.file_path != database_id:
             return
         if self.project_data.get_bid(active_bid) is not None:
+            self._resolve_bid_lock_state(active_bid)
+            self.ui_access_manager.refresh()
+            self._update_menu_state()
             self.main_window.project_view.restore_bid_selection(active_bid)
             return
         self._on_file_selected(database_id, is_database_root=True)
@@ -4414,19 +4417,19 @@ class UIEventCoordinator:
 
     def _resolve_bid_lock_state(self, bid_ref: BidRef) -> None:
         bid = self.project_data.get_bid(bid_ref)
-        bid_status = bid.status if bid else None
+        bid_status_uid = bid.status_uid if bid else None
         if self._project_write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
         ):
             is_locked = any(
-                status.name == bid_status and status.locked
+                str(status.uid) == str(bid_status_uid) and status.locked
                 for status in self.project_data.get_job_status_snapshot(
                     bid_ref.file_path
                 )
             )
         else:
             is_locked = self._project_read_service.is_bid_locked(
-                bid_ref.file_path, bid_status
+                bid_ref.file_path, bid_status_uid
             )
         self.project_data.set_current_bid_locked(is_locked)
 

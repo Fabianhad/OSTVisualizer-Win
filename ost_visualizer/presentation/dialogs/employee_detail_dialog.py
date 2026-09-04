@@ -11,6 +11,10 @@ from ..config import (
 )
 from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..utils.button_policy import apply_no_highlight_button_policy
+from ..utils.combo_identity import (
+    AmbiguousComboIdentityError,
+    resolve_editable_combo_uid,
+)
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import confirm_not_found, show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
@@ -160,14 +164,9 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
             self.combo_pay_class.addItem(pc.name, pc.uid)
         self.combo_pay_class.blockSignals(False)
 
-    def _find_pay_class_uid_by_name(self, text: str) -> str:
-        if not text:
-            return ""
-        lower = text.lower()
-        return next(
-            (pc.uid for pc in self._pay_classes if pc.name.lower() == lower),
-            "",
-        )
+    def _selected_pay_class_uid(self) -> str:
+        resolved = resolve_editable_combo_uid(self.combo_pay_class)
+        return str(resolved) if resolved is not None else ""
 
     def _select_pay_class_by_uid(self, uid: str) -> None:
         matched_idx = -1
@@ -213,9 +212,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         emp.home_phone = self.edit_home_phone.text().strip()
         emp.mobile_phone = self.edit_mobile_phone.text().strip()
         emp.email = self.edit_email.text().strip()
-        emp.pay_class_uid = self._find_pay_class_uid_by_name(
-            self.combo_pay_class.currentText().strip()
-        )
+        emp.pay_class_uid = self._selected_pay_class_uid()
 
     def _validate_current(self) -> bool:
         errors = []
@@ -227,9 +224,11 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         if not emp_no:
             errors.append("Employee Number is required.")
         else:
+            normalized_employee_no = emp_no.casefold()
             duplicate = any(
                 i != self._current_index
-                and self._employees[i].employee_no.strip() == emp_no
+                and self._employees[i].employee_no.strip().casefold()
+                == normalized_employee_no
                 for i in range(len(self._employees))
             )
             if duplicate:
@@ -242,7 +241,12 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
             )
             return False
         pay_class_text = self.combo_pay_class.currentText().strip()
-        if pay_class_text and not self._find_pay_class_uid_by_name(pay_class_text):
+        try:
+            pay_class_uid = self._selected_pay_class_uid()
+        except AmbiguousComboIdentityError as exc:
+            show_warning(self, "Employee Detail", str(exc))
+            return False
+        if pay_class_text and not pay_class_uid:
             if confirm_not_found(self, pay_class_text):
                 self._open_payroll_class_dialog(initial_name=pay_class_text)
             return False
@@ -283,8 +287,10 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         return self._pay_classes
 
     def _open_payroll_class_dialog(self, initial_name: Optional[str] = None) -> None:
-        current_text = self.combo_pay_class.currentText().strip()
-        current_uid = self._find_pay_class_uid_by_name(current_text)
+        try:
+            current_uid = self._selected_pay_class_uid()
+        except AmbiguousComboIdentityError:
+            current_uid = ""
         pay_classes = [pc.to_pay_class() for pc in self._pay_classes]
         used_uids = {str(e.pay_class_uid) for e in self._employees if e.pay_class_uid}
         dialog = PayrollClassListDialog(

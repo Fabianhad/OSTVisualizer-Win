@@ -870,6 +870,93 @@ def _batch(
 
 
 class SqlCollaborationPhase4Tests(unittest.TestCase):
+    def test_session_rejects_multiple_database_metadata_rows(self):
+        expected_guid = "00000000-0000-0000-0000-000000000123"
+        inserted_sessions = []
+
+        class _Requests:
+            @staticmethod
+            def request(_database_id, *, read_only):
+                self.assertFalse(read_only)
+                return SimpleNamespace(
+                    location=SqlServerDatabaseLocation(
+                        server="localhost",
+                        database="TEST",
+                        database_guid=expected_guid,
+                    )
+                )
+
+        class _Cursor:
+            def __init__(self):
+                self.last_sql = ""
+
+            def execute(self, sql, *parameters):
+                self.last_sql = sql
+                if "INSERT INTO [ostv].[Sessions]" in sql:
+                    inserted_sessions.append(parameters)
+                return self
+
+            def fetchone(self):
+                if "DatabaseMetadata" in self.last_sql:
+                    if "COUNT_BIG(*)" in self.last_sql:
+                        return None
+                    return (expected_guid,)
+                if "CHANGE_TRACKING_CURRENT_VERSION" in self.last_sql:
+                    return (8,)
+                raise AssertionError(self.last_sql)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        class _Lease:
+            def __init__(self):
+                self.commits = 0
+                self.rollbacks = 0
+
+            def cursor(self):
+                return _Cursor()
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        lease = _Lease()
+
+        class _Connections:
+            @contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.assertFalse(autocommit)
+                yield lease
+
+            def assertFalse(self, value):
+                self_test.assertFalse(value)
+
+        self_test = self
+        store = SqlCollaborationStore.__new__(SqlCollaborationStore)
+        store._requests = _Requests()
+        store._connections = _Connections()
+        with self.assertRaisesRegex(
+            SqlInfrastructureError,
+            "metadata is missing",
+        ) as raised:
+            store.start_session(
+                "saved-database-id",
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+                "test-user",
+                "test-machine",
+                "test-version",
+            )
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
+        self.assertEqual(inserted_sessions, [])
+        self.assertEqual(lease.commits, 0)
+        self.assertEqual(lease.rollbacks, 1)
+
     def test_session_rejects_database_recreated_with_saved_connection_identity(self):
         expected_guid = "00000000-0000-0000-0000-000000000123"
         replacement_guid = "00000000-0000-0000-0000-000000000456"
@@ -900,7 +987,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 return self
 
             def fetchone(self):
-                if "SELECT [DatabaseGuid]" in self.last_sql:
+                if "DatabaseMetadata" in self.last_sql:
                     return (replacement_guid,)
                 if "CHANGE_TRACKING_CURRENT_VERSION" in self.last_sql:
                     return (8,)
@@ -955,10 +1042,9 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
         self.assertEqual(inserted_sessions, [])
-        self.assertEqual(
-            statements,
-            ["SELECT [DatabaseGuid] FROM [ostv].[DatabaseMetadata]"],
-        )
+        self.assertEqual(len(statements), 1)
+        self.assertIn("COUNT_BIG(*)", statements[0])
+        self.assertIn("sys.database_recovery_status", statements[0])
         self.assertEqual(lease.commits, 0)
         self.assertEqual(lease.rollbacks, 1)
 
@@ -3628,6 +3714,60 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_job_status_and_employee_hydration_refreshes_hierarchy_displays(self):
+        hierarchy = HierarchyFileEntry(file_path="database")
+        parse_calls = []
+
+        class _Reader:
+            @staticmethod
+            def parse_file_connection(database_id, _connection):
+                parse_calls.append(database_id)
+                return hierarchy, {}
+
+            @staticmethod
+            def _parse_settings_defaults(_connection):
+                return {}
+
+            @staticmethod
+            def _parse_job_statuses(_connection):
+                return (JobStatus("status-1", "Renamed"),)
+
+            @staticmethod
+            def _parse_used_job_status_uids(_connection):
+                return {"status-1"}
+
+            @staticmethod
+            def _parse_employees_and_pay_classes(_connection):
+                return ([Employee("employee-1", first_name="Renamed")], [])
+
+            @staticmethod
+            def _parse_used_employee_uids(_connection):
+                return {"employee-1"}
+
+        reader = SqlRemoteChangeReader.__new__(SqlRemoteChangeReader)
+        reader._reader = _Reader()
+        batch = _batch(
+            "database",
+            "epoch",
+            1,
+            2,
+            (
+                _change(
+                    "database",
+                    ResourceRef("job_statuses_collection", "database"),
+                    1,
+                ),
+                _change(
+                    "database",
+                    ResourceRef("employees_collection", "database"),
+                    2,
+                ),
+            ),
+        )
+        hydrated = reader.hydrate_connection(batch, object())
+        self.assertIs(hydrated.hierarchy_file, hierarchy)
+        self.assertEqual(parse_calls, ["database"])
 
     def test_inactive_database_rejects_incomplete_cover_sheet_hydration(self):
         project_data = _ProjectData("other-database")

@@ -23,6 +23,10 @@ from ...config import (
 )
 from ...managers.icon_manager import IconId, IconManager
 from ...utils.button_policy import apply_no_highlight_button_policy
+from ...utils.combo_identity import (
+    AmbiguousComboIdentityError,
+    resolve_editable_combo_uid,
+)
 from ...utils.dialog import delete_later_if_valid, save_result_refresh_failed
 from ...utils.image_show_mode import (
     SHOW_BOTH,
@@ -1040,20 +1044,25 @@ class CoverSheetDialog(QtWidgets.QDialog):
         _disable_overlay(self.plan_tree.invisibleRootItem())
         self.plan_tree.viewport().update()
 
-    @staticmethod
-    def _combo_has_match(combo: QtWidgets.QComboBox, text: str) -> bool:
-        tl = text.lower()
-        return any(combo.itemText(i).lower() == tl for i in range(combo.count()))
-
     def _on_ok(self) -> None:
         js_text = self.combo_job_status.currentText().strip()
-        if js_text and not self._combo_has_match(self.combo_job_status, js_text):
+        try:
+            js_uid = resolve_editable_combo_uid(self.combo_job_status)
+        except AmbiguousComboIdentityError as exc:
+            show_warning(self, "Cover Sheet", str(exc))
+            return
+        if js_text and js_uid is None:
             self.combo_job_status.lineEdit().clear()
             if confirm_not_found(self, js_text):
                 self._open_job_statuses_dialog(initial_name=js_text)
             return
         est_text = self.combo_estimator.currentText().strip()
-        if est_text and not self._combo_has_match(self.combo_estimator, est_text):
+        try:
+            estimator_uid = resolve_editable_combo_uid(self.combo_estimator)
+        except AmbiguousComboIdentityError as exc:
+            show_warning(self, "Cover Sheet", str(exc))
+            return
+        if est_text and estimator_uid is None:
             self.combo_estimator.lineEdit().clear()
             if confirm_not_found(self, est_text):
                 self._open_employees_dialog(initial_first_name=est_text)
@@ -1078,41 +1087,24 @@ class CoverSheetDialog(QtWidgets.QDialog):
             result = dialog.exec()
             if not isValid(self) or not isValid(dialog):
                 return
-            selected_name = None
+            selected_uid = str(current_uid)
             if result == QtWidgets.QDialog.DialogCode.Accepted:
                 res = dialog.get_result()
-                selected_name = next(
-                    (
-                        s.name
-                        for s in res.items
-                        if str(s.uid) == str(res.selected_uid or "")
-                    ),
-                    None,
-                )
+                selected_uid = str(res.selected_uid or "")
             if self._reload_job_statuses_fn:
                 self.data.job_statuses = self._reload_job_statuses_fn()
             self._replace_combo_items(
                 self.combo_job_status,
                 ((js.name, js.uid) for js in self.data.job_statuses),
             )
-            if selected_name:
-                matched = next(
-                    (
-                        i
-                        for i in range(self.combo_job_status.count())
-                        if self.combo_job_status.itemText(i) == selected_name
-                    ),
-                    -1,
-                )
-            else:
-                matched = next(
-                    (
-                        i
-                        for i in range(self.combo_job_status.count())
-                        if str(self.combo_job_status.itemData(i)) == str(current_uid)
-                    ),
-                    -1,
-                )
+            matched = next(
+                (
+                    i
+                    for i in range(self.combo_job_status.count())
+                    if str(self.combo_job_status.itemData(i)) == selected_uid
+                ),
+                -1,
+            )
             self.combo_job_status.setCurrentIndex(matched)
             if matched == -1:
                 self.combo_job_status.lineEdit().clear()
@@ -1148,33 +1140,24 @@ class CoverSheetDialog(QtWidgets.QDialog):
             result = dialog.exec()
             if not isValid(self) or not isValid(dialog):
                 return
-            selected_name = None
+            selected_uid = str(current_uid)
             if result == QtWidgets.QDialog.DialogCode.Accepted:
                 res = dialog.get_result()
-                selected_name = next(
-                    (
-                        e.display_name
-                        for e in res.items
-                        if str(e.uid) == str(res.selected_uid or "")
-                    ),
-                    None,
-                )
+                selected_uid = str(res.selected_uid or "")
             if self._reload_employees_fn:
                 self._all_employees, self.data.pay_classes = self._reload_employees_fn()
             self._replace_combo_items(
                 self.combo_estimator,
                 ((emp.display_name, emp.uid) for emp in self._all_employees),
             )
-            matched = -1
-            for i in range(self.combo_estimator.count()):
-                if selected_name and self.combo_estimator.itemText(i) == selected_name:
-                    matched = i
-                    break
-                if not selected_name and str(self.combo_estimator.itemData(i)) == str(
-                    current_uid
-                ):
-                    matched = i
-                    break
+            matched = next(
+                (
+                    i
+                    for i in range(self.combo_estimator.count())
+                    if str(self.combo_estimator.itemData(i)) == selected_uid
+                ),
+                -1,
+            )
             self.combo_estimator.setCurrentIndex(matched)
             if matched == -1:
                 self.combo_estimator.lineEdit().clear()
@@ -2227,32 +2210,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
         return QDate.currentDate(), (8, 0)
 
     def get_updates(self) -> dict:
-        js_text = self.combo_job_status.currentText().strip().lower()
-        js_uid = (
-            next(
-                (
-                    self.combo_job_status.itemData(i)
-                    for i in range(self.combo_job_status.count())
-                    if self.combo_job_status.itemText(i).lower() == js_text
-                ),
-                None,
-            )
-            if js_text
-            else None
-        )
-        est_text = self.combo_estimator.currentText().strip().lower()
-        est_uid = (
-            next(
-                (
-                    self.combo_estimator.itemData(i)
-                    for i in range(self.combo_estimator.count())
-                    if self.combo_estimator.itemText(i).lower() == est_text
-                ),
-                None,
-            )
-            if est_text
-            else None
-        )
+        js_uid = resolve_editable_combo_uid(self.combo_job_status)
+        est_uid = resolve_editable_combo_uid(self.combo_estimator)
         qdate = self.date_edit.date()
         time_data = self.combo_time.currentData()
         h, m = time_data if time_data else (8, 0)

@@ -2,13 +2,23 @@ import datetime
 import uuid
 from typing import Dict, List, Optional
 import pyodbc
+from ...database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+    persist_next_bid_number,
+    require_writable_bid_number_allocator,
+)
+from ...database.page_area_selection import canonicalize_page_area_settings
+from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ..schema_contract import BID_SECTIONS, BID_TAIL_SECTIONS, PAGE_SECTIONS
 from .constants import (
+    COVER_SHEET_PAGE_SELECTION_TYPE,
     HANDLED_SEPARATELY,
+    LEGACY_BID_TABLES_COPIED_BY_DUPLICATION,
     PAGE_DELETE_CHILD_TABLES,
     TAKEOFF_REFERENCE_TABLES,
 )
-from ..raw_bid_integrity import RAW_BID_RELATIONSHIPS
+from ..raw_bid_integrity import BID_RELATIONSHIPS
 from .serialization import coerce_binary_column_value, encode_text_blob
 from .identity_allocation import AccessIdentityAllocationMixin
 from .sql_helpers import placeholders
@@ -29,10 +39,7 @@ _BID_SCOPED_PRE = (
     "BidConditionUser",
     "BidPlanRooms",
 )
-_PAGE_SCOPED = (
-    "BidPercents",
-    *PAGE_DELETE_CHILD_TABLES,
-)
+_PAGE_SCOPED = PAGE_DELETE_CHILD_TABLES
 _BID_SCOPED_POST = (
     "BidHotLinks",
     "BidNamedViews",
@@ -52,6 +59,14 @@ _BID_SCOPED_POST = (
 
 
 class BidOperationsMixin(AccessIdentityAllocationMixin):
+    @staticmethod
+    def _global_settings_read_table_sql() -> str:
+        return "[Settings]"
+
+    @staticmethod
+    def _global_settings_write_table_sql() -> str:
+        return "[Settings]"
+
     def delete_bids(self, db_path: str, bid_uids: List[str]) -> bool:
         if not bid_uids:
             return True
@@ -228,17 +243,18 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 if not source_row:
                     return None
                 bid_data = dict(zip(cols, source_row))
-                next_bid_no = 1
-                if not schema.optional_table_missing(
-                    "Settings"
-                ) and schema.column_exists("Settings", "NextBidNo"):
-                    cursor.execute("SELECT [NextBidNo] FROM [Settings]")
-                    settings_row = cursor.fetchone()
-                    next_bid_no = (
-                        int(settings_row[0])
-                        if (settings_row and settings_row[0] is not None)
-                        else 1
-                    )
+                if not schema.optional_table_missing("BidSettings"):
+                    schema.require_column("BidSettings", "BidUID")
+                    fetch_optional_bid_settings_row(cursor, bid_uid, ("BidUID",))
+                require_writable_bid_number_allocator(schema)
+                settings_row = fetch_optional_global_settings_row(
+                    cursor,
+                    "[NextBidNo]",
+                    table_sql=self._global_settings_read_table_sql(),
+                )
+                next_bid_no = normalize_next_bid_number(
+                    settings_row[0] if settings_row is not None else None
+                )
                 now = datetime.datetime.now()
                 new_guid = "{" + str(uuid.uuid4()).upper() + "}"
                 new_bid_uid_int = self._next_uid(cursor, "Bids")
@@ -249,6 +265,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     "GUID": new_guid,
                     "CopyFromBidNO": bid_data.get("BidNo"),
                     "CopyTimeStamp": now,
+                    "CreateDateTime": now,
                     "ModDateTime": now,
                 }
                 self._execute_insert_values(
@@ -277,19 +294,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     ]
                     + list(HANDLED_SEPARATELY - _uid_map_tables)
                     + [t for t in BID_TAIL_SECTIONS if t not in HANDLED_SEPARATELY]
-                    + [
-                        "AffectDPCTypGroupViews",
-                        "BidLaborCostCodeTotals",
-                        "BidTypicalGroupTotals",
-                        "Boost",
-                        "DPCCalcFilter",
-                        "BidLaborActivity",
-                        "BidLaborCostCodes",
-                        "BidDPCSubscribers",
-                        "BidEmployees",
-                        "BidNotes",
-                        "BidTimeCardStates",
-                    ]
+                    + list(LEGACY_BID_TABLES_COPIED_BY_DUPLICATION)
                 )
                 for table in bid_tables:
                     duplicated_uid_maps.setdefault(table, {}).update(
@@ -346,6 +351,8 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     page_data = dict(zip(page_cols, page_row))
                     old_page_uid = str(int(page_data["UID"]))
                     new_page_uid_int = self._next_uid(cursor, "BidPages")
+                    if "GUID" in page_data:
+                        page_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                     page_values = [
                         (
                             new_page_uid_int
@@ -381,12 +388,19 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 self._remap_duplicated_relationships(
                     cursor, schema, duplicated_uid_maps, new_bid_uid
                 )
-                if not schema.optional_table_missing(
-                    "Settings"
-                ) and schema.column_exists("Settings", "NextBidNo"):
-                    cursor.execute(
-                        "UPDATE [Settings] SET [NextBidNo] = ?", next_bid_no + 1
-                    )
+                self._remap_duplicated_cover_sheet_selection(
+                    cursor,
+                    schema,
+                    bid_data,
+                    page_uid_map,
+                    new_bid_uid,
+                )
+                persist_next_bid_number(
+                    cursor,
+                    settings_row,
+                    next_bid_no + 1,
+                    table_sql=self._global_settings_write_table_sql(),
+                )
                 return new_bid_uid
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
@@ -401,27 +415,28 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "Bids", ("UID", "JobName"))
+                require_writable_bid_number_allocator(schema)
                 cursor = conn.cursor()
                 settings_row = None
-                if not schema.optional_table_missing("Settings"):
-                    settings_select = ", ".join(
-                        [
-                            schema.optional_column("Settings", "NextBidNo", "1"),
-                            schema.optional_column("Settings", "ScaleStyle", "1"),
-                            schema.optional_column("Settings", "ScaleFactor1", "0.125"),
-                            schema.optional_column("Settings", "ScaleFactor2", "12"),
-                            schema.optional_column("Settings", "PageWidth", "42"),
-                            schema.optional_column("Settings", "PageHeight", "30"),
-                            schema.optional_column("Settings", "MeasureBase", "0"),
-                            schema.optional_column(
-                                "Settings", "TakeoffIncrements", "1"
-                            ),
-                        ]
-                    )
-                    cursor.execute(f"SELECT {settings_select} FROM [Settings]")
-                    settings_row = cursor.fetchone()
+                settings_select = ", ".join(
+                    [
+                        schema.optional_column("Settings", "NextBidNo", "1"),
+                        schema.optional_column("Settings", "ScaleStyle", "1"),
+                        schema.optional_column("Settings", "ScaleFactor1", "0.125"),
+                        schema.optional_column("Settings", "ScaleFactor2", "12"),
+                        schema.optional_column("Settings", "PageWidth", "42"),
+                        schema.optional_column("Settings", "PageHeight", "30"),
+                        schema.optional_column("Settings", "MeasureBase", "0"),
+                        schema.optional_column("Settings", "TakeoffIncrements", "1"),
+                    ]
+                )
+                settings_row = fetch_optional_global_settings_row(
+                    cursor,
+                    settings_select,
+                    table_sql=self._global_settings_read_table_sql(),
+                )
                 if settings_row:
-                    next_bid_no = int(settings_row.NextBidNo or 1)
+                    next_bid_no = normalize_next_bid_number(settings_row.NextBidNo)
                     def_scale_style = settings_row.ScaleStyle or 1
                     def_sf1 = settings_row.ScaleFactor1 or 0.125
                     def_sf2 = settings_row.ScaleFactor2 or 12.0
@@ -629,12 +644,12 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         "create_bid_cover_sheet_selection",
                         allow_empty=True,
                     )
-                if not schema.optional_table_missing(
-                    "Settings"
-                ) and schema.column_exists("Settings", "NextBidNo"):
-                    cursor.execute(
-                        "UPDATE [Settings] SET [NextBidNo] = ?", next_bid_no + 1
-                    )
+                persist_next_bid_number(
+                    cursor,
+                    settings_row,
+                    next_bid_no + 1,
+                    table_sql=self._global_settings_write_table_sql(),
+                )
                 return str(new_bid_uid)
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
@@ -667,16 +682,19 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 old_uid,
             )
             binary_cols = {d[0] for d in cursor.description if d[1] is bytearray}
-            rows = cursor.fetchall()
+            rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
             if not rows:
                 return uid_map
+            if table == "BidPageSettings":
+                rows = canonicalize_page_area_settings(rows)
             has_uid = "UID" in cols
             insert_cols = cols
-            for row in rows:
-                row_data = dict(zip(cols, row))
+            for row_data in rows:
                 row_data[uid_col] = new_uid
                 if extra_overrides:
                     row_data.update(extra_overrides)
+                if "GUID" in row_data:
+                    row_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                 if has_uid:
                     old_row_uid = str(int(row_data["UID"]))
                     new_row_uid = self._next_uid(cursor, table)
@@ -709,10 +727,10 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         duplicated_uid_maps: Dict[str, Dict[str, str]],
         new_bid_uid: str,
     ) -> None:
-        for relationship in RAW_BID_RELATIONSHIPS:
+        for relationship in BID_RELATIONSHIPS:
             parent_uid_map = duplicated_uid_maps.get(relationship.parent_table, {})
             child_uid_map = duplicated_uid_maps.get(relationship.child_table, {})
-            if not parent_uid_map or not child_uid_map:
+            if not parent_uid_map:
                 continue
             if schema.column_exists(relationship.child_table, "BidUID"):
                 where_columns = ("BidUID", relationship.child_column)
@@ -724,6 +742,8 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     for new_page_uid in duplicated_uid_maps.get("BidPages", {}).values()
                 )
             else:
+                if not child_uid_map:
+                    continue
                 where_columns = ("UID", relationship.child_column)
                 scopes = tuple(
                     (new_child_uid,) for new_child_uid in child_uid_map.values()
@@ -739,6 +759,36 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         where_columns,
                         (*scope, old_parent_uid),
                     )
+
+    def _remap_duplicated_cover_sheet_selection(
+        self,
+        cursor,
+        schema,
+        source_bid: Dict[str, object],
+        page_uid_map: Dict[str, str],
+        new_bid_uid: str,
+    ) -> None:
+        try:
+            selection_type = int(source_bid.get("CoverSheetSelItemType") or 0)
+        except (TypeError, ValueError):
+            return
+        if selection_type != COVER_SHEET_PAGE_SELECTION_TYPE:
+            return
+        try:
+            selected_uid = str(int(source_bid.get("CoverSheetSelItemUID") or 0))
+        except (TypeError, ValueError):
+            new_selected_uid = None
+        else:
+            new_selected_uid = page_uid_map.get(selected_uid)
+        self._update_if_columns(
+            cursor,
+            schema,
+            "Bids",
+            "CoverSheetSelItemUID",
+            new_selected_uid,
+            ("UID",),
+            (new_bid_uid,),
+        )
 
     def _copy_with_uid_map(
         self,
@@ -772,6 +822,8 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 new_row_uid_int = self._next_uid(cursor, table)
                 row_data["UID"] = new_row_uid_int
                 row_data[uid_col] = new_uid
+                if "GUID" in row_data:
+                    row_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                 values = []
                 for c in insert_cols:
                     val = row_data[c]

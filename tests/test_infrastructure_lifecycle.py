@@ -38,6 +38,9 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.components.settings_reader import (
+    SettingsReaderMixin,
+)
 from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
     TakeoffOperationsMixin,
 )
@@ -45,6 +48,7 @@ from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
 from ost_visualizer.infrastructure.services.license_validation_scheduler import (
     LicenseValidationScheduler,
 )
+from ost_visualizer.domain.entities.area import BidAreaChangeset
 
 
 class _SqliteCursorWrapper:
@@ -55,6 +59,12 @@ class _SqliteCursorWrapper:
     def execute(self, query, *params):
         self._cursor = self._connection.execute(query, params)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return False
+
     def fetchone(self):
         if self._cursor is None:
             return None
@@ -63,6 +73,15 @@ class _SqliteCursorWrapper:
             return row
         columns = [description[0] for description in self._cursor.description]
         return _SqliteRow(columns, row)
+
+    def fetchall(self):
+        if self._cursor is None:
+            return []
+        rows = self._cursor.fetchall()
+        if self._cursor.description is None:
+            return rows
+        columns = [description[0] for description in self._cursor.description]
+        return [_SqliteRow(columns, row) for row in rows]
 
     @property
     def rowcount(self):
@@ -122,6 +141,7 @@ class _SqliteSchema:
 class _SqliteMdbOps(
     AccessBulkWriteMixin,
     BidOperationsMixin,
+    ConditionOperationsMixin,
     ConditionFolderOperationsMixin,
     LayerOperationsMixin,
     SettingsOperationsMixin,
@@ -861,6 +881,83 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             ).fetchone()[0]
         )
 
+    def test_save_bid_selected_page_rejects_multiple_settings_rows(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER PRIMARY KEY, BidUID INTEGER)")
+        conn.execute(
+            """
+            CREATE TABLE BidSettings (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageSelectedUID INTEGER
+            )
+            """
+        )
+        conn.execute("INSERT INTO Bids (UID) VALUES (1)")
+        conn.execute("INSERT INTO BidPages (UID, BidUID) VALUES (10, 1)")
+        conn.execute("INSERT INTO BidPages (UID, BidUID) VALUES (11, 1)")
+        conn.execute(
+            "INSERT INTO BidSettings (UID, BidUID, BidPageSelectedUID) "
+            "VALUES (20, 1, 10)"
+        )
+        conn.execute(
+            "INSERT INTO BidSettings (UID, BidUID, BidPageSelectedUID) "
+            "VALUES (21, 1, 11)"
+        )
+        self.assertFalse(
+            _SqliteMdbOps(conn).save_bid_selected_page("bid.mdb", "1", "11")
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidPageSelectedUID FROM BidSettings ORDER BY UID"
+            ).fetchall(),
+            [(20, 10), (21, 11)],
+        )
+
+    def test_save_bid_selected_page_creates_missing_legacy_settings_row(self):
+        class Ops(_SqliteMdbOps):
+            @staticmethod
+            def _execute_insert_values(
+                cursor,
+                schema,
+                table,
+                values,
+                required_columns,
+                _operation,
+            ):
+                for column in required_columns:
+                    if not schema.column_exists(table, column):
+                        raise RuntimeError(f"Missing {table}.{column}")
+                filtered = {
+                    column: value
+                    for column, value in values.items()
+                    if schema.column_exists(table, column)
+                }
+                columns = tuple(filtered)
+                cursor.execute(
+                    f"INSERT INTO [{table}] "
+                    f"({', '.join(f'[{column}]' for column in columns)}) "
+                    f"VALUES ({', '.join('?' for _column in columns)})",
+                    *(filtered[column] for column in columns),
+                )
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER PRIMARY KEY, BidUID INTEGER)")
+        conn.execute(
+            "CREATE TABLE BidSettings (" "BidUID INTEGER, BidPageSelectedUID INTEGER)"
+        )
+        conn.execute("INSERT INTO Bids (UID) VALUES (1)")
+        conn.execute("INSERT INTO BidPages (UID, BidUID) VALUES (10, 1)")
+        self.assertTrue(Ops(conn).save_bid_selected_page("bid.mdb", "1", "10"))
+        self.assertEqual(
+            conn.execute(
+                "SELECT BidUID, BidPageSelectedUID FROM BidSettings"
+            ).fetchall(),
+            [(1, 10)],
+        )
+
     def test_delete_page_clears_bid_settings_selected_page_before_page_delete(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -895,6 +992,32 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 "SELECT BidPageSelectedUID FROM BidSettings WHERE UID = 2"
             ).fetchone()[0]
         )
+
+    def test_delete_page_clears_only_page_typed_cover_sheet_selection(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE Bids ("
+            "UID INTEGER PRIMARY KEY, "
+            "CoverSheetSelItemType INTEGER, "
+            "CoverSheetSelItemUID INTEGER)"
+        )
+        conn.execute("CREATE TABLE BidPages (UID INTEGER PRIMARY KEY, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidPages (UID, BidUID) VALUES (10, 1)")
+        conn.execute(
+            "INSERT INTO Bids "
+            "(UID, CoverSheetSelItemType, CoverSheetSelItemUID) "
+            "VALUES (1, 1, 10)"
+        )
+        conn.execute(
+            "INSERT INTO Bids "
+            "(UID, CoverSheetSelItemType, CoverSheetSelItemUID) "
+            "VALUES (2, 2, 10)"
+        )
+        self.assertTrue(_SqliteMdbOps(conn).delete_pages("bid.mdb", ["10"]))
+        rows = conn.execute(
+            "SELECT UID, CoverSheetSelItemUID FROM Bids ORDER BY UID"
+        ).fetchall()
+        self.assertEqual(rows, [(1, None), (2, 10)])
 
     def test_delete_pages_preserves_conditions_uoms_and_remaining_takeoffs(self):
         conn = sqlite3.connect(":memory:")
@@ -964,6 +1087,170 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             0,
         )
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages").fetchone()[0], 0)
+
+    def test_delete_page_removes_all_ancillary_page_dependents(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE BidTypGroupViews ("
+            "UID INTEGER PRIMARY KEY, BidPageUID INTEGER REFERENCES BidPages(UID))"
+        )
+        conn.execute(
+            "CREATE TABLE AffectDPCTypGroupViews ("
+            "UID INTEGER PRIMARY KEY, BidTypGroupViewUID INTEGER "
+            "REFERENCES BidTypGroupViews(UID))"
+        )
+        conn.execute("INSERT INTO BidPages (UID) VALUES (10)")
+        for table in (
+            "BidPercents",
+            "BidTakeoffTotals",
+            "BidLaborCostCodeTotals",
+            "BidTypicalGroupTotals",
+            "Boost",
+            "DPCCalcFilter",
+        ):
+            conn.execute(
+                f"CREATE TABLE {table} (UID INTEGER PRIMARY KEY, "
+                "BidPageUID INTEGER REFERENCES BidPages(UID))"
+            )
+            conn.execute(
+                f"INSERT INTO {table} (UID, BidPageUID) VALUES (?, 10)",
+                (100 + len(table),),
+            )
+        conn.execute("INSERT INTO BidTypGroupViews (UID, BidPageUID) VALUES (20, 10)")
+        conn.execute(
+            "INSERT INTO AffectDPCTypGroupViews "
+            "(UID, BidTypGroupViewUID) VALUES (30, 20)"
+        )
+        self.assertTrue(_SqliteMdbOps(conn).delete_pages("bid.mdb", ["10"]))
+        for table in (
+            "AffectDPCTypGroupViews",
+            "BidTypGroupViews",
+            "BidPercents",
+            "BidTakeoffTotals",
+            "BidLaborCostCodeTotals",
+            "BidTypicalGroupTotals",
+            "Boost",
+            "DPCCalcFilter",
+            "BidPages",
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0
+                )
+
+    def test_delete_condition_removes_all_ancillary_condition_dependents(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            "CREATE TABLE BidConditions (UID INTEGER PRIMARY KEY, BidUID INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE BidLaborActivity ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidConditionUID INTEGER "
+            "REFERENCES BidConditions(UID))"
+        )
+        conn.execute(
+            "CREATE TABLE BidPercents ("
+            "UID INTEGER PRIMARY KEY, BidLaborActivityUID INTEGER "
+            "REFERENCES BidLaborActivity(UID))"
+        )
+        conn.execute(
+            "CREATE TABLE BidTypGroupViews ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidConditionUID INTEGER "
+            "REFERENCES BidConditions(UID))"
+        )
+        conn.execute(
+            "CREATE TABLE AffectDPCTypGroupViews ("
+            "UID INTEGER PRIMARY KEY, BidTypGroupViewUID INTEGER "
+            "REFERENCES BidTypGroupViews(UID))"
+        )
+        conn.execute("INSERT INTO BidConditions (UID, BidUID) VALUES (10, 1)")
+        for table in ("BidTakeoffTotals", "BidTypicalGroupTotals"):
+            conn.execute(
+                f"CREATE TABLE {table} (UID INTEGER PRIMARY KEY, BidUID INTEGER, "
+                "BidConditionUID INTEGER REFERENCES BidConditions(UID))"
+            )
+            conn.execute(
+                f"INSERT INTO {table} (UID, BidUID, BidConditionUID) "
+                "VALUES (?, 1, 10)",
+                (100 + len(table),),
+            )
+        conn.execute(
+            "INSERT INTO BidLaborActivity "
+            "(UID, BidUID, BidConditionUID) VALUES (20, 1, 10)"
+        )
+        conn.execute(
+            "INSERT INTO BidPercents (UID, BidLaborActivityUID) VALUES (30, 20)"
+        )
+        conn.execute(
+            "INSERT INTO BidTypGroupViews "
+            "(UID, BidUID, BidConditionUID) VALUES (40, 1, 10)"
+        )
+        conn.execute(
+            "INSERT INTO AffectDPCTypGroupViews "
+            "(UID, BidTypGroupViewUID) VALUES (50, 40)"
+        )
+        self.assertTrue(_SqliteMdbOps(conn).delete_conditions("bid.mdb", "1", ["10"]))
+        for table in (
+            "BidPercents",
+            "BidLaborActivity",
+            "AffectDPCTypGroupViews",
+            "BidTypGroupViews",
+            "BidTakeoffTotals",
+            "BidTypicalGroupTotals",
+            "BidConditions",
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0
+                )
+
+    def test_delete_area_removes_all_ancillary_area_dependents(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("CREATE TABLE BidAreas (UID INTEGER PRIMARY KEY, BidUID INTEGER)")
+        conn.execute(
+            "CREATE TABLE BidAreaTranslations ("
+            "UID INTEGER PRIMARY KEY, MasterAreaUID INTEGER REFERENCES BidAreas(UID), "
+            "TranslateAreaUID INTEGER REFERENCES BidAreas(UID))"
+        )
+        conn.execute("INSERT INTO BidAreas (UID, BidUID) VALUES (10, 1)")
+        for table in (
+            "BidTakeoffTotals",
+            "BidLaborCostCodeTotals",
+            "BidTypicalGroupTotals",
+        ):
+            conn.execute(
+                f"CREATE TABLE {table} (UID INTEGER PRIMARY KEY, "
+                "BidAreaUID INTEGER REFERENCES BidAreas(UID))"
+            )
+            conn.execute(
+                f"INSERT INTO {table} (UID, BidAreaUID) VALUES (?, 10)",
+                (100 + len(table),),
+            )
+        conn.execute(
+            "INSERT INTO BidAreaTranslations "
+            "(UID, MasterAreaUID, TranslateAreaUID) VALUES (20, 10, 10)"
+        )
+        result = _SqliteMdbOps(conn).save_bid_areas(
+            "bid.mdb",
+            "1",
+            BidAreaChangeset(new=[], updated=[], deleted_uids=["10"]),
+        )
+        self.assertEqual(result, {})
+        for table in (
+            "BidAreaTranslations",
+            "BidTakeoffTotals",
+            "BidLaborCostCodeTotals",
+            "BidTypicalGroupTotals",
+            "BidAreas",
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0
+                )
 
     def test_delete_layer_clears_indexed_annotation_shape_layer_refs(self):
         conn = sqlite3.connect(":memory:")
@@ -1194,6 +1481,66 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             "SELECT EmployeeNo, FirstName, LastName FROM Employees WHERE UID=8"
         ).fetchone()
         self.assertEqual(inserted, ("E2", "Mia", "Ray"))
+
+    def test_used_employee_uids_include_all_direct_bid_roles(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE Bids ("
+            "UID INTEGER PRIMARY KEY, EstimatorUID INTEGER, "
+            "PrManagerUID INTEGER, JobSiteManagerUID INTEGER)"
+        )
+        conn.execute("INSERT INTO Bids VALUES (1, 10, 20, 30)")
+        used = SettingsReaderMixin._parse_used_employee_uids(
+            _SqliteMdbOps(conn), _SqliteConnectionWrapper(conn)
+        )
+        self.assertEqual(used, {"10", "20", "30"})
+
+    def test_delete_employee_clears_all_direct_bid_roles(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Employees (UID INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE Bids ("
+            "UID INTEGER PRIMARY KEY, EstimatorUID INTEGER, "
+            "PrManagerUID INTEGER, JobSiteManagerUID INTEGER)"
+        )
+        conn.execute("INSERT INTO Employees VALUES (7)")
+        conn.execute("INSERT INTO Bids VALUES (1, 7, 7, 7)")
+        result = _SqliteMdbOps(conn).save_employees(
+            "bid.mdb", {"new": [], "updated": [], "deleted_uids": ["7"]}
+        )
+        self.assertEqual(result, {})
+        self.assertEqual(
+            conn.execute(
+                "SELECT EstimatorUID, PrManagerUID, JobSiteManagerUID FROM Bids"
+            ).fetchone(),
+            (None, None, None),
+        )
+
+    def test_delete_employee_removes_subscribers_through_bid_employee_identity(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Employees (UID INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE BidEmployees ("
+            "UID INTEGER PRIMARY KEY, EmployeeUID INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE BidDPCSubscribers ("
+            "UID INTEGER PRIMARY KEY, BidEmployeeUID INTEGER)"
+        )
+        conn.execute("INSERT INTO Employees VALUES (7)")
+        conn.execute("INSERT INTO BidEmployees VALUES (70, 7)")
+        conn.execute("INSERT INTO BidDPCSubscribers VALUES (700, 70)")
+        result = _SqliteMdbOps(conn).save_employees(
+            "bid.mdb", {"new": [], "updated": [], "deleted_uids": ["7"]}
+        )
+        self.assertEqual(result, {})
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidDPCSubscribers").fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidEmployees").fetchone()[0], 0
+        )
 
     def test_delete_parent_takeoff_clears_child_parent_uid(self):
         conn = sqlite3.connect(":memory:")

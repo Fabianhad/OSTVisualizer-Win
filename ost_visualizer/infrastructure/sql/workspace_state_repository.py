@@ -13,6 +13,9 @@ from ...application.interfaces.i_sql_workspace_state_repository import (
     ISqlWorkspaceStateRepository,
 )
 from .connection_manager import SqlConnectionManager
+from .database_metadata_contract import (
+    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
+)
 from .descriptor_connection import SqlDescriptorConnectionFactory
 
 
@@ -176,7 +179,8 @@ class SqlWorkspaceStateRepository(ISqlWorkspaceStateRepository):
             "SELECT [DatabaseGuid], "
             "CONVERT(varbinary(85), SUSER_SID(ORIGINAL_LOGIN())), "
             "CONVERT(nvarchar(256), ORIGINAL_LOGIN()) "
-            "FROM [ostv].[DatabaseMetadata]"
+            "FROM [ostv].[DatabaseMetadata] m WHERE "
+            + DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
         )
         row = cursor.fetchone()
         if row is None or row[1] is None or not str(row[2]).strip():

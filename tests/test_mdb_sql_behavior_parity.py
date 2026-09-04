@@ -131,9 +131,12 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         locked_values = []
         coordinator = SimpleNamespace(
             project_data=SimpleNamespace(
-                get_bid=lambda _bid_ref: SimpleNamespace(status="Locked"),
+                get_bid=lambda _bid_ref: SimpleNamespace(
+                    status="Duplicate", status_uid="status-locked"
+                ),
                 get_job_status_snapshot=lambda _database_id: [
-                    JobStatus(uid="status-1", name="Locked", locked=True)
+                    JobStatus(uid="status-unlocked", name="Duplicate", locked=False),
+                    JobStatus(uid="status-locked", name="Duplicate", locked=True),
                 ],
                 set_current_bid_locked=locked_values.append,
             ),
@@ -156,7 +159,9 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         read_calls = []
         coordinator = SimpleNamespace(
             project_data=SimpleNamespace(
-                get_bid=lambda _bid_ref: SimpleNamespace(status="Locked"),
+                get_bid=lambda _bid_ref: SimpleNamespace(
+                    status="Duplicate", status_uid="status-locked"
+                ),
                 get_job_status_snapshot=lambda _database_id: self.fail(
                     "MDB lock state must retain its local reader strategy"
                 ),
@@ -174,7 +179,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         UIEventCoordinator._resolve_bid_lock_state(
             coordinator, BidRef("local.mdb", "bid-1")
         )
-        self.assertEqual(read_calls, [("local.mdb", "Locked")])
+        self.assertEqual(read_calls, [("local.mdb", "status-locked")])
         self.assertEqual(locked_values, [True])
 
     def test_main_sql_scale_failure_restores_only_its_current_page(self):

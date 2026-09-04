@@ -34,6 +34,7 @@ from ost_visualizer.domain.entities.cover_sheet import (
     CoverSheetData,
     CoverSheetFolder,
     CoverSheetPage,
+    JobStatus,
 )
 from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.domain.entities.identity_refs import BidRef
@@ -59,6 +60,9 @@ from ost_visualizer.infrastructure.mdb.components.settings_reader import (
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
 from ost_visualizer.presentation.dialogs.cover_sheet.pdf_metadata_loader import (
     PdfMetadataSnapshot,
+)
+from ost_visualizer.presentation.dtos.picker_dialog_result_dto import (
+    PickerDialogResult,
 )
 from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
@@ -2765,6 +2769,29 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_cover_sheet_page_and_folder_with_same_uid_remain_typed(self):
+        data = _cover_sheet_data()
+        page = data.pages_without_folder[0]
+        page.uid = "shared"
+        data.folders["shared"] = CoverSheetFolder(uid="shared", name="Folder")
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            page_item = dialog._page_items["shared"]
+            folder_item = dialog._folder_items["shared"]
+            self.assertEqual(page_item.data(0, dialog._ITEM_ROLE), ("page", "shared"))
+            self.assertEqual(
+                folder_item.data(0, dialog._ITEM_ROLE), ("folder", "shared")
+            )
+            dialog.plan_tree.setCurrentItem(page_item)
+            dialog._delete_selected()
+            self.assertIn("shared", dialog._folder_items)
+            self.assertNotIn("shared", dialog._page_items)
+            self.assertEqual(dialog.get_updates()["deleted_page_uids"], ["shared"])
+            self.assertEqual(dialog.get_updates()["deleted_folder_uids"], [])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_cover_sheet_duplicate_reuses_external_reference_without_copying(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "drawing.pdf"
@@ -3390,8 +3417,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             + 1  # BidTakeoffs
             + 2  # BidHotLinks
             + 1  # BidNamedViews
-            + 2  # aggregate tables
+            + 1  # indirect typical-group-view dependents
             + 1  # selected-page reference
+            + 1  # page-typed Cover Sheet selection
             + 1  # BidPages
         )
         self.assertTrue(success)
@@ -3422,7 +3450,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             def get_cover_sheet_data(self, _file_path, _bid_uid):
                 return _cover_sheet_data()
 
-            def get_estimator_uids_in_use(self, _file_path):
+            def get_employee_uids_in_use(self, _file_path):
                 return set()
 
             def get_pages_with_takeoffs(self, _file_path, _bid_uid):
@@ -4473,6 +4501,142 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             self.assertTrue(dialog.combo_estimator.signalsBlocked())
         finally:
             dialog.combo_estimator.blockSignals(False)
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_job_status_picker_reselects_duplicate_name_by_uid(self):
+        data = _cover_sheet_data()
+        data.job_status_uid = "status-1"
+        data.job_statuses = [
+            JobStatus(uid="status-1", name="Open"),
+            JobStatus(uid="status-2", name="Open"),
+        ]
+
+        class AcceptedJobStatusesDialog:
+            def __init__(self, *_args, **_call_options):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_result(self):
+                return PickerDialogResult(
+                    selected_uid="status-2",
+                    items=list(data.job_statuses),
+                )
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            data,
+            reload_job_statuses_fn=lambda: list(data.job_statuses),
+        )
+        try:
+            from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+            with mock.patch.object(
+                module,
+                "JobStatusesDialog",
+                AcceptedJobStatusesDialog,
+            ):
+                dialog._open_job_statuses_dialog()
+            self.assertEqual(dialog.combo_job_status.currentData(), "status-2")
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_employee_picker_reselects_duplicate_display_name_by_uid(self):
+        data = _cover_sheet_data()
+        data.estimator_uid = "emp-1"
+        data.employees = [
+            Employee(uid="emp-1", first_name="Alex", last_name="Smith"),
+            Employee(uid="emp-2", first_name="Alex", last_name="Smith"),
+        ]
+
+        class AcceptedEmployeesDialog:
+            def __init__(self, *_args, **_call_options):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_result(self):
+                return PickerDialogResult(
+                    selected_uid="emp-2",
+                    items=list(data.employees),
+                )
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            data,
+            reload_employees_fn=lambda: (list(data.employees), data.pay_classes),
+        )
+        try:
+            from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+            with mock.patch.object(
+                module,
+                "EmployeesDialog",
+                AcceptedEmployeesDialog,
+            ):
+                dialog._open_employees_dialog()
+            self.assertEqual(dialog.combo_estimator.currentData(), "emp-2")
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_save_preserves_selected_duplicate_master_uids(self):
+        data = _cover_sheet_data()
+        data.job_status_uid = "2"
+        data.estimator_uid = "12"
+        data.job_statuses = [
+            JobStatus(uid="1", name="Open"),
+            JobStatus(uid="2", name="Open"),
+        ]
+        data.employees = [
+            Employee(uid="11", first_name="Alex", last_name="Smith"),
+            Employee(uid="12", first_name="Alex", last_name="Smith"),
+        ]
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            updates = dialog.get_updates()
+            self.assertEqual(updates["job_status_uid"], 2)
+            self.assertEqual(updates["estimator_uid"], 12)
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_rejects_typed_ambiguous_master_name(self):
+        data = _cover_sheet_data()
+        data.job_statuses = [
+            JobStatus(uid="1", name="Open"),
+            JobStatus(uid="2", name="Open"),
+        ]
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            dialog.combo_job_status.setCurrentIndex(-1)
+            dialog.combo_job_status.setEditText("Open")
+            with mock.patch(
+                "ost_visualizer.presentation.dialogs.cover_sheet.dialog.show_warning"
+            ) as warning:
+                dialog._on_ok()
+            self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            warning.assert_called_once()
+            self.assertIn("matches more than one item", warning.call_args.args[2])
+        finally:
             dialog.close()
             dialog.deleteLater()
 

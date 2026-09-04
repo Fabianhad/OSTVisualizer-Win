@@ -30,6 +30,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         parent: Optional[QtWidgets.QWidget] = None,
         condition_types: Optional[List[CdnType]] = None,
         current_name: str = "",
+        current_uid: str = "",
         save_fn: Optional[Callable[[dict], Optional[Dict[str, str]]]] = None,
         save_async_fn=None,
         blocked_delete_uids_fn: Optional[Callable[[List[str]], Set[str]]] = None,
@@ -47,6 +48,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._delete_fn = delete_fn
         self._reload_fn = reload_fn
         self._selected_name: str = ""
+        self._selected_uid: str = ""
         self._has_license: bool = has_license
         self._interactive_requested: bool = has_license
         self._is_interactive: bool = has_license
@@ -57,7 +59,10 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._pending_new_prev_uid: Optional[str] = None
         self._pending_new_editor_connected = False
         self._setup_ui()
-        self._populate(select_name=current_name.strip())
+        self._populate(
+            select_uid=current_uid or None,
+            select_name=current_name.strip(),
+        )
         self._header_controller = PersistentHeaderController(
             self.tree,
             "condition_types",
@@ -170,7 +175,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             uid = str(item.data(0, self._UID_ROLE))
             name = item.text(0).strip().lower()
             if (select_uid and uid == str(select_uid)) or (
-                wanted_name and name == wanted_name
+                not select_uid and wanted_name and name == wanted_name
             ):
                 self.tree.setCurrentItem(item)
                 self.tree.scrollToItem(item)
@@ -470,6 +475,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             return
         item = selected[0]
         self._selected_name = item.text(0)
+        self._selected_uid = str(item.data(0, self._UID_ROLE))
         self.accept()
 
     def _on_accept_clicked(self) -> None:
@@ -553,6 +559,9 @@ class ConditionTypesDialog(QtWidgets.QDialog):
 
     def selected_name(self) -> str:
         return self._selected_name
+
+    def selected_uid(self) -> str:
+        return self._selected_uid
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

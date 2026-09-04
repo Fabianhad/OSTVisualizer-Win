@@ -129,7 +129,7 @@ class CoverSheetHandler:
             used_employee_uids = self._project_data.get_used_employee_uids(file_path)
             bid_areas = self._project_data.get_bid_area_snapshot()
         else:
-            used_employee_uids = self._read_service.get_estimator_uids_in_use(file_path)
+            used_employee_uids = self._read_service.get_employee_uids_in_use(file_path)
             bid_areas = []
         pages_with_takeoffs = (
             {

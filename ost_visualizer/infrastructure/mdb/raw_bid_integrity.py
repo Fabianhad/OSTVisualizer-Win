@@ -69,7 +69,25 @@ class RawBidParentCycle:
         return f"{self.table}.UID={self.uid} participates in a ParentUID cycle"
 
 
-RawBidGraphIssue = RawBidDuplicateUid | RawBidMalformedUid | RawBidParentCycle
+@dataclass(frozen=True)
+class RawBidCardinalityIssue:
+    table: str
+    owner_table: str
+    owner_uid: str
+    count: int
+    maximum: int
+
+    def format(self) -> str:
+        return (
+            f"{self.table} has {self.count} rows for "
+            f"{self.owner_table}.UID={self.owner_uid}; "
+            f"expected at most {self.maximum}"
+        )
+
+
+RawBidGraphIssue = (
+    RawBidDuplicateUid | RawBidMalformedUid | RawBidParentCycle | RawBidCardinalityIssue
+)
 RawBidFormattedIssue = RawBidIntegrityIssue | RawBidGraphIssue
 
 
@@ -84,7 +102,11 @@ class TakeoffGraphResolution:
         return len(self.missing_parent_roots) + len(self.dependent_descendants)
 
 
-RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
+BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
+    RawBidRelationship(
+        "AffectDPCTypGroupViews", "BidTypGroupViewUID", "BidTypGroupViews"
+    ),
+    RawBidRelationship("AffectDPCTypGroupViews", "BidUID", "Bids"),
     RawBidRelationship("BidPlanRooms", "BidUID", "Bids"),
     RawBidRelationship("BidAreas", "BidUID", "Bids"),
     RawBidRelationship("BidAreas", "ParentUID", "BidAreas"),
@@ -106,6 +128,26 @@ RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
     RawBidRelationship("BidConditions", "BidLayerUID", "BidLayers"),
     RawBidRelationship("BidConditions", "CdnTypeUID", "CdnTypes"),
     RawBidRelationship("BidConditionUser", "BidUID", "Bids"),
+    RawBidRelationship("BidConditionUser", "ConditionUID", "BidConditions"),
+    RawBidRelationship("BidDPCSubscribers", "BidUID", "Bids"),
+    RawBidRelationship("BidDPCSubscribers", "BidEmployeeUID", "Employees"),
+    RawBidRelationship("BidLaborActivity", "BidUID", "Bids"),
+    RawBidRelationship("BidLaborActivity", "BidConditionUID", "BidConditions"),
+    RawBidRelationship("BidLaborActivity", "BidLaborCostCodeUID", "BidLaborCostCodes"),
+    RawBidRelationship("BidLaborCostCodes", "BidUID", "Bids"),
+    RawBidRelationship("BidLaborCostCodes", "CostCodeUID", "CostCodes"),
+    RawBidRelationship("BidLaborCostCodeTotals", "BidUID", "Bids"),
+    RawBidRelationship("BidLaborCostCodeTotals", "BidPageUID", "BidPages"),
+    RawBidRelationship("BidLaborCostCodeTotals", "BidAreaUID", "BidAreas"),
+    RawBidRelationship(
+        "BidLaborCostCodeTotals", "BidLaborCostCodeUID", "BidLaborCostCodes"
+    ),
+    RawBidRelationship("BidNotes", "BidUID", "Bids"),
+    RawBidRelationship("BidPercents", "BidTimeCardStateUID", "BidTimeCardStates"),
+    RawBidRelationship("BidPercents", "BidLaborCostCodeUID", "BidLaborCostCodes"),
+    RawBidRelationship("BidPercents", "BidLaborActivityUID", "BidLaborActivity"),
+    RawBidRelationship("BidPercents", "BidTakeoffUID", "BidTakeoffs"),
+    RawBidRelationship("BidPercents", "BidPageUID", "BidPages"),
     RawBidRelationship("BidZones", "BidUID", "Bids"),
     RawBidRelationship("BidZones", "BidLayerUID", "BidLayers"),
     RawBidRelationship("BidTypGroupViews", "BidUID", "Bids"),
@@ -126,6 +168,19 @@ RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
     RawBidRelationship("BidTakeoffs", "TypGroupTakeoffUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypPageTakeoffUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypGroupMarkerUID", "BidTakeoffs"),
+    RawBidRelationship("BidTakeoffTotals", "BidUID", "Bids"),
+    RawBidRelationship("BidTakeoffTotals", "BidPageUID", "BidPages"),
+    RawBidRelationship("BidTakeoffTotals", "BidZoneUID", "BidZones"),
+    RawBidRelationship("BidTakeoffTotals", "BidAreaUID", "BidAreas"),
+    RawBidRelationship("BidTakeoffTotals", "BidTypAreaUID", "BidTypAreas"),
+    RawBidRelationship("BidTakeoffTotals", "BidConditionUID", "BidConditions"),
+    RawBidRelationship("BidTimeCardStates", "BidUID", "Bids"),
+    RawBidRelationship("BidTimeCards", "BidTimeCardStateUID", "BidTimeCardStates"),
+    RawBidRelationship("BidTimeCards", "BidEmployeeUID", "BidEmployees"),
+    RawBidRelationship("BidTimeCards", "BidAreaUID", "BidAreas"),
+    RawBidRelationship("BidTimeCards", "BidTypicalAreaUID", "BidTypAreas"),
+    RawBidRelationship("BidTimeCards", "BidLaborCostCodeUID", "BidLaborCostCodes"),
+    RawBidRelationship("BidTransactionsHistory", "BidUID", "Bids"),
     RawBidRelationship("BidHighlights", "BidUID", "Bids"),
     RawBidRelationship("BidHighlights", "BidPageUID", "BidPages"),
     RawBidRelationship("BidHighlights", "BidLayerUID", "BidLayers"),
@@ -180,6 +235,16 @@ RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
     RawBidRelationship("BidHotLinks", "BidPageUID", "BidPages"),
     RawBidRelationship("BidHotLinks", "BidPageViewUID", "BidNamedViews"),
     RawBidRelationship("BidHotLinks", "BidLayerUID", "BidLayers"),
+    RawBidRelationship("BidTypicalGroupTotals", "BidUID", "Bids"),
+    RawBidRelationship("BidTypicalGroupTotals", "BidPageUID", "BidPages"),
+    RawBidRelationship("BidTypicalGroupTotals", "BidZoneUID", "BidZones"),
+    RawBidRelationship("BidTypicalGroupTotals", "BidAreaUID", "BidAreas"),
+    RawBidRelationship("BidTypicalGroupTotals", "BidConditionUID", "BidConditions"),
+    RawBidRelationship("Boost", "BidUID", "Bids"),
+    RawBidRelationship("Boost", "BidPageUID", "BidPages"),
+    RawBidRelationship("DPCCalcFilter", "BidUID", "Bids"),
+    RawBidRelationship("DPCCalcFilter", "BidPageUID", "BidPages"),
+    RawBidRelationship("STSTransactionHistory", "BidUID", "Bids"),
     RawBidRelationship("Employees", "PayClassUID", "PayClasses"),
     RawBidRelationship("Employees", "AccessLevelUID", "AccessLevels"),
 )
@@ -193,6 +258,12 @@ _RAW_TABLES = (
 )
 _RAW_TABLE_SET = set(_RAW_TABLES)
 _GLOBAL_TABLE_SET = set(GLOBAL_SECTIONS)
+RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = tuple(
+    relationship
+    for relationship in BID_RELATIONSHIPS
+    if relationship.child_table in _RAW_TABLE_SET
+    and relationship.parent_table in _RAW_TABLE_SET
+)
 _CLEARABLE_EXPORT_REFERENCES = {("BidSettings", "BidPageSelectedUID")}
 _TAKEOFF_GRAPH_REFERENCES = {("BidTakeoffs", "ParentUID")}
 _NULL_REFERENCE_UID = "0"
@@ -258,6 +329,16 @@ def validate_raw_bid_integrity(
             for uid, count in sorted(uid_counts.items())
             if count > 1
         )
+    settings_counts = Counter(
+        str(row.get("BidUID", ""))
+        for row in rows_by_table.get("BidSettings", [])
+        if is_present_uid(str(row.get("BidUID", "")))
+    )
+    issues.extend(
+        RawBidCardinalityIssue("BidSettings", "Bids", bid_uid, count, 1)
+        for bid_uid, count in sorted(settings_counts.items())
+        if count > 1
+    )
     for relationship in relationships:
         child_rows = rows_by_table.get(relationship.child_table, [])
         if not child_rows:

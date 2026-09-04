@@ -204,6 +204,30 @@ Persistence:
   arrows, annotation lines, ink, and legends do not own `BidLayerUID`; takeoffs
   inherit their layer through their condition, and layerless annotation tables
   project to the canonical annotation layer.
+- `BID_RELATIONSHIPS` is the complete bid ownership/reference catalog used by
+  duplication; `RAW_BID_RELATIONSHIPS` is its OST/OSP import/export subset.
+  Duplicate Bid regenerates each copied entity GUID and copies each table once.
+  `BidSettings` is an optional singular row per bid; readers, writers, imports,
+  exports, and duplication reject multiple rows instead of choosing or updating
+  them arbitrarily. Known page-based Cover Sheet selection identity is remapped
+  through the duplicated page graph; a missing known page target is cleared in
+  the duplicate, and page deletion clears it without touching other selector
+  types. A duplicate receives a fresh creation time.
+  Cover Sheet picker results retain their typed UID across refresh and must not
+  re-resolve by display name.
+  When the table exists, global `Settings` is a zero-or-one compatibility
+  record. All readers and bid number allocators reject duplicate rows; a present
+  but empty legacy table is initialized on the first successful allocation, and
+  allocation persistence failure aborts the owning mutation. A legacy database
+  without `Settings.NextBidNo` remains readable, but bid creation, import, and
+  duplication must reject it instead of allocating an undurable default number.
+  `BidPageSettings` may contain multiple inactive rows, but only one positive
+  selected row per page is canonical. Preserve inactive rows when changing or
+  clearing the page filter, and use precedence `BidAreaSelected DESC, UID DESC`
+  during reconstruction, import, duplication, and malformed-row normalization.
+  Page, Condition, and area deletion catalogs must stay aligned with the same
+  schema relationships and remove or clear all ancillary dependents before
+  deleting the owner; SQL and Access share this application-level contract.
 
 Database backends:
 
@@ -214,9 +238,12 @@ Database backends:
   partial cleanup must not drop the only reference to that handle.
 
 - A saved SQL descriptor's `DatabaseGuid` is the logical database identity.
-  Collaboration startup must compare it with live `DatabaseMetadata` before
-  cleanup, journal recovery, hydration, or session creation; a database recreated
-  under the same server/name is a replacement and requires an explicit re-add.
+  Exactly one `DatabaseMetadata` row for OST Visualizer must exist and identify
+  the current SQL Server database incarnation. Schema inspection, capability
+  checks, workspace identity, mutation logging, and collaboration startup use
+  that same cardinality and identity predicate before cleanup, journal recovery,
+  hydration, or session creation; a database recreated under the same
+  server/name is a replacement and requires an explicit re-add.
 
 - Backend selection occurs at the descriptor/adapter registry boundary. Shared
   application and domain workflows use stable database IDs and neutral ports.
@@ -352,6 +379,21 @@ Database backends:
   identity-map creation, and hydration stay off the Qt thread. Multi-file
   selection has explicit ordered per-file outcomes: an earlier committed file
   remains committed if a later file fails. Access keeps its synchronous importer.
+- OST/OSP master-data reconciliation may use a format-provided weak business key
+  only when it resolves to exactly one target record. Condition Type names use
+  the same trimmed, case-insensitive comparison as their editor, while Employee
+  imports use the existing normalized employee-number or legacy name/email key.
+  Ambiguous source or target keys reject the import; UI editors retain the
+  selected Job Status, Employee, Pay Class, and Condition Type UID instead of
+  resolving an editable display label back to the first matching row.
+  Loaded bids likewise retain `JobStatusUID`; lock evaluation, status menus,
+  and status grouping use that UID while the status name remains display-only.
+  Remote Job Status and Employee changes refresh hierarchy-derived labels and
+  active-bid access state, while Condition Type catalog changes refresh cached
+  Condition labels through `CdnTypeUID`. Employee use/deletion covers the
+  estimator, project-manager, and job-site-manager bid roles by UID. Deleting
+  an Employee removes DPC subscribers through the matching `BidEmployees` rows,
+  never by comparing a global Employee UID to a Bid Employee UID.
 - Remote application merges are targeted by entity family. Do not publish
   EventBus events from polling workers, add remote commands to local undo
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread
@@ -365,9 +407,10 @@ Database backends:
 - Takeoffs inherit bid-layer membership through their condition; `Takeoff` does
   not own a layer UID. SQL and Access share the canonical takeoff hydrator, and
   remote takeoff graphs must be validated before main-thread projection. Bid
-  duplication and SQL import reconstruct every copied internal reference from
-  the canonical raw-bid relationship graph; regenerated row identities must not
-  retain source-bid references. Plan clipboard snapshots use the current typed
+  duplication reconstructs every copied internal reference from the complete
+  bid relationship graph, while SQL import uses its raw interchange subset;
+  regenerated row identities and GUIDs must not retain source-bid identity.
+  Plan clipboard snapshots use the current typed
   takeoff label-font state as authoritative over older raw storage extras.
 - Unchecking or removing a SQL descriptor always detaches local state even when
   the server is unavailable. Remote session and lock cleanup is best effort for

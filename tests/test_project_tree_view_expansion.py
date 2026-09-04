@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 from shiboken6 import delete, isValid
 from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.loaded_file import LoadedFile
 from ost_visualizer.domain.entities.project import Project
@@ -212,6 +213,31 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         self.assertTrue(all(isValid(submenu) for submenu in submenus.values()))
 
+    def test_job_status_submenu_uses_uid_when_display_names_collide(self):
+        bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            status="Duplicate",
+            status_uid="status-current",
+        )
+        loaded = self._loaded_file([])
+        loaded[0].projects[0].bids = [bid]
+        self.view.on_get_job_statuses = lambda _file_path: [
+            JobStatus(uid="status-other", name="Duplicate"),
+            JobStatus(uid="status-current", name="Duplicate"),
+        ]
+        self.view.on_can_update_bid_job_status = lambda _bid_ref: True
+        self.view.build_complete_structure(loaded)
+        item = self._select_bid_items("bid-1")[0]
+        context = self.view._context_for_item(item)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._add_job_status_submenu(menu, context)
+        actions = menu.actions()[0].menu().actions()
+        self.assertFalse(actions[0].isChecked())
+        self.assertTrue(actions[0].isEnabled())
+        self.assertTrue(actions[1].isChecked())
+        self.assertFalse(actions[1].isEnabled())
+
     def test_delete_replacement_selects_orphan_sibling_in_same_database(self):
         self.view.build_complete_structure(
             self._loaded_file([], orphan_bid_uids=["orphan-1", "orphan-2"])
@@ -415,6 +441,40 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         self.assertEqual(project_uids, ["project-shared"])
         self.assertEqual(project_file_path, "C:/jobs/test.mdb")
+
+    def test_group_by_job_status_does_not_merge_same_name_status_uids(self):
+        loaded_file = LoadedFile(
+            file_path="C:/jobs/test.mdb",
+            display_name="test.mdb",
+            projects=[
+                Project(
+                    uid="project-1",
+                    name="Project",
+                    bids=[
+                        Bid(
+                            uid="bid-a",
+                            name="A",
+                            status="Duplicate",
+                            status_uid="status-a",
+                        ),
+                        Bid(
+                            uid="bid-b",
+                            name="B",
+                            status="Duplicate",
+                            status_uid="status-b",
+                        ),
+                    ],
+                )
+            ],
+        )
+        self.view._group_by_job_status = True
+        self.view.build_complete_structure([loaded_file])
+        file_item = self.view.top_tree.topLevelItem(0)
+        self.assertEqual(file_item.childCount(), 2)
+        self.assertEqual(
+            [file_item.child(index).text(0) for index in range(2)],
+            ["Duplicate", "Duplicate"],
+        )
 
     def test_scheduled_rename_targets_matching_database_for_duplicate_project_uid(self):
         loaded_files = self._loaded_file([], file_path="C:/jobs/one.mdb")

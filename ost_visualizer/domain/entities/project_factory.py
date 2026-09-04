@@ -82,6 +82,7 @@ def build_bid(bid_info: Optional[HierarchyBidInfo]) -> Bid:
         notes=bid_info.notes,
         job_id=bid_info.job_id,
         status=bid_info.status,
+        status_uid=bid_info.status_uid,
         estimator=bid_info.estimator,
         page_count=bid_info.page_count,
         condition_count=bid_info.condition_count,

@@ -22,6 +22,9 @@ from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.database.connection_wrapper import ConnectionWrapper
+from ost_visualizer.infrastructure.database.settings_cardinality import (
+    GlobalSettingsCardinalityError,
+)
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
@@ -469,6 +472,72 @@ def _empty_inventory():
 
 
 class SqlCleanupCorrectnessTests(unittest.TestCase):
+    def test_sql_bid_sequence_uses_the_shared_zero_or_one_settings_contract(self):
+        class _SettingsCursor:
+            def __init__(self, rows):
+                self.rows = rows
+                self.read_index = 0
+                self.executed = []
+
+            def execute(self, sql, *params):
+                self.executed.append(sql)
+                if "SELECT [NextBidNo]" in sql:
+                    self.read_index = 0
+                elif "INSERT INTO [dbo].[Settings]" in sql:
+                    self.rows.append(params[0])
+                elif "UPDATE [dbo].[Settings]" in sql:
+                    self.rows[:] = [params[0] for _row in self.rows]
+                return self
+
+            def fetchone(self):
+                if self.read_index >= len(self.rows):
+                    return None
+                row = (self.rows[self.read_index],)
+                self.read_index += 1
+                return row
+
+            def close(self):
+                pass
+
+        class _SettingsConnection:
+            def __init__(self, rows):
+                self.cursor_value = _SettingsCursor(rows)
+
+            def cursor(self):
+                return self.cursor_value
+
+        writer = SqlProjectWriter(
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        rows = []
+        first = RawBidData(bid_row={})
+        second = RawBidData(bid_row={})
+        first_connection = _SettingsConnection(rows)
+        second_connection = _SettingsConnection(rows)
+        writer._assign_next_bid_no(first_connection, first)
+        writer._assign_next_bid_no(second_connection, second)
+        self.assertEqual(
+            (first.bid_row["BidNo"], second.bid_row["BidNo"]),
+            ("1", "2"),
+        )
+        self.assertEqual(rows, [3])
+        self.assertTrue(
+            all(
+                "WITH (UPDLOCK, HOLDLOCK)" in sql
+                for sql in (
+                    first_connection.cursor_value.executed
+                    + second_connection.cursor_value.executed
+                )
+                if "SELECT [NextBidNo]" in sql
+            )
+        )
+        malformed = _SettingsConnection([7, 12])
+        with self.assertRaises(GlobalSettingsCardinalityError):
+            writer._assign_next_bid_no(malformed, RawBidData(bid_row={}))
+        self.assertEqual(malformed.cursor_value.rows, [7, 12])
+
     def test_sql_mutation_uses_canonical_entity_version_token_column(self):
         source = Path("ost_visualizer/infrastructure/sql/writer.py").read_text(
             encoding="utf-8"
@@ -1291,18 +1360,20 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         with (
             patch.object(
                 MdbWriter,
-                "_load_existing_uid_by_column",
-                return_value={"Concrete": "12"},
+                "_load_existing_uid_candidates_by_column",
+                return_value={"concrete": ["12"]},
             ) as access_lookup,
             patch.object(
                 SqlProjectWriter,
-                "_load_existing_uid_by_column",
+                "_load_existing_uid_candidates_by_column",
                 side_effect=AssertionError("Access import dispatched to SQL"),
             ),
             writer._backend_scope("example.mdb"),
         ):
-            result = writer._load_existing_uid_by_column(connection, "CdnTypes", "Name")
-        self.assertEqual(result, {"Concrete": "12"})
+            result = writer._load_existing_uid_candidates_by_column(
+                connection, "CdnTypes", "Name"
+            )
+        self.assertEqual(result, {"concrete": ["12"]})
         access_lookup.assert_called_once_with(writer, connection, "CdnTypes", "Name")
 
     def test_writer_requires_an_explicit_backend_scope(self):
@@ -1349,6 +1420,43 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 for sql in table_inventory_queries
             )
         )
+
+    def test_schema_inspector_rejects_multiple_database_metadata_rows(self):
+        class _MetadataCursor(_InspectionCursor):
+            def fetchone(self):
+                if "FROM [ostv].[DatabaseMetadata]" in self._last_sql:
+                    if "COUNT_BIG(*)" in self._last_sql:
+                        return None
+                    return (SQL_SCHEMA_V1.version, SQL_SCHEMA_V1.checksum)
+                if "database_guid" in self._last_sql:
+                    return ("00000000-0000-0000-0000-000000000001",)
+                return None
+
+            def fetchall(self):
+                if "SELECT s.name, t.name FROM sys.tables" in self._last_sql:
+                    return [
+                        ("ostv", "DatabaseMetadata"),
+                        ("ostv", "SchemaMigrations"),
+                    ]
+                return []
+
+        class _MetadataLease(_InspectionLease):
+            def __init__(self):
+                super().__init__()
+                self.cursor_value = _MetadataCursor()
+
+        class _MetadataManager:
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.autocommit = autocommit
+                self.lease = _MetadataLease()
+                yield self.lease
+
+        inventory = SqlSchemaInspector(_MetadataManager()).inspect(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        self.assertEqual(inventory.schema_version, 0)
+        self.assertEqual(inventory.schema_checksum, "")
 
     def test_sql_reader_rejects_invalid_schema_before_domain_queries(self):
         registry = DatabaseDescriptorRegistry()

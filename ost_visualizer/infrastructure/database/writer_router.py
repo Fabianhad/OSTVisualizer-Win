@@ -202,19 +202,25 @@ class DatabaseProjectWriter(SqlProjectWriter):
             return SqlProjectWriter._get_table_info(self, connection, table)
         return MdbWriter._get_table_info(self, connection, table)
 
-    def _load_existing_uid_by_column(
+    def _load_existing_uid_candidates_by_column(
         self, connection, table: str, column: str
-    ) -> dict[str, str]:
+    ) -> dict[str, list[str]]:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
-            return SqlProjectWriter._load_existing_uid_by_column(
+            return SqlProjectWriter._load_existing_uid_candidates_by_column(
                 self, connection, table, column
             )
-        return MdbWriter._load_existing_uid_by_column(self, connection, table, column)
+        return MdbWriter._load_existing_uid_candidates_by_column(
+            self, connection, table, column
+        )
 
-    def _load_existing_employee_uid_by_key(self, connection) -> dict[str, str]:
+    def _load_existing_employee_uid_candidates_by_key(
+        self, connection
+    ) -> dict[str, list[str]]:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
-            return SqlProjectWriter._load_existing_employee_uid_by_key(self, connection)
-        return MdbWriter._load_existing_employee_uid_by_key(self, connection)
+            return SqlProjectWriter._load_existing_employee_uid_candidates_by_key(
+                self, connection
+            )
+        return MdbWriter._load_existing_employee_uid_candidates_by_key(self, connection)
 
     def _insert_page_area_selection(
         self,

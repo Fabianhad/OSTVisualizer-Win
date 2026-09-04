@@ -36,11 +36,27 @@ from ...application.interfaces.i_database_mutation_executor import IMutationReco
 from ...domain.dtos.raw_bid_data_dto import RawBidData
 from ..mdb.components.constants import BID_TABLES_WRITE_ORDER, TAKEOFF_REFERENCE_TABLES
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
+from ..database.master_data_identity import (
+    MasterDataCandidateIndex,
+    add_master_data_candidate,
+    build_master_data_candidate_index,
+    master_data_identity_key,
+    require_unambiguous_incoming_identities,
+    resolve_master_data_candidate,
+)
+from ..database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+    persist_next_bid_number,
+)
 from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
 from ..mdb.mdb_writer import MdbWriter
 from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from .connection_manager import SqlConnectionLease, SqlConnectionManager
+from .database_metadata_contract import (
+    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
+)
 from .client_permissions import require_sql_client_editability
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import (
@@ -158,6 +174,14 @@ class SqlProjectWriter(MdbWriter):
         self._active_mutation = contextvars.ContextVar(
             "sql_database_mutation", default=None
         )
+
+    @staticmethod
+    def _global_settings_read_table_sql() -> str:
+        return "[dbo].[Settings] WITH (UPDLOCK, HOLDLOCK)"
+
+    @staticmethod
+    def _global_settings_write_table_sql() -> str:
+        return "[dbo].[Settings]"
 
     @contextmanager
     def _connection(
@@ -794,8 +818,10 @@ class SqlProjectWriter(MdbWriter):
                 "WITH (UPDLOCK, HOLDLOCK) WHERE "
                 "target.[ResourceType]=source.[ResourceType] AND "
                 "target.[ResourceId]=source.[ResourceId]); "
-                "DECLARE @DatabaseGuid uniqueidentifier=(SELECT TOP (1) "
-                "[DatabaseGuid] FROM [ostv].[DatabaseMetadata]); "
+                "DECLARE @DatabaseGuid uniqueidentifier=(SELECT m.[DatabaseGuid] "
+                "FROM [ostv].[DatabaseMetadata] m WHERE "
+                + DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
+                + "); "
                 "INSERT INTO [ostv].[ChangeLog] ([TransactionId], "
                 "[SourceSessionId], [DatabaseGuid], [BidUID], [ResourceType], "
                 "[ResourceId], [Operation], [ResultVersion], [ChangedFields], "
@@ -1163,18 +1189,38 @@ class SqlProjectWriter(MdbWriter):
         incoming = raw_data.global_tables.get(table, [])
         if not incoming:
             return {}
-        existing = self._load_existing_uid_by_column(connection, table, identity_column)
+        ignore_empty_identity = table in {"AccessLevels", "PayClasses"}
+        require_unambiguous_incoming_identities(
+            incoming,
+            lambda row: master_data_identity_key(
+                table, identity_column, row.get(identity_column, "")
+            ),
+            f"{table}.{identity_column}",
+            ignore_empty=ignore_empty_identity,
+        )
+        existing = self._load_existing_uid_candidates_by_column(
+            connection, table, identity_column
+        )
         result: dict[str, str] = {}
         table_info = self._get_table_info(connection, table)
         for row in incoming:
             old_uid = str(row.get("UID", ""))
-            identity = str(row.get(identity_column, ""))
-            if identity in existing:
-                result[old_uid] = existing[identity]
+            identity = master_data_identity_key(
+                table, identity_column, row.get(identity_column, "")
+            )
+            existing_uid = (
+                resolve_master_data_candidate(
+                    existing, identity, f"{table}.{identity_column}"
+                )
+                if identity or not ignore_empty_identity
+                else None
+            )
+            if existing_uid is not None:
+                result[old_uid] = existing_uid
                 continue
             actual = self._insert_identity_raw(connection, table, row, table_info)
             result[old_uid] = str(actual)
-            existing[identity] = str(actual)
+            add_master_data_candidate(existing, identity, str(actual))
         return result
 
     def _resolve_sql_employees(
@@ -1187,14 +1233,25 @@ class SqlProjectWriter(MdbWriter):
         incoming = raw_data.global_tables.get("Employees", [])
         if not incoming:
             return {}
-        existing = self._load_existing_employee_uid_by_key(connection)
+        require_unambiguous_incoming_identities(
+            incoming,
+            self._employee_identity_key,
+            "Employees business key",
+            ignore_empty=True,
+        )
+        existing = self._load_existing_employee_uid_candidates_by_key(connection)
         table_info = self._get_table_info(connection, "Employees")
         result: dict[str, str] = {}
         for row in incoming:
             old_uid = str(row.get("UID", ""))
             key = self._employee_identity_key(row)
-            if key and key in existing:
-                result[old_uid] = existing[key]
+            existing_uid = (
+                resolve_master_data_candidate(existing, key, "Employees business key")
+                if key
+                else None
+            )
+            if existing_uid is not None:
+                result[old_uid] = existing_uid
                 continue
             insert_row = dict(row)
             for column, mapping in (
@@ -1217,7 +1274,7 @@ class SqlProjectWriter(MdbWriter):
             )
             result[old_uid] = str(actual)
             if key:
-                existing[key] = str(actual)
+                add_master_data_candidate(existing, key, str(actual))
         return result
 
     def _write_remapped_identity_graph(
@@ -1377,28 +1434,36 @@ class SqlProjectWriter(MdbWriter):
     def _assign_next_bid_no(self, connection, remapped: RawBidData) -> None:
         cursor = connection.cursor()
         try:
-            cursor.execute("SELECT [NextBidNo] FROM [dbo].[Settings]")
-            row = cursor.fetchone()
-            if row is None or row[0] is None:
-                raise RuntimeError("The current SQL database has no bid sequence.")
-            next_bid_no = int(row[0])
-            cursor.execute("UPDATE [dbo].[Settings] SET [NextBidNo]=?", next_bid_no + 1)
+            row = fetch_optional_global_settings_row(
+                cursor,
+                "[NextBidNo]",
+                table_sql=self._global_settings_read_table_sql(),
+            )
+            next_bid_no = normalize_next_bid_number(row[0] if row is not None else None)
+            persist_next_bid_number(
+                cursor,
+                row,
+                next_bid_no + 1,
+                table_sql=self._global_settings_write_table_sql(),
+            )
         finally:
             cursor.close()
         remapped.bid_row["BidNo"] = str(next_bid_no)
 
-    def _load_existing_uid_by_column(
+    def _load_existing_uid_candidates_by_column(
         self, connection, table: str, column: str
-    ) -> dict[str, str]:
+    ) -> MasterDataCandidateIndex:
         cursor = connection.cursor()
         try:
             cursor.execute(f"SELECT [UID], [{column}] FROM [dbo].[{table}]")
             rows = cursor.fetchall()
         finally:
             cursor.close()
-        return {str(row[1]) if row[1] is not None else "": str(row[0]) for row in rows}
+        return build_master_data_candidate_index(rows, table, column)
 
-    def _load_existing_employee_uid_by_key(self, connection) -> dict[str, str]:
+    def _load_existing_employee_uid_candidates_by_key(
+        self, connection
+    ) -> MasterDataCandidateIndex:
         columns = ("UID", "EmployeeNo", "FirstName", "LastName", "EMail")
         cursor = connection.cursor()
         try:
@@ -1409,7 +1474,7 @@ class SqlProjectWriter(MdbWriter):
             rows = cursor.fetchall()
         finally:
             cursor.close()
-        result: dict[str, str] = {}
+        result: MasterDataCandidateIndex = {}
         for row in rows:
             row_data = {
                 column: str(row[index]) if row[index] is not None else ""
@@ -1417,7 +1482,7 @@ class SqlProjectWriter(MdbWriter):
             }
             key = self._employee_identity_key(row_data)
             if key:
-                result[key] = row_data["UID"]
+                add_master_data_candidate(result, key, row_data["UID"])
         return result
 
     def _insert_page_area_selection(
