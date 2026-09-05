@@ -45,7 +45,11 @@ from ost_visualizer.domain.entities.workspace_state import (
 )
 from ost_visualizer.infrastructure.mdb.components.constants import (
     PAGE_DELETE_CHILD_TABLES,
+    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
     TAKEOFF_REFERENCE_TABLES,
+)
+from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
+    AccessBulkWriteMixin,
 )
 from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
@@ -86,7 +90,20 @@ def _app():
 
 class _FakeSchema:
     def column_exists(self, table, column):
-        return table == "Bids" and column == "MeasureBase"
+        return (
+            table == "Bids"
+            and column in {"MeasureBase", "JobStatusUID", "EstimatorUID"}
+        ) or (
+            table == "BidAreas"
+            and column in {"UID", "BidUID", "ParentUID", "Name", "Sequence", "GUID"}
+        ) or (
+            table == "BidPageFolders"
+            and column in {"UID", "BidUID", "ParentUID", "Name"}
+        )
+
+    def require_column(self, table, column):
+        if not self.column_exists(table, column):
+            raise RuntimeError(f"Missing {table}.{column}")
 
     def optional_table_missing(self, _table):
         return False
@@ -98,13 +115,32 @@ class _FakeCursor:
         self.last_query = None
         self.calls = []
         self.current_overlay_path = ""
+        self.last_args = ()
 
     def execute(self, query, *args):
         self.last_query = query
+        self.last_args = args
         self.calls.append((query, args))
         return None
 
+    def fetchall(self):
+        if self.last_query and self.last_query.startswith(
+            "SELECT [UID], [BidUID] FROM [BidPages]"
+        ):
+            return [(value, 7) for value in self.last_args]
+        if self.last_query and "FROM [BidAreas] WHERE [BidUID]" in self.last_query:
+            return [(5, None)]
+        if self.last_query and "FROM [BidPageFolders] WHERE [BidUID]" in self.last_query:
+            return [(5, None)]
+        if self.last_query and "SELECT [UID] FROM [BidComments]" in self.last_query:
+            return []
+        if self.last_query and "SELECT [UID] FROM [BidTakeoffs]" in self.last_query:
+            return []
+        return [(value,) for value in self.last_args]
+
     def fetchone(self):
+        if self.last_query and "SELECT [BidUID] FROM [BidPages]" in self.last_query:
+            return [7]
         if self.last_query and "SELECT [OverlayImagePath]" in self.last_query:
             return [self.current_overlay_path]
         if (
@@ -135,7 +171,11 @@ class _FakeConnection:
         return self.cursor_obj
 
 
-class _CoverSheetSettingsOps(SettingsOperationsMixin, PageOperationsMixin):
+class _CoverSheetSettingsOps(
+    AccessBulkWriteMixin,
+    SettingsOperationsMixin,
+    PageOperationsMixin,
+):
     def __init__(self):
         self.conn = _FakeConnection()
         self.schema = _FakeSchema()
@@ -1701,6 +1741,61 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         _folders, pages = Reader()._query_cover_sheet_pages(connection, "7")
         self.assertEqual(pages[0].multi_page_count, 7)
         self.assertIn("[MultiPageCount]", connection.cursors[-1].query)
+
+    def test_cover_sheet_reader_rejects_page_folder_cycle(self):
+        class Schema:
+            @staticmethod
+            def require_column(_table, _column):
+                pass
+
+            @staticmethod
+            def optional_table_missing(_table):
+                return False
+
+            @staticmethod
+            def optional_column(_table, column, _fallback):
+                return f"[{column}]"
+
+            @staticmethod
+            def order_by_existing(_table, _columns, fallback):
+                return fallback
+
+        class Cursor:
+            def __init__(self):
+                self.query = ""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, query, *_args):
+                self.query = query
+
+            def fetchall(self):
+                if "FROM [BidPageFolders]" in self.query:
+                    return [
+                        SimpleNamespace(UID=7, Name="A", ParentUID=8),
+                        SimpleNamespace(UID=8, Name="B", ParentUID=7),
+                    ]
+                return []
+
+        class Connection:
+            def cursor(self):
+                return Cursor()
+
+        class Reader(SettingsReaderMixin):
+            @staticmethod
+            def _schema(_connection):
+                return Schema()
+
+            @staticmethod
+            def _record_caught_read_error(_error):
+                return False
+
+        with self.assertRaisesRegex(RuntimeError, "ParentUID cycle"):
+            Reader()._query_cover_sheet_pages(Connection(), "7")
 
     def test_cover_sheet_rows_have_independent_index_combos_and_share_pdf_metadata(
         self,
@@ -3411,8 +3506,10 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             },
         )
         per_page_statement_count = (
-            1  # BidPercents
+            4  # owner lookup plus MasterPage, comment, and takeoff reference scans
+            + 1  # BidPercents
             + len(TAKEOFF_REFERENCE_TABLES)
+            * len(TAKEOFF_ANNOTATION_REFERENCE_COLUMNS)
             + len(PAGE_DELETE_CHILD_TABLES)
             + 1  # BidTakeoffs
             + 2  # BidHotLinks
@@ -3427,7 +3524,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertEqual(ops.conn.exit_count, 1)
         self.assertEqual(
             len(ops.conn.cursor_obj.calls),
-            1 + page_count * per_page_statement_count,
+            4 + page_count * per_page_statement_count,
         )
 
     def test_cover_sheet_close_publishes_one_refresh_for_bulk_delete(self):

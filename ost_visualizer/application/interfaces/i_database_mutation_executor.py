@@ -28,6 +28,7 @@ class IDatabaseMutationExecutor(Protocol):
     def verify_plan_items_exist(
         self,
         database_id: str,
+        bid_uid: str,
         takeoff_uids: Sequence[str],
         annotations: Sequence[tuple[str, str]],
     ) -> None: ...

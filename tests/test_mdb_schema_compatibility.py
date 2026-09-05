@@ -575,6 +575,10 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
             def fetchone():
                 return ("Source", 1)
 
+            @staticmethod
+            def fetchall():
+                return [(1,)]
+
         class Connection:
             @staticmethod
             def cursor():
@@ -828,7 +832,6 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
             for relationship in BID_RELATIONSHIPS
         }
         excluded_external_relationships = {
-            ("bids", "bidprojectuid", "bidprojects", "uid"),
             (
                 "conditionsetstyles",
                 "conditionstyleuid",
@@ -925,6 +928,10 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
 
             @staticmethod
             def _next_uid(_cursor, _table):
+                return 2
+
+            @staticmethod
+            def _next_uid_preserving_references(_cursor, _schema, _table):
                 return 2
 
             @staticmethod
@@ -1133,6 +1140,10 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
 
             @staticmethod
             def _next_uid(_cursor, _table):
+                return 2
+
+            @staticmethod
+            def _next_uid_preserving_references(_cursor, _schema, _table):
                 return 2
 
             @staticmethod
@@ -1406,6 +1417,11 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                         return row
                 return None
 
+            def fetchall(self):
+                if self._selected_table == "Bids":
+                    return [(1,)]
+                return []
+
         cursor = Cursor()
 
         class Connection:
@@ -1489,6 +1505,10 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
 
             @staticmethod
             def _next_uid(_cursor, _table):
+                return 20
+
+            @staticmethod
+            def _next_uid_preserving_references(_cursor, _schema, _table):
                 return 20
 
             def _execute_insert_values(
@@ -1857,9 +1877,10 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
             cleanup_writer = MdbWriter()
             try:
                 self.assertTrue(
-                    cleanup_writer.delete_pages(
-                        str(db_path), ["200", duplicate_page_uid]
-                    )
+                    cleanup_writer.delete_pages(str(db_path), ["200"])
+                )
+                self.assertTrue(
+                    cleanup_writer.delete_pages(str(db_path), [duplicate_page_uid])
                 )
                 self.assertTrue(
                     cleanup_writer.delete_conditions(str(db_path), "100", ["300"])

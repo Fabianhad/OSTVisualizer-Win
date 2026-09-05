@@ -2268,6 +2268,26 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 1)
         self.assertEqual(interaction_cancellations, ["cancel"])
 
+    def test_clearing_active_page_clears_stale_page_settings_projection(self):
+        coordinator, _pages = self._make_view_state_coordinator()
+        page_settings_clears = []
+        coordinator._page_settings_bar = SimpleNamespace(
+            clear_page=lambda: page_settings_clears.append(True)
+        )
+        coordinator._prepare_plan_for_authoritative_refresh = lambda: None
+        coordinator._save_current_page_view_state = lambda **_kwargs: None
+        coordinator._viewer = SimpleNamespace(clear_plan_view=lambda: None)
+        coordinator._sidebar = SimpleNamespace(
+            update_conditions_quantities=lambda: None
+        )
+        coordinator._placement = SimpleNamespace(is_active=False)
+        coordinator._sync_page_info_status = lambda: None
+        coordinator._update_export_menu_state = lambda: None
+
+        coordinator.handle_active_page_changed(None)
+
+        self.assertEqual(page_settings_clears, [True])
+
     def test_missing_selected_page_cancels_pending_bid_selected_page_write(self):
         coordinator, _pages = self._make_view_state_coordinator()
         coordinator._save_current_page_view_state(selected_page_override="missing")

@@ -9,6 +9,16 @@ from ...database.settings_cardinality import (
     require_writable_bid_number_allocator,
 )
 from ...database.page_area_selection import canonicalize_page_area_settings
+from ...database.master_data_identity import (
+    require_optional_existing_unique_master_data_uid,
+)
+from ...database.bid_owned_identity import (
+    DanglingBidOwnedReferenceError,
+    require_acyclic_bid_owned_parent_graph,
+    require_existing_unique_bid_owned_uid_matches,
+    require_unique_bid_owned_uid_matches,
+    require_valid_unique_bid_owned_uids,
+)
 from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ..schema_contract import BID_SECTIONS, BID_TAIL_SECTIONS, PAGE_SECTIONS
 from .constants import (
@@ -16,6 +26,7 @@ from .constants import (
     HANDLED_SEPARATELY,
     LEGACY_BID_TABLES_COPIED_BY_DUPLICATION,
     PAGE_DELETE_CHILD_TABLES,
+    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
     TAKEOFF_REFERENCE_TABLES,
 )
 from ..raw_bid_integrity import BID_RELATIONSHIPS
@@ -87,6 +98,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "Bids", ("UID",))
                 cursor = conn.cursor()
+                require_unique_bid_owned_uid_matches(cursor, "Bids", uids)
 
                 def _del_bid(table: str) -> None:
                     if schema.optional_table_missing(table) or not schema.column_exists(
@@ -113,17 +125,19 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     if (
                         schema.optional_table_missing(table)
                         or schema.optional_table_missing("BidTakeoffs")
-                        or not schema.column_exists(table, "BidTakeoffFromUID")
                         or not schema.column_exists("BidTakeoffs", "UID")
                         or not schema.column_exists("BidTakeoffs", "BidUID")
                     ):
                         return
-                    cursor.execute(
-                        f"DELETE FROM [{table}] WHERE [BidTakeoffFromUID] IN "
-                        f"(SELECT [UID] FROM [BidTakeoffs] "
-                        f"WHERE BidUID IN ({placeholders_sql}))",
-                        *uids,
-                    )
+                    for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
+                        if not schema.column_exists(table, reference_column):
+                            continue
+                        cursor.execute(
+                            f"DELETE FROM [{table}] WHERE [{reference_column}] IN "
+                            f"(SELECT [UID] FROM [BidTakeoffs] "
+                            f"WHERE BidUID IN ({placeholders_sql}))",
+                            *uids,
+                        )
 
                 def _del_child_by_bid_parent(
                     child_table: str, child_fk: str, parent_table: str
@@ -232,6 +246,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "Bids", ("UID",))
                 cursor = conn.cursor()
+                require_unique_bid_owned_uid_matches(cursor, "Bids", (bid_uid,))
                 bid_cols = sorted(schema.get_columns("Bids"))
                 cursor.execute(
                     f"SELECT {', '.join(f'[{c}]' for c in bid_cols)} "
@@ -243,9 +258,20 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 if not source_row:
                     return None
                 bid_data = dict(zip(cols, source_row))
+                for column, table in (
+                    ("JobStatusUID", "JobStatuses"),
+                    ("EstimatorUID", "Employees"),
+                    ("PrManagerUID", "Employees"),
+                    ("JobSiteManagerUID", "Employees"),
+                ):
+                    if column in bid_data:
+                        require_optional_existing_unique_master_data_uid(
+                            cursor, table, bid_data[column]
+                        )
                 if not schema.optional_table_missing("BidSettings"):
                     schema.require_column("BidSettings", "BidUID")
                     fetch_optional_bid_settings_row(cursor, bid_uid, ("BidUID",))
+                self._require_duplicable_bid_relationships(cursor, schema, int(bid_uid))
                 require_writable_bid_number_allocator(schema)
                 settings_row = fetch_optional_global_settings_row(
                     cursor,
@@ -257,7 +283,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 )
                 now = datetime.datetime.now()
                 new_guid = "{" + str(uuid.uuid4()).upper() + "}"
-                new_bid_uid_int = self._next_uid(cursor, "Bids")
+                new_bid_uid_int = self._next_uid_preserving_references(
+                    cursor, schema, "Bids"
+                )
                 insert_cols = list(cols)
                 overrides = {
                     "UID": new_bid_uid_int,
@@ -345,12 +373,18 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     bid_uid,
                 )
                 page_rows = cursor.fetchall()
+                require_valid_unique_bid_owned_uids(
+                    (page_row[page_cols.index("UID")] for page_row in page_rows),
+                    "BidPages",
+                )
                 page_uid_map = {}
                 insert_page_cols = list(page_cols)
                 for page_row in page_rows:
                     page_data = dict(zip(page_cols, page_row))
                     old_page_uid = str(int(page_data["UID"]))
-                    new_page_uid_int = self._next_uid(cursor, "BidPages")
+                    new_page_uid_int = self._next_uid_preserving_references(
+                        cursor, schema, "BidPages"
+                    )
                     if "GUID" in page_data:
                         page_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                     page_values = [
@@ -417,6 +451,37 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 self._require_write_columns(schema, "Bids", ("UID", "JobName"))
                 require_writable_bid_number_allocator(schema)
                 cursor = conn.cursor()
+                if project_uid:
+                    require_existing_unique_bid_owned_uid_matches(
+                        cursor, "BidProjects", (project_uid,)
+                    )
+                new_folders = self._require_valid_new_bid_folder_references(updates)
+                if new_folders and schema.optional_table_missing("BidPageFolders"):
+                    raise RuntimeError(
+                        "This OST database does not support page-folder persistence."
+                    )
+                if (
+                    new_folders
+                    and not schema.column_exists("BidPageFolders", "ParentUID")
+                    and any(
+                        folder.get("parent_uid") not in (None, "", 0, "0")
+                        for folder in new_folders
+                    )
+                ):
+                    raise RuntimeError(
+                        "This OST database does not support page-folder hierarchy "
+                        "persistence."
+                    )
+                job_status_uid = updates.get("job_status_uid")
+                if schema.column_exists("Bids", "JobStatusUID"):
+                    job_status_uid = require_optional_existing_unique_master_data_uid(
+                        cursor, "JobStatuses", job_status_uid
+                    )
+                estimator_uid = updates.get("estimator_uid")
+                if schema.column_exists("Bids", "EstimatorUID"):
+                    estimator_uid = require_optional_existing_unique_master_data_uid(
+                        cursor, "Employees", estimator_uid
+                    )
                 settings_row = None
                 settings_select = ", ".join(
                     [
@@ -449,7 +514,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     def_scale_style, def_sf1, def_sf2 = 1, 0.125, 12.0
                     def_pw, def_ph = 42.0, 30.0
                     def_mb, def_ti = 0, 1.0
-                new_bid_uid = self._next_uid(cursor, "Bids")
+                new_bid_uid = self._next_uid_preserving_references(
+                    cursor, schema, "Bids"
+                )
                 new_guid = "{" + str(uuid.uuid4()).upper() + "}"
                 now = datetime.datetime.now().replace(second=0, microsecond=0)
                 notes_raw = updates.get("notes", "") or ""
@@ -464,8 +531,8 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         "GUID": new_guid,
                         "BidNo": next_bid_no,
                         "JobName": updates.get("job_name", "") or "",
-                        "JobStatusUID": updates.get("job_status_uid"),
-                        "EstimatorUID": updates.get("estimator_uid"),
+                        "JobStatusUID": job_status_uid,
+                        "EstimatorUID": estimator_uid,
                         "Notes": notes_val,
                         "BidDate": updates.get("bid_date"),
                         "JobID": updates.get("job_id", "") or "",
@@ -513,7 +580,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         schema,
                         "BidLayers",
                         {
-                            "UID": self._next_uid(cursor, "BidLayers"),
+                            "UID": self._next_uid_preserving_references(
+                                cursor, schema, "BidLayers"
+                            ),
                             "BidUID": new_bid_uid,
                             "Name": tpl.Name,
                             "Show": show_val,
@@ -527,10 +596,11 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 pages = updates.get("pages", [])
                 first_page_uid = None
                 local_folder_uid_map: Dict[str, int] = {}
-                new_folders = updates.get("new_folders", [])
                 if new_folders:
                     for nf in new_folders:
-                        assigned_uid = self._next_uid(cursor, "BidPageFolders")
+                        assigned_uid = self._next_uid_preserving_references(
+                            cursor, schema, "BidPageFolders"
+                        )
                         raw_parent = nf.get("parent_uid")
                         if raw_parent and str(raw_parent) in local_folder_uid_map:
                             parent_val = local_folder_uid_map[str(raw_parent)]
@@ -561,7 +631,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 for page in pages:
                     if page.get("width") is None:
                         continue
-                    page_uid = self._next_uid(cursor, "BidPages")
+                    page_uid = self._next_uid_preserving_references(
+                        cursor, schema, "BidPages"
+                    )
                     if first_page_uid is None:
                         first_page_uid = page_uid
                     page_guid = "{" + str(uuid.uuid4()).upper() + "}"
@@ -608,7 +680,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                             schema,
                             "BidLegends",
                             {
-                                "UID": self._next_uid(cursor, "BidLegends"),
+                                "UID": self._next_uid_preserving_references(
+                                    cursor, schema, "BidLegends"
+                                ),
                                 "BidUID": new_bid_uid,
                                 "BidPageUID": page_uid,
                                 "FontName": "Arial",
@@ -659,6 +733,58 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             )
             return None
 
+    @staticmethod
+    def _require_valid_new_bid_folder_references(
+        updates: Dict[str, object],
+    ) -> list[dict]:
+        normalized_folders: list[dict] = []
+        folder_by_uid: dict[str, dict] = {}
+        parent_by_uid: dict[str, str | None] = {}
+        for index, source_folder in enumerate(updates.get("new_folders", [])):
+            folder = dict(source_folder)
+            local_uid = str(folder.get("local_uid") or f"__folder_{index}")
+            if local_uid in folder_by_uid:
+                raise ValueError(
+                    f"New Bid contains duplicate page-folder identity {local_uid}."
+                )
+            folder["local_uid"] = local_uid
+            normalized_folders.append(folder)
+            folder_by_uid[local_uid] = folder
+            parent_uid = folder.get("parent_uid")
+            parent_by_uid[local_uid] = (
+                None if parent_uid in (None, "", 0, "0") else str(parent_uid)
+            )
+        for local_uid, parent_uid in parent_by_uid.items():
+            if parent_uid is not None and parent_uid not in folder_by_uid:
+                raise DanglingBidOwnedReferenceError(
+                    f"New Bid page folder {local_uid} references unavailable "
+                    f"page folder {parent_uid}."
+                )
+        require_acyclic_bid_owned_parent_graph(parent_by_uid, "BidPageFolders")
+        for page in updates.get("pages", []):
+            folder_uid = page.get("folder_uid")
+            if folder_uid in (None, "", 0, "0"):
+                continue
+            if str(folder_uid) not in folder_by_uid:
+                raise DanglingBidOwnedReferenceError(
+                    f"New Bid page references unavailable page folder {folder_uid}."
+                )
+        ordered_folders: list[dict] = []
+        appended: set[str] = set()
+
+        def append_with_parent(local_uid: str) -> None:
+            if local_uid in appended:
+                return
+            parent_uid = parent_by_uid[local_uid]
+            if parent_uid is not None:
+                append_with_parent(parent_uid)
+            ordered_folders.append(folder_by_uid[local_uid])
+            appended.add(local_uid)
+
+        for folder in normalized_folders:
+            append_with_parent(str(folder["local_uid"]))
+        return ordered_folders
+
     def _copy_bid_table_rows(
         self,
         cursor: pyodbc.Cursor,
@@ -688,6 +814,8 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             if table == "BidPageSettings":
                 rows = canonicalize_page_area_settings(rows)
             has_uid = "UID" in cols
+            if has_uid:
+                require_valid_unique_bid_owned_uids((row["UID"] for row in rows), table)
             insert_cols = cols
             for row_data in rows:
                 row_data[uid_col] = new_uid
@@ -697,7 +825,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     row_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                 if has_uid:
                     old_row_uid = str(int(row_data["UID"]))
-                    new_row_uid = self._next_uid(cursor, table)
+                    new_row_uid = self._next_uid_preserving_references(
+                        cursor, schema, table
+                    )
                     row_data["UID"] = new_row_uid
                 values = []
                 for c in insert_cols:
@@ -760,6 +890,218 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         (*scope, old_parent_uid),
                     )
 
+    def _require_duplicable_bid_relationships(
+        self,
+        cursor,
+        schema,
+        bid_uid: int,
+    ) -> None:
+        checked: set[tuple[str, str, str, str]] = set()
+        for relationship in BID_RELATIONSHIPS:
+            key = (
+                relationship.child_table,
+                relationship.child_column,
+                relationship.parent_table,
+                relationship.parent_column,
+            )
+            if key in checked:
+                continue
+            checked.add(key)
+            if schema.optional_table_missing(
+                relationship.child_table
+            ) or schema.optional_table_missing(relationship.parent_table):
+                continue
+            child_columns = schema.get_columns(relationship.child_table)
+            parent_columns = schema.get_columns(relationship.parent_table)
+            if not {
+                "UID",
+                "BidUID",
+                relationship.child_column,
+            }.issubset(child_columns) or not {
+                "BidUID",
+                relationship.parent_column,
+            }.issubset(
+                parent_columns
+            ):
+                continue
+            cursor.execute(
+                f"SELECT [child].[UID], [child].[{relationship.child_column}] "
+                f"FROM [{relationship.child_table}] AS [child] "
+                "WHERE [child].[BidUID] = ? AND "
+                f"[child].[{relationship.child_column}] IS NOT NULL AND "
+                f"[child].[{relationship.child_column}] <> 0",
+                bid_uid,
+            )
+            child_rows = cursor.fetchall()
+            if not child_rows:
+                continue
+            cursor.execute(
+                f"SELECT [{relationship.parent_column}] "
+                f"FROM [{relationship.parent_table}] WHERE [BidUID] = ?",
+                bid_uid,
+            )
+            parent_uids = {int(row[0]) for row in cursor.fetchall()}
+            missing_row = next(
+                (row for row in child_rows if int(row[1]) not in parent_uids),
+                None,
+            )
+            if missing_row is not None:
+                raise DanglingBidOwnedReferenceError(
+                    f"{relationship.child_table}.UID={int(missing_row[0])} "
+                    f"references missing {relationship.parent_table}.UID="
+                    f"{int(missing_row[1])} "
+                    f"through {relationship.child_column}."
+                )
+        self._require_duplicable_indirect_area_counts(cursor, schema, bid_uid)
+        self._require_duplicable_indirect_page_relationships(cursor, schema, bid_uid)
+        for table in (
+            "BidTakeoffs",
+            "BidAreas",
+            "BidConditionFolders",
+            "BidPageFolders",
+        ):
+            if schema.optional_table_missing(table):
+                continue
+            columns = schema.get_columns(table)
+            if not {"UID", "BidUID", "ParentUID"}.issubset(columns):
+                continue
+            cursor.execute(
+                f"SELECT [UID], [ParentUID] FROM [{table}] WHERE [BidUID] = ?",
+                bid_uid,
+            )
+            require_acyclic_bid_owned_parent_graph(
+                {row[0]: row[1] for row in cursor.fetchall()},
+                table,
+            )
+
+    @staticmethod
+    def _require_duplicable_indirect_area_counts(cursor, schema, bid_uid: int) -> None:
+        table = "BidTypAreaCounts"
+        required_tables = (table, "BidAreas", "BidTypAreas")
+        if any(schema.optional_table_missing(name) for name in required_tables):
+            return
+        if not {
+            "UID",
+            "BidAreaUID",
+            "BidTypAreaUID",
+        }.issubset(schema.get_columns(table)):
+            return
+        if not {"UID", "BidUID"}.issubset(schema.get_columns("BidAreas")) or not {
+            "UID",
+            "BidUID",
+        }.issubset(schema.get_columns("BidTypAreas")):
+            return
+        cursor.execute("SELECT [UID] FROM [BidAreas] WHERE [BidUID]=?", bid_uid)
+        area_uids = {int(row[0]) for row in cursor.fetchall()}
+        if not area_uids:
+            return
+        cursor.execute("SELECT [UID] FROM [BidTypAreas] WHERE [BidUID]=?", bid_uid)
+        typical_area_uids = {int(row[0]) for row in cursor.fetchall()}
+        cursor.execute(
+            "SELECT [UID], [BidAreaUID], [BidTypAreaUID] " "FROM [BidTypAreaCounts]"
+        )
+        rows = [
+            row
+            for row in cursor.fetchall()
+            if row[1] not in (None, "", 0, "0") and int(row[1]) in area_uids
+        ]
+        require_valid_unique_bid_owned_uids((row[0] for row in rows), table)
+        missing_row = next(
+            (
+                row
+                for row in rows
+                if row[2] not in (None, "", 0, "0")
+                and int(row[2]) not in typical_area_uids
+            ),
+            None,
+        )
+        if missing_row is not None:
+            raise DanglingBidOwnedReferenceError(
+                f"BidTypAreaCounts.UID={int(missing_row[0])} references missing "
+                f"BidTypAreas.UID={int(missing_row[2])} through BidTypAreaUID."
+            )
+
+    @staticmethod
+    def _require_duplicable_indirect_page_relationships(
+        cursor,
+        schema,
+        bid_uid: int,
+    ) -> None:
+        if schema.optional_table_missing("BidPages") or not {
+            "UID",
+            "BidUID",
+        }.issubset(schema.get_columns("BidPages")):
+            return
+        cursor.execute("SELECT [UID] FROM [BidPages] WHERE [BidUID]=?", bid_uid)
+        page_uids = [int(row[0]) for row in cursor.fetchall()]
+        if not page_uids:
+            return
+        checked: set[tuple[str, str, str, str]] = set()
+        for relationship in BID_RELATIONSHIPS:
+            if relationship.child_table not in PAGE_SECTIONS:
+                continue
+            key = (
+                relationship.child_table,
+                relationship.child_column,
+                relationship.parent_table,
+                relationship.parent_column,
+            )
+            if key in checked:
+                continue
+            checked.add(key)
+            if schema.optional_table_missing(
+                relationship.child_table
+            ) or schema.optional_table_missing(relationship.parent_table):
+                continue
+            child_columns = schema.get_columns(relationship.child_table)
+            parent_columns = schema.get_columns(relationship.parent_table)
+            if (
+                "BidUID" in child_columns
+                or not {
+                    "BidPageUID",
+                    relationship.child_column,
+                }.issubset(child_columns)
+                or not {
+                    "BidUID",
+                    relationship.parent_column,
+                }.issubset(parent_columns)
+            ):
+                continue
+            child_uid_sql = "[UID]" if "UID" in child_columns else "NULL AS [UID]"
+            child_rows = []
+            for page_uid in page_uids:
+                cursor.execute(
+                    f"SELECT {child_uid_sql}, [{relationship.child_column}] "
+                    f"FROM [{relationship.child_table}] WHERE [BidPageUID]=? "
+                    f"AND [{relationship.child_column}] IS NOT NULL "
+                    f"AND [{relationship.child_column}] <> 0",
+                    page_uid,
+                )
+                child_rows.extend(cursor.fetchall())
+            if not child_rows:
+                continue
+            cursor.execute(
+                f"SELECT [{relationship.parent_column}] "
+                f"FROM [{relationship.parent_table}] WHERE [BidUID]=?",
+                bid_uid,
+            )
+            parent_uids = {int(row[0]) for row in cursor.fetchall()}
+            missing_row = next(
+                (row for row in child_rows if int(row[1]) not in parent_uids),
+                None,
+            )
+            if missing_row is not None:
+                child_uid = (
+                    str(int(missing_row[0]))
+                    if missing_row[0] is not None
+                    else "<legacy>"
+                )
+                raise DanglingBidOwnedReferenceError(
+                    f"{relationship.child_table}.UID={child_uid} references missing "
+                    f"{relationship.parent_table}.UID={int(missing_row[1])} "
+                    f"through {relationship.child_column}."
+                )
+
     def _remap_duplicated_cover_sheet_selection(
         self,
         cursor,
@@ -815,11 +1157,17 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             rows = cursor.fetchall()
             if not rows:
                 return uid_map
+            require_valid_unique_bid_owned_uids(
+                (row[cols.index("UID")] for row in rows),
+                table,
+            )
             insert_cols = cols
             for row in rows:
                 row_data = dict(zip(cols, row))
                 old_row_uid = str(int(row_data["UID"]))
-                new_row_uid_int = self._next_uid(cursor, table)
+                new_row_uid_int = self._next_uid_preserving_references(
+                    cursor, schema, table
+                )
                 row_data["UID"] = new_row_uid_int
                 row_data[uid_col] = new_uid
                 if "GUID" in row_data:

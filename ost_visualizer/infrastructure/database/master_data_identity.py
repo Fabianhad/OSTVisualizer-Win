@@ -8,6 +8,59 @@ class AmbiguousMasterDataIdentityError(RuntimeError):
     """A weak import identity matched more than one master-data record."""
 
 
+class DuplicateMasterDataUidError(RuntimeError):
+    """A master-data table contains more than one row for an authoritative UID."""
+
+
+class MissingMasterDataIdentityError(RuntimeError):
+    """A referenced authoritative master-data record does not exist."""
+
+
+def require_unique_master_data_uids(uid_values: Iterable[object], table: str) -> None:
+    seen: set[str] = set()
+    for raw_uid in uid_values:
+        uid = "" if raw_uid is None else str(raw_uid)
+        if uid in seen:
+            raise DuplicateMasterDataUidError(
+                f"{table} contains duplicate UID {uid}; "
+                "authoritative master-data UIDs must be unique."
+            )
+        seen.add(uid)
+
+
+def require_existing_unique_master_data_uid(cursor, table: str, uid: int) -> None:
+    cursor.execute(f"SELECT [UID] FROM [{table}] WHERE [UID]=?", uid)
+    rows = cursor.fetchall()
+    require_unique_master_data_uids((row[0] for row in rows), table)
+    if not rows:
+        raise MissingMasterDataIdentityError(
+            f"{table} has no row for UID {uid}; "
+            "the referenced authoritative master-data record does not exist."
+        )
+
+
+def require_optional_existing_unique_master_data_uid(
+    cursor,
+    table: str,
+    value: object,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TypeError("Boolean values are not valid master-data identifiers")
+    if isinstance(value, int):
+        uid = value
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        uid = int(stripped)
+    else:
+        raise TypeError(f"Unsupported master-data identifier: {type(value).__name__}")
+    require_existing_unique_master_data_uid(cursor, table, uid)
+    return uid
+
+
 def master_data_identity_key(table: str, column: str, value: object) -> str:
     text = "" if value is None else str(value)
     if table == "CdnTypes" and column == "Name":
@@ -20,8 +73,10 @@ def build_master_data_candidate_index(
     table: str,
     column: str,
 ) -> MasterDataCandidateIndex:
+    source_rows = list(rows)
+    require_unique_master_data_uids((row[0] for row in source_rows), table)
     result: MasterDataCandidateIndex = {}
-    for raw_uid, raw_value in rows:
+    for raw_uid, raw_value in source_rows:
         add_master_data_candidate(
             result,
             master_data_identity_key(table, column, raw_value),

@@ -1,14 +1,21 @@
 from typing import Optional
+from ...database.bid_owned_identity import (
+    require_existing_unique_bid_owned_uid_matches,
+    require_single_bid_scope_for_uids,
+    require_unique_bid_owned_uid_matches,
+)
 from .constants import LAYER_REFERENCE_TABLES
+from .identity_allocation import AccessIdentityAllocationMixin
 
 
-class LayerOperationsMixin:
+class LayerOperationsMixin(AccessIdentityAllocationMixin):
     def update_layer_show(self, db_path: str, layer_uid: str, show: bool) -> bool:
         show_value = -1 if show else 0
         with self._connection(db_path) as conn:
             schema = self._schema(conn)
             self._require_write_columns(schema, "BidLayers", ("UID", "Show"))
             cursor = conn.cursor()
+            require_single_bid_scope_for_uids(cursor, "BidLayers", (layer_uid,))
             cursor.execute(
                 "UPDATE [BidLayers] SET [Show] = ? WHERE [UID] = ?",
                 show_value,
@@ -26,6 +33,7 @@ class LayerOperationsMixin:
                 schema, "BidLayers", ("UID", "Show", "IsTemplate")
             )
             cursor = conn.cursor()
+            require_unique_bid_owned_uid_matches(cursor, "BidLayers", (layer_uid,))
             cursor.execute(
                 "UPDATE [BidLayers] SET [Show] = ? "
                 "WHERE [UID] = ? AND [IsTemplate] <> 0",
@@ -41,6 +49,7 @@ class LayerOperationsMixin:
             schema = self._schema(conn)
             self._require_write_columns(schema, "BidLayers", ("UID", "BidUID", "Name"))
             cursor = conn.cursor()
+            require_existing_unique_bid_owned_uid_matches(cursor, "Bids", (bid_uid,))
             has_sequence = schema.column_exists("BidLayers", "Sequence")
             if has_sequence:
                 cursor.execute(
@@ -51,7 +60,7 @@ class LayerOperationsMixin:
                 )
             else:
                 schema.log_optional_write_skip("BidLayers", "Sequence", "insert_layer")
-            new_uid = self._next_uid(cursor, "BidLayers")
+            new_uid = self._next_uid_preserving_references(cursor, schema, "BidLayers")
             new_seq = after_sequence + 1
             self._execute_insert_values(
                 cursor,
@@ -90,7 +99,7 @@ class LayerOperationsMixin:
                 schema.log_optional_write_skip(
                     "BidLayers", "Sequence", "insert_default_layer"
                 )
-            new_uid = self._next_uid(cursor, "BidLayers")
+            new_uid = self._next_uid_preserving_references(cursor, schema, "BidLayers")
             self._execute_insert_values(
                 cursor,
                 schema,
@@ -113,6 +122,7 @@ class LayerOperationsMixin:
             schema = self._schema(conn)
             self._require_write_columns(schema, "BidLayers", ("UID",))
             cursor = conn.cursor()
+            require_single_bid_scope_for_uids(cursor, "BidLayers", (layer_uid,))
             select_cols = ["[UID]"]
             if schema.column_exists("BidLayers", "Sequence"):
                 select_cols.append("[Sequence]")
@@ -178,6 +188,7 @@ class LayerOperationsMixin:
             schema = self._schema(conn)
             self._require_write_columns(schema, "BidLayers", ("UID", "IsTemplate"))
             cursor = conn.cursor()
+            require_unique_bid_owned_uid_matches(cursor, "BidLayers", (layer_uid,))
             select_cols = ["[UID]"]
             if schema.column_exists("BidLayers", "Sequence"):
                 select_cols.append("[Sequence]")
@@ -217,6 +228,7 @@ class LayerOperationsMixin:
             ):
                 template_filter = " OR ([IsTemplate] <> 0 AND [IsLocked] <> 0)"
             cursor = conn.cursor()
+            require_existing_unique_bid_owned_uid_matches(cursor, "Bids", (bid_uid,))
             cursor.execute(
                 "UPDATE [BidLayers] SET [Show] = ? "
                 f"WHERE [BidUID] = ?{template_filter}",
@@ -247,6 +259,7 @@ class LayerOperationsMixin:
             if schema.column_exists("BidLayers", "IsLocked"):
                 where_parts.append("[IsLocked] = 0")
             cursor = conn.cursor()
+            require_single_bid_scope_for_uids(cursor, "BidLayers", (layer_uid,))
             cursor.execute(
                 "UPDATE [BidLayers] SET [Name] = ? "
                 f"WHERE {' AND '.join(where_parts)}",
@@ -264,6 +277,7 @@ class LayerOperationsMixin:
                 schema, "BidLayers", ("UID", "Name", "IsTemplate")
             )
             cursor = conn.cursor()
+            require_unique_bid_owned_uid_matches(cursor, "BidLayers", (layer_uid,))
             cursor.execute(
                 "UPDATE [BidLayers] SET [Name] = ? "
                 "WHERE [UID] = ? AND [IsTemplate] <> 0",
@@ -279,6 +293,9 @@ class LayerOperationsMixin:
             schema = self._schema(conn)
             self._require_write_columns(schema, "BidLayers", ("UID", "Sequence"))
             cursor = conn.cursor()
+            require_single_bid_scope_for_uids(
+                cursor, "BidLayers", (layer_uid_a, layer_uid_b)
+            )
             cursor.execute(
                 "SELECT [UID], [Sequence] FROM [BidLayers] WHERE [UID] IN (?, ?)",
                 int(layer_uid_a),
@@ -313,6 +330,9 @@ class LayerOperationsMixin:
                 schema, "BidLayers", ("UID", "Sequence", "IsTemplate")
             )
             cursor = conn.cursor()
+            require_unique_bid_owned_uid_matches(
+                cursor, "BidLayers", (layer_uid_a, layer_uid_b)
+            )
             cursor.execute(
                 "SELECT [UID], [Sequence] FROM [BidLayers] "
                 "WHERE [UID] IN (?, ?) AND [IsTemplate] <> 0",

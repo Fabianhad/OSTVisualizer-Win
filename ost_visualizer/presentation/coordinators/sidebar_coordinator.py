@@ -188,9 +188,6 @@ class SidebarCoordinator:
             bid_ref.file_path, bid_ref.bid_uid
         )
         self._project_data.set_bid_layer_visibility(merged)
-        if not merged:
-            self.bid_layers_sidebar.clear()
-            return
         used_uids = self._project_read_service.get_layer_uids_in_use(
             bid_ref.file_path, bid_ref.bid_uid
         )
@@ -203,9 +200,6 @@ class SidebarCoordinator:
             self.bid_layers_sidebar.clear()
             return
         layers = self._project_data.get_bid_layer_snapshot()
-        if not layers:
-            self.bid_layers_sidebar.clear()
-            return
         self.bid_layers_sidebar.load_layers(
             layers,
             used_uids=self._project_data.get_layer_uids_in_use(),

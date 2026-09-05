@@ -5270,8 +5270,9 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             InsertTakeoffSpec(
                 condition_uid="10",
                 page_uid="20",
-                area_uid=None,
+                area_uid="30",
                 position=[1.0, 2.0],
+                parent_uid="40",
             ),
             InsertTakeoffSpec(
                 condition_uid="11",
@@ -5307,9 +5308,11 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(
             request.dependency_resources,
             (
+                ResourceRef("area", "30", 8),
                 ResourceRef("condition", "10", 8),
                 ResourceRef("condition", "11", 8),
                 ResourceRef("page", "20", 8),
+                ResourceRef("takeoff", "40", 8),
             ),
         )
         self.assertTrue(kwargs["result_validator"](work_result))
@@ -5333,9 +5336,11 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             def __init__(self):
                 self.verifications = []
 
-            def verify_plan_items_exist(self, database_id, takeoff_uids, annotations):
+            def verify_plan_items_exist(
+                self, database_id, bid_uid, takeoff_uids, annotations
+            ):
                 self.verifications.append(
-                    (database_id, tuple(takeoff_uids), tuple(annotations))
+                    (database_id, bid_uid, tuple(takeoff_uids), tuple(annotations))
                 )
                 raise RuntimeError("selected takeoff was deleted")
 
@@ -5375,7 +5380,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             queued[0][0][1]()
         self.assertEqual(
             executor.verifications,
-            [("database", ("101", "102"), ())],
+            [("database", "8", ("101", "102"), ())],
         )
         self.assertEqual(save_calls, [])
 
@@ -5391,9 +5396,11 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             def __init__(self):
                 self.verifications = []
 
-            def verify_plan_items_exist(self, database_id, takeoff_uids, annotations):
+            def verify_plan_items_exist(
+                self, database_id, bid_uid, takeoff_uids, annotations
+            ):
                 self.verifications.append(
-                    (database_id, tuple(takeoff_uids), tuple(annotations))
+                    (database_id, bid_uid, tuple(takeoff_uids), tuple(annotations))
                 )
                 raise RuntimeError("selected plan item was deleted")
 
@@ -5441,7 +5448,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             queued[0][0][1]()
         self.assertEqual(
             executor.verifications,
-            [("database", ("101", "102"), (("201", "line"),))],
+            [("database", "8", ("101", "102"), (("201", "line"),))],
         )
         self.assertEqual(save_calls, [])
 

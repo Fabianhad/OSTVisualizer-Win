@@ -103,6 +103,12 @@ class TakeoffGraphResolution:
 
 
 BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
+    RawBidRelationship("Bids", "BidProjectUID", "BidProjects"),
+    RawBidRelationship("Bids", "OrigBidProjectUID", "BidProjects"),
+    RawBidRelationship("Bids", "JobStatusUID", "JobStatuses"),
+    RawBidRelationship("Bids", "EstimatorUID", "Employees"),
+    RawBidRelationship("Bids", "PrManagerUID", "Employees"),
+    RawBidRelationship("Bids", "JobSiteManagerUID", "Employees"),
     RawBidRelationship(
         "AffectDPCTypGroupViews", "BidTypGroupViewUID", "BidTypGroupViews"
     ),
@@ -258,11 +264,24 @@ _RAW_TABLES = (
 )
 _RAW_TABLE_SET = set(_RAW_TABLES)
 _GLOBAL_TABLE_SET = set(GLOBAL_SECTIONS)
+_IMPORT_RECONCILED_OPTIONAL_MASTER_REFERENCES = frozenset(
+    {
+        ("Bids", "JobStatusUID"),
+        ("Bids", "EstimatorUID"),
+        ("Bids", "PrManagerUID"),
+        ("Bids", "JobSiteManagerUID"),
+    }
+)
 RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = tuple(
     relationship
     for relationship in BID_RELATIONSHIPS
     if relationship.child_table in _RAW_TABLE_SET
     and relationship.parent_table in _RAW_TABLE_SET
+    and (
+        relationship.child_table,
+        relationship.child_column,
+    )
+    not in _IMPORT_RECONCILED_OPTIONAL_MASTER_REFERENCES
 )
 _CLEARABLE_EXPORT_REFERENCES = {("BidSettings", "BidPageSelectedUID")}
 _TAKEOFF_GRAPH_REFERENCES = {("BidTakeoffs", "ParentUID")}
@@ -272,6 +291,33 @@ _ANNOTATION_TAKEOFF_REFERENCE_COLUMNS = {
     "BidArrows": ("BidTakeoffFromUID", "BidTakeoffToUID"),
     "BidALines": ("BidTakeoffFromUID", "BidTakeoffToUID"),
 }
+_AUTHORITATIVE_BID_OWNED_UID_TABLES = frozenset(
+    {
+        "Bids",
+        "BidAreas",
+        "BidTypAreas",
+        "BidConditionFolders",
+        "BidPageFolders",
+        "BidLayers",
+        "BidConditions",
+        "BidZones",
+        "BidPages",
+        "BidAnnotationClouds",
+        "BidAnnotationOvals",
+        "BidAnnotationPolygons",
+        "BidAnnotationRects",
+        "BidAnnoInk",
+        "BidALines",
+        "BidDimensions",
+        "BidArrows",
+        "BidTexts",
+        "BidHighlights",
+        "BidNamedViews",
+        "BidHotLinks",
+        "BidCallOuts",
+        "BidComments",
+    }
+)
 
 
 def clone_raw_bid_data(raw_data: RawBidData) -> RawBidData:
@@ -319,15 +365,36 @@ def validate_raw_bid_integrity(
     parent_uid_cache: Dict[Tuple[str, str], Set[str]] = {}
     issues: List[RawBidFormattedIssue] = []
     for table in _RAW_TABLES:
-        uid_counts = Counter(
-            str(row.get("UID", ""))
-            for row in rows_by_table.get(table, [])
-            if is_present_uid(str(row.get("UID", "")))
-        )
+        table_rows = rows_by_table.get(table, [])
+        uid_counts: Counter[str] = Counter()
+        if table in _AUTHORITATIVE_BID_OWNED_UID_TABLES:
+            for row in table_rows:
+                uid = str(row.get("UID", ""))
+                if not uid.isascii() or not uid.isdecimal() or int(uid) <= 0:
+                    issues.append(RawBidMalformedUid(table, uid, "UID", uid))
+                    continue
+                uid_counts[str(int(uid))] += 1
+        else:
+            uid_counts.update(
+                str(row.get("UID", ""))
+                for row in table_rows
+                if is_present_uid(str(row.get("UID", "")))
+            )
         issues.extend(
             RawBidDuplicateUid(table, uid, count)
             for uid, count in sorted(uid_counts.items())
             if count > 1
+        )
+    for table in ("BidAreas", "BidConditionFolders", "BidPageFolders"):
+        parent_by_uid = {
+            str(row.get("UID", "")): str(row.get("ParentUID", ""))
+            for row in rows_by_table.get(table, [])
+            if is_present_uid(str(row.get("UID", "")))
+            and is_present_uid(str(row.get("ParentUID", "")))
+        }
+        issues.extend(
+            RawBidParentCycle(table, uid)
+            for uid in sorted(find_takeoff_parent_cycle_uids(parent_by_uid))
         )
     settings_counts = Counter(
         str(row.get("BidUID", ""))

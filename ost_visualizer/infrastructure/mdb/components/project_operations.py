@@ -1,8 +1,13 @@
 from typing import List, Optional
+from ...database.bid_owned_identity import (
+    require_existing_unique_bid_owned_uid_matches,
+    require_unique_bid_owned_uid_matches,
+)
+from .identity_allocation import AccessIdentityAllocationMixin
 from .sql_helpers import placeholders
 
 
-class ProjectOperationsMixin:
+class ProjectOperationsMixin(AccessIdentityAllocationMixin):
     def move_bids_to_project(
         self,
         db_path: str,
@@ -27,6 +32,14 @@ class ProjectOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "Bids", ("UID", "BidProjectUID"))
                 cursor = conn.cursor()
+                require_existing_unique_bid_owned_uid_matches(cursor, "Bids", uids)
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "BidProjects", (project_uid,)
+                )
+                if orig_project_uid is not None:
+                    require_existing_unique_bid_owned_uid_matches(
+                        cursor, "BidProjects", (orig_project_uid,)
+                    )
                 if orig_project_uid is not None and schema.column_exists(
                     "Bids", "OrigBidProjectUID"
                 ):
@@ -76,6 +89,7 @@ class ProjectOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "Bids", ("UID", "BidProjectUID"))
                 cursor = conn.cursor()
+                require_unique_bid_owned_uid_matches(cursor, "Bids", uids)
                 cursor.execute(
                     f"UPDATE [Bids] SET BidProjectUID = NULL WHERE UID IN ({placeholders_sql})",
                     *uids,
@@ -93,7 +107,9 @@ class ProjectOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidProjects", ("UID", "Name"))
                 cursor = conn.cursor()
-                new_uid = str(self._next_uid(cursor, "BidProjects"))
+                new_uid = str(
+                    self._next_uid_preserving_references(cursor, schema, "BidProjects")
+                )
                 cursor.execute(
                     "INSERT INTO [BidProjects] ([UID], [Name]) VALUES (?, ?)",
                     new_uid,
@@ -112,6 +128,9 @@ class ProjectOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidProjects", ("UID", "Name"))
                 cursor = conn.cursor()
+                require_unique_bid_owned_uid_matches(
+                    cursor, "BidProjects", (project_uid,)
+                )
                 cursor.execute(
                     "UPDATE [BidProjects] SET [Name] = ? WHERE UID = ?",
                     new_name,
@@ -144,12 +163,21 @@ class ProjectOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidProjects", ("UID",))
                 cursor = conn.cursor()
+                require_unique_bid_owned_uid_matches(cursor, "BidProjects", uids)
                 if not schema.optional_table_missing("Bids") and schema.column_exists(
                     "Bids", "BidProjectUID"
                 ):
                     cursor.execute(
                         "UPDATE [Bids] SET [BidProjectUID]=NULL "
                         f"WHERE [BidProjectUID] IN ({placeholders_sql})",
+                        *uids,
+                    )
+                if not schema.optional_table_missing("Bids") and schema.column_exists(
+                    "Bids", "OrigBidProjectUID"
+                ):
+                    cursor.execute(
+                        "UPDATE [Bids] SET [OrigBidProjectUID]=NULL "
+                        f"WHERE [OrigBidProjectUID] IN ({placeholders_sql})",
                         *uids,
                     )
                 cursor.execute(

@@ -1,6 +1,6 @@
 import unittest
+from collections import namedtuple
 from contextlib import contextmanager
-from types import SimpleNamespace
 from ost_visualizer.infrastructure.mdb.components.layer_operations import (
     LayerOperationsMixin,
 )
@@ -9,15 +9,24 @@ from ost_visualizer.infrastructure.mdb.components.layer_operations import (
 class _Cursor:
     def __init__(self):
         self.executions = []
+        self._last_sql = ""
 
     def execute(self, sql, *parameters):
-        self.executions.append((" ".join(sql.split()), parameters))
+        self._last_sql = " ".join(sql.split())
+        self.executions.append((self._last_sql, parameters))
         return self
 
     def fetchall(self):
+        if self._last_sql.startswith(
+            "SELECT [UID], [BidUID] FROM [BidLayers]"
+        ):
+            return [(10, 7), (11, 7)]
+        if self._last_sql.startswith("SELECT [UID] FROM [Bids]"):
+            return [(7,)]
+        row_type = namedtuple("LayerRow", ("UID", "Sequence"))
         return [
-            SimpleNamespace(UID=10, Sequence=1),
-            SimpleNamespace(UID=11, Sequence=2),
+            row_type(10, 1),
+            row_type(11, 2),
         ]
 
 
@@ -54,7 +63,7 @@ class LayerOperationsTests(unittest.TestCase):
     def test_bid_layer_swap_updates_non_template_rows(self):
         operations = _LayerOperations()
         self.assertTrue(operations.swap_layer_sequence("bid.mdb", "10", "11"))
-        updates = operations.cursor.executions[1:]
+        updates = operations.cursor.executions[3:]
         self.assertEqual(
             updates,
             [

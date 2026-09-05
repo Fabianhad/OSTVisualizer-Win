@@ -3806,6 +3806,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 (list(pages), active)
             )
         )
+        page_settings_clears = []
+        coordinator._page_settings_bar = SimpleNamespace(
+            clear_page=lambda: page_settings_clears.append(True)
+        )
         coordinator._viewer = SimpleNamespace(clear_plan_view=lambda: None)
         coordinator._request_or_defer_mesh_refresh = (
             lambda pages: mesh_refreshes.append(list(pages))
@@ -3823,6 +3827,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(mesh_refreshes, [[]])
         self.assertEqual(terminal_clears, [])
         self.assertEqual(restored_navigation, [([], None)])
+        self.assertEqual(page_settings_clears, [True])
 
     def test_remote_projection_request_failure_releases_registered_surface(self):
         database_id = "sql-db"
@@ -5417,6 +5422,73 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_queued_layer_write_complete(result)
         self.assertEqual(calls[0], "memory")
         self.assertEqual(calls[1], ("sql-database", "Layer Update", result))
+
+    def test_access_layer_delete_failure_restores_sidebar_and_reports_error(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        calls = []
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "8")
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
+            delete_layer=lambda _database_id, _layer_uid: False,
+        )
+        coordinator._flush_deferred_for_file = lambda _database_id: True
+        coordinator._sidebar = SimpleNamespace(
+            load_bid_layers_sidebar=lambda: calls.append("reload")
+        )
+        coordinator.main_window = object()
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "show_critical"
+        ) as show_error:
+            coordinator._on_layer_deleted("layer-1")
+        self.assertEqual(calls, ["reload"])
+        show_error.assert_called_once()
+        self.assertEqual(show_error.call_args.args[1], "Delete Layer")
+
+    def test_sql_layer_delete_failure_reports_delete_operation(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        queued = {}
+        calls = []
+        result = SimpleNamespace(
+            database_id="sql-database",
+            outcome_status=MutationOutcomeStatus.CONFLICT,
+            message="conflict",
+        )
+
+        def queue_delete(_database_id, _bid_uid, _layer_uid, callback):
+            queued["callback"] = callback
+
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("sql-database", "8")
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: True,
+            queue_layer_delete=queue_delete,
+        )
+        coordinator._flush_deferred_for_file = lambda _database_id: True
+        coordinator._sidebar = SimpleNamespace(
+            load_bid_layers_sidebar_from_memory=lambda: calls.append("reload")
+        )
+        coordinator._is_cleaning_up = False
+        coordinator.present_queued_mutation_error = (
+            lambda database_id, title, presented: calls.append(
+                (database_id, title, presented)
+            )
+        )
+
+        coordinator._on_layer_deleted("layer-1")
+        queued["callback"](result)
+
+        self.assertEqual(calls[0], "reload")
+        self.assertEqual(calls[1], ("sql-database", "Delete Layer", result))
 
     def test_projection_recovery_does_not_open_a_premature_modal_error(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

@@ -4,6 +4,11 @@ from ...database.settings_cardinality import (
     fetch_optional_global_settings_row,
     normalize_next_bid_number,
 )
+from ...database.master_data_identity import require_unique_master_data_uids
+from ...database.bid_owned_identity import (
+    require_acyclic_bid_owned_parent_graph,
+    require_valid_unique_bid_owned_uids,
+)
 from ....domain.entities.area import BidArea
 from ....domain.entities.cover_sheet import (
     CoverSheetData,
@@ -57,6 +62,7 @@ class SettingsReaderMixin:
 
     def _parse_job_statuses(self, connection) -> List[JobStatus]:
         rows = self._select_all_unfiltered(connection, "JobStatuses")
+        require_unique_master_data_uids((row.get("UID") for row in rows), "JobStatuses")
         return sorted(
             [
                 JobStatus(
@@ -75,6 +81,12 @@ class SettingsReaderMixin:
     ) -> Tuple[List[Employee], List[PayClass]]:
         employee_rows = self._select_all_unfiltered(connection, "Employees")
         pay_class_rows = self._select_all_unfiltered(connection, "PayClasses")
+        require_unique_master_data_uids(
+            (row.get("UID") for row in employee_rows), "Employees"
+        )
+        require_unique_master_data_uids(
+            (row.get("UID") for row in pay_class_rows), "PayClasses"
+        )
         employees = [
             Employee(
                 uid=_clean_optional_text(row.get("UID", "")),
@@ -173,7 +185,11 @@ class SettingsReaderMixin:
                         "FROM [BidPageFolders] WHERE [BidUID] = ? ORDER BY [Name]",
                         bid_uid,
                     )
-                    for row in cursor.fetchall():
+                    folder_rows = cursor.fetchall()
+                    require_valid_unique_bid_owned_uids(
+                        (row.UID for row in folder_rows), "BidPageFolders"
+                    )
+                    for row in folder_rows:
                         folder_uid = str(row.UID)
                         parent_uid = (
                             str(row.ParentUID)
@@ -184,6 +200,10 @@ class SettingsReaderMixin:
                             uid=folder_uid, name=decode_value(row.Name) or folder_uid
                         )
                         folder_parent_map[folder_uid] = parent_uid
+                    require_acyclic_bid_owned_parent_graph(
+                        folder_parent_map,
+                        "BidPageFolders",
+                    )
             root_folders: Dict[str, CoverSheetFolder] = {}
             for folder_uid, folder in all_folders.items():
                 parent_uid = folder_parent_map.get(folder_uid)
@@ -221,7 +241,11 @@ class SettingsReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                page_rows = cursor.fetchall()
+                require_valid_unique_bid_owned_uids(
+                    (row.UID for row in page_rows), "BidPages"
+                )
+                for row in page_rows:
                     page = CoverSheetPage(
                         uid=str(row.UID) if row.UID is not None else "",
                         sheet_no=decode_value(row.SheetNo) or "",

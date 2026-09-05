@@ -1070,7 +1070,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
 
                 def delete_first(recorder):
                     writers[0].verify_plan_items_exist(
-                        descriptor.database_id, (first_uid,), ()
+                        descriptor.database_id, str(bid_uid), (first_uid,), ()
                     )
                     self.assertTrue(
                         writers[0].delete_takeoffs(descriptor.database_id, (first_uid,))
@@ -1159,7 +1159,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                             ),
                         ),
                         lambda _recorder: writers[1].verify_plan_items_exist(
-                            descriptor.database_id, (first_uid,), ()
+                            descriptor.database_id, str(bid_uid), (first_uid,), ()
                         ),
                     )
                 finally:
@@ -1360,6 +1360,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     def delete(recorder):
                         writer.verify_plan_items_exist(
                             descriptor.database_id,
+                            str(bid_uid),
                             (created_uid,),
                             (),
                         )
@@ -1872,6 +1873,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                 def delete_mutation(recorder):
                     writer.verify_plan_items_exist(
                         descriptor.database_id,
+                        str(bid_uid),
                         (created_uid,),
                         (),
                     )

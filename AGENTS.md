@@ -199,6 +199,26 @@ Persistence:
   Replacing an overlay resets its prior rectangle, offsets, rotation, deskew,
   and resized state. Removing it clears that same complete overlay-owned state
   and makes the original image the authoritative page display mode.
+- Bid Areas form a same-bid acyclic forest. MDB/SQL reconstruction, area saves,
+  Duplicate Bid, and OST/OSP import reject missing, cross-bid, or cyclic area
+  parents before mutation; legacy zero parents normalize to the root. Legacy
+  schemas without `BidAreas.ParentUID` remain
+  writable only for flat area changes. Page deletion clears surviving same-bid
+  `MasterPageUID` and comment-parent references whose targets are deleted.
+  Deleting takeoffs directly, through Page deletion, or through Condition
+  deletion clears every surviving same-bid takeoff self-reference, including
+  parent, typical-group, typical-page, and typical-group-marker links.
+- Annotation insertion validates the required Page, every persisted optional
+  Layer, and every positive Hot Link target against the exact target bid before
+  allocating identities. Named View deletion is one atomic dependency batch:
+  every targeting Hot Link must be included, while Page deletion owns the
+  automatic Named View/Hot Link cascade. Direct, Page, Condition, and legacy Bid
+  takeoff deletion all remove line, arrow, and dimension companions linked
+  through either takeoff endpoint. Condition deletion also owns
+  `BidConditionUser` cleanup. Page-area selection requires its Area to belong to
+  the Page's bid. Deleting a Project clears both current ownership and deleted-
+  bid restore references; moving a bid with an original-project value validates
+  both Project identities before mutation.
 - MDB and SQL bid duplication remap layer foreign keys through the shared
   `LAYER_REFERENCE_TABLES` contract. Tables such as takeoffs, dimensions,
   arrows, annotation lines, ink, and legends do not own `BidLayerUID`; takeoffs
@@ -207,6 +227,21 @@ Persistence:
 - `BID_RELATIONSHIPS` is the complete bid ownership/reference catalog used by
   duplication; `RAW_BID_RELATIONSHIPS` is its OST/OSP import/export subset.
   Duplicate Bid regenerates each copied entity GUID and copies each table once.
+  Folder parent graphs must be acyclic during hierarchy/Cover Sheet
+  reconstruction, Duplicate Bid, and OST/OSP import. Ordinary MDB loading keeps
+  the established missing- or cross-bid-parent fallback at the root, but new
+  folder and page assignments must resolve to the exact target bid before any
+  mutation. Access UID allocation for authoritative owners must reserve IDs
+  still named by canonical inbound references; otherwise a legacy dangling row
+  can acquire an unrelated newly created owner after reload. This applies to
+  global master-data creation and import as well as bid-owned entities. SQL
+  identity allocation remains database-generated and must not run the Access
+  inbound-reference `MAX(UID)` scan. A requested Condition- or Page-folder
+  parent requires the corresponding legacy `ParentUID` column, and any Page
+  folder creation requires the folder table; reject unsupported hierarchy
+  writes before changing Bid data while retaining flat root-folder writes.
+  Employee saves validate every non-null Pay Class reference for the complete
+  batch before the first mutation.
   `BidSettings` is an optional singular row per bid; readers, writers, imports,
   exports, and duplication reject multiple rows instead of choosing or updating
   them arbitrarily. Known page-based Cover Sheet selection identity is remapped
@@ -391,9 +426,14 @@ Database backends:
   Remote Job Status and Employee changes refresh hierarchy-derived labels and
   active-bid access state, while Condition Type catalog changes refresh cached
   Condition labels through `CdnTypeUID`. Employee use/deletion covers the
-  estimator, project-manager, and job-site-manager bid roles by UID. Deleting
-  an Employee removes DPC subscribers through the matching `BidEmployees` rows,
-  never by comparing a global Employee UID to a Bid Employee UID.
+  estimator, project-manager, and job-site-manager bid roles by UID. Despite its
+  legacy column name, `BidDPCSubscribers.BidEmployeeUID` references the global
+  `Employees.UID`; Employee deletion must use that direct schema relationship,
+  while `BidTimeCards.BidEmployeeUID` references `BidEmployees.UID`.
+  Master-data UIDs are authoritative primary identities. Reconstruction and
+  mutation must reject a malformed legacy table containing duplicate physical
+  UIDs before choosing or changing any row; display ordering must never select
+  between records that claim the same UID.
 - Remote application merges are targeted by entity family. Do not publish
   EventBus events from polling workers, add remote commands to local undo
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread
@@ -410,6 +450,39 @@ Database backends:
   duplication reconstructs every copied internal reference from the complete
   bid relationship graph, while SQL import uses its raw interchange subset;
   regenerated row identities and GUIDs must not retain source-bid identity.
+  Authoritative projects, bids, bid-owned layers, Condition/page folders, pages,
+  Conditions, areas/typical areas, zones, takeoffs, and each typed annotation
+  table require positive, table-wide unique integer UIDs. Access reconstruction,
+  single-entity mutation/cascade, OST/OSP import, and Duplicate Bid reject
+  malformed or duplicate owner identities before dictionary collapse or
+  ambiguous mutation. A bid move/create must resolve its requested Project, and
+  loaded takeoffs must resolve their required Page, Condition, and non-root
+  Takeoff parent owners and must form an acyclic parent graph. Duplicate Bid
+  rejects copied bid-internal references that are missing or belong to another
+  bid before allocating destination identities, so a dangling source UID cannot
+  bind to an unrelated regenerated row. Null optional references remain valid.
+  Legacy UID-less `BidPageSettings` rows and intentionally orphaned hierarchy
+  placement retain their separate supported compatibility contracts.
+  Multi-resource Access mutations validate their complete target set before the
+  first write: batch targets belong to one bid, relationship assignments resolve
+  inside that bid, and root Layer/Condition-folder creation resolves the owning
+  Bid before sequence or identity allocation. Takeoff, annotation, Area, and
+  selected-page creation likewise require that authoritative Bid even if orphan
+  companion rows carry the same Bid UID. New Bid page-folder references are
+  local to the new bid, form one acyclic graph, and are inserted parent-first
+  regardless of drag-produced payload order. Optional Bid Job Status, Estimator,
+  Project Manager, and Site Manager references remain nullable; any value copied
+  or written must resolve to its exact master-data table before the first write.
+  Legacy bid-owned rows may remain readable when their Bid is missing, but direct
+  edits, moves, and deletes must resolve the authoritative owning Bid before the
+  first write. When an optional Job Status or Employee master table is absent,
+  unrelated Cover Sheet saves preserve the stored reference; an explicit new
+  selection is unsupported and must fail without mutation.
+  SQL plan preflight carries the expected Bid into its locked existence check,
+  and queued Takeoff creation/paste locks every persisted Page, Condition, Area,
+  and pre-existing parent Takeoff dependency. Plan paste also locks an external
+  same-bid Named View referenced by a Hot Link; a cross-bid link retains that
+  reference only when the Named View is part of the same copied payload.
   Plan clipboard snapshots use the current typed
   takeoff label-font state as authoritative over older raw storage extras.
 - Unchecking or removing a SQL descriptor always detaches local state even when
@@ -442,6 +515,15 @@ State and identity:
   snapshots must retain hidden annotations so every open plan surface can
   reveal the existing scene items when the layer is enabled; do not filter
   hidden annotations out during viewer hydration.
+- An editable empty Bid layer collection still permits creating its first
+  layer; only controls that operate on existing layers are disabled.
+- Page-setting controls retain Bid-owned Area choices independently from their
+  active Page projection. Losing the active Page clears and disables only the
+  Page-owned scale/Area selection instead of displaying state from a deleted
+  Page or treating the Bid itself as unloaded.
+- Condition Summary authoritative refreshes preserve the current row and
+  expanded branches only while their complete logical tree paths still exist;
+  removed rows clear selection and action availability.
 - Plan mutation completions may restore previews, selections, editor properties,
   or placement tools only while their captured database, bid, and page still own
   that surface. Pending or granted geometry edit leases are released when the

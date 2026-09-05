@@ -193,6 +193,32 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         coordinator.conditions_sidebar = sidebar
         return coordinator, sidebar, ui_state
 
+    def test_layer_coordinator_keeps_empty_loaded_bid_distinct_from_no_bid(self):
+        calls = []
+        bid_ref = BidRef("db.mdb", "bid-1")
+        ui_state = SimpleNamespace(get_selected_bid_ref=lambda: bid_ref)
+        project_data = SimpleNamespace(
+            get_bid_layer_snapshot=lambda: [],
+            get_layer_uids_in_use=lambda: set(),
+            set_bid_layer_visibility=lambda _layers: None,
+        )
+        read_service = SimpleNamespace(
+            get_merged_bid_layers=lambda _path, _bid_uid: [],
+            get_layer_uids_in_use=lambda _path, _bid_uid: set(),
+        )
+        coordinator = SidebarCoordinator(read_service, ui_state, project_data)
+        coordinator.bid_layers_sidebar = SimpleNamespace(
+            clear=lambda: calls.append(("clear",)),
+            load_layers=lambda layers, used_uids: calls.append(
+                ("load", list(layers), set(used_uids))
+            ),
+        )
+
+        coordinator.load_bid_layers_sidebar()
+        coordinator.load_bid_layers_sidebar_from_memory()
+
+        self.assertEqual(calls, [("load", [], set()), ("load", [], set())])
+
     def _show_compact_sidebar(self, sidebar: ConditionsSidebar) -> None:
         sidebar.resize(260, 180)
         sidebar.show()

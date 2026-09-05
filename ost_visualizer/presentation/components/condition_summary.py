@@ -260,6 +260,15 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         if self._root_node is None:
             self.clear()
             return
+        had_items = self.tree.topLevelItemCount() > 0
+        current_item = self.tree.currentItem()
+        current_key = self._item_path_key(current_item) if current_item else None
+        expanded_keys = {
+            self._item_path_key(item)
+            for item in self._iter_items(self.tree.invisibleRootItem())
+            if item.isExpanded()
+        }
+        scroll_value = self.tree.verticalScrollBar().value()
         column_keys = self._visible_column_keys()
         self.columns_about_to_change.emit(tuple(column_keys))
         self._column_keys = column_keys
@@ -270,6 +279,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self._apply_header_alignment()
         self._configure_header_sections()
         self.tree.setUpdatesEnabled(False)
+        signals_blocked = self.tree.blockSignals(True)
         try:
             self.tree.clear()
             self._condition_items.clear()
@@ -279,11 +289,54 @@ class ConditionSummaryTab(QtWidgets.QWidget):
                 if node.children:
                     self._append_children(item, node.children)
                     item.setExpanded(True)
-            self.tree.expandAll()
+            if had_items:
+                rebuilt_current = None
+                for item in self._iter_items(self.tree.invisibleRootItem()):
+                    item_key = self._item_path_key(item)
+                    item.setExpanded(item_key in expanded_keys)
+                    if item_key == current_key:
+                        rebuilt_current = item
+                if rebuilt_current is not None:
+                    self.tree.setCurrentItem(rebuilt_current)
+                self.tree.verticalScrollBar().setValue(scroll_value)
+            else:
+                self.tree.expandAll()
         finally:
+            self.tree.blockSignals(signals_blocked)
             self.tree.setUpdatesEnabled(True)
         self.columns_changed.emit()
         self.tree.viewport().update()
+        self.summary_action_state_changed.emit()
+
+    def _item_path_key(
+        self, item: QtWidgets.QTreeWidgetItem
+    ) -> tuple[tuple[str, str, str, str, str, str], ...]:
+        path = []
+        current = item
+        while current is not None:
+            node = self._node_for_item(current)
+            if node is not None:
+                path.append(
+                    (
+                        node.kind,
+                        node.condition_uid,
+                        node.folder_uid,
+                        node.group_level,
+                        node.label,
+                        node.values.area,
+                    )
+                )
+            current = current.parent()
+        return tuple(reversed(path))
+
+    @classmethod
+    def _iter_items(
+        cls, parent: QtWidgets.QTreeWidgetItem
+    ) -> Iterable[QtWidgets.QTreeWidgetItem]:
+        for index in range(parent.childCount()):
+            item = parent.child(index)
+            yield item
+            yield from cls._iter_items(item)
 
     def _apply_header_alignment(self) -> None:
         self.tree.header().setDefaultAlignment(_HEADER_ALIGNMENT)

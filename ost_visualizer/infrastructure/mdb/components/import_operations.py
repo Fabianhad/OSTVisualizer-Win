@@ -9,6 +9,7 @@ from ...database.settings_cardinality import (
     require_writable_bid_number_allocator,
 )
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
+from ..raw_bid_integrity import BID_RELATIONSHIPS
 from ...database.connection_wrapper import ConnectionWrapper
 from ...database.master_data_identity import (
     MasterDataCandidateIndex,
@@ -16,13 +17,15 @@ from ...database.master_data_identity import (
     build_master_data_candidate_index,
     master_data_identity_key,
     require_unambiguous_incoming_identities,
+    require_unique_master_data_uids,
     resolve_master_data_candidate,
 )
 from .constants import BID_TABLES_WRITE_ORDER, NUMERIC_TYPE_SUBSTRINGS
+from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import encode_text_blob
 
 
-class ImportOperationsMixin:
+class ImportOperationsMixin(AccessIdentityAllocationMixin):
     def import_ost_data(
         self,
         db_path: str,
@@ -76,6 +79,7 @@ class ImportOperationsMixin:
 
     def _get_max_uid(self, connection: ConnectionWrapper) -> int:
         max_uid = 0
+        schema = self._schema(connection)
         tables_to_check = (
             ["Bids", "CdnTypes", "JobStatuses"] + RAW_BID_TABLES + list(PAGE_SECTIONS)
         )
@@ -89,6 +93,34 @@ class ImportOperationsMixin:
                         val = int(row[0])
                         if val > max_uid:
                             max_uid = val
+                except pyodbc.Error:
+                    pass
+            checked_references: set[tuple[str, str]] = set()
+            target_tables = set(tables_to_check)
+            for relationship in BID_RELATIONSHIPS:
+                if (
+                    relationship.parent_table not in target_tables
+                    or relationship.parent_column != "UID"
+                ):
+                    continue
+                reference = (relationship.child_table, relationship.child_column)
+                if reference in checked_references:
+                    continue
+                checked_references.add(reference)
+                if schema.optional_table_missing(
+                    relationship.child_table
+                ) or not schema.column_exists(
+                    relationship.child_table, relationship.child_column
+                ):
+                    continue
+                try:
+                    cursor.execute(
+                        f"SELECT MAX([{relationship.child_column}]) "
+                        f"FROM [{relationship.child_table}]"
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        max_uid = max(max_uid, int(row[0]))
                 except pyodbc.Error:
                     pass
         finally:
@@ -429,7 +461,9 @@ class ImportOperationsMixin:
                 f"SELECT {', '.join(f'[{column}]' for column in columns)} "
                 "FROM [Employees]"
             )
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            require_unique_master_data_uids((row[0] for row in rows), "Employees")
+            for row in rows:
                 row_data = {
                     columns[index]: str(row[index]) if row[index] is not None else ""
                     for index in range(len(columns))
@@ -457,15 +491,13 @@ class ImportOperationsMixin:
     def _next_table_uid(self, connection: ConnectionWrapper, table: str) -> int:
         cursor = connection.cursor()
         try:
-            cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
-            row = cursor.fetchone()
-            if row and row[0] is not None:
-                return int(row[0]) + 1
-        except pyodbc.Error:
-            pass
+            return self._next_uid_preserving_references(
+                cursor,
+                self._schema(connection),
+                table,
+            )
         finally:
             cursor.close()
-        return 1
 
     def _get_table_info(
         self, connection: ConnectionWrapper, table: str

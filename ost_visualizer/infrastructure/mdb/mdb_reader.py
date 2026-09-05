@@ -7,6 +7,7 @@ from ...domain.entities.hierarchy_data import HierarchyFileEntry
 from ...domain.entities.page_info import BidPageInfo
 from ...domain.entities.takeoff import Takeoff
 from ..parsers.utils.parser import decode_value
+from ..database.master_data_identity import require_unique_master_data_uids
 from .components.annotation_reader import AnnotationReaderMixin
 from .components.bid_data_reader import BidDataReaderMixin
 from ..database.connection_wrapper import ConnectionWrapper
@@ -79,7 +80,9 @@ class MdbReader(
         schema.require_column("CdnTypes", "Name")
         with connection.cursor() as cursor:
             cursor.execute("SELECT [UID], [Name] FROM [CdnTypes]")
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            require_unique_master_data_uids((row.UID for row in rows), "CdnTypes")
+            for row in rows:
                 uid = str(row.UID)
                 name = decode_value(row.Name)
                 cdn_types[uid] = CdnType(uid=uid, name=name)

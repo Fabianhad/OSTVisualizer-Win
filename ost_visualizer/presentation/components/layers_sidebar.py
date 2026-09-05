@@ -139,10 +139,10 @@ class BidLayersSidebar(QtWidgets.QWidget):
         return self._table
 
     def _sync_top_buttons(self) -> None:
-        enabled = self._interactive and bool(self._layers)
-        self._add_btn.setEnabled(enabled)
-        self._select_all_btn.setEnabled(enabled)
-        self._unselect_all_btn.setEnabled(enabled)
+        has_layers = bool(self._layers)
+        self._add_btn.setEnabled(self._interactive)
+        self._select_all_btn.setEnabled(self._interactive and has_layers)
+        self._unselect_all_btn.setEnabled(self._interactive and has_layers)
 
     def set_interactive(self, enabled: bool) -> None:
         self._interactive = enabled

@@ -4,13 +4,98 @@
 
 ### Fixed
 
+- Fixed stale Takeoff presentation state after empty/refresh transitions. An
+  editable Bid with no layers can create its first layer, active-page removal
+  clears the deleted page's scale/Area controls without unloading the Bid, and
+  Condition Summary refreshes retain the current surviving row and branch
+  expansion. Failed layer deletion now restores the authoritative list and
+  reports the correct Access or SQL operation instead of failing silently or
+  presenting a generic update error.
+- Fixed remaining infrastructure callers that bypassed canonical identity and
+  optional-schema contracts. Access master-data creation and import now reserve
+  UIDs still named by dangling Bid, Employee, or Condition references, while SQL
+  identity placeholders remain database-generated instead of being replaced by
+  Access `MAX(UID)` scans. Employee saves preflight every non-null Pay Class in
+  the complete batch. Condition-folder, Cover Sheet, and New Bid hierarchy
+  writes now reject unavailable legacy folder tables/parent columns before
+  changing Bid data, while flat root-folder writes remain supported.
+- Fixed mutation paths that treated readable orphaned legacy rows as writable
+  solely because their stored `BidUID` looked valid. Page, Condition, Layer,
+  Condition-folder, Takeoff, and typed-annotation edits and deletes now resolve
+  the authoritative owning Bid before the first write. Cover Sheet saves against
+  legacy schemas without optional Job Status or Employee master tables preserve
+  their retained references during unrelated edits and reject explicit new
+  selections instead of silently clearing or persisting them.
+- Fixed writer paths that accepted valid-looking relationships without one
+  authoritative owning context. Bid creation, Cover Sheet saves, status changes,
+  and duplication now reject dangling Job Status and Employee-role references;
+  Takeoff, annotation, Area, and selected-page creation reject orphan Bid graphs.
+  New Bid resolves its complete acyclic page-folder payload independently of
+  drag-produced row order. Plan paste now locks external same-bid Named View
+  dependencies and clears cross-bid Hot Link targets that were not copied, so a
+  matching destination UID cannot silently retarget the link.
+- Fixed multi-resource mutations accepting individually valid UIDs from
+  different bids. Access now preflights Takeoff inserts, assignments, bulk
+  position/rotation/text saves and deletes, annotation batches, Condition
+  create/update/duplicate/delete, page/folder deletes, Cover Sheet page updates,
+  and bid moves before the first write. Root Layers and Condition folders require
+  an authoritative Bid, and New Bid rejects page-folder references outside its
+  local folder graph. SQL plan-item preflight now verifies the expected Bid, and
+  queued Takeoff placement/paste includes Area and parent-Takeoff dependencies.
+- Fixed alternate deletion and assignment paths bypassing canonical companion
+  relationships. Condition deletion now removes `BidConditionUser` rows, and
+  Page, Condition, and legacy Bid cascades remove line/arrow/dimension records
+  linked through either takeoff endpoint. Named View deletion rejects an
+  incomplete batch that omits dependent Hot Links. Project deletion clears
+  deleted-bid restore pointers, and bid moves reject missing original projects.
+  Annotation creation now validates its same-bid Page, optional Layer, and Hot
+  Link target before allocation, while page-area selection rejects an Area from
+  another bid.
+- Fixed malformed Bid Area parent graphs silently disappearing from the Area
+  editor and picker. Reload, save, Duplicate Bid, and OST/OSP import now enforce
+  a same-bid acyclic area forest before mutation, zero parents reconstruct as
+  roots, and flat writes remain
+  compatible with legacy schemas lacking `ParentUID`. Deleting a page now also
+  clears surviving same-bid Master Page and cross-page comment-parent pointers
+  to records removed by that deletion. Direct, Page, and Condition takeoff
+  deletion now clear all surviving parent and typical takeoff self-links instead
+  of leaving records that later fail reload, import, or duplication integrity.
+- Fixed malformed Project, Bid, takeoff, Named View, Hot Link, and other typed
+  annotation UIDs being reconstructed by cursor order or mutated as a group.
+  Project/Bid hierarchy loading, singular Access mutations, Duplicate Bid, and
+  OST/OSP import now reject invalid or duplicate physical identities before any
+  write or cascade. Bid moves reject a missing Project target, and bid loading
+  rejects takeoffs whose required Page, Condition, or non-root Takeoff parent is
+  absent, cross-bid, or part of a parent cycle. Duplicate Bid now rejects copied
+  internal references that are dangling or cross-bid before allocating new UIDs,
+  preventing malformed Hot Links, layers, folders, and other optional references
+  from silently binding to unrelated destination records after an ID collision.
+- Fixed cyclic Condition-folder and Page-folder graphs disappearing from normal
+  hierarchy and Cover Sheet reconstruction. Reload, Duplicate Bid, and OST/OSP
+  import now reject cycles deterministically; ordinary missing legacy parents
+  remain root-level compatibility items. Folder/page mutations validate exact
+  same-bid parents before writing, and deleting a Condition folder reparents its
+  surviving child folders to the root. Access creation, duplication, and import
+  now allocate Projects, Bids, pages, Conditions, areas, layers, folders,
+  takeoffs, and annotations above canonical dangling inbound references so old
+  orphan rows cannot silently attach to newly created owners through UID reuse.
 - Fixed loaded bids discarding their authoritative Job Status UID and later
   using duplicate display names for lock checks, Project Tree status actions,
   and status grouping. Remote master-data projection now refreshes hierarchy
   labels and active-bid locking, Condition Type renames refresh cached Condition
   labels by UID, and Employee deletion/use checks cover every direct bid role.
-  Employee deletion also follows `BidEmployees` identity when removing DPC
-  subscribers, preventing orphaned subscriber rows when the two UIDs differ.
+  Employee deletion also follows the schema-defined global Employee identity
+  when removing DPC subscribers, preventing both orphaning and UID-collision
+  over-deletion.
+- Fixed malformed legacy master-data tables with duplicate physical UIDs being
+  reconstructed by cursor order or updated as a group. Condition Types, Job
+  Statuses, Employees, Pay Classes, and Access Levels now reject duplicate
+  authoritative UIDs before reconstruction, import reconciliation, or mutation.
+- Fixed malformed bid-owned layers, folders, pages, Conditions, areas, typical
+  areas, and zones with duplicate, null, zero, or nonnumeric UIDs reaching
+  reconstruction, import, or Duplicate Bid. Access now preflights singular
+  page, Condition, layer, folder, and area mutations before any update or
+  cascade, preventing one action from changing multiple corrupt physical rows.
 - Fixed OST/OSP master-data reconciliation and editors so duplicate display
   names or employee keys cannot silently bind imported bids, Cover Sheet fields,
   Employees, or Conditions to an arbitrary same-label master record.

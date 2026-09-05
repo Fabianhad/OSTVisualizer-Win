@@ -3064,6 +3064,8 @@ class UIEventCoordinator:
                 if not defer_plan_projection:
                     self._update_plan_view(active_page)
             else:
+                if self._page_settings_bar:
+                    self._page_settings_bar.clear_page()
                 self._viewer.clear_plan_view()
             if not defer_plan_projection:
                 self._request_or_defer_mesh_refresh(valid_pages)
@@ -4111,6 +4113,8 @@ class UIEventCoordinator:
             self._update_page_settings_bar(active_uid)
             self._sync_overlay_display_mode(active_uid)
             self._update_native_page_textures()
+        elif self._page_settings_bar:
+            self._page_settings_bar.clear_page()
         if active_uid and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(active_uid)
         else:
@@ -4193,10 +4197,14 @@ class UIEventCoordinator:
         self.main_window.project_view.build_complete_structure(loaded_files)
 
     def _update_page_settings_bar(self, page_uid: str) -> None:
-        if not self._page_settings_bar or not page_uid:
+        if not self._page_settings_bar:
+            return
+        if not page_uid:
+            self._page_settings_bar.clear_page()
             return
         page = self.project_data.get_page(page_uid)
         if not page:
+            self._page_settings_bar.clear_page()
             return
         selected_area = self.project_data.get_page_area_selections().get(page_uid)
         areas_for_page = self.project_data.get_area_uids_with_takeoff_for_page(page_uid)
@@ -5700,13 +5708,21 @@ class UIEventCoordinator:
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 layer_uid,
-                self._on_queued_layer_write_complete,
+                self._on_queued_layer_delete_complete,
             )
             return
+        success = False
         try:
-            write_svc.delete_layer(bid_ref.file_path, layer_uid)
+            success = bool(write_svc.delete_layer(bid_ref.file_path, layer_uid))
         except Exception:
             logger.warning("Failed to delete layer", exc_info=True)
+        if not success:
+            self._sidebar.load_bid_layers_sidebar()
+            show_critical(
+                self.main_window,
+                "Delete Layer",
+                f"Failed to delete layer. {DB_LOCKED_HINT}",
+            )
 
     def _on_layers_show_all(self, show: bool) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -5870,11 +5886,17 @@ class UIEventCoordinator:
             self._sidebar.load_bid_layers_sidebar()
 
     def _on_queued_layer_write_complete(self, result: QueuedMutationResult) -> None:
+        self._finish_queued_layer_write(result, "Layer Update")
+
+    def _on_queued_layer_delete_complete(self, result: QueuedMutationResult) -> None:
+        self._finish_queued_layer_write(result, "Delete Layer")
+
+    def _finish_queued_layer_write(
+        self, result: QueuedMutationResult, title: str
+    ) -> None:
         if result.outcome_status == MutationOutcomeStatus.COMMITTED:
             return
-        logger.warning("Queued SQL layer update failed: %s", result.message)
+        logger.warning("Queued SQL %s failed: %s", title.lower(), result.message)
         if not self._is_cleaning_up:
             self._sidebar.load_bid_layers_sidebar_from_memory()
-            self.present_queued_mutation_error(
-                result.database_id, "Layer Update", result
-            )
+            self.present_queued_mutation_error(result.database_id, title, result)

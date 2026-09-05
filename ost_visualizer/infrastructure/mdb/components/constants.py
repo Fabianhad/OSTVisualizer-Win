@@ -63,6 +63,16 @@ TAKEOFF_REFERENCE_TABLES = (
     "BidALines",
     "BidArrows",
 )
+TAKEOFF_ANNOTATION_REFERENCE_COLUMNS = (
+    "BidTakeoffFromUID",
+    "BidTakeoffToUID",
+)
+TAKEOFF_SELF_REFERENCE_COLUMNS = (
+    "ParentUID",
+    "TypGroupTakeoffUID",
+    "TypPageTakeoffUID",
+    "TypGroupMarkerUID",
+)
 PAGE_ANNOTATION_TABLES = (
     "BidDimensions",
     "BidALines",

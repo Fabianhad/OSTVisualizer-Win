@@ -4,10 +4,21 @@ from types import MappingProxyType
 from typing import Dict, List, Optional
 from ....application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ....application.dtos.update_condition_dto import UpdateConditionDto
+from ...database.bid_owned_identity import (
+    require_existing_bid_scoped_uid_match,
+    require_existing_bid_scoped_uid_matches,
+    require_existing_unique_bid_owned_uid_matches,
+    require_unique_bid_owned_uid_matches,
+)
+from .constants import (
+    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
+    TAKEOFF_SELF_REFERENCE_COLUMNS,
+)
+from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import coerce_binary_column_value, encode_text_blob
 
 
-class ConditionOperationsMixin:
+class ConditionOperationsMixin(AccessIdentityAllocationMixin):
     _CONDITION_CROSS_BID_CLEAR_COLUMNS = frozenset(
         {
             "BidConditionFolderUID",
@@ -22,7 +33,7 @@ class ConditionOperationsMixin:
     def _allocate_condition_identity(self, cursor, bid_uid: str):
         schema = self._schema(cursor.connection)
         self._require_write_columns(schema, "BidConditions", ("UID", "BidUID"))
-        new_uid = self._next_uid(cursor, "BidConditions")
+        new_uid = self._next_uid_preserving_references(cursor, schema, "BidConditions")
         new_guid = self._new_ost_guid()
         max_ref = None
         if schema.column_exists("BidConditions", "RefNo"):
@@ -45,6 +56,9 @@ class ConditionOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidConditions", ("UID", "BidUID"))
                 cursor = conn.cursor()
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidConditions", condition_uids, bid_uid
+                )
                 for condition_uid in condition_uids:
                     table_cols = sorted(schema.get_columns("BidConditions"))
                     select_cols = ", ".join(f"[{c}]" for c in table_cols)
@@ -110,6 +124,12 @@ class ConditionOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidConditions", ("UID", "BidUID"))
                 cursor = conn.cursor()
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "Bids", (destination_bid_uid,)
+                )
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidConditions", ordered_uids, source_bid_uid
+                )
                 table_cols = sorted(schema.get_columns("BidConditions"))
                 select_cols = ", ".join(f"[{c}]" for c in table_cols)
                 for condition_uid in ordered_uids:
@@ -177,6 +197,25 @@ class ConditionOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                bid_uid_int = int(bid_uid)
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "Bids", (bid_uid_int,)
+                )
+                if spec.layer_uid and schema.column_exists(
+                    "BidConditions", "BidLayerUID"
+                ):
+                    require_existing_bid_scoped_uid_match(
+                        cursor, "BidLayers", spec.layer_uid, bid_uid_int
+                    )
+                if spec.folder_uid and schema.column_exists(
+                    "BidConditions", "BidConditionFolderUID"
+                ):
+                    require_existing_bid_scoped_uid_match(
+                        cursor,
+                        "BidConditionFolders",
+                        spec.folder_uid,
+                        bid_uid_int,
+                    )
                 new_uid, new_guid, next_ref_no = self._allocate_condition_identity(
                     cursor, bid_uid
                 )
@@ -275,16 +314,49 @@ class ConditionOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidConditions", ("UID", "BidUID"))
                 cursor = conn.cursor()
-                for child in ("BidDimensions", "BidALines", "BidArrows"):
-                    if schema.optional_table_missing(child) or not schema.column_exists(
-                        child, "BidTakeoffFromUID"
-                    ):
-                        continue
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidConditions", cond_ints, bid_int
+                )
+                deleted_takeoff_uids: list[int] = []
+                if not schema.optional_table_missing("BidTakeoffs") and all(
+                    schema.column_exists("BidTakeoffs", column)
+                    for column in ("UID", "BidUID", "BidConditionUID")
+                ):
                     cursor.execute(
-                        f"DELETE FROM [{child}] WHERE [BidTakeoffFromUID] IN "
-                        f"{takeoff_subquery}",
+                        "SELECT [UID] FROM [BidTakeoffs] "
+                        f"WHERE [BidConditionUID] IN ({placeholders}) "
+                        "AND [BidUID]=?",
                         *sub_params,
                     )
+                    deleted_takeoff_uids = [int(row[0]) for row in cursor.fetchall()]
+                    require_unique_bid_owned_uid_matches(
+                        cursor, "BidTakeoffs", deleted_takeoff_uids
+                    )
+                    for reference_column in TAKEOFF_SELF_REFERENCE_COLUMNS:
+                        if not schema.column_exists("BidTakeoffs", reference_column):
+                            continue
+                        for uid_chunk in self._iter_access_chunks(deleted_takeoff_uids):
+                            where_sql, where_params = self._uid_where_clause(
+                                reference_column, uid_chunk
+                            )
+                            cursor.execute(
+                                "UPDATE [BidTakeoffs] "
+                                f"SET [{reference_column}]=NULL "
+                                f"WHERE [BidUID]=? AND {where_sql}",
+                                bid_int,
+                                *where_params,
+                            )
+                for child in ("BidDimensions", "BidALines", "BidArrows"):
+                    if schema.optional_table_missing(child):
+                        continue
+                    for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
+                        if not schema.column_exists(child, reference_column):
+                            continue
+                        cursor.execute(
+                            f"DELETE FROM [{child}] WHERE [{reference_column}] IN "
+                            f"{takeoff_subquery}",
+                            *sub_params,
+                        )
                 if not schema.optional_table_missing(
                     "BidPercents"
                 ) and schema.column_exists("BidPercents", "BidTakeoffUID"):
@@ -349,6 +421,14 @@ class ConditionOperationsMixin:
                         f"WHERE [BidConditionUID] IN ({placeholders}) "
                         "AND [BidUID]=?",
                         *sub_params,
+                    )
+                if not schema.optional_table_missing(
+                    "BidConditionUser"
+                ) and schema.column_exists("BidConditionUser", "ConditionUID"):
+                    cursor.execute(
+                        "DELETE FROM [BidConditionUser] "
+                        f"WHERE [ConditionUID] IN ({placeholders})",
+                        *cond_ints,
                     )
                 if not schema.optional_table_missing("BidTakeoffs"):
                     self._require_write_columns(
@@ -512,6 +592,22 @@ class ConditionOperationsMixin:
                     return True
                 bid_uid_int = int(bid_uid)
                 condition_uid_int = int(condition_uid)
+                require_existing_bid_scoped_uid_match(
+                    cursor, "BidConditions", condition_uid_int, bid_uid_int
+                )
+                layer_uid = values_by_col.get("BidLayerUID")
+                if layer_uid is not None:
+                    require_existing_bid_scoped_uid_match(
+                        cursor, "BidLayers", layer_uid, bid_uid_int
+                    )
+                folder_uid = values_by_col.get("BidConditionFolderUID")
+                if folder_uid is not None:
+                    require_existing_bid_scoped_uid_match(
+                        cursor,
+                        "BidConditionFolders",
+                        folder_uid,
+                        bid_uid_int,
+                    )
                 if "RefNo" in values_by_col:
                     new_ref_no = int(values_by_col["RefNo"])
                     values_by_col["RefNo"] = new_ref_no
@@ -565,17 +661,9 @@ class ConditionOperationsMixin:
                     schema, "BidConditions", ("UID", "BidUID", "RefNo")
                 )
                 cursor = conn.cursor()
-                placeholders = ",".join("?" * len(uid_ints))
-                cursor.execute(
-                    f"SELECT [UID] FROM [BidConditions] "
-                    f"WHERE [UID] IN ({placeholders}) AND [BidUID] = ?",
-                    *uid_ints,
-                    bid_int,
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidConditions", uid_ints, bid_int
                 )
-                found_uids = {int(row[0]) for row in cursor.fetchall()}
-                missing = [uid for uid in uid_ints if uid not in found_uids]
-                if missing:
-                    raise ValueError(f"Conditions {missing} not found in bid {bid_uid}")
                 cursor.execute(
                     "SELECT MAX([RefNo]) FROM [BidConditions] WHERE [BidUID] = ?",
                     bid_int,

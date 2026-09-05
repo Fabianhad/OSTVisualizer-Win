@@ -704,6 +704,26 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self._load(self.tab.grouping)
         self.assertEqual(self.tab.grouping, grouping)
 
+    def test_authoritative_refresh_preserves_current_row_and_expansion(self):
+        grouping = ConditionSummaryGrouping(by_area=True)
+        self._load(grouping)
+        current = self._item_for_condition_uid("c1")
+        parent = current.parent()
+        self.assertIsNotNone(parent)
+        self.tab.tree.setCurrentItem(current)
+        parent.setExpanded(False)
+
+        self.takeoffs[0].x = 12.0
+        self._load(grouping)
+
+        rebuilt_current = self.tab.tree.currentItem()
+        self.assertIsNotNone(rebuilt_current)
+        rebuilt_node = rebuilt_current.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        self.assertEqual(rebuilt_node.condition_uid, "c1")
+        self.assertFalse(rebuilt_current.parent().isExpanded())
+        self.assertTrue(self.tab.can_copy_current_row())
+        self.assertTrue(self.tab.can_delete_current_row())
+
     def test_condition_layer_visibility_updates_only_matching_summary_rows(self):
         self.condition.layer_uid = "layer-a"
         self.condition.color_fill = 0x336699

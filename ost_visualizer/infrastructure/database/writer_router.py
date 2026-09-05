@@ -122,6 +122,13 @@ class DatabaseProjectWriter(SqlProjectWriter):
             return SqlProjectWriter._next_uid(self, cursor, table)
         return MdbWriter._next_uid(self, cursor, table)
 
+    def _next_uid_preserving_references(self, cursor, schema, table: str) -> int:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._next_uid_preserving_references(
+                self, cursor, schema, table
+            )
+        return MdbWriter._next_uid_preserving_references(self, cursor, schema, table)
+
     def _record_caught_mutation_error(self, exc: BaseException) -> bool:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
             return SqlProjectWriter._record_caught_mutation_error(self, exc)

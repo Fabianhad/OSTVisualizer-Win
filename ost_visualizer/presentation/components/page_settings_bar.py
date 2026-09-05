@@ -209,13 +209,27 @@ class PageSettingsBar(QtWidgets.QWidget):
 
     def clear_bid(self) -> None:
         self._bid_ref = None
-        self._page_uid = None
         self._bid_areas_in_use = None
+        area_signals_were_blocked = self.area_combo.blockSignals(True)
+        try:
+            self.area_combo.clear_areas()
+        finally:
+            self.area_combo.blockSignals(area_signals_were_blocked)
+        self._clear_page_projection()
+        self.presentation_state_changed.emit()
+
+    def clear_page(self) -> None:
+        self._clear_page_projection()
+        self.presentation_state_changed.emit()
+
+    def _clear_page_projection(self) -> None:
+        self._page_uid = None
         self._page_areas_in_use = None
         self._current_scale_index = -1
         area_signals_were_blocked = self.area_combo.blockSignals(True)
         try:
-            self.area_combo.clear_areas()
+            self.area_combo.set_current_area_uid("")
+            self.area_combo.update_bold_states(set())
         finally:
             self.area_combo.blockSignals(area_signals_were_blocked)
         signals_were_blocked = self.scale_combo.blockSignals(True)
@@ -226,7 +240,6 @@ class PageSettingsBar(QtWidgets.QWidget):
             self.scale_combo.blockSignals(signals_were_blocked)
         for w in (self.scale_combo, self.area_combo, self.area_browse_btn):
             w.setEnabled(False)
-        self.presentation_state_changed.emit()
 
     def set_interactive(self, enabled: bool) -> None:
         self._interactive = enabled

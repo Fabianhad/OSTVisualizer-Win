@@ -1,7 +1,13 @@
 from typing import List, Optional
+from ...database.bid_owned_identity import (
+    require_existing_bid_scoped_uid_match,
+    require_existing_unique_bid_owned_uid_matches,
+    require_single_bid_scope_for_uids,
+)
+from .identity_allocation import AccessIdentityAllocationMixin
 
 
-class ConditionFolderOperationsMixin:
+class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
     def insert_condition_folder(
         self,
         db_path: str,
@@ -13,7 +19,24 @@ class ConditionFolderOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
-                new_uid = self._next_uid(cursor, "BidConditionFolders")
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "Bids", (bid_uid,)
+                )
+                if parent_uid:
+                    if not schema.column_exists("BidConditionFolders", "ParentUID"):
+                        raise RuntimeError(
+                            "This OST database does not support Condition folder "
+                            "hierarchy persistence."
+                        )
+                    require_existing_bid_scoped_uid_match(
+                        cursor,
+                        "BidConditionFolders",
+                        parent_uid,
+                        bid_uid,
+                    )
+                new_uid = self._next_uid_preserving_references(
+                    cursor, schema, "BidConditionFolders"
+                )
                 parent_val = int(parent_uid) if parent_uid else None
                 self._execute_insert_values(
                     cursor,
@@ -44,6 +67,9 @@ class ConditionFolderOperationsMixin:
                     schema, "BidConditionFolders", ("UID", "Name")
                 )
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(
+                    cursor, "BidConditionFolders", (folder_uid,)
+                )
                 cursor.execute(
                     "UPDATE [BidConditionFolders] SET [Name] = ? WHERE [UID] = ?",
                     name,
@@ -77,6 +103,7 @@ class ConditionFolderOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidConditionFolders", ("UID",))
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidConditionFolders", uids)
                 if not schema.optional_table_missing(
                     "BidConditions"
                 ) and schema.column_exists("BidConditions", "BidConditionFolderUID"):
@@ -91,6 +118,12 @@ class ConditionFolderOperationsMixin:
                             "Refusing to delete condition folders in use: %s", uids
                         )
                         return False
+                if schema.column_exists("BidConditionFolders", "ParentUID"):
+                    cursor.execute(
+                        "UPDATE [BidConditionFolders] SET [ParentUID]=NULL "
+                        f"WHERE [ParentUID] IN ({placeholders})",
+                        *uids,
+                    )
                 cursor.execute(
                     f"DELETE FROM [BidConditionFolders] WHERE [UID] IN ({placeholders})",
                     *uids,

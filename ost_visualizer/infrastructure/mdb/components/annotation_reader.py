@@ -5,6 +5,7 @@ from ....domain.entities.layer import BidLayers
 from ...parsers.utils.parser import decode_value
 from ..mappers.annotation_mapper import MdbAnnotationLayerMapper
 from ...database.schema_inspector_contract import IDatabaseSchemaInspector
+from ...database.bid_owned_identity import require_valid_unique_bid_owned_uids
 from .serialization import decode_annotation_text, parse_position_storage
 
 
@@ -17,6 +18,12 @@ def _resolve_color(raw_color: Any, default: str = "#FF0000") -> str:
 
 
 class AnnotationReaderMixin:
+    @staticmethod
+    def _validated_annotation_rows(cursor, table: str):
+        rows = cursor.fetchall()
+        require_valid_unique_bid_owned_uids((row.UID for row in rows), table)
+        return rows
+
     def _parse_bid_annotations_for_bid(
         self,
         connection: "pyodbc.Connection",
@@ -36,7 +43,9 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(
+                    cursor, "BidAnnotationClouds"
+                ):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
@@ -64,7 +73,9 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(
+                    cursor, "BidAnnotationOvals"
+                ):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
@@ -92,7 +103,9 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(
+                    cursor, "BidAnnotationPolygons"
+                ):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
@@ -120,7 +133,9 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(
+                    cursor, "BidAnnotationRects"
+                ):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
@@ -148,7 +163,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidAnnoInk"):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer()
@@ -177,7 +192,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidALines"):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer()
@@ -213,7 +228,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidDimensions"):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer()
@@ -257,7 +272,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidArrows"):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer()
@@ -293,7 +308,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidTexts"):
                     position = parse_position_storage(row.Position)
                     if position and len(position) >= 4:
                         name_str = decode_annotation_text(row.Name)
@@ -334,7 +349,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidHighlights"):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
@@ -363,7 +378,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidNamedViews"):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer()
@@ -393,7 +408,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidHotLinks"):
                     position = parse_position_storage(row.Position)
                     if position:
                         layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
@@ -430,7 +445,7 @@ class AnnotationReaderMixin:
                     """,
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                for row in self._validated_annotation_rows(cursor, "BidCallOuts"):
                     position = parse_position_storage(row.Position)
                     if position:
                         name_str = decode_annotation_text(row.Name)

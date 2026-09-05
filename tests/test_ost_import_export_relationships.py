@@ -239,6 +239,7 @@ class _SqliteMdbWriter(ImportOperationsMixin, PageOperationsMixin):
 class _CapturingImportWriter:
     def __init__(self):
         self.takeoffs = ()
+        self.called = False
 
     def import_ost_data(
         self,
@@ -247,6 +248,7 @@ class _CapturingImportWriter:
         _transform,
         _target_project_uid,
     ):
+        self.called = True
         self.takeoffs = tuple(
             (row["UID"], row.get("ParentUID", "0"), row.get("Name", ""))
             for row in raw_data.page_tables.get("BidTakeoffs", [])
@@ -544,6 +546,18 @@ def _raw_data_with_row(table_name, row):
 
 
 class OstImportExportRelationshipTests(unittest.TestCase):
+    def test_access_import_uid_floor_includes_dangling_target_references(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE Bids (UID INTEGER)")
+        connection.execute("INSERT INTO Bids VALUES (1)")
+        connection.execute("CREATE TABLE BidNotes (UID INTEGER, BidUID INTEGER)")
+        connection.execute("INSERT INTO BidNotes VALUES (10, 2)")
+        writer = _SqliteMdbWriter(connection)
+
+        max_uid = writer._get_max_uid(_SqliteConnection(connection))
+
+        self.assertEqual(max_uid, 2)
+
     def test_page_area_reader_uses_import_export_duplicate_row_precedence(self):
         connection = sqlite3.connect(":memory:")
         _create_import_schema(connection)
@@ -772,6 +786,30 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                         and issue.column == relationship.child_column
                         and issue.missing_uid == "999"
                         and issue.parent_table == relationship.parent_table
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_raw_bid_integrity_rejects_hierarchy_parent_cycles(self):
+        for table in ("BidAreas", "BidConditionFolders", "BidPageFolders"):
+            with self.subTest(table=table):
+                raw_data = RawBidData(
+                    bid_row={"UID": "1"},
+                    bid_tables={
+                        table: [
+                            {"UID": "7", "BidUID": "1", "ParentUID": "8"},
+                            {"UID": "8", "BidUID": "1", "ParentUID": "7"},
+                        ]
+                    },
+                )
+
+                issues = validate_raw_bid_integrity(raw_data)
+
+                self.assertTrue(
+                    any(
+                        issue.table == table
+                        and "ParentUID cycle" in issue.format()
                         for issue in issues
                     ),
                     issues,
@@ -1009,6 +1047,81 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertIn("BidPages.UID=20 occurs 2 times", logs.output[0])
         self.assertEqual(writer.takeoffs, ())
 
+    def test_ost_import_rejects_malformed_bid_owned_uid_before_backend_remapping(self):
+        for table, element in (
+            ("BidLayers", '<BidLayer UID="0" BidUID="1" Name="Layer"/>'),
+            (
+                "BidConditionFolders",
+                '<BidConditionFolder UID="   " BidUID="1" Name="Folder"/>',
+            ),
+            ("BidZones", '<BidZone BidUID="1" Name="Zone"/>'),
+            ("BidTypAreas", '<BidTypArea UID="not-a-uid" BidUID="1"/>'),
+        ):
+            with self.subTest(table=table):
+                xml = f"""
+                <XML_ROOT>
+                  <Bid UID="1" JobName="Imported">
+                    <{table}>{element}</{table}>
+                  </Bid>
+                </XML_ROOT>
+                """
+                writer = _CapturingImportWriter()
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    ost_path = Path(temp_dir) / "malformed_uid.ost"
+                    ost_path.write_text(xml, encoding="utf-8")
+                    with self.assertLogs(
+                        "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                        level="ERROR",
+                    ) as logs:
+                        self.assertFalse(
+                            OstImporter(writer).import_ost(
+                                str(ost_path), "target.mdb"
+                            )
+                        )
+                self.assertIn(f"{table}.UID=", logs.output[0])
+                self.assertIn("has malformed UID=", logs.output[0])
+                self.assertFalse(writer.called)
+
+    def test_ost_import_rejects_malformed_bid_and_annotation_uids(self):
+        cases = (
+            (
+                '<Bid UID="0" JobName="Imported"/>',
+                "Bids.UID=0 has malformed UID=0",
+            ),
+            (
+                """
+                <Bid UID="1" JobName="Imported">
+                  <BidPages>
+                    <BidPage UID="20" BidUID="1" Name="Sheet"/>
+                  </BidPages>
+                  <BidNamedViews>
+                    <BidNamedView UID="0" BidUID="1" BidPageUID="20" Name="View"/>
+                  </BidNamedViews>
+                </Bid>
+                """,
+                "BidNamedViews.UID=0 has malformed UID=0",
+            ),
+        )
+        for bid_xml, expected in cases:
+            with self.subTest(expected=expected):
+                writer = _CapturingImportWriter()
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    ost_path = Path(temp_dir) / "malformed_root_uid.ost"
+                    ost_path.write_text(
+                        f"<XML_ROOT>{bid_xml}</XML_ROOT>", encoding="utf-8"
+                    )
+                    with self.assertLogs(
+                        "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                        level="ERROR",
+                    ) as logs:
+                        self.assertFalse(
+                            OstImporter(writer).import_ost(
+                                str(ost_path), "target.mdb"
+                            )
+                        )
+                self.assertIn(expected, logs.output[0])
+                self.assertFalse(writer.called)
+
     def test_ost_import_rejects_malformed_takeoff_uid_before_remapping(self):
         cases = (
             (
@@ -1088,6 +1201,31 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
         )
+
+    def test_ost_import_rejects_area_parent_cycle_before_writer(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidAreas>
+              <BidArea UID="7" BidUID="1" ParentUID="8" Name="First"/>
+              <BidArea UID="8" BidUID="1" ParentUID="7" Name="Second"/>
+            </BidAreas>
+          </Bid>
+        </XML_ROOT>
+        """
+        writer = _CapturingImportWriter()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "area_cycle.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("BidAreas.UID=7 participates in a ParentUID cycle", logs.output[0])
+        self.assertFalse(writer.called)
 
     def test_access_and_sql_writers_receive_same_pruned_takeoff_graph(self):
         xml = """
@@ -1568,6 +1706,41 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertEqual(imported_employee[1], imported_pay_class[0])
         self.assertEqual(imported_bid, (5, imported_employee[0]))
 
+    def test_ost_import_preserves_bid_employee_through_authoritative_employee_uid(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidEmployees>
+              <BidEmployee UID="20" BidUID="1" EmployeeUID="7"/>
+            </BidEmployees>
+            <BidPages/>
+          </Bid>
+          <Employees>
+            <Employee UID="7" EmployeeNo="E100" FirstName="Alice"
+                      LastName="Estimator"/>
+          </Employees>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            "CREATE TABLE BidEmployees ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, EmployeeUID INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO Employees (UID, EmployeeNo, FirstName, LastName) "
+            "VALUES (70, 'E100', 'Existing', 'Employee')"
+        )
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "bid_employee.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(OstImporter(writer).import_ost(str(ost_path), "target.mdb"))
+        self.assertEqual(
+            connection.execute("SELECT EmployeeUID FROM BidEmployees").fetchone()[0],
+            70,
+        )
+
     def test_access_import_rejects_ambiguous_job_status_name(self):
         connection = sqlite3.connect(":memory:")
         _create_import_schema(connection)
@@ -1588,6 +1761,28 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "ambiguous.*JobStatuses.Name"):
             writer._resolve_job_statuses(
+                _SqliteConnection(connection), raw_data, max_uid=100
+            )
+
+    def test_access_import_rejects_duplicate_target_master_uid(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute("DROP TABLE CdnTypes")
+        connection.execute(
+            "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT, ExpandState INTEGER)"
+        )
+        connection.executemany(
+            "INSERT INTO CdnTypes (UID, Name) VALUES (7, ?)",
+            (("Concrete",), ("Conflicting",)),
+        )
+        raw_data = RawBidData(
+            global_tables={"CdnTypes": [{"UID": "90", "Name": "Concrete"}]}
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "CdnTypes contains duplicate UID 7",
+        ):
+            _SqliteMdbWriter(connection)._resolve_cdn_types(
                 _SqliteConnection(connection), raw_data, max_uid=100
             )
 
@@ -1705,6 +1900,99 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "ambiguous.*Employees"):
             writer._resolve_employees(_SqliteConnection(connection), raw_data, {}, {})
+
+    def test_access_import_master_inserts_preserve_dangling_reference_uids(self):
+        fixtures = (
+            (
+                "AccessLevels",
+                (
+                    "CREATE TABLE AccessLevels (UID INTEGER, Description TEXT)",
+                    "CREATE TABLE Employees (UID INTEGER, AccessLevelUID INTEGER)",
+                ),
+                (
+                    "INSERT INTO AccessLevels VALUES (1, 'Existing')",
+                    "INSERT INTO Employees VALUES (10, 2)",
+                ),
+                RawBidData(
+                    bid_row={"UID": "1"},
+                    global_tables={
+                        "AccessLevels": [{"UID": "90", "Description": "New"}]
+                    },
+                ),
+                lambda writer, connection, raw: writer._resolve_access_levels(
+                    connection, raw
+                ),
+                {"90": "3"},
+            ),
+            (
+                "PayClasses",
+                (
+                    "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+                    "CREATE TABLE Employees (UID INTEGER, PayClassUID INTEGER)",
+                ),
+                (
+                    "INSERT INTO PayClasses VALUES (1, 'Existing')",
+                    "INSERT INTO Employees VALUES (10, 2)",
+                ),
+                RawBidData(
+                    bid_row={"UID": "1"},
+                    global_tables={
+                        "PayClasses": [{"UID": "90", "Name": "New"}]
+                    },
+                ),
+                lambda writer, connection, raw: writer._resolve_pay_classes(
+                    connection, raw
+                ),
+                {"90": "3"},
+            ),
+            (
+                "Employees",
+                (
+                    "CREATE TABLE Employees ("
+                    "UID INTEGER, EmployeeNo TEXT, FirstName TEXT, LastName TEXT)",
+                    "CREATE TABLE Bids (UID INTEGER, EstimatorUID INTEGER)",
+                ),
+                (
+                    "INSERT INTO Employees VALUES (1, 'E1', 'Ava', 'Lee')",
+                    "INSERT INTO Bids VALUES (10, 2)",
+                ),
+                RawBidData(
+                    bid_row={"UID": "1"},
+                    global_tables={
+                        "Employees": [
+                            {
+                                "UID": "90",
+                                "EmployeeNo": "E2",
+                                "FirstName": "Mia",
+                                "LastName": "Ray",
+                            }
+                        ]
+                    },
+                ),
+                lambda writer, connection, raw: writer._resolve_employees(
+                    connection, raw, {}, {}
+                ),
+                {"90": "3"},
+            ),
+        )
+        for table, ddl, inserts, raw_data, resolve, expected in fixtures:
+            with self.subTest(table=table):
+                connection = sqlite3.connect(":memory:")
+                for statement in ddl:
+                    connection.execute(statement)
+                for statement in inserts:
+                    connection.execute(statement)
+                writer = _SqliteMdbWriter(connection)
+
+                result = resolve(writer, _SqliteConnection(connection), raw_data)
+
+                self.assertEqual(result, expected)
+                self.assertEqual(
+                    connection.execute(
+                        f"SELECT [UID] FROM [{table}] ORDER BY [UID]"
+                    ).fetchall(),
+                    [(1,), (3,)],
+                )
 
     def test_access_import_uses_condition_type_name_contract(self):
         connection = sqlite3.connect(":memory:")
@@ -2590,6 +2878,29 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             "WHERE BidPageUID=20 ORDER BY UID"
         ).fetchall()
         self.assertEqual(rows, [(11, 2)])
+
+    def test_save_page_area_rejects_area_from_another_bid(self):
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection, unique_page_selected=True)
+        connection.executemany(
+            "INSERT INTO Bids (UID, JobName) VALUES (?, ?)",
+            ((1, "First"), (2, "Second")),
+        )
+        connection.execute(
+            "INSERT INTO BidPages (UID, BidUID, Name) VALUES (20, 1, 'Sheet')"
+        )
+        connection.execute(
+            "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (10, 2, 'Other')"
+        )
+        connection.commit()
+
+        self.assertFalse(
+            _SqliteMdbWriter(connection).save_page_area("target.mdb", "20", "10")
+        )
+
+        self.assertEqual(
+            connection.execute("SELECT * FROM BidPageSettings").fetchall(), []
+        )
 
     def test_save_page_area_normalizes_duplicate_physical_uids(self):
         connection = sqlite3.connect(":memory:")

@@ -8,6 +8,11 @@ from ....domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from ...parsers.utils.parser import decode_value, parse_float, remove_empty_folders
+from ...database.master_data_identity import require_unique_master_data_uids
+from ...database.bid_owned_identity import (
+    require_acyclic_bid_owned_parent_graph,
+    require_valid_unique_bid_owned_uids,
+)
 from ...database.schema_inspector_contract import IDatabaseSchemaInspector
 from .serialization import decode_text_blob
 
@@ -36,7 +41,11 @@ class HierarchyReaderMixin:
                 f"SELECT [UID], [Name], {project_description} "
                 "FROM [BidProjects] ORDER BY [Name], [UID]"
             )
-            for project_uid, bid_name, description in cursor.fetchall():
+            project_rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids(
+                (row[0] for row in project_rows), "BidProjects"
+            )
+            for project_uid, bid_name, description in project_rows:
                 project_uid_str = str(project_uid)
                 bid_projects[project_uid_str] = HierarchyProjectInfo(
                     name=decode_value(bid_name),
@@ -71,6 +80,7 @@ class HierarchyReaderMixin:
                 """
             )
             bid_rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids((row.UID for row in bid_rows), "Bids")
         status_map = self._load_status_map(connection)
         employee_map = self._load_employee_map(connection)
         for bid_row in bid_rows:
@@ -164,6 +174,9 @@ class HierarchyReaderMixin:
                     bid_uid,
                 )
                 folder_rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids(
+                (row[0] for row in folder_rows), "BidPageFolders"
+            )
             all_folders: Dict[str, HierarchyFolderInfo] = {}
             root_folders: Dict[str, HierarchyFolderInfo] = {}
             for folder_uid, folder_name, description, parent_uid in folder_rows:
@@ -176,6 +189,13 @@ class HierarchyReaderMixin:
                     ),
                 )
                 all_folders[folder_uid_str] = folder_data
+            require_acyclic_bid_owned_parent_graph(
+                {
+                    folder_uid: folder.parent_uid
+                    for folder_uid, folder in all_folders.items()
+                },
+                "BidPageFolders",
+            )
             for folder_uid_str, folder_data in all_folders.items():
                 parent_uid = folder_data.parent_uid
                 if parent_uid is None or parent_uid == "0":
@@ -215,7 +235,11 @@ class HierarchyReaderMixin:
                 """,
                 bid_uid,
             )
-            for row in cursor.fetchall():
+            page_rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids(
+                (row.UID for row in page_rows), "BidPages"
+            )
+            for row in page_rows:
                 page_uid_str = str(row.UID)
                 page_name_str = decode_value(row.Name)
                 page_info = HierarchyPageInfo(
@@ -250,7 +274,9 @@ class HierarchyReaderMixin:
         with connection.cursor() as cursor:
             status_map: Dict[str, str] = {}
             cursor.execute("SELECT [UID], [Name] FROM [JobStatuses]")
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            require_unique_master_data_uids((row.UID for row in rows), "JobStatuses")
+            for row in rows:
                 status_map[str(row.UID)] = decode_value(row.Name)
             return status_map
 
@@ -264,7 +290,9 @@ class HierarchyReaderMixin:
         with connection.cursor() as cursor:
             employee_map: Dict[str, str] = {}
             cursor.execute(f"SELECT [UID], {first_name}, {last_name} FROM [Employees]")
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            require_unique_master_data_uids((row.UID for row in rows), "Employees")
+            for row in rows:
                 first_name = decode_value(row.FirstName).strip()
                 last_name = decode_value(row.LastName).strip()
                 full_name = f"{first_name} {last_name}".strip()

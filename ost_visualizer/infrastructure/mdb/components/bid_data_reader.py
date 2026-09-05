@@ -16,11 +16,17 @@ from ....domain.entities.layer import (
     is_layer_visible,
 )
 from ....domain.entities.page_info import BidPageInfo
-from ....domain.entities.takeoff import Takeoff
+from ....domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
 from ...parsers.ost_serializer import serialize_row
 from ...parsers.position_parser import extract_z_value_from_name
 from ...parsers.utils.parser import decode_value, parse_float
 from ...database.schema_inspector_contract import IDatabaseSchemaInspector
+from ...database.bid_owned_identity import (
+    CyclicBidOwnedReferenceError,
+    require_acyclic_bid_owned_parent_graph,
+    require_existing_bid_owned_references,
+    require_valid_unique_bid_owned_uids,
+)
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from .constants import PAGE_DELETE_CONFIRMATION_TABLES
 from .overlay_rect import EMPTY_OVERLAY_RECT, parse_overlay_rect_storage
@@ -87,6 +93,43 @@ class BidDataReaderMixin:
             bid_takeoffs, takeoff_extras = self._parse_bid_takeoffs_for_bid(
                 connection, bid_uid, schema
             )
+            require_existing_bid_owned_references(
+                ((takeoff.uid, takeoff.condition_uid) for takeoff in bid_takeoffs),
+                bid_conditions,
+                child_table="BidTakeoffs",
+                child_column="BidConditionUID",
+                parent_table="BidConditions",
+            )
+            require_existing_bid_owned_references(
+                ((takeoff.uid, takeoff.page_uid) for takeoff in bid_takeoffs),
+                bid_pages,
+                child_table="BidTakeoffs",
+                child_column="BidPageUID",
+                parent_table="BidPages",
+            )
+            require_existing_bid_owned_references(
+                (
+                    (takeoff.uid, takeoff.parent_uid)
+                    for takeoff in bid_takeoffs
+                    if takeoff.is_hole
+                ),
+                (takeoff.uid for takeoff in bid_takeoffs),
+                child_table="BidTakeoffs",
+                child_column="ParentUID",
+                parent_table="BidTakeoffs",
+            )
+            parent_cycles = find_takeoff_parent_cycle_uids(
+                {
+                    takeoff.uid: takeoff.parent_uid
+                    for takeoff in bid_takeoffs
+                    if takeoff.is_hole
+                }
+            )
+            if parent_cycles:
+                uid = min(parent_cycles, key=int)
+                raise CyclicBidOwnedReferenceError(
+                    f"BidTakeoffs.UID={uid} participates in a ParentUID cycle."
+                )
             bid_annotations = self._parse_bid_annotations_for_bid(
                 connection, bid_uid, bid_layers, schema
             )
@@ -162,16 +205,37 @@ class BidDataReaderMixin:
                     f"FROM [BidAreas] WHERE [BidUID] = ? ORDER BY {order_clause}",
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                rows = cursor.fetchall()
+                require_valid_unique_bid_owned_uids(
+                    (row[0] for row in rows), "BidAreas"
+                )
+                for row in rows:
                     uid = str(row[0])
                     areas[uid] = BidArea(
                         uid=uid,
                         bid_uid=str(row[1]),
-                        parent_uid=str(row[2]) if row[2] is not None else "",
+                        parent_uid=(
+                            "" if row[2] in (None, "", 0, "0") else str(row[2])
+                        ),
                         name=decode_value(row[3]) if row[3] else "",
                         sequence=int(row[4]) if row[4] is not None else 0,
                         guid=str(row[5]) if row[5] else "",
                     )
+                require_existing_bid_owned_references(
+                    (
+                        (area.uid, area.parent_uid)
+                        for area in areas.values()
+                        if area.parent_uid not in ("", "0", "None")
+                    ),
+                    areas,
+                    child_table="BidAreas",
+                    child_column="ParentUID",
+                    parent_table="BidAreas",
+                )
+                require_acyclic_bid_owned_parent_graph(
+                    {area.uid: area.parent_uid for area in areas.values()},
+                    "BidAreas",
+                )
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):
                 raise
@@ -363,7 +427,9 @@ class BidDataReaderMixin:
                 """,
                 bid_uid,
             )
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids((row.UID for row in rows), "BidLayers")
+            for row in rows:
                 uid = str(row.UID)
                 name = decode_value(row.Name) or ""
                 bid_layers[uid] = Layer(
@@ -421,9 +487,11 @@ class BidDataReaderMixin:
         schema.require_column("BidPages", "BidUID")
         with connection.cursor() as cursor:
             cursor.execute("SELECT [UID] FROM [BidPages] WHERE [BidUID] = ?", bid_uid)
-            bid_page_uids = {
-                str(row[0]) for row in cursor.fetchall() if row[0] is not None
-            }
+            page_rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids(
+                (row[0] for row in page_rows), "BidPages"
+            )
+            bid_page_uids = {str(row[0]) for row in page_rows if row[0] is not None}
             if not bid_page_uids:
                 return result
             for table in PAGE_DELETE_CONFIRMATION_TABLES:
@@ -479,7 +547,9 @@ class BidDataReaderMixin:
                 """,
                 bid_uid,
             )
-            return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids((row.UID for row in rows), "BidLayers")
+            return [self._bid_layer_from_row(row) for row in rows]
 
     def get_default_layers(self, file_path: str) -> List[BidLayer]:
         with self._connection(file_path) as connection:
@@ -516,7 +586,9 @@ class BidDataReaderMixin:
                 ORDER BY {order_expr}
                 """
             )
-            return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids((row.UID for row in rows), "BidLayers")
+            return [self._bid_layer_from_row(row) for row in rows]
 
     @staticmethod
     def _bid_layer_from_row(row) -> BidLayer:
@@ -581,7 +653,9 @@ class BidDataReaderMixin:
                 """,
                 bid_uid,
             )
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids((row.UID for row in rows), "BidPages")
+            for row in rows:
                 uid = str(row.UID)
                 name_str = decode_value(row.Name)
                 overlay_rect_str = decode_value(row.OverlayRect)
@@ -729,7 +803,11 @@ class BidDataReaderMixin:
                 """,
                 bid_uid,
             )
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            require_valid_unique_bid_owned_uids(
+                (row.UID for row in rows), "BidConditions"
+            )
+            for row in rows:
                 uid = str(row.UID)
                 name = decode_value(row.Name)
                 condition_type = int(row.Type) if row.Type is not None else 0
@@ -864,7 +942,11 @@ class BidDataReaderMixin:
                     "FROM [BidConditionFolders] WHERE [BidUID] = ?",
                     bid_uid,
                 )
-                for row in cursor.fetchall():
+                rows = cursor.fetchall()
+                require_valid_unique_bid_owned_uids(
+                    (row.UID for row in rows), "BidConditionFolders"
+                )
+                for row in rows:
                     uid = str(row.UID)
                     name = decode_value(row.Name)
                     parent_uid = (
@@ -876,6 +958,13 @@ class BidDataReaderMixin:
                         bid_uid=bid_uid,
                         parent_uid=parent_uid,
                     )
+                require_acyclic_bid_owned_parent_graph(
+                    {
+                        folder_uid: folder.parent_uid
+                        for folder_uid, folder in folders.items()
+                    },
+                    "BidConditionFolders",
+                )
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):
                 raise
@@ -928,7 +1017,12 @@ class BidDataReaderMixin:
                 extra_cols = [
                     c for c in col_names if c not in self._TAKEOFF_TYPED_COLUMNS
                 ]
-                for row in cursor.fetchall():
+                rows = cursor.fetchall()
+                require_valid_unique_bid_owned_uids(
+                    (row[col_names.index("UID")] for row in rows),
+                    "BidTakeoffs",
+                )
+                for row in rows:
                     row_data = dict(zip(col_names, row))
                     uid = str(row_data["UID"])
                     condition_uid = str(row_data["BidConditionUID"])

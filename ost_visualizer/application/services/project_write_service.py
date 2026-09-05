@@ -6,10 +6,14 @@ from ...domain.services.elevation import parse_elevation
 from ...domain.services.takeoff_domain_service import (
     takeoffs_can_reassign_to_condition,
 )
-from ...domain.entities.annotation import ANNOTATION_TYPE_NAMED_VIEW
+from ...domain.entities.annotation import (
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+)
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.collaboration_resource_catalog import (
     CollaborationResourceType,
+    annotation_resource_id,
     parse_annotation_resource_id,
 )
 from ..dtos.collaboration_dtos import (
@@ -35,6 +39,7 @@ from ..dtos.collaboration_dtos import (
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
 from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
+from ...domain.entities.area import is_unassigned_area_uid
 from ..events.app_events import AppEvents
 from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
 from ..interfaces.i_database_mutation_executor import IDatabaseMutationExecutor
@@ -1503,10 +1508,25 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 {
                     ResourceRef("page", str(spec.page_uid), bid_value)
                     for spec in takeoff_specs
-                }.union(
+                }
+                .union(
                     {
                         ResourceRef("condition", str(spec.condition_uid), bid_value)
                         for spec in takeoff_specs
+                    }
+                )
+                .union(
+                    {
+                        ResourceRef("area", str(spec.area_uid), bid_value)
+                        for spec in takeoff_specs
+                        if not is_unassigned_area_uid(spec.area_uid)
+                    }
+                )
+                .union(
+                    {
+                        ResourceRef("takeoff", str(spec.parent_uid), bid_value)
+                        for spec in takeoff_specs
+                        if spec.parent_uid not in (None, "", 0, "0")
                     }
                 )
             )
@@ -1655,6 +1675,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             def delete(recorder):
                 self._mutation_executor.verify_plan_items_exist(
                     database_id,
+                    str(bid_uid),
                     payload.takeoff_uids,
                     payload.annotations,
                 )
@@ -1927,6 +1948,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             def save(recorder):
                 self._mutation_executor.verify_plan_items_exist(
                     database_id,
+                    str(bid_uid),
                     tuple(
                         dict.fromkeys(
                             [
@@ -2132,6 +2154,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
                 self._mutation_executor.verify_plan_items_exist(
                     database_id,
+                    str(bid_uid),
                     takeoff_uids,
                     annotations,
                 )
@@ -2253,6 +2276,60 @@ class ProjectWriteService(DatabaseMutationWriteService):
             callback,
         )
 
+    @staticmethod
+    def _prepare_plan_items_paste_payload(
+        payload: PlanItemsPastePayload,
+    ) -> PlanItemsPastePayload:
+        if payload.source_bid_uid == payload.destination_bid_uid:
+            return payload
+        copied_named_view_uids = {
+            parse_annotation_resource_id(source_uid)[1]
+            for source_uid in payload.annotation_source_uids
+            if parse_annotation_resource_id(source_uid)[0] == ANNOTATION_TYPE_NAMED_VIEW
+        }
+        normalized_specs = []
+        changed = False
+        for spec in payload.annotation_specs:
+            target_uid = spec.properties.get("BidPageViewUID")
+            if (
+                spec.annotation_type == ANNOTATION_TYPE_HOTLINK
+                and target_uid not in (None, "", 0, "0")
+                and str(target_uid) not in copied_named_view_uids
+            ):
+                properties = dict(spec.properties)
+                properties["BidPageViewUID"] = None
+                spec = replace(spec, properties=properties)
+                changed = True
+            normalized_specs.append(spec)
+        return (
+            replace(payload, annotation_specs=tuple(normalized_specs))
+            if changed
+            else payload
+        )
+
+    @staticmethod
+    def _plan_paste_named_view_dependencies(
+        payload: PlanItemsPastePayload,
+        bid_uid: int,
+    ) -> set[ResourceRef]:
+        copied_named_view_uids = {
+            parse_annotation_resource_id(source_uid)[1]
+            for source_uid in payload.annotation_source_uids
+            if parse_annotation_resource_id(source_uid)[0] == ANNOTATION_TYPE_NAMED_VIEW
+        }
+        return {
+            ResourceRef(
+                "annotation",
+                annotation_resource_id(ANNOTATION_TYPE_NAMED_VIEW, str(target_uid)),
+                bid_uid,
+            )
+            for spec in payload.annotation_specs
+            if spec.annotation_type == ANNOTATION_TYPE_HOTLINK
+            for target_uid in (spec.properties.get("BidPageViewUID"),)
+            if target_uid not in (None, "", 0, "0")
+            and str(target_uid) not in copied_named_view_uids
+        }
+
     def queue_plan_items_paste(
         self,
         database_id: str,
@@ -2262,6 +2339,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         dependency_resources: tuple[ResourceRef, ...] = (),
         owning_surface: str = "main-plan",
     ) -> int:
+        payload = self._prepare_plan_items_paste_payload(payload)
         bid_value = int(payload.destination_bid_uid)
         families = tuple(
             family
@@ -2307,6 +2385,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 if not cross_bid
             ),
             *(
+                ResourceRef("area", str(spec.area_uid), bid_value)
+                for spec in payload.takeoff_specs
+                if not is_unassigned_area_uid(spec.area_uid)
+            ),
+            *(
                 ResourceRef("takeoff", str(spec.parent_uid), bid_value)
                 for spec in payload.takeoff_specs
                 if str(spec.parent_uid or "0") not in {"", "0", "None"}
@@ -2317,6 +2400,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 for spec in payload.annotation_specs
                 if spec.layer_uid
             ),
+            *self._plan_paste_named_view_dependencies(payload, bid_value),
         }
         operation_id = str(uuid.uuid4())
         request = QueuedMutationRequest(
@@ -2594,6 +2678,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> MutationExecutionResult:
         if self.uses_sql_collaboration_mutations(database_id):
             raise ValueError("SQL paste must use the collaboration queue")
+        payload = self._prepare_plan_items_paste_payload(payload)
         bid_value = int(payload.destination_bid_uid)
         families = tuple(
             family
@@ -2639,10 +2724,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 if not cross_bid
             ),
             *(
+                ResourceRef("area", str(spec.area_uid), bid_value)
+                for spec in payload.takeoff_specs
+                if not is_unassigned_area_uid(spec.area_uid)
+            ),
+            *(
                 ResourceRef("layer", str(spec.layer_uid), bid_value)
                 for spec in payload.annotation_specs
                 if spec.layer_uid
             ),
+            *self._plan_paste_named_view_dependencies(payload, bid_value),
         }
 
         def paste(recorder):

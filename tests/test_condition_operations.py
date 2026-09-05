@@ -19,9 +19,11 @@ class _Cursor:
     def __init__(self):
         self.executed = []
         self._result = None
+        self._parameters = ()
 
     def execute(self, sql, *parameters):
         self.executed.append((sql, parameters))
+        self._parameters = parameters
         if sql.startswith("SELECT [RefNo]"):
             self._result = (8,)
         elif sql.startswith("SELECT [UID]"):
@@ -32,6 +34,13 @@ class _Cursor:
         result = self._result
         self._result = None
         return result
+
+    def fetchall(self):
+        if self.executed and self.executed[-1][0].startswith(
+            "SELECT [UID], [BidUID]"
+        ):
+            return [(self._parameters[0], 7)]
+        return [(self._parameters[0],)] if self._parameters else []
 
 
 class _Connection:
@@ -111,6 +120,8 @@ class ConditionOperationsTests(unittest.TestCase):
         self.assertEqual(
             statements,
             [
+                "SELECT [UID], [BidUID] FROM [BidConditions] WHERE [UID] IN (?)",
+                "SELECT [UID] FROM [Bids] WHERE [UID] IN (?)",
                 "SELECT [RefNo] FROM [BidConditions] "
                 "WHERE [UID] = ? AND [BidUID] = ?",
                 "SELECT [UID] FROM [BidConditions] "

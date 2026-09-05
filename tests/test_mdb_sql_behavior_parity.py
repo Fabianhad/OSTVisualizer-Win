@@ -415,6 +415,135 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             {"shared": "named-new"},
         )
 
+    def test_sql_plan_paste_locks_takeoff_area_dependency(self):
+        service, provider = self._queued_project_service()
+        payload = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            takeoff_source_uids=("takeoff-1",),
+            takeoff_specs=(
+                InsertTakeoffSpec(
+                    condition_uid="condition-1",
+                    page_uid="page-1",
+                    area_uid="area-1",
+                    position=[0.0, 0.0],
+                ),
+            ),
+            annotation_source_uids=(),
+            annotation_specs=(),
+        )
+
+        service.queue_plan_items_paste(
+            "database", payload, lambda _result: None
+        )
+
+        request, _execute, _callback = provider.requests[0]
+        self.assertIn(
+            ResourceRef("area", "area-1", 7), request.dependency_resources
+        )
+
+    def test_sql_plan_paste_locks_existing_hot_link_named_view_dependency(self):
+        service, provider = self._queued_project_service()
+        payload = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            annotation_source_uids=(annotation_resource_id("hotlink", "12"),),
+            annotation_specs=(
+                InsertAnnotationSpec(
+                    page_uid="page-1",
+                    annotation_type="hotlink",
+                    position=[0.0, 0.0],
+                    color="#000000",
+                    width=1.0,
+                    properties={"BidPageViewUID": "55"},
+                ),
+            ),
+        )
+
+        service.queue_plan_items_paste("database", payload, lambda _result: None)
+
+        request, _execute, _callback = provider.requests[0]
+        self.assertIn(
+            ResourceRef("annotation", annotation_resource_id("namedview", "55"), 7),
+            request.dependency_resources,
+        )
+
+    def test_cross_bid_plan_paste_clears_external_hot_link_target(self):
+        service, provider = self._queued_project_service()
+        service._insert_annotations = _SequenceUseCase(["hotlink-new"])
+        payload = PlanItemsPastePayload(
+            source_bid_uid="6",
+            destination_bid_uid="7",
+            annotation_source_uids=(annotation_resource_id("hotlink", "12"),),
+            annotation_specs=(
+                InsertAnnotationSpec(
+                    page_uid="page-1",
+                    annotation_type="hotlink",
+                    position=[0.0, 0.0],
+                    color="#000000",
+                    width=1.0,
+                    properties={"BidPageViewUID": "55"},
+                ),
+            ),
+        )
+
+        service.queue_plan_items_paste("database", payload, lambda _result: None)
+        request, execute, _callback = provider.requests[0]
+        result = execute()
+
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        inserted_spec = service._insert_annotations.calls[0][2][0]
+        self.assertIsNone(inserted_spec.properties["BidPageViewUID"])
+        self.assertNotIn(
+            ResourceRef("annotation", annotation_resource_id("namedview", "55"), 7),
+            request.dependency_resources,
+        )
+
+    def test_plan_paste_does_not_lock_named_view_created_in_same_payload(self):
+        service, provider = self._queued_project_service()
+        service._insert_annotations = _SequenceUseCase(
+            ["named-view-new"], ["hot-link-new"]
+        )
+        payload = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            annotation_source_uids=(
+                annotation_resource_id("namedview", "55"),
+                annotation_resource_id("hotlink", "12"),
+            ),
+            annotation_specs=(
+                InsertAnnotationSpec(
+                    page_uid="page-1",
+                    annotation_type="namedview",
+                    position=[0.0, 0.0, 1.0, 1.0],
+                    color="#000000",
+                    width=1.0,
+                ),
+                InsertAnnotationSpec(
+                    page_uid="page-1",
+                    annotation_type="hotlink",
+                    position=[0.0, 0.0],
+                    color="#000000",
+                    width=1.0,
+                    properties={"BidPageViewUID": "55"},
+                ),
+            ),
+        )
+
+        service.queue_plan_items_paste("database", payload, lambda _result: None)
+
+        request, execute, _callback = provider.requests[0]
+        self.assertNotIn(
+            ResourceRef("annotation", annotation_resource_id("namedview", "55"), 7),
+            request.dependency_resources,
+        )
+        result = execute()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            service._insert_annotations.calls[1][3].namedview_uids,
+            {"55": "named-view-new"},
+        )
+
     def test_mdb_mixed_paste_failure_has_no_success_projection(self):
         stage_overrides = {
             "parents": ("_insert_takeoffs", _SequenceUseCase([])),

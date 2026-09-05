@@ -83,6 +83,20 @@ class _IdentityCoordinateSystem:
         self.page_info = page_info
 
 
+class _FakeCursor:
+    def __init__(self):
+        self.rows = []
+
+    def execute(self, sql, *params):
+        if sql.startswith("SELECT [UID], [BidUID] FROM ["):
+            self.rows = [(param, 1) for param in params]
+        else:
+            self.rows = [(param,) for param in params]
+
+    def fetchall(self):
+        return list(self.rows)
+
+
 class _FakeConnection:
     def __enter__(self):
         return self
@@ -91,7 +105,7 @@ class _FakeConnection:
         return False
 
     def cursor(self):
-        return object()
+        return _FakeCursor()
 
 
 class _TakeoffTextStyleWriter(TakeoffOperationsMixin):

@@ -235,6 +235,25 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.assertIsNone(self.bar._page_areas_in_use)
         self.assertEqual(self.bar._current_scale_index, -1)
 
+    def test_clear_page_removes_stale_controls_but_retains_loaded_bid(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        self.bar.load_bid_areas(
+            bid_ref,
+            areas=[BidArea("area-1", "bid-1", "", "Area 1", 0)],
+        )
+        self.bar.load_page("page-1", 1.0, 1.0, "area-1")
+        self.bar.set_interactive(True)
+
+        self.bar.clear_page()
+
+        self.assertEqual(self.bar._bid_ref, bid_ref)
+        self.assertIsNone(self.bar._page_uid)
+        self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
+        self.assertEqual(self.bar.area_combo.get_current_area_uid(), "")
+        self.assertFalse(self.bar.scale_combo.isEnabled())
+        self.assertFalse(self.bar.area_combo.isEnabled())
+        self.assertFalse(self.bar.area_browse_btn.isEnabled())
+
     def test_non_architectural_custom_and_invalid_scales_use_safe_display(self):
         self.bar.load_page("metric-custom", 2.5, 1000.0, "")
         self.assertEqual(self.bar.scale_combo.currentText(), "2.5 : 1000")
@@ -3093,6 +3112,24 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertFalse(sidebar._checkboxes[0].isChecked())
             self.assertEqual(calls, [("layer-1", False)])
         finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_layers_sidebar_can_add_first_layer_after_last_layer_disappears(self):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)])
+        sidebar.set_interactive(True)
+        sidebar.load_layers([])
+        try:
+            self.assertTrue(sidebar._add_btn.isEnabled())
+            self.assertFalse(sidebar._select_all_btn.isEnabled())
+            self.assertFalse(sidebar._unselect_all_btn.isEnabled())
+            sidebar._add_btn.click()
+            self.assertIsNotNone(sidebar._pending_new_item)
+            self.assertEqual(sidebar._table.topLevelItemCount(), 1)
+            self.assertEqual(sidebar._pending_new_after_sequence, 0)
+        finally:
+            sidebar.clear()
             sidebar.close()
             sidebar.deleteLater()
 

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
     BidDataReaderMixin,
 )
@@ -44,9 +45,9 @@ class _FailingContentConnection:
     def execute(self, query, *_params):
         self.query_count += 1
         if self.query_count == 1:
-            self.rows = [("page-1",), ("page-2",)]
+            self.rows = [(1,), (2,)]
         elif self.query_count == 2:
-            self.rows = [("page-1",)]
+            self.rows = [(1,)]
         else:
             raise RuntimeError(f"content scan failed: {query}")
         return self
@@ -73,7 +74,227 @@ class _Reader(BidDataReaderMixin):
         return False
 
 
+def _owner_validation_reader(takeoffs):
+    class OwnerValidationReader(BidDataReaderMixin):
+        @contextmanager
+        def _connection(self, _file_path):
+            yield object()
+
+        @staticmethod
+        def _schema(_connection):
+            return _Schema()
+
+        @staticmethod
+        def _parse_cdn_types(_connection):
+            return {}
+
+        @staticmethod
+        def _parse_bid_layers_for_bid(_connection, _bid_uid):
+            return {}
+
+        @staticmethod
+        def _parse_bid_pages_for_bid(_connection, _bid_uid, _layers, _schema):
+            return {"3": SimpleNamespace(uid="3")}
+
+        @staticmethod
+        def _parse_bid_areas_for_bid(_connection, _bid_uid, _schema):
+            return {}
+
+        @staticmethod
+        def _parse_page_area_selections_for_bid(_connection, _pages, _schema):
+            return {}
+
+        @staticmethod
+        def _parse_bid_conditions_for_bid(
+            _connection, _bid_uid, _layers, _cdn_types, _schema
+        ):
+            return {"5": SimpleNamespace(uid="5")}
+
+        @staticmethod
+        def _parse_bid_takeoffs_for_bid(_connection, _bid_uid, _schema):
+            return list(takeoffs), {}
+
+        @staticmethod
+        def _parse_bid_annotations_for_bid(
+            _connection, _bid_uid, _layers, _schema
+        ):
+            return []
+
+        @staticmethod
+        def _parse_bid_condition_folders_for_bid(
+            _connection, _bid_uid, _schema
+        ):
+            return {}
+
+        @staticmethod
+        def _parse_bid_selected_page(_connection, _bid_uid):
+            return None
+
+        @staticmethod
+        def _hydrates_bid_navigation_snapshots():
+            return False
+
+    return OwnerValidationReader()
+
+
 class BidDataReaderTests(unittest.TestCase):
+    def test_bid_load_rejects_takeoff_with_missing_required_owner(self):
+        class OwnerValidationReader(BidDataReaderMixin):
+            @contextmanager
+            def _connection(self, _file_path):
+                yield object()
+
+            @staticmethod
+            def _schema(_connection):
+                return _Schema()
+
+            @staticmethod
+            def _parse_cdn_types(_connection):
+                return {}
+
+            @staticmethod
+            def _parse_bid_layers_for_bid(_connection, _bid_uid):
+                return {}
+
+            @staticmethod
+            def _parse_bid_pages_for_bid(_connection, _bid_uid, _layers, _schema):
+                return {"3": SimpleNamespace(uid="3")}
+
+            @staticmethod
+            def _parse_bid_areas_for_bid(_connection, _bid_uid, _schema):
+                return {}
+
+            @staticmethod
+            def _parse_page_area_selections_for_bid(_connection, _pages, _schema):
+                return {}
+
+            @staticmethod
+            def _parse_bid_conditions_for_bid(
+                _connection, _bid_uid, _layers, _cdn_types, _schema
+            ):
+                return {"5": SimpleNamespace(uid="5")}
+
+            @staticmethod
+            def _parse_bid_takeoffs_for_bid(_connection, _bid_uid, _schema):
+                return (
+                    [
+                        Takeoff(
+                            uid="7",
+                            condition_uid="99",
+                            page_uid="3",
+                            position=[0.0, 0.0, 1.0, 1.0],
+                        )
+                    ],
+                    {},
+                )
+
+            @staticmethod
+            def _parse_bid_annotations_for_bid(
+                _connection, _bid_uid, _layers, _schema
+            ):
+                return []
+
+            @staticmethod
+            def _parse_bid_condition_folders_for_bid(
+                _connection, _bid_uid, _schema
+            ):
+                return {}
+
+            @staticmethod
+            def _parse_bid_selected_page(_connection, _bid_uid):
+                return None
+
+            @staticmethod
+            def _hydrates_bid_navigation_snapshots():
+                return False
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "BidTakeoffs.UID=7 references missing BidConditions.UID=99",
+        ):
+            OwnerValidationReader().get_bid_data("malformed.mdb", "1")
+
+    def test_bid_load_rejects_takeoff_with_missing_parent(self):
+        takeoff = Takeoff(
+            uid="7",
+            condition_uid="5",
+            page_uid="3",
+            parent_uid="99",
+            position=[0.0, 0.0, 1.0, 1.0],
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "BidTakeoffs.UID=7 references missing BidTakeoffs.UID=99",
+        ):
+            _owner_validation_reader([takeoff]).get_bid_data("malformed.mdb", "1")
+
+    def test_bid_load_rejects_self_parented_takeoff(self):
+        takeoff = Takeoff(
+            uid="7",
+            condition_uid="5",
+            page_uid="3",
+            parent_uid="7",
+            position=[0.0, 0.0, 1.0, 1.0],
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "BidTakeoffs.UID=7 participates in a ParentUID cycle",
+        ):
+            _owner_validation_reader([takeoff]).get_bid_data("malformed.mdb", "1")
+
+    def test_bid_load_rejects_multi_takeoff_parent_cycle(self):
+        takeoffs = [
+            Takeoff(
+                uid="7",
+                condition_uid="5",
+                page_uid="3",
+                parent_uid="8",
+                position=[0.0, 0.0, 1.0, 1.0],
+            ),
+            Takeoff(
+                uid="8",
+                condition_uid="5",
+                page_uid="3",
+                parent_uid="9",
+                position=[0.0, 0.0, 1.0, 1.0],
+            ),
+            Takeoff(
+                uid="9",
+                condition_uid="5",
+                page_uid="3",
+                parent_uid="7",
+                position=[0.0, 0.0, 1.0, 1.0],
+            ),
+        ]
+        with self.assertRaisesRegex(RuntimeError, "participates in a ParentUID cycle"):
+            _owner_validation_reader(takeoffs).get_bid_data("malformed.mdb", "1")
+
+    def test_bid_load_accepts_valid_multi_level_takeoff_parent_chain(self):
+        takeoffs = [
+            Takeoff(
+                uid="7",
+                condition_uid="5",
+                page_uid="3",
+                position=[0.0, 0.0, 1.0, 1.0],
+            ),
+            Takeoff(
+                uid="8",
+                condition_uid="5",
+                page_uid="3",
+                parent_uid="7",
+                position=[0.0, 0.0, 1.0, 1.0],
+            ),
+            Takeoff(
+                uid="9",
+                condition_uid="5",
+                page_uid="3",
+                parent_uid="8",
+                position=[0.0, 0.0, 1.0, 1.0],
+            ),
+        ]
+        loaded = _owner_validation_reader(takeoffs).get_bid_data("valid.mdb", "1")
+        self.assertEqual([takeoff.uid for takeoff in loaded[1]], ["7", "8", "9"])
+
     def test_delete_content_scan_discards_partial_results_after_failure(self):
         reader = _Reader()
         self.assertIsNone(reader.get_pages_with_delete_content("project.mdb", "bid-1"))

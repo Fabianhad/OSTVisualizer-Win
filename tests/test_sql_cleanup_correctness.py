@@ -406,6 +406,10 @@ class _WriterCursor(_CreationCursor):
         return None
 
     def fetchall(self):
+        if self._last_sql.startswith("SELECT [UID], [BidUID] FROM ["):
+            return [(param, 1) for param in self._last_params]
+        if self._last_sql.startswith("SELECT [UID] FROM ["):
+            return [(param,) for param in self._last_params]
         if "DECLARE @RequestedLocks TABLE" in self._last_sql:
             requested = json.loads(self._last_params[0])
             return [(row["ordinal"], 0) for row in requested]
@@ -959,6 +963,48 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "has not been generated"):
             str(uid)
 
+    def test_sql_writer_does_not_replace_deferred_identity_with_access_reference_max(self):
+        class _Cursor:
+            def __init__(self):
+                self.execute_count = 0
+
+            def execute(self, _sql):
+                self.execute_count += 1
+
+            @staticmethod
+            def fetchone():
+                return (42,)
+
+        class _Schema:
+            @staticmethod
+            def optional_table_missing(_table):
+                return False
+
+            @staticmethod
+            def column_exists(_table, _column):
+                return True
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        cursor = _Cursor()
+
+        with writer._backend_scope(descriptor.database_id):
+            uid = writer._next_uid_preserving_references(cursor, _Schema(), "Bids")
+
+        self.assertEqual(cursor.execute_count, 0)
+        with self.assertRaisesRegex(RuntimeError, "has not been generated"):
+            str(uid)
+
     def test_sql_writer_rejects_shared_page_navigation_and_view_state_paths(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1131,6 +1177,47 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 [],
                 CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema),
             )
+
+    def test_sql_plan_item_preflight_carries_expected_bid_into_locked_query(self):
+        class _Cursor:
+            def __init__(self):
+                self.executed = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                return False
+
+            def execute(self, sql, *params):
+                self.executed = (sql, params)
+
+            @staticmethod
+            def fetchone():
+                return (0,)
+
+        class _Lease:
+            def __init__(self):
+                self.cursor_value = _Cursor()
+
+            def cursor(self):
+                return self.cursor_value
+
+        lease = _Lease()
+        writer = SqlProjectWriter.__new__(SqlProjectWriter)
+        writer._write_schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+
+        @contextlib.contextmanager
+        def connection(_database_id):
+            yield lease
+
+        writer._connection = connection
+        writer.verify_plan_items_exist("database", "8", ("101",), ())
+
+        sql, params = lease.cursor_value.executed
+        self.assertIn("DECLARE @ExpectedBidUID bigint=?", sql)
+        self.assertIn("target.[BidUID]<>@ExpectedBidUID", sql)
+        self.assertEqual(params[0], 8)
 
     def test_sql_parse_file_uses_one_snapshot_transaction(self):
         class _Cursor:
@@ -1923,6 +2010,57 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         access_delete.assert_not_called()
 
+    def test_sql_takeoff_delete_clears_all_surviving_self_references(self):
+        class Schema:
+            def require_column(self, _table, _column):
+                pass
+
+        class Cursor:
+            def __init__(self):
+                self.sql = ""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def execute(self, sql, *_params):
+                self.sql = sql
+
+            @staticmethod
+            def fetchone():
+                return (1,)
+
+        class Connection:
+            def __init__(self):
+                self.cursor_value = Cursor()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def cursor(self):
+                return self.cursor_value
+
+        connection = Connection()
+        writer = SqlProjectWriter.__new__(SqlProjectWriter)
+        writer._connection = lambda _database_id: connection
+        writer._schema = lambda _connection: Schema()
+
+        writer._run_delete_takeoffs("sql-db", [7], ACCESS_BULK_CHUNK_SIZE)
+
+        for column in (
+            "ParentUID",
+            "TypGroupTakeoffUID",
+            "TypPageTakeoffUID",
+            "TypGroupMarkerUID",
+        ):
+            with self.subTest(column=column):
+                self.assertIn(f"[{column}]=NULL", connection.cursor_value.sql)
+
     def test_sql_router_scopes_preconnection_validation_as_sql(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -2060,6 +2198,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         original = RuntimeError("access row failure")
         with (
+            patch(
+                "ost_visualizer.infrastructure.mdb.components."
+                "annotation_operations.require_existing_bid_scoped_uid_matches"
+            ),
+            patch(
+                "ost_visualizer.infrastructure.mdb.components."
+                "annotation_operations.require_existing_unique_bid_owned_uid_matches"
+            ),
             patch.object(writer, "_next_uid", return_value=1),
             patch.object(
                 writer,
@@ -2080,6 +2226,15 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         original = pyodbc.DataError("22018", "type mismatch")
 
         class _Cursor:
+            def __init__(self):
+                self.rows = []
+
+            def execute(self, _sql, *params):
+                self.rows = [(param,) for param in params]
+
+            def fetchall(self):
+                return list(self.rows)
+
             def close(self):
                 pass
 
@@ -2166,6 +2321,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         with (
             patch.object(writer, "_schema", return_value=object()),
+            patch(
+                "ost_visualizer.infrastructure.mdb.components."
+                "annotation_operations.require_existing_bid_scoped_uid_matches"
+            ),
+            patch(
+                "ost_visualizer.infrastructure.mdb.components."
+                "annotation_operations.require_existing_unique_bid_owned_uid_matches"
+            ),
             patch.object(writer, "_next_uid", return_value=1),
             patch.object(writer, "_execute_annotation_insert", side_effect=original),
             self.assertRaises(pyodbc.DataError) as captured,
@@ -2207,6 +2370,10 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             width=1.0,
         )
         with (
+            patch(
+                "ost_visualizer.infrastructure.mdb.components."
+                "annotation_operations.require_existing_bid_scoped_uid_matches"
+            ),
             patch.object(
                 writer,
                 "_execute_annotation_insert",
@@ -2238,6 +2405,10 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             width=1.0,
         )
         with (
+            patch(
+                "ost_visualizer.infrastructure.mdb.components."
+                "annotation_operations.require_existing_bid_scoped_uid_matches"
+            ),
             patch.object(writer, "_next_uid", return_value=1),
             patch.object(
                 writer,

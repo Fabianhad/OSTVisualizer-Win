@@ -34,7 +34,12 @@ from ...application.dtos.collaboration_dtos import (
 )
 from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...domain.dtos.raw_bid_data_dto import RawBidData
-from ..mdb.components.constants import BID_TABLES_WRITE_ORDER, TAKEOFF_REFERENCE_TABLES
+from ..mdb.components.constants import (
+    BID_TABLES_WRITE_ORDER,
+    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
+    TAKEOFF_REFERENCE_TABLES,
+    TAKEOFF_SELF_REFERENCE_COLUMNS,
+)
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ..database.master_data_identity import (
     MasterDataCandidateIndex,
@@ -42,6 +47,7 @@ from ..database.master_data_identity import (
     build_master_data_candidate_index,
     master_data_identity_key,
     require_unambiguous_incoming_identities,
+    require_unique_master_data_uids,
     resolve_master_data_candidate,
 )
 from ..database.settings_cardinality import (
@@ -210,13 +216,16 @@ class SqlProjectWriter(MdbWriter):
     def verify_plan_items_exist(
         self,
         database_id: str,
+        bid_uid: str,
         takeoff_uids: Sequence[str],
         annotations: Sequence[tuple[str, str]],
     ) -> None:
         with self._connection(database_id) as connection:
             schema = self._schema(connection)
             schema.require_column("BidTakeoffs", "UID")
-            schema.require_column("BidTakeoffs", "ParentUID")
+            schema.require_column("BidTakeoffs", "BidUID")
+            for column in TAKEOFF_SELF_REFERENCE_COLUMNS:
+                schema.require_column("BidTakeoffs", column)
             normalized_takeoffs = tuple(dict.fromkeys(int(uid) for uid in takeoff_uids))
             normalized_annotations: dict[tuple[str, int], dict[str, object]] = {}
             for uid, annotation_type in annotations:
@@ -230,6 +239,7 @@ class SqlProjectWriter(MdbWriter):
                         )
                     )
                 schema.require_column(table, "UID")
+                schema.require_column(table, "BidUID")
                 annotation_uid = int(uid)
                 normalized_annotations[(table, annotation_uid)] = {
                     "table": table,
@@ -245,14 +255,16 @@ class SqlProjectWriter(MdbWriter):
                     + "' AND NOT EXISTS (SELECT 1 FROM ["
                     + table
                     + "] target WITH (UPDLOCK, HOLDLOCK) "
-                    "WHERE target.[UID]=requested.[UID]))"
+                    "WHERE target.[UID]=requested.[UID] AND "
+                    "target.[BidUID]=@ExpectedBidUID))"
                     for table in annotation_tables
                 )
                 or "1=0"
             )
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SET NOCOUNT ON; DECLARE @RequestedTakeoffs TABLE "
+                    "SET NOCOUNT ON; DECLARE @ExpectedBidUID bigint=?; "
+                    "DECLARE @RequestedTakeoffs TABLE "
                     "([UID] bigint NOT NULL PRIMARY KEY); INSERT INTO "
                     "@RequestedTakeoffs ([UID]) SELECT source.[UID] FROM "
                     "OPENJSON(?) WITH ([UID] bigint '$') source; DECLARE "
@@ -264,7 +276,8 @@ class SqlProjectWriter(MdbWriter):
                     "[UID] bigint '$.uid') source; DECLARE @Status int=0; "
                     "IF EXISTS (SELECT 1 FROM @RequestedTakeoffs requested "
                     "LEFT JOIN [BidTakeoffs] target WITH (UPDLOCK, HOLDLOCK) "
-                    "ON target.[UID]=requested.[UID] WHERE target.[UID] IS NULL) "
+                    "ON target.[UID]=requested.[UID] WHERE target.[UID] IS NULL "
+                    "OR target.[BidUID]<>@ExpectedBidUID) "
                     "SET @Status=1; ELSE IF EXISTS (SELECT 1 FROM [BidTakeoffs] "
                     "child WITH (UPDLOCK, HOLDLOCK) JOIN @RequestedTakeoffs parent "
                     "ON parent.[UID]=child.[ParentUID] LEFT JOIN "
@@ -273,6 +286,7 @@ class SqlProjectWriter(MdbWriter):
                     "(SELECT 1 FROM @RequestedAnnotations requested WHERE "
                     f"{missing_annotation_predicate}) SET @Status=3; "
                     "SELECT @Status",
+                    int(bid_uid),
                     json.dumps(normalized_takeoffs, separators=(",", ":")),
                     json.dumps(
                         tuple(normalized_annotations.values()),
@@ -323,16 +337,28 @@ class SqlProjectWriter(MdbWriter):
             schema.require_column("BidTakeoffs", "ParentUID")
             schema.require_column("BidPercents", "BidTakeoffUID")
             for table in TAKEOFF_REFERENCE_TABLES:
-                schema.require_column(table, "BidTakeoffFromUID")
-                schema.require_column(table, "BidTakeoffToUID")
+                for column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
+                    schema.require_column(table, column)
+            requested_reference_match = " OR ".join(
+                "requested.[UID]=target.[" + column + "]"
+                for column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS
+            )
             reference_deletes = " ".join(
                 "DELETE target FROM ["
                 + table
                 + "] target WHERE EXISTS (SELECT 1 FROM @Requested requested "
-                "WHERE requested.[UID]=target.[BidTakeoffFromUID] OR "
-                "requested.[UID]=target.[BidTakeoffToUID]); SET @Affected+="
+                "WHERE " + requested_reference_match + "); SET @Affected+="
                 "@@ROWCOUNT;"
                 for table in TAKEOFF_REFERENCE_TABLES
+            )
+            self_reference_updates = " ".join(
+                "UPDATE child SET ["
+                + column
+                + "]=NULL FROM [BidTakeoffs] child WHERE EXISTS (SELECT 1 "
+                "FROM @Requested requested WHERE requested.[UID]=child.["
+                + column
+                + "]); SET @Affected+=@@ROWCOUNT;"
+                for column in TAKEOFF_SELF_REFERENCE_COLUMNS
             )
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -342,11 +368,8 @@ class SqlProjectWriter(MdbWriter):
                     f"source; DECLARE @Affected int=0; {reference_deletes} "
                     "DELETE target FROM [BidPercents] target WHERE EXISTS "
                     "(SELECT 1 FROM @Requested requested WHERE requested.[UID]="
-                    "target.[BidTakeoffUID]); SET @Affected+=@@ROWCOUNT; UPDATE "
-                    "child SET [ParentUID]=NULL "
-                    "FROM [BidTakeoffs] child WHERE EXISTS (SELECT 1 FROM "
-                    "@Requested requested WHERE requested.[UID]=child.[ParentUID]); "
-                    "SET @Affected+=@@ROWCOUNT; "
+                    "target.[BidTakeoffUID]); SET @Affected+=@@ROWCOUNT; "
+                    f"{self_reference_updates} "
                     "DECLARE @Expected int=(SELECT COUNT(*) FROM @Requested); "
                     "DELETE target FROM [BidTakeoffs] target JOIN @Requested "
                     "requested ON requested.[UID]=target.[UID]; DECLARE @Deleted "
@@ -1024,6 +1047,10 @@ class SqlProjectWriter(MdbWriter):
         with self._identity_lock:
             return _DeferredIdentity(next(self._identity_placeholders))
 
+    def _next_uid_preserving_references(self, cursor, schema, table: str) -> int:
+        del schema
+        return self._next_uid(cursor, table)
+
     def _execute_insert_values(
         self,
         cursor,
@@ -1474,6 +1501,7 @@ class SqlProjectWriter(MdbWriter):
             rows = cursor.fetchall()
         finally:
             cursor.close()
+        require_unique_master_data_uids((row[0] for row in rows), "Employees")
         result: MasterDataCandidateIndex = {}
         for row in rows:
             row_data = {

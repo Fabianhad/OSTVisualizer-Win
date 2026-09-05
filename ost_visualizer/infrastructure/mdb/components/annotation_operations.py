@@ -14,6 +14,12 @@ from ....domain.entities.annotation import (
 )
 from ....domain.entities.named_view import normalize_named_view_position
 from ...database.annotation_storage import ANNOTATION_TABLE_BY_TYPE
+from ...database.bid_owned_identity import (
+    IncoherentBidOwnedScopeError,
+    require_existing_bid_scoped_uid_matches,
+    require_existing_unique_bid_owned_uid_matches,
+    require_single_bid_scope_for_uids,
+)
 from .constants import hex_to_color_int
 from .serialization import encode_annotation_text, serialize_position_for_table
 from .identity_allocation import AccessIdentityAllocationMixin
@@ -42,6 +48,22 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
     )
     _ANNOTATION_TABLE = ANNOTATION_TABLE_BY_TYPE
 
+    def _require_unique_annotation_targets(self, cursor, schema, annotations) -> None:
+        uids_by_table: Dict[str, List[int]] = {}
+        for uid, annotation_type, *_rest in annotations:
+            table = self._ANNOTATION_TABLE.get(annotation_type)
+            if not table or schema.optional_table_missing(table):
+                continue
+            uids_by_table.setdefault(table, []).append(int(uid))
+        bid_uids: set[int] = set()
+        for table, uids in uids_by_table.items():
+            self._require_write_columns(schema, table, ("UID", "BidUID"))
+            bid_uids.add(require_single_bid_scope_for_uids(cursor, table, uids))
+        if len(bid_uids) > 1:
+            raise IncoherentBidOwnedScopeError(
+                "Annotation mutation targets do not belong to one authoritative Bid."
+            )
+
     def save_annotation_positions(
         self, db_path: str, positions: List[Tuple[str, str, List[float]]]
     ) -> bool:
@@ -49,6 +71,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                self._require_unique_annotation_targets(cursor, schema, positions)
                 for uid, annotation_type, position in positions:
                     table = self._ANNOTATION_TABLE.get(annotation_type)
                     if not table:
@@ -84,6 +107,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                self._require_unique_annotation_targets(cursor, schema, updates)
                 for uid, annotation_type, properties in updates:
                     if annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
                         table = self._ANNOTATION_TABLE[annotation_type]
@@ -165,6 +189,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                self._require_unique_annotation_targets(cursor, schema, updates)
                 for uid, annotation_type, properties in updates:
                     table = self._ANNOTATION_TABLE.get(annotation_type)
                     if not table or schema.optional_table_missing(table):
@@ -284,7 +309,40 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "Bids", (bid_uid,)
+                )
+                annotation_tables: list[str] = []
+                page_uids: list[object] = []
+                layer_uids: list[object] = []
+                hotlink_target_uids: list[object] = []
+                namedview_remap = ref_remap.namedview_uids if ref_remap else {}
                 for spec in specs:
+                    table = self._ANNOTATION_TABLE.get(spec.annotation_type)
+                    if not table:
+                        raise ValueError(
+                            f"Unsupported annotation type: {spec.annotation_type}"
+                        )
+                    annotation_tables.append(table)
+                    page_uids.append(spec.page_uid)
+                    if spec.layer_uid and schema.column_exists(table, "BidLayerUID"):
+                        layer_uids.append(spec.layer_uid)
+                    if spec.annotation_type == ANNOTATION_TYPE_HOTLINK:
+                        target_uid = spec.properties.get("BidPageViewUID")
+                        if target_uid not in (None, "", "0", 0):
+                            hotlink_target_uids.append(
+                                namedview_remap.get(str(target_uid), target_uid)
+                            )
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidPages", page_uids, bid_uid
+                )
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidLayers", layer_uids, bid_uid
+                )
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidNamedViews", hotlink_target_uids, bid_uid
+                )
+                for spec, table in zip(specs, annotation_tables):
                     page_uid = spec.page_uid
                     annotation_type = spec.annotation_type
                     position = (
@@ -296,16 +354,13 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                     width = spec.width
                     properties = spec.properties
                     layer_uid = spec.layer_uid
-                    table = self._ANNOTATION_TABLE.get(annotation_type)
-                    if not table:
-                        raise ValueError(
-                            f"Unsupported annotation type: {annotation_type}"
-                        )
                     position_val = serialize_position_for_table(table, position)
                     color_int = hex_to_color_int(color)
                     width_int = int(width) if width else 0
                     layer_int = int(layer_uid) if layer_uid else None
-                    new_uid = self._next_uid(cursor, table)
+                    new_uid = self._next_uid_preserving_references(
+                        cursor, schema, table
+                    )
                     self._execute_annotation_insert(
                         cursor,
                         schema,
@@ -564,6 +619,24 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                self._require_unique_annotation_targets(cursor, schema, annotations)
+                named_view_uids = by_table.get("BidNamedViews", ())
+                if named_view_uids and not schema.optional_table_missing("BidHotLinks"):
+                    self._require_write_columns(
+                        schema, "BidHotLinks", ("UID", "BidPageViewUID")
+                    )
+                    placeholders = ",".join("?" for _uid in named_view_uids)
+                    cursor.execute(
+                        "SELECT [UID] FROM [BidHotLinks] "
+                        f"WHERE [BidPageViewUID] IN ({placeholders})",
+                        *named_view_uids,
+                    )
+                    dependent_uids = [int(row[0]) for row in cursor.fetchall()]
+                    requested_hotlink_uids = set(by_table.get("BidHotLinks", ()))
+                    if any(uid not in requested_hotlink_uids for uid in dependent_uids):
+                        raise ValueError(
+                            "Named View deletion must include every dependent Hot Link."
+                        )
                 for table in sorted(
                     by_table,
                     key=lambda value: 1 if value == "BidNamedViews" else 0,

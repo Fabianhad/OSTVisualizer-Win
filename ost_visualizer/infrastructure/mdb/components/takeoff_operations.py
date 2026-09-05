@@ -2,8 +2,17 @@ import uuid
 from typing import List
 from ....application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ....domain.entities.area import is_unassigned_area_uid
+from ...database.bid_owned_identity import (
+    require_existing_bid_scoped_uid_matches,
+    require_existing_unique_bid_owned_uid_matches,
+    require_single_bid_scope_for_uids,
+)
 from .bulk_write_helpers import ACCESS_BULK_CHUNK_SIZE
-from .constants import TAKEOFF_REFERENCE_TABLES
+from .constants import (
+    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
+    TAKEOFF_REFERENCE_TABLES,
+    TAKEOFF_SELF_REFERENCE_COLUMNS,
+)
 from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import encode_position
 
@@ -164,8 +173,19 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
     ) -> None:
         with self._connection(db_path) as conn:
             schema = self._schema(conn)
-            self._require_write_columns(schema, "BidTakeoffs", ("UID", column))
+            self._require_write_columns(
+                schema, "BidTakeoffs", ("UID", "BidUID", column)
+            )
             cursor = conn.cursor()
+            bid_uid = require_single_bid_scope_for_uids(cursor, "BidTakeoffs", uid_ints)
+            if column == "BidConditionUID":
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidConditions", (value,), bid_uid
+                )
+            elif column == "BidAreaUID" and value is not None:
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidAreas", (value,), bid_uid
+                )
             self._execute_uid_in_update_chunks(
                 cursor,
                 "BidTakeoffs",
@@ -199,6 +219,7 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidTakeoffs", ("UID", "Position"))
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidTakeoffs", (takeoff_uid,))
                 self._execute_update_values(
                     cursor,
                     schema,
@@ -222,6 +243,10 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidTakeoffs", ("UID", "Position"))
                 cursor = conn.cursor()
+                if positions:
+                    require_single_bid_scope_for_uids(
+                        cursor, "BidTakeoffs", (uid for uid, _position in positions)
+                    )
                 for takeoff_uid, position in positions:
                     cursor.execute(
                         "UPDATE [BidTakeoffs] SET [Position]=? WHERE [UID]=?",
@@ -243,6 +268,10 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidTakeoffs", ("UID", "Rotation"))
                 cursor = conn.cursor()
+                if rotations:
+                    require_single_bid_scope_for_uids(
+                        cursor, "BidTakeoffs", (uid for uid, _rotation in rotations)
+                    )
                 for takeoff_uid, rotation in rotations:
                     cursor.execute(
                         "UPDATE [BidTakeoffs] SET [Rotation]=? WHERE [UID]=?",
@@ -265,6 +294,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(
+                    cursor, "BidTakeoffs", (uid for uid, _properties in updates)
+                )
                 for takeoff_uid, properties in updates:
                     values = {
                         self._TAKEOFF_TEXT_PROPERTY_COLUMNS[key]: value
@@ -337,13 +369,11 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
             schema = self._schema(conn)
             self._require_write_columns(schema, "BidTakeoffs", ("UID",))
             cursor = conn.cursor()
+            require_single_bid_scope_for_uids(cursor, "BidTakeoffs", uids)
             for child in TAKEOFF_REFERENCE_TABLES:
                 if schema.optional_table_missing(child):
                     continue
-                for reference_column in (
-                    "BidTakeoffFromUID",
-                    "BidTakeoffToUID",
-                ):
+                for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
                     if not schema.column_exists(child, reference_column):
                         continue
                     self._execute_uid_in_delete_chunks(
@@ -363,15 +393,16 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                     uids,
                     chunk_size,
                 )
-            if schema.column_exists("BidTakeoffs", "ParentUID"):
-                self._execute_uid_in_update_chunks(
-                    cursor,
-                    "BidTakeoffs",
-                    "ParentUID",
-                    {"ParentUID": None},
-                    uids,
-                    chunk_size,
-                )
+            for reference_column in TAKEOFF_SELF_REFERENCE_COLUMNS:
+                if schema.column_exists("BidTakeoffs", reference_column):
+                    self._execute_uid_in_update_chunks(
+                        cursor,
+                        "BidTakeoffs",
+                        reference_column,
+                        {reference_column: None},
+                        uids,
+                        chunk_size,
+                    )
             self._execute_uid_in_delete_chunks(
                 cursor,
                 "BidTakeoffs",
@@ -397,6 +428,44 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                     ("UID", "BidUID", "BidConditionUID", "BidPageUID", "Position"),
                 )
                 cursor = conn.cursor()
+                bid_uid_int = int(bid_uid)
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "Bids", (bid_uid_int,)
+                )
+                require_existing_bid_scoped_uid_matches(
+                    cursor,
+                    "BidConditions",
+                    (spec.condition_uid for spec in takeoff_specs),
+                    bid_uid_int,
+                )
+                require_existing_bid_scoped_uid_matches(
+                    cursor,
+                    "BidPages",
+                    (spec.page_uid for spec in takeoff_specs),
+                    bid_uid_int,
+                )
+                if schema.column_exists("BidTakeoffs", "BidAreaUID"):
+                    require_existing_bid_scoped_uid_matches(
+                        cursor,
+                        "BidAreas",
+                        (
+                            spec.area_uid
+                            for spec in takeoff_specs
+                            if not is_unassigned_area_uid(spec.area_uid)
+                        ),
+                        bid_uid_int,
+                    )
+                if schema.column_exists("BidTakeoffs", "ParentUID"):
+                    require_existing_bid_scoped_uid_matches(
+                        cursor,
+                        "BidTakeoffs",
+                        (
+                            spec.parent_uid
+                            for spec in takeoff_specs
+                            if spec.parent_uid not in (None, "", 0, "0")
+                        ),
+                        bid_uid_int,
+                    )
                 table_cols = sorted(schema.get_columns("BidTakeoffs"))
                 table_col_set = set(table_cols)
                 new_uids = []
@@ -412,7 +481,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                         if spec.parent_uid and spec.parent_uid not in ("0", "")
                         else 0
                     )
-                    new_uid = self._next_uid(cursor, "BidTakeoffs")
+                    new_uid = self._next_uid_preserving_references(
+                        cursor, schema, "BidTakeoffs"
+                    )
                     typed_values = {
                         "UID": new_uid,
                         "BidUID": int(bid_uid),

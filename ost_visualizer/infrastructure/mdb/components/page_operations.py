@@ -1,4 +1,8 @@
 import pyodbc
+from ...database.bid_owned_identity import (
+    require_existing_bid_scoped_uid_match,
+    require_single_bid_scope_for_uids,
+)
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.overlay import overlay_units_per_sheet_inch
 from ....domain.services.page_scale_transform import (
@@ -28,6 +32,7 @@ class PageOperationsMixin:
                     schema, "BidPages", ("UID", "ScaleFactor1", "ScaleFactor2")
                 )
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 self._rescale_page_content_for_scale_change(
                     cursor, schema, int(page_uid), sf1, sf2
                 )
@@ -124,6 +129,7 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 return self._execute_update_values(
                     cursor,
                     schema,
@@ -201,6 +207,7 @@ class PageOperationsMixin:
                     "CurrentY": current_y,
                 }
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 self._execute_update_values(
                     cursor,
                     schema,
@@ -227,6 +234,7 @@ class PageOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidPages", ("UID", "Show"))
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 cursor.execute(
                     "UPDATE [BidPages] SET [Show]=? WHERE [UID]=?",
                     int(show_mode),
@@ -248,6 +256,7 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 cursor.execute(
                     "SELECT [Width], [Height], [ScaleFactor1], [ScaleFactor2], "
                     "[OverlayImagePath], [ImagePath] FROM [BidPages] WHERE [UID]=?",
@@ -302,6 +311,7 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 cursor.execute(
                     "SELECT [ScaleFactor1], [ScaleFactor2] "
                     "FROM [BidPages] WHERE [UID]=?",
@@ -344,6 +354,7 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 return self._execute_update_values(
                     cursor,
                     schema,
@@ -370,6 +381,7 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                require_single_bid_scope_for_uids(cursor, "BidPages", (page_uid,))
                 return self._execute_update_values(
                     cursor,
                     schema,
@@ -415,6 +427,7 @@ class PageOperationsMixin:
                     "Invert": self._access_bool(invert),
                     "Bitonal": self._access_bool(bitonal),
                 }
+                require_single_bid_scope_for_uids(cursor, "BidPages", page_uids)
                 for page_uid in page_uids:
                     self._execute_update_values(
                         cursor,
@@ -452,6 +465,16 @@ class PageOperationsMixin:
                     ("BidPageUID", "BidAreaUID", "BidAreaSelected"),
                 )
                 cursor = conn.cursor()
+                page_bid_uid = require_single_bid_scope_for_uids(
+                    cursor, "BidPages", (page_uid,)
+                )
+                if area_uid not in (None, "", UNASSIGNED_AREA_UID):
+                    require_existing_bid_scoped_uid_match(
+                        cursor,
+                        "BidAreas",
+                        area_uid,
+                        page_bid_uid,
+                    )
                 if area_uid == UNASSIGNED_AREA_UID:
                     self._replace_page_area_selection(
                         cursor, schema, int(page_uid), None, 1
