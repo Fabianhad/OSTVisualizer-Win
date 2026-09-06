@@ -587,6 +587,8 @@ class ComponentBuilder:
         plan_view.page_geometry_ready.connect(_discard_replaced_zoom_contexts)
 
         def _on_zoom_changed(factor: float) -> None:
+            if plan_view.current_page_uid is None:
+                return
             draft = _zoom_drafts.get(1)
             if draft is not None and (
                 draft[0] != _zoom_context() or not isclose(draft[1], factor)
@@ -766,7 +768,12 @@ class ComponentBuilder:
             zoom_combo,
             viewer_container,
             view_stack,
-            refresh_zoom_fn=lambda: _update_combo(canvas.get_zoom_percent() / 100.0),
+            refresh_zoom_fn=lambda: _update_combo(
+                canvas.get_zoom_percent() / 100.0
+                if view_stack.currentIndex() == 0
+                else _last_2d_zoom[0]
+            ),
+            plan_view=plan_view,
         )
         _TakeoffViewSelectorController(
             view_toolbar,

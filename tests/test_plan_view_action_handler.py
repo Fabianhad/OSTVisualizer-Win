@@ -220,6 +220,8 @@ def _rect_annotation(uid: str) -> BidAnnotation:
 class FakePlanView:
     def __init__(self, data=None):
         self.selected = set()
+        self.selection_revision = 0
+        self.tool_revision = 0
         self.clears = 0
         self.data = data
         self.current_page_uid = "p1"
@@ -246,14 +248,20 @@ class FakePlanView:
         self.clipboard_changed = SimpleNamespace(emit=lambda: None)
 
     def set_selected_uids(self, uids):
+        if self.selected != set(uids):
+            self.selection_revision += 1
         self.selected = set(uids)
+
+    def begin_deferred_selection(self):
+        self.selection_revision += 1
+        return self.selection_revision
 
     def get_selected_uids(self):
         return set(self.selected)
 
     def clear_selection(self):
         self.clears += 1
-        self.selected = set()
+        self.set_selected_uids(set())
 
     def get_takeoff(self, uid):
         if self.data is None:

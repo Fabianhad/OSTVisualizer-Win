@@ -365,13 +365,20 @@ class MenuController:
             action = self._actions.get(action_key)
             if action:
                 enabled = takeoff_active
+                if enabled and action_key == ACTION_ANNOTATION_WINDOW:
+                    enabled = (
+                        self.window.is_annotation_window_open()
+                        or self.window.can_open_annotation_window()
+                    )
                 if enabled and action_key in {
                     ACTION_ZOOM_IN,
                     ACTION_ZOOM_OUT,
                     ACTION_RESET_VIEW,
                 }:
                     enabled = scene_navigation_available(
-                        self.window.opengl_viewer, self.window.get_view_stack()
+                        self.window.opengl_viewer,
+                        self.window.get_view_stack(),
+                        self.window.get_takeoff_plan_view(),
                     )
                 action.setEnabled(enabled)
         self._set_variable_actions_enabled("display_modes_synced", takeoff_active)
@@ -590,7 +597,9 @@ class MenuController:
                 action.setEnabled(
                     takeoff_active
                     and scene_navigation_available(
-                        self.window.opengl_viewer, self.window.get_view_stack()
+                        self.window.opengl_viewer,
+                        self.window.get_view_stack(),
+                        self.window.get_takeoff_plan_view(),
                     )
                 )
                 continue

@@ -100,7 +100,15 @@ Threading and events:
   surface use its real top-level widget as their transient owner; a child
   `QWidgetWindow` is not a valid top-level owner. Clipboard payloads remain
   detached data, and database ownership comparisons use canonical path
-  normalization. Project Tree multi-selection does not replace the active bid:
+  normalization. Delayed insert, paste, geometry/property-save, and delete
+  selection belongs to the originating Plan surface's selection revision.
+  Result-owned annotation tool reactivation validates both selection and the
+  Plan-local tool revision. Cursor mode, annotation type, and placement Condition
+  changes advance tool ownership independently of selection. New selection
+  intent, another insertion/paste, or navigation
+  supersedes it; same-page projection preserves it without coupling selection to
+  rendering generations. Persisted results and undo history still complete.
+  Project Tree multi-selection does not replace the active bid:
   toolbar and shortcut duplication target that one active bid, while context-menu
   duplication captures and revalidates the exact right-clicked bid. Other
   Project Tree context mutations likewise retain their captured database and
@@ -124,6 +132,18 @@ Threading and events:
   and disables camera controls; a retained scene after regeneration failure stays
   usable. Repeated availability projection must not overwrite a typed zoom draft
   or a Main 2D control while the 3D surface is inactive.
+  Deferred remote Page projection must run the existing missing-target fallback
+  even when an empty Bid left the detached target UID blank, so its first new
+  Page restores content and controls without manual navigation.
+  Detached Plan managers consume database unload events for their own database,
+  clear local history, and reproject current Page availability immediately. A
+  permission-only refresh must not leave the removed database visible.
+  Main's detached-Plan action uses the canonical Page-opening predicate when
+  closed, but remains available to close an existing window after Page loss.
+  Main Plan navigation controls require a current Page. Explicit Page clearing
+  disables them and clears zoom text; visual reloads of the same Page do not
+  announce a false empty state. Late zoom notifications from a cleared Plan
+  must not repopulate the shared field. Page readiness restores navigation.
   Detached 3D context-menu zoom and reset commands reuse that window's toolbar
   actions for both enablement and execution; camera state remains surface-local.
   Main's shared zoom field retains separate unsubmitted Plan and 3D drafts across

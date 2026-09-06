@@ -895,6 +895,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _load_page_content(self) -> bool:
         page = self.page_data.page if self.page_data else None
         if not page:
+            self._update_combo_to_page("")
             if self._scale_combo is not None:
                 with QtCore.QSignalBlocker(self._scale_combo):
                     self._scale_combo.setCurrentIndex(-1)
@@ -1563,6 +1564,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._geometry_edit_lease_selection.clear()
             self.plan_view.disable_geometry_edit_leasing()
         self._set_annotation_items_pending(bid_ref, identities, True)
+        selection_revision = self.plan_view.begin_deferred_selection()
         window_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1585,12 +1587,16 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     and window._editing_enabled()
                 ):
                     window.plan_view.restore_flushed_positions([], ann_changes)
-                    window.plan_view.set_selected_uids(current_keys)
+                    if window.plan_view.selection_revision == selection_revision:
+                        window.plan_view.set_selected_uids(current_keys)
                 return
-            if window._annotation_context_is_current(
-                bid_ref,
-                page_uids,
-                page_identities,
+            if (
+                window._annotation_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                )
+                and window.plan_view.selection_revision == selection_revision
             ):
                 window.plan_view.set_selected_uids(current_keys)
             if window._page_identities_are_current(page_uids, page_identities):
@@ -1666,6 +1672,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         page_uids = self._annotation_page_uids_for_keys(keys)
         page_identities = self._capture_page_identities(page_uids)
         self._set_annotation_items_pending(bid_ref, identities, True)
+        selection_revision = self.plan_view.begin_deferred_selection()
         window_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1685,12 +1692,16 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     page_identities,
                 ):
                     restore()
-                    window.plan_view.set_selected_uids(current_keys)
+                    if window.plan_view.selection_revision == selection_revision:
+                        window.plan_view.set_selected_uids(current_keys)
                 return
-            if window._annotation_context_is_current(
-                bid_ref,
-                page_uids,
-                page_identities,
+            if (
+                window._annotation_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                )
+                and window.plan_view.selection_revision == selection_revision
             ):
                 window.plan_view.set_selected_uids(current_keys)
             if window._page_identities_are_current(page_uids, page_identities):
@@ -1781,6 +1792,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         page_uids = tuple(dict.fromkeys(str(spec.page_uid) for spec in specs))
         page_identities = self._capture_page_identities(page_uids)
+        selection_revision = self.plan_view.begin_deferred_selection()
+        tool_revision = self.plan_view.tool_revision
         window_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1808,13 +1821,21 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 page_uids,
                 page_identities,
             )
-            if keys and context_is_current:
+            selection_is_current = (
+                window.plan_view.selection_revision == selection_revision
+            )
+            if keys and context_is_current and selection_is_current:
                 window.plan_view.set_selected_uids(keys)
                 if source_anchor:
                     window.plan_view.mark_intelligent_paste_drag_pending(
                         sorted(keys), source_anchor
                     )
-            if reactivate_annotation_type and context_is_current:
+            if (
+                reactivate_annotation_type
+                and context_is_current
+                and selection_is_current
+                and window.plan_view.tool_revision == tool_revision
+            ):
                 window.plan_view.activate_annotation_placement(
                     reactivate_annotation_type
                 )
@@ -1917,6 +1938,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         page_identities = self._capture_page_identities(page_uids)
         self._set_annotation_items_pending(bid_ref, pending_identities, True)
         self.plan_view.set_selected_uids(set(skipped_selection_keys))
+        selection_revision = self.plan_view.begin_deferred_selection()
         window_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -1929,10 +1951,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 return
             window._set_annotation_items_pending(bid_ref, pending_identities, False)
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if window._annotation_context_is_current(
-                    bid_ref,
-                    page_uids,
-                    page_identities,
+                if (
+                    window._annotation_context_is_current(
+                        bid_ref,
+                        page_uids,
+                        page_identities,
+                    )
+                    and window.plan_view.selection_revision == selection_revision
                 ):
                     window.plan_view.set_selected_uids(
                         window._annotation_keys_for_identities(
@@ -1940,10 +1965,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                         )
                     )
                 return
-            if window._annotation_context_is_current(
-                bid_ref,
-                page_uids,
-                page_identities,
+            if (
+                window._annotation_context_is_current(
+                    bid_ref,
+                    page_uids,
+                    page_identities,
+                )
+                and window.plan_view.selection_revision == selection_revision
             ):
                 window.plan_view.set_selected_uids(
                     window._annotation_keys_for_identities(

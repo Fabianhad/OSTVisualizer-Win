@@ -1321,7 +1321,7 @@ class UIEventCoordinator:
         )
         if not selection_changed:
             if (
-                projection_changed
+                (projection_changed or source == self._SOURCE_2D)
                 and self._tab_widget
                 and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
             ):

@@ -33,6 +33,7 @@ from ...application.interfaces.i_shutdown_aware import IShutdownAware
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.annotation_view import AnnotationView
 from ...domain.entities.identity_refs import BidRef
+from ...domain.entities.file_state import normalize_path
 from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.workspace_state import DetachedWindowState
 from ...domain.repositories.i_annotation_view_repository import (
@@ -148,6 +149,7 @@ class DetachedPageViewManager(IShutdownAware):
         )
         subscriptions = (
             (AppEvents.DATABASE_REFRESHED, self._on_database_refreshed),
+            (AppEvents.FILE_UNLOADED, self._on_file_unloaded),
             (AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed),
             (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
             (AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed),
@@ -212,6 +214,7 @@ class DetachedPageViewManager(IShutdownAware):
         if event_bus is not None:
             subscriptions = (
                 (AppEvents.DATABASE_REFRESHED, self._on_database_refreshed),
+                (AppEvents.FILE_UNLOADED, self._on_file_unloaded),
                 (AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed),
                 (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
                 (AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed),
@@ -318,6 +321,24 @@ class DetachedPageViewManager(IShutdownAware):
         if view.target_page_uid not in affected_page_uids:
             return
         self._apply_window_page(view, self._get_page_data(view))
+
+    def _on_file_unloaded(
+        self, file_path: str = "", active_context_removed: bool = True
+    ) -> None:
+        del active_context_removed
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if view is None or view.bid_ref is None:
+            return
+        if file_path and normalize_path(view.bid_ref.file_path) != normalize_path(
+            file_path
+        ):
+            return
+        self._window.prepare_for_authoritative_refresh()
+        if self._window_undo_service is not None:
+            self._window_undo_service.clear()
+        self._refresh_window()
 
     def _on_database_refreshed(
         self,
@@ -568,7 +589,6 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref is None
             or view.bid_ref.file_path != database_id
             or view.bid_ref.bid_uid != bid_uid
-            or not view.target_page_uid
             or barrier.database_id != database_id
             or barrier.runtime_generation != runtime_generation
         ):

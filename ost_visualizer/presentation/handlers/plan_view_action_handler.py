@@ -209,7 +209,14 @@ class PlanViewActionHandler:
         page_uids: tuple[str, ...],
         plan_uids: set[str],
         page_identities: Optional[tuple[tuple[str, object], ...]] = None,
+        *,
+        selection_revision: Optional[int] = None,
     ) -> None:
+        if (
+            selection_revision is not None
+            and self._plan_view.selection_revision != selection_revision
+        ):
+            return
         if not plan_uids or not self._plan_context_is_current(
             bid_ref,
             page_uids,
@@ -807,6 +814,7 @@ class PlanViewActionHandler:
             True,
             annotation_identities,
         )
+        selection_revision = self._plan_view.begin_deferred_selection()
         handler_ref = weakref.ref(self)
 
         def restore_preview(handler) -> None:
@@ -852,6 +860,7 @@ class PlanViewActionHandler:
                     page_uids,
                     current_plan_uids,
                     page_identities,
+                    selection_revision=selection_revision,
                 )
                 return
             handler._restore_plan_selection_if_current(
@@ -859,6 +868,7 @@ class PlanViewActionHandler:
                 page_uids,
                 current_plan_uids,
                 page_identities,
+                selection_revision=selection_revision,
             )
             if handler._page_identities_are_current(page_uids, page_identities):
                 handler._push_sql_geometry_history(
@@ -951,6 +961,7 @@ class PlanViewActionHandler:
             True,
             annotation_identities,
         )
+        selection_revision = self._plan_view.begin_deferred_selection()
         handler_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -995,6 +1006,7 @@ class PlanViewActionHandler:
                     page_uids,
                     current_plan_uids,
                     page_identities,
+                    selection_revision=selection_revision,
                 )
                 return
             handler._restore_plan_selection_if_current(
@@ -1002,6 +1014,7 @@ class PlanViewActionHandler:
                 page_uids,
                 current_plan_uids,
                 page_identities,
+                selection_revision=selection_revision,
             )
             if old_updates and handler._page_identities_are_current(
                 page_uids,
@@ -2627,6 +2640,8 @@ class PlanViewActionHandler:
             dict.fromkeys(str(spec.page_uid) for spec in specs if spec.page_uid)
         )
         page_identities = self._capture_page_identities(originating_page_uids)
+        selection_revision = self._plan_view.begin_deferred_selection()
+        tool_revision = self._plan_view.tool_revision
         handler_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -2650,7 +2665,10 @@ class PlanViewActionHandler:
                 originating_page_uids,
                 page_identities,
             )
-            if originating_page_is_current and keys:
+            selection_is_current = (
+                handler._plan_view.selection_revision == selection_revision
+            )
+            if originating_page_is_current and selection_is_current and keys:
                 handler._plan_view.set_selected_uids(keys)
             if handler._page_identities_are_current(
                 originating_page_uids,
@@ -2665,6 +2683,8 @@ class PlanViewActionHandler:
             if (
                 after_success is not None
                 and originating_page_is_current
+                and selection_is_current
+                and handler._plan_view.tool_revision == tool_revision
                 and handler._is_allowed(Feature.PLACE_ANNOTATIONS)
             ):
                 after_success()
@@ -3229,6 +3249,7 @@ class PlanViewActionHandler:
             pending_annotation_identities,
         )
         self._plan_view.set_selected_uids(set(skipped_selection_keys))
+        selection_revision = self._plan_view.begin_deferred_selection()
         handler_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -3265,6 +3286,7 @@ class PlanViewActionHandler:
                     page_uids,
                     requested_takeoff_uids.union(current_requested_annotations),
                     page_identities,
+                    selection_revision=selection_revision,
                 )
                 return
             handler._restore_plan_selection_if_current(
@@ -3272,6 +3294,7 @@ class PlanViewActionHandler:
                 page_uids,
                 current_skipped_annotations,
                 page_identities,
+                selection_revision=selection_revision,
             )
             if handler._page_identities_are_current(page_uids, page_identities):
                 handler._push_sql_delete_history(
@@ -3908,6 +3931,7 @@ class PlanViewActionHandler:
             self._plan_identities_for_keys(previous_selection)
         )
         self._plan_view.clear_selection()
+        selection_revision = self._plan_view.begin_deferred_selection()
         handler_ref = weakref.ref(self)
 
         def complete(result: QueuedMutationResult) -> None:
@@ -3925,6 +3949,7 @@ class PlanViewActionHandler:
                     if (
                         active_bid == bid_ref
                         and handler._plan_view.current_page_uid == page_uid
+                        and handler._plan_view.selection_revision == selection_revision
                     ):
                         handler._plan_view.set_selected_uids(
                             handler._current_plan_keys_for_identities(
@@ -3943,6 +3968,7 @@ class PlanViewActionHandler:
             if (
                 active_bid == bid_ref
                 and handler._plan_view.current_page_uid == page_uid
+                and handler._plan_view.selection_revision == selection_revision
             ):
                 handler._plan_view.set_selected_uids(selected)
             handler._push_sql_paste_history(

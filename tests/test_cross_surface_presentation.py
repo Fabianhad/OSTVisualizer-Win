@@ -173,6 +173,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def setUp(self):
+        self.addCleanup(
+            QtCore.QCoreApplication.sendPostedEvents,
+            None,
+            QtCore.QEvent.Type.DeferredDelete,
+        )
         self.data = SharedPageData()
         self.state = PresentationUiState()
         self.bid_ref = self.state.get_selected_bid_ref()
@@ -285,8 +290,1826 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             QtCore.QThread.msleep(5)
         self.assertEqual(actual, colors)
 
+    def test_database_unload_clears_open_detached_plan_without_navigation(self):
+        from ost_visualizer.presentation.services.undo_redo_service import (
+            UndoRedoService,
+        )
+
+        history = UndoRedoService()
+        history.set_active_bid(self.bid_ref)
+        history.push_local(lambda: True, lambda: True)
+        self.manager._window_undo_service = history
+        page, bid = self.data.page, self.data.bid
+        current = [True]
+        self.data.get_current_bid_ref = lambda: self.bid_ref if current[0] else None
+        self.data.get_bid = lambda _ref: bid if current[0] else None
+        self.data.get_page = lambda uid: (
+            page if current[0] and uid == page.uid else None
+        )
+        self.data.get_all_pages = lambda: [page] if current[0] else []
+        self.data.annotations = [
+            BidAnnotation(
+                uid="selected",
+                annotation_type="rect",
+                page_uid=page.uid,
+                position=[10.0, 10.0, 40.0, 40.0],
+            )
+        ]
+        self.refresh()
+        self.detached.plan_view.set_selection_enabled(True)
+        self.detached.plan_view.set_selected_uids({"selected"})
+        self.assertEqual(self.detached.plan_view.current_page_uid, page.uid)
+        self.bus.publish(
+            AppEvents.FILE_UNLOADED,
+            file_path="unrelated.mdb",
+            active_context_removed=False,
+        )
+        self.assertEqual(self.detached.plan_view.current_page_uid, page.uid)
+        current[0] = False
+        self.bus.publish(
+            AppEvents.FILE_UNLOADED,
+            file_path=self.bid_ref.file_path,
+            active_context_removed=True,
+        )
+        self.app.processEvents()
+        self.assertIsNone(self.detached.plan_view.current_page_uid)
+        self.assertIsNone(self.detached.plan_view._background_item)
+        self.assertFalse(history.can_undo())
+        self.assertFalse(self.detached.plan_view.get_selected_uids())
+        self.assertFalse(self.detached.plan_view._selection_items)
+        self.assertEqual(self.detached._scale_combo.currentText(), "")
+        self.assertFalse(self.detached._btn_prev.isEnabled())
+        self.assertFalse(self.detached._btn_next.isEnabled())
+        self.assertIsNone(self.detached.current_area_selection_target())
+        current[0] = True
+        self.bus.publish(AppEvents.DATABASE_REFRESHED, file_path=self.bid_ref.file_path)
+        self.app.processEvents()
+        self.assertEqual(self.detached.plan_view.current_page_uid, page.uid)
+        self.assertTrue(self.detached._scale_combo.currentText())
+        self.assertFalse(self.detached.plan_view.get_selected_uids())
+
+    def test_detached_plan_action_tracks_empty_page_and_open_window_recovery(self):
+        from ost_visualizer.presentation.actions.action_ids import (
+            ACTION_ANNOTATION_WINDOW,
+        )
+        from ost_visualizer.presentation.main_window import MainWindow
+
+        page = self.data.page
+        pages = {page.uid: page}
+        self.data.get_page = pages.get
+        action = QtGui.QAction("Detached Plan", self.main_plan)
+        action.setCheckable(True)
+        opened = [False]
+        owner = SimpleNamespace(
+            ui_state_manager=self.state,
+            plan_view=self.main_plan,
+            _project_data_service=self.data,
+            is_takeoff_tab_active=lambda: True,
+            is_summary_tab_active=lambda: False,
+            is_annotation_window_open=lambda: opened[0],
+            get_takeoff_plan_view=lambda: None,
+            _annotation_window_action=action,
+        )
+        owner.get_active_takeoff_page_uid = (
+            lambda: MainWindow.get_active_takeoff_page_uid(owner)
+        )
+        owner.can_open_annotation_window = (
+            lambda: MainWindow.can_open_annotation_window(owner)
+        )
+        owner.can_restore_annotation_window = (
+            lambda: MainWindow.can_restore_annotation_window(owner)
+        )
+        close_calls = []
+
+        def close_window():
+            opened[0] = False
+            close_calls.append(True)
+
+        owner._annotation_view_manager = SimpleNamespace(close_view=close_window)
+        owner._view_window_manager = SimpleNamespace(
+            has_active_view_lifecycle=lambda: False
+        )
+        controller = export_menu_controller(
+            MenuUiState(self.bid_ref), MenuProjectData(self.bid_ref)
+        )
+        controller.window = owner
+        controller._actions[ACTION_ANNOTATION_WINDOW] = action
+        for has_page, is_open, expected in (
+            (True, False, True),
+            (False, False, False),
+            (True, False, True),
+            (False, True, True),
+            (False, False, False),
+        ):
+            with self.subTest(has_page=has_page, is_open=is_open):
+                pages.clear()
+                if has_page:
+                    pages[page.uid] = page
+                opened[0] = is_open
+                action.setChecked(is_open)
+                controller.update_menu_states()
+                self.assertEqual(action.isEnabled(), expected)
+                self.assertEqual(action.isChecked(), is_open)
+                if is_open and not has_page:
+                    close = lambda checked: MainWindow.set_annotation_window_visible(
+                        owner, checked
+                    )
+                    action.triggered.connect(close)
+                    action.trigger()
+                    action.triggered.disconnect(close)
+                    self.assertFalse(opened[0])
+                    self.assertFalse(action.isChecked())
+                    controller.update_menu_states()
+                    self.assertFalse(action.isEnabled())
+                    self.assertEqual(close_calls, [True])
+                if not has_page and not is_open:
+                    self.assertFalse(owner.can_open_annotation_window())
+                    MainWindow.set_annotation_window_visible(owner, True)
+                    self.assertFalse(action.isChecked())
+
+    def test_remote_first_page_restores_detached_plan_after_empty_bid(self):
+        self._assert_first_page_restores_detached_plan(remote=True)
+
+    def test_local_first_page_restores_detached_plan_after_empty_bid(self):
+        self._assert_first_page_restores_detached_plan(remote=False)
+
+    def _assert_first_page_restores_detached_plan(self, *, remote):
+        from ost_visualizer.application.dtos.remote_projection_dtos import (
+            RemoteProjectionBarrier,
+        )
+        from tests.test_remote_plan_update_pipeline import (
+            _QueuedBridge,
+            _ManualThreadPool,
+        )
+
+        page = self.data.page
+        pages = {page.uid: page}
+        self.data.get_page = pages.get
+        self.data.get_all_pages = lambda: list(pages.values())
+        view = self.detached.view
+        self.manager.repository = SimpleNamespace(
+            get_active_view=lambda: view, update_view=lambda _view: None
+        )
+        bridge, pool = _QueuedBridge(), _ManualThreadPool()
+        self.manager._remote_plan_pipeline._callback_bridge = bridge
+        self.manager._remote_plan_pipeline._thread_pool = pool
+
+        def project_remote():
+            if not remote:
+                self.bus.publish(
+                    AppEvents.DATABASE_REFRESHED, file_path=self.bid_ref.file_path
+                )
+                self.app.processEvents()
+                return
+            self.bus.publish(
+                AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                database_id=self.bid_ref.file_path,
+                bid_uid=self.bid_ref.bid_uid,
+                families=["pages"],
+                defer_plan_projection=True,
+            )
+            barrier = RemoteProjectionBarrier(
+                database_id=self.bid_ref.file_path,
+                runtime_generation=1,
+                is_runtime_current=lambda *_args: True,
+                on_complete=lambda _success: None,
+            )
+            self.bus.publish(
+                AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+                database_id=self.bid_ref.file_path,
+                bid_uid=self.bid_ref.bid_uid,
+                runtime_generation=1,
+                families=("pages",),
+                condition_uids=(),
+                condition_changed_fields=None,
+                condition_change_operations=(),
+                areas_changed=False,
+                resource_uids_by_family={},
+                barrier=barrier,
+            )
+            barrier.seal()
+            while pool.runnables:
+                pool.run_next()
+                callback, payload = bridge.callbacks.pop(0)
+                callback(payload)
+            self.app.processEvents()
+
+        pages.clear()
+        self.data.bid.pages_without_folder = []
+        project_remote()
+        self.assertIsNone(self.detached.plan_view.current_page_uid)
+        self.assertEqual(view.target_page_uid, "")
+        self.assertEqual(self.detached._scale_combo.currentText(), "")
+        self.assertFalse(self.detached._btn_next.isEnabled())
+        replacement = deepcopy(page)
+        replacement.uid = "first-new-page"
+        replacement.name = "First new Page"
+        replacement.scale_factor1, replacement.scale_factor2 = 1.0, 480.0
+        pages[replacement.uid] = replacement
+        self.data.bid.pages_without_folder = [replacement]
+        project_remote()
+        self.assertEqual(self.detached.plan_view.current_page_uid, replacement.uid)
+        self.assertEqual(view.target_page_uid, replacement.uid)
+        self.assertEqual(self.detached._scale_combo.currentData(), (1.0, 480.0))
+        self.assertFalse(self.detached._btn_next.isEnabled())
+        self.assertEqual(self.detached._page_combo.get_page_order(), [replacement.uid])
+        self.assertFalse(self.detached.plan_view.get_selected_uids())
+        second = deepcopy(replacement)
+        second.uid = "second-new-page"
+        pages[second.uid] = second
+        self.data.bid.pages_without_folder.append(second)
+        project_remote()
+        self.assertEqual(self.detached.plan_view.current_page_uid, replacement.uid)
+        self.assertTrue(self.detached._btn_next.isEnabled())
+        self.assertEqual(
+            self.detached._page_combo.get_page_order(), [replacement.uid, second.uid]
+        )
+
+    def test_remote_page_projection_cannot_rewind_reopened_detached_plan(self):
+        from ost_visualizer.application.dtos.remote_projection_dtos import (
+            RemoteProjectionBarrier,
+        )
+        from tests.test_remote_plan_update_pipeline import (
+            _QueuedBridge,
+            _ManualThreadPool,
+        )
+
+        active = [self.detached.view]
+
+        def create_view(*, bid_ref, target_page_uid, target_named_view_uid):
+            active[0] = AnnotationView(
+                uid=uuid.uuid4().hex,
+                file_path=bid_ref.file_path,
+                bid_uid=bid_ref.bid_uid,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+            return active[0]
+
+        self.manager.repository = SimpleNamespace(
+            get_active_view=lambda: active[0],
+            create_view=create_view,
+            update_view=lambda _view: None,
+        )
+        self.manager._coord_factory = SimpleNamespace(create=lambda: object())
+        self.manager._infrastructure_provider = SimpleNamespace(
+            create_plan_view_renderers=lambda *_args: renderers()
+        )
+        bridge, pool = _QueuedBridge(), _ManualThreadPool()
+        pipeline = self.manager._remote_plan_pipeline
+        pipeline._callback_bridge = bridge
+        pipeline._thread_pool = pool
+        page = self.data.page
+
+        def request():
+            barrier = RemoteProjectionBarrier(
+                database_id=self.bid_ref.file_path,
+                runtime_generation=1,
+                is_runtime_current=lambda *_args: True,
+                on_complete=lambda _success: None,
+            )
+            self.manager._on_remote_plan_projection_requested(
+                database_id=self.bid_ref.file_path,
+                bid_uid=self.bid_ref.bid_uid,
+                runtime_generation=1,
+                families=("pages",),
+                condition_uids=(),
+                condition_changed_fields=None,
+                condition_change_operations=(),
+                areas_changed=False,
+                resource_uids_by_family={"pages": (page.uid,)},
+                barrier=barrier,
+            )
+            barrier.seal()
+
+        for reopen_before_c in (False, True):
+            with self.subTest(reopen_before_c=reopen_before_c):
+                page.name, page.scale_factor1, page.scale_factor2 = "A", 1.0, 96.0
+                self.manager.refresh_active_view()
+                request()
+                pool.run_next()  # A prepared; its Qt completion remains queued.
+                page.name, page.scale_factor2 = "B", 240.0
+                request()
+                old_window = self.manager.get_window()
+                self.manager.close_view()
+                if not reopen_before_c:
+                    page.name, page.scale_factor2 = "C", 480.0
+                self.manager.open_view(self.bid_ref, page.uid)
+                window = self.manager.get_window()
+                self.addCleanup(delete_later_if_valid, window)
+                self.addCleanup(window.cleanup)
+                self.assertIsNot(window, old_window)
+                expected = (1.0, 240.0 if reopen_before_c else 480.0)
+                self.assertEqual(window._scale_combo.currentData(), expected)
+                page.name, page.scale_factor2 = "C", 480.0
+                request()
+                callback, payload = bridge.callbacks.pop(0)
+                callback(payload)
+                self.assertEqual(window._scale_combo.currentData(), expected)
+                pool.run_next()  # Coalesced newest C, never the discarded B.
+                callback, payload = bridge.callbacks.pop(0)
+                callback(payload)
+                self.assertEqual(window._scale_combo.currentData(), (1.0, 480.0))
+                self.assertEqual(window.page_data.page.name, "C")
+                self.assertFalse(window.plan_view.get_selected_uids())
+                self.assertIsNone(window.plan_view.annotation_place_type)
+                self.assertFalse(bridge.callbacks)
+                self.assertFalse(pool.runnables)
+
+    def test_deleted_page_restore_target_does_not_resurrect_detached_plan(self):
+        from ost_visualizer.presentation.managers.ui_access_manager import (
+            PlanSurfaceAccessState,
+        )
+
+        page = self.data.page
+        pages = {page.uid: page}
+        self.data.get_page = pages.get
+        self.data.get_all_pages = lambda: list(pages.values())
+        active = [self.detached.view]
+
+        def create_view(*, bid_ref, target_page_uid, target_named_view_uid):
+            active[0] = AnnotationView(
+                uid=uuid.uuid4().hex,
+                file_path=bid_ref.file_path,
+                bid_uid=bid_ref.bid_uid,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+            return active[0]
+
+        self.manager.repository = SimpleNamespace(
+            get_active_view=lambda: active[0],
+            create_view=create_view,
+            update_view=lambda _view: None,
+        )
+        self.manager._coord_factory = SimpleNamespace(create=lambda: object())
+        self.manager._infrastructure_provider = SimpleNamespace(
+            create_plan_view_renderers=lambda *_args: renderers()
+        )
+        self.manager._ui_access_manager.get_plan_surface_access = lambda context: (
+            _full_plan_surface_access()
+            if context.page_uid in pages
+            else PlanSurfaceAccessState()
+        )
+        for closed_when_deleted in (False, True):
+            with self.subTest(closed_when_deleted=closed_when_deleted):
+                pages[page.uid] = page
+                self.data.bid.pages_without_folder = [page]
+                self.manager.open_view(self.bid_ref, page.uid)
+                window = self.manager._window
+                self.addCleanup(delete_later_if_valid, window)
+                self.addCleanup(window.cleanup)
+                self.assertEqual(window.plan_view.current_page_uid, page.uid)
+                if closed_when_deleted:
+                    self.manager.close_view()
+                pages.clear()
+                self.data.bid.pages_without_folder.clear()
+                self.data.area_selections.clear()
+                if not closed_when_deleted:
+                    self.manager.refresh_active_view()
+                    self.assertIsNone(window.plan_view.current_page_uid)
+                    self.assertEqual(window._scale_combo.currentText(), "")
+                    self.manager.close_view()
+                self.manager.open_view(self.bid_ref, page.uid)
+                reopened = self.manager._window
+                self.addCleanup(delete_later_if_valid, reopened)
+                self.addCleanup(reopened.cleanup)
+                self.assertIsNot(reopened, window)
+                self.assertIsNone(reopened.plan_view.current_page_uid)
+                self.assertIsNone(reopened.plan_view._background_item)
+                self.assertFalse(reopened.plan_view.get_selected_uids())
+                self.assertEqual(reopened._scale_combo.currentText(), "")
+                self.assertFalse(reopened._scale_combo.isEnabled())
+                self.assertIsNone(reopened.current_area_selection_target())
+                self.assertFalse(reopened._btn_prev.isEnabled())
+                self.assertFalse(reopened._btn_next.isEnabled())
+                self.assertFalse(reopened._page_combo.get_page_order())
+                pages[page.uid] = page
+                next_page = deepcopy(page)
+                next_page.uid, next_page.name = "next-page", "Next Page"
+                pages[next_page.uid] = next_page
+                self.data.bid.pages_without_folder = [page, next_page]
+                self.manager.open_view(self.bid_ref, page.uid)
+                self.assertEqual(reopened.plan_view.current_page_uid, page.uid)
+                self.assertFalse(reopened._btn_prev.isEnabled())
+                self.assertTrue(reopened._btn_next.isEnabled())
+                self.manager.close_view()
+
+    def test_late_scale_and_area_results_preserve_newer_remote_page_controls(self):
+        service = FakeProjectWriteService()
+        service.queue_sql_settings = True
+        persistence = DeferredPersistenceManager(
+            service, FakeSqlWorkspaceService(service)
+        )
+        self.addCleanup(persistence.cleanup)
+        self.coordinator._deferred_persistence = persistence
+        self.coordinator._project_write_service = service
+        self.coordinator.plan_view = self.main_plan
+        self.coordinator.opengl_viewer = None
+        self.coordinator._mesh_window = None
+        self.coordinator._undo_service = None
+        self.coordinator._pending_takeoff_page_uids = None
+        self.coordinator._sidebar = Mock()
+        self.coordinator._bid_data_cache = None
+        self.coordinator.takeoff_sidebar = Mock()
+        self.coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+        self.coordinator._update_export_menu_state = lambda: None
+        self.state.selected_page_uids = [self.data.page.uid]
+
+        def select_pages(uids):
+            self.state.selected_page_uids = list(uids)
+
+        self.state.set_page_selection = select_pages
+        self.data.select_pages = lambda uids: uids
+        self.bar.scale_change_requested.connect(self.coordinator._on_page_scale_changed)
+        for handler in (
+            self.coordinator._invalidate_refreshed_image_sources,
+            self.coordinator._on_remote_bid_content_changed,
+        ):
+            self.bus.subscribe(AppEvents.REMOTE_BID_CONTENT_CHANGED, handler)
+            self.addCleanup(
+                self.bus.unsubscribe, AppEvents.REMOTE_BID_CONTENT_CHANGED, handler
+            )
+        for kind in ("scale", "area"):
+            for replacement in (False, True):
+                for outcome in (
+                    MutationOutcomeStatus.COMMITTED,
+                    MutationOutcomeStatus.REJECTED,
+                ):
+                    with self.subTest(
+                        kind=kind, replacement=replacement, outcome=outcome
+                    ):
+                        page = self.data.page
+                        page.scale_factor1, page.scale_factor2 = 1.0, 120.0
+                        self.data.area_selections[page.uid] = "a1"
+                        self.refresh()
+                        if kind == "scale":
+                            index = next(
+                                index
+                                for index in range(self.bar.scale_combo.count())
+                                if self.bar.scale_combo.itemData(index) == (1.0, 240.0)
+                            )
+                            self.bar.scale_combo.setCurrentIndex(index)
+                            self.bar.scale_combo.activated.emit(index)
+                            self.assertEqual(
+                                self.bar.scale_combo.currentData(), (1.0, 240.0)
+                            )
+                        else:
+                            self.bar.area_combo.set_current_area_uid("a2")
+                            self.bar.area_combo.area_activated.emit("a2")
+                            self.assertEqual(self.bar.get_selected_area_uid(), "a2")
+                        self.assertTrue(persistence.flush())
+                        completion = service.queued_setting_callbacks[-1]
+                        current = deepcopy(page) if replacement else page
+                        current.scale_factor1, current.scale_factor2 = 1.0, 480.0
+                        self.data.page = current
+                        self.data.bid.pages_without_folder = [current]
+                        self.data.area_selections[page.uid] = None
+                        self.bus.publish(
+                            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                            database_id=self.bid_ref.file_path,
+                            bid_uid=self.bid_ref.bid_uid,
+                            families=["pages"],
+                            resource_uids_by_family={"pages": [page.uid]},
+                        )
+                        for terminal in (False, True):
+                            if terminal:
+                                completion(
+                                    QueuedMutationResult(
+                                        database_id=self.bid_ref.file_path,
+                                        runtime_generation=1,
+                                        operation_id=uuid.uuid4().hex,
+                                        outcome_status=outcome,
+                                    )
+                                )
+                            self.assertIs(self.data.get_page(page.uid), current)
+                            self.assertEqual(
+                                self.bar.scale_combo.currentData(), (1.0, 480.0)
+                            )
+                            self.assertEqual(
+                                self.detached._scale_combo.currentData(), (1.0, 480.0)
+                            )
+                            self.assertEqual(self.bar.get_selected_area_uid(), "")
+                            self.assertIsNone(
+                                self.detached.current_area_selection_target()[1]
+                            )
+                            for surface in (self.main_plan, self.detached.plan_view):
+                                self.assertEqual(
+                                    surface._current_page_area_selections,
+                                    {page.uid: None},
+                                )
+
     def test_same_path_file_replacement_repaints_both_open_plan_surfaces(self):
         self._assert_same_path_replacement(preserve_timestamp=False)
+
+    def test_delayed_paste_does_not_replace_newer_plan_selection(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            AuthoritativeMutationResult,
+            PlanItemsPastePayload,
+        )
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+        from tests.test_plan_view_action_handler import (
+            PlanViewActionHandlerTests,
+            FakeWriteService,
+        )
+
+        write = FakeWriteService()
+        handler = PlanViewActionHandlerTests._paste_handler(
+            self,
+            plan_view=self.main_plan,
+            write=write,
+            data=self.data,
+        )
+        handler._ui_state = self.state
+        self.detached._project_write_svc = write
+        self.detached._annotation_write_coordinator = SimpleNamespace(
+            apply_default_annotation_layer=lambda _specs: None
+        )
+        self.detached._project_data_svc = self.data
+        self.data.annotations = [
+            BidAnnotation(
+                uid=uid,
+                annotation_type="rect",
+                page_uid=self.data.page.uid,
+                layer_uid="annotation-layer",
+                position=[10.0, 10.0, 40.0, 40.0],
+            )
+            for uid in ("old", "newer", "pasted")
+        ]
+        self.refresh()
+        spec = InsertAnnotationSpec(
+            self.data.page.uid, "rect", [10.0, 10.0, 40.0, 40.0], "#ff0000", 1.0
+        )
+        payload = PlanItemsPastePayload(
+            source_bid_uid=self.bid_ref.bid_uid,
+            destination_bid_uid=self.bid_ref.bid_uid,
+            annotation_source_uids=("rect/source",),
+            annotation_specs=(spec,),
+        )
+        for detached in (False, True):
+            for outcome in (
+                MutationOutcomeStatus.COMMITTED,
+                MutationOutcomeStatus.REJECTED,
+            ):
+                for intent in (
+                    "unchanged",
+                    "select",
+                    "clear",
+                    "navigate",
+                    "paste-again",
+                ):
+                    with self.subTest(
+                        detached=detached, outcome=outcome, intent=intent
+                    ):
+                        surface = (
+                            self.detached.plan_view if detached else self.main_plan
+                        )
+                        surface.set_selection_enabled(True)
+                        keys = {
+                            annotation.uid: key
+                            for key, annotation in surface._current_annotations.items()
+                        }
+                        surface.set_selected_uids({keys["old"]})
+                        if detached:
+                            self.detached._queue_sql_annotation_insert(
+                                self.bid_ref, [spec], source_uids=["rect/source"]
+                            )
+                        else:
+                            handler._queue_sql_plan_items_paste_payload(
+                                self.bid_ref, self.data.page.uid, payload, ()
+                            )
+                        completion = write.queued_pastes[-1][3]
+                        if intent == "paste-again":
+                            if detached:
+                                self.detached._queue_sql_annotation_insert(
+                                    self.bid_ref, [spec], source_uids=["rect/source"]
+                                )
+                            else:
+                                handler._queue_sql_plan_items_paste_payload(
+                                    self.bid_ref, self.data.page.uid, payload, ()
+                                )
+                            write.queued_pastes[-1][3](
+                                QueuedMutationResult(
+                                    database_id=self.bid_ref.file_path,
+                                    runtime_generation=1,
+                                    operation_id=uuid.uuid4().hex,
+                                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                                    authoritative_result=AuthoritativeMutationResult(
+                                        created_resource_ids=("newer",),
+                                        created_uid_maps=(
+                                            (
+                                                "annotations",
+                                                (("rect/source", "newer"),),
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            )
+                            self.assertEqual(
+                                set(surface.get_selected_uids()), {keys["newer"]}
+                            )
+                        if intent in ("select", "clear"):
+                            surface.set_selected_uids({keys["newer"]})
+                        if intent == "clear":
+                            surface.clear_selection()
+                        if intent == "navigate":
+                            other = deepcopy(self.data.page)
+                            other.uid = "other-page"
+                            surface.load_page(other, [], {}, {}, bid_ref=self.bid_ref)
+                            surface.load_page(
+                                self.data.page,
+                                [],
+                                {},
+                                {},
+                                bid_ref=self.bid_ref,
+                                annotations=self.data.annotations,
+                            )
+                        expected = set(surface.get_selected_uids())
+                        self.refresh()
+                        self.data.page.rotation = (self.data.page.rotation + 90) % 360
+                        surface.load_page(
+                            self.data.page,
+                            [],
+                            {},
+                            {},
+                            bid_ref=self.bid_ref,
+                            annotations=self.data.annotations,
+                        )
+                        if intent == "unchanged":
+                            expected = {
+                                (
+                                    keys["pasted"]
+                                    if outcome == MutationOutcomeStatus.COMMITTED
+                                    else keys["old"]
+                                )
+                            }
+                        completion(
+                            QueuedMutationResult(
+                                database_id=self.bid_ref.file_path,
+                                runtime_generation=1,
+                                operation_id=uuid.uuid4().hex,
+                                outcome_status=outcome,
+                                authoritative_result=(
+                                    AuthoritativeMutationResult(
+                                        created_resource_ids=("pasted",),
+                                        created_uid_maps=(
+                                            (
+                                                "annotations",
+                                                (("rect/source", "pasted"),),
+                                            ),
+                                        ),
+                                    )
+                                    if outcome == MutationOutcomeStatus.COMMITTED
+                                    else None
+                                ),
+                            )
+                        )
+                        self.assertEqual(set(surface.get_selected_uids()), expected)
+                        self.assertEqual(bool(surface._selection_items), bool(expected))
+
+    def test_annotation_insert_completion_respects_newer_selection_and_tool(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            AuthoritativeMutationResult,
+        )
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+        from tests.test_plan_view_action_handler import (
+            PlanViewActionHandlerTests,
+            FakeWriteService,
+        )
+
+        write = FakeWriteService()
+        handler = PlanViewActionHandlerTests._paste_handler(
+            self, plan_view=self.main_plan, write=write, data=self.data
+        )
+        handler._ui_state = self.state
+        self.detached._project_write_svc = write
+        self.detached._annotation_write_coordinator = handler._annotation_writes
+        spec = InsertAnnotationSpec(
+            self.data.page.uid, "text", [10.0, 10.0, 40.0, 40.0], "#ff0000", 1.0
+        )
+        for detached in (False, True):
+            for intent in ("unchanged", "select", "clear"):
+                with self.subTest(detached=detached, intent=intent):
+                    self.data.annotations = [
+                        BidAnnotation(
+                            uid=uid,
+                            annotation_type="rect",
+                            page_uid=self.data.page.uid,
+                            position=[10.0, 10.0, 40.0, 40.0],
+                        )
+                        for uid in ("old", "newer", "other-surface")
+                    ]
+                    self.refresh()
+                    surface = self.detached.plan_view if detached else self.main_plan
+                    other = self.main_plan if detached else self.detached.plan_view
+                    surface.set_selection_enabled(True)
+                    other.set_selection_enabled(True)
+                    surface.set_selected_uids({"old"})
+                    other.set_selected_uids({"other-surface"})
+                    self.assertTrue(surface.activate_annotation_placement("text"))
+                    if detached:
+                        self.detached._queue_sql_annotation_insert(
+                            self.bid_ref, [spec], reactivate_annotation_type="text"
+                        )
+                    else:
+                        handler._queue_sql_annotation_insert(
+                            self.bid_ref,
+                            [spec],
+                            lambda: surface.activate_annotation_placement("text"),
+                        )
+                    queued = write.queued_pastes[-1]
+                    if intent != "unchanged":
+                        surface.set_selected_uids({"newer"})
+                        if intent == "clear":
+                            surface.clear_selection()
+                        self.assertTrue(surface.activate_annotation_placement("rect"))
+                    expected_selection = set(surface.get_selected_uids())
+                    self.data.annotations.append(
+                        BidAnnotation(
+                            uid="inserted",
+                            annotation_type="text",
+                            page_uid=self.data.page.uid,
+                            position=list(spec.position),
+                            properties={"Text": "Inserted"},
+                        )
+                    )
+                    self.refresh()
+                    queued[3](
+                        QueuedMutationResult(
+                            database_id=self.bid_ref.file_path,
+                            runtime_generation=1,
+                            operation_id=uuid.uuid4().hex,
+                            outcome_status=MutationOutcomeStatus.COMMITTED,
+                            authoritative_result=AuthoritativeMutationResult(
+                                created_resource_ids=("inserted",),
+                                created_uid_maps=(
+                                    (
+                                        "annotations",
+                                        (
+                                            (
+                                                queued[1].annotation_source_uids[0],
+                                                "inserted",
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        )
+                    )
+                    with self.subTest(presentation="selection"):
+                        self.assertEqual(
+                            set(surface.get_selected_uids()),
+                            (
+                                {"inserted"}
+                                if intent == "unchanged"
+                                else expected_selection
+                            ),
+                        )
+                    with self.subTest(presentation="tool"):
+                        self.assertEqual(
+                            surface.annotation_place_type,
+                            "text" if intent == "unchanged" else "rect",
+                        )
+                    self.assertEqual(other.get_selected_uids(), ["other-surface"])
+
+    def test_tool_only_change_supersedes_pending_annotation_reactivation(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            AuthoritativeMutationResult,
+        )
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+        from tests.test_plan_view_action_handler import (
+            PlanViewActionHandlerTests,
+            FakeWriteService,
+        )
+        from ost_visualizer.domain.entities.condition import Condition
+        from ost_visualizer.presentation.services.undo_redo_service import (
+            UndoRedoService,
+        )
+
+        write = FakeWriteService()
+        handler = PlanViewActionHandlerTests._paste_handler(
+            self, plan_view=self.main_plan, write=write, data=self.data
+        )
+        handler._ui_state = self.state
+        self.detached._project_write_svc = write
+        self.detached._annotation_write_coordinator = handler._annotation_writes
+        self.data.get_takeoff = lambda _uid: None
+        condition = Condition(uid="placement", condition_type=Condition.TYPE_COUNT)
+        self.data.get_bid_conditions = lambda: {condition.uid: condition}
+        histories = [UndoRedoService(), UndoRedoService()]
+        handler._undo_svc, self.detached._undo_svc = histories
+        for surface, history in zip(
+            (self.main_plan, self.detached.plan_view), histories
+        ):
+            history.set_active_bid(self.bid_ref)
+            surface.undo_requested.connect(history.undo)
+            surface.redo_requested.connect(history.redo)
+        self.addCleanup(self.main_plan.undo_requested.disconnect, histories[0].undo)
+        self.addCleanup(self.main_plan.redo_requested.disconnect, histories[0].redo)
+        spec = InsertAnnotationSpec(
+            self.data.page.uid, "text", [10.0, 10.0, 40.0, 40.0], "#ff0000", 1.0
+        )
+        for detached in (False, True):
+            for intent in ("rect", "arrow", "line", "pan", "select", "takeoff"):
+                if detached and intent == "takeoff":
+                    continue
+                for empty, phase, outcome in (
+                    (empty, phase, outcome)
+                    for empty in (False, True)
+                    for phase in ("refresh", "undo-redo", "replace-page")
+                    for outcome in (
+                        MutationOutcomeStatus.COMMITTED,
+                        MutationOutcomeStatus.REJECTED,
+                    )
+                ):
+                    with self.subTest(
+                        detached=detached,
+                        intent=intent,
+                        empty=empty,
+                        phase=phase,
+                        outcome=outcome,
+                    ):
+                        self.data.annotations = [
+                            BidAnnotation(
+                                uid=uid,
+                                annotation_type="rect",
+                                page_uid=self.data.page.uid,
+                                position=[10.0, 10.0, 40.0, 40.0],
+                            )
+                            for uid in ("old", "newer", "other-surface")
+                        ]
+                        self.refresh()
+                        surface = (
+                            self.detached.plan_view if detached else self.main_plan
+                        )
+                        other = self.main_plan if detached else self.detached.plan_view
+                        surface.set_selection_enabled(True)
+                        other.set_selection_enabled(True)
+                        surface.set_selected_uids(set() if empty else {"old"})
+                        other.set_selected_uids({"other-surface"})
+                        self.assertTrue(surface.activate_annotation_placement("text"))
+                        if detached:
+                            self.detached._queue_sql_annotation_insert(
+                                self.bid_ref, [spec], reactivate_annotation_type="text"
+                            )
+                        else:
+                            handler._queue_sql_annotation_insert(
+                                self.bid_ref,
+                                [spec],
+                                lambda: surface.activate_annotation_placement("text"),
+                            )
+                        queued = write.queued_pastes[-1]
+                        history = histories[int(detached)]
+                        history.clear()
+                        if phase == "replace-page":
+                            previous_page = self.data.page
+                            self.data.page = deepcopy(previous_page)
+                            self.data.bid.pages_without_folder = [self.data.page]
+                            self.refresh()
+                            self.assertIsNot(self.data.page, previous_page)
+                        selection_before = set(surface.get_selected_uids())
+                        revision_before = surface.selection_revision
+                        tool_revision_before = surface.tool_revision
+                        if intent == "takeoff":
+                            surface.set_editing_enabled(True)
+                            self.assertTrue(
+                                surface.activate_place_for_condition(condition.uid)
+                            )
+                        elif intent in ("pan", "select"):
+                            surface.set_cursor_mode(intent)
+                        else:
+                            self.assertTrue(
+                                surface.activate_annotation_placement(intent)
+                            )
+                        expected_type = surface.annotation_place_type
+                        expected_mode = surface._cursor_mode
+                        expected_condition = surface.place_condition_uid
+                        self.assertEqual(
+                            set(surface.get_selected_uids()), selection_before
+                        )
+                        self.assertEqual(surface.selection_revision, revision_before)
+                        self.assertGreater(surface.tool_revision, tool_revision_before)
+                        other.activate_annotation_placement("oval")
+                        if phase == "undo-redo":
+                            before = [("old", "rect", {"Width": 1.0})]
+                            after = [("old", "rect", {"Width": 4.0})]
+                            if detached:
+                                self.detached._push_sql_annotation_property_history(
+                                    self.bid_ref,
+                                    "annotation_style",
+                                    before,
+                                    after,
+                                    (self.data.page.uid,),
+                                )
+                            else:
+                                handler._push_sql_property_history(
+                                    self.bid_ref,
+                                    "annotation_style",
+                                    before,
+                                    after,
+                                    (self.data.page.uid,),
+                                    (),
+                                )
+                            for action in (
+                                surface.undo_requested.emit,
+                                surface.redo_requested.emit,
+                            ):
+                                action()
+                                update = write.queued_properties[-1]
+                                self.data.annotations[0].width = update[3][0][2][
+                                    "Width"
+                                ]
+                                self.refresh()
+                                update[-1](
+                                    QueuedMutationResult(
+                                        database_id=self.bid_ref.file_path,
+                                        runtime_generation=1,
+                                        operation_id=uuid.uuid4().hex,
+                                        outcome_status=MutationOutcomeStatus.COMMITTED,
+                                    )
+                                )
+                            self.assertTrue(history.can_undo())
+                            self.assertFalse(history.can_redo())
+                        if outcome == MutationOutcomeStatus.COMMITTED:
+                            self.data.annotations.append(
+                                BidAnnotation(
+                                    uid="inserted",
+                                    annotation_type="text",
+                                    page_uid=self.data.page.uid,
+                                    position=list(spec.position),
+                                    properties={"Text": "Inserted"},
+                                )
+                            )
+                        self.refresh()
+                        queued[3](
+                            QueuedMutationResult(
+                                database_id=self.bid_ref.file_path,
+                                runtime_generation=1,
+                                operation_id=uuid.uuid4().hex,
+                                outcome_status=outcome,
+                                authoritative_result=AuthoritativeMutationResult(
+                                    created_resource_ids=("inserted",),
+                                    created_uid_maps=(
+                                        (
+                                            "annotations",
+                                            (
+                                                (
+                                                    queued[1].annotation_source_uids[0],
+                                                    "inserted",
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            )
+                        )
+                        self.assertEqual(surface.annotation_place_type, expected_type)
+                        self.assertEqual(surface._cursor_mode, expected_mode)
+                        self.assertEqual(
+                            surface.place_condition_uid, expected_condition
+                        )
+                        if detached:
+                            if intent in ("pan", "select"):
+                                button = (
+                                    self.detached._btn_pan
+                                    if intent == "pan"
+                                    else self.detached._btn_select
+                                )
+                            else:
+                                key = next(
+                                    spec.action_key
+                                    for spec in self.detached._config.annotation_tool_specs
+                                    if spec.annotation_type == intent
+                                )
+                                button = self.detached._annotation_tool_buttons[key]
+                            self.assertTrue(button.isChecked())
+                        self.assertEqual(other.annotation_place_type, "oval")
+                        self.assertEqual(other.get_selected_uids(), ["other-surface"])
+
+    def _main_edit_action_projection(self):
+        from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+            ToolbarStateCoordinator,
+        )
+        from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+        from tests.test_toolbar_state_coordinator import _Access, _UiState, _IndexWidget
+
+        toolbar = ToolbarStateCoordinator(
+            _UiState(selected_bid_ref=self.bid_ref, active_page_uid=self.data.page.uid),
+            _Access(),
+            self.data,
+        )
+        self.addCleanup(toolbar.cleanup)
+        toolbar.set_plan_view(self.main_plan)
+        tab = _IndexWidget(TAB_INDEX_TAKEOFF)
+        toolbar.set_tab_widget(tab)
+        toolbar.set_view_stack(_IndexWidget(1))
+        copy, delete, duplicate = [QtGui.QAction(self.main_plan) for _ in range(3)]
+        toolbar.set_copy_action(copy)
+        toolbar.set_delete_action(delete)
+        toolbar.set_duplicate_action(duplicate)
+        coordinator = self.coordinator
+        coordinator.plan_view = self.main_plan
+        coordinator._toolbar = toolbar
+        coordinator._tab_widget = tab
+        coordinator._placement = SimpleNamespace(is_active=False, condition_uid=None)
+        coordinator._nav = object()
+        coordinator._selected_takeoff_uids = ()
+        coordinator._selection_projected_condition_uids = set()
+        coordinator.ui_state_manager.highlighted_condition_uids = set()
+        coordinator.conditions_sidebar = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator.main_window.project_view = SimpleNamespace(
+            get_selected_node_state=lambda: {
+                "kind": "bid",
+                "bid_uid": self.bid_ref.bid_uid,
+                "file_path": self.bid_ref.file_path,
+            }
+        )
+        # Use the production Plan -> coordinator signal, including its early-return path.
+        self.main_plan.takeoff_selection_changed.connect(
+            coordinator._on_takeoff_selection_changed
+        )
+        self.addCleanup(
+            self.main_plan.takeoff_selection_changed.disconnect,
+            coordinator._on_takeoff_selection_changed,
+        )
+        return toolbar, (copy, delete, duplicate), coordinator
+
+    def test_annotation_selection_deletion_and_recovery_refresh_main_edit_actions(self):
+        toolbar, (copy, delete, duplicate), coordinator = (
+            self._main_edit_action_projection()
+        )
+        self.data.annotations = [
+            BidAnnotation(
+                uid="selected",
+                annotation_type="rect",
+                page_uid=self.data.page.uid,
+                position=[10.0, 10.0, 40.0, 40.0],
+            )
+        ]
+        self.refresh()
+        toolbar.refresh()
+        self.assertFalse(any(a.isEnabled() for a in (copy, delete, duplicate)))
+        self.main_plan.set_selected_uids({"selected"})
+        with self.subTest(transition="select"):
+            self.assertTrue(all(a.isEnabled() for a in (copy, delete, duplicate)))
+        # Seed the valid state to independently expose missing deletion refresh.
+        toolbar.refresh()
+        self.data.annotations = []
+        self.refresh()
+        self.assertFalse(self.main_plan.has_selection)
+        self.assertFalse(self.main_plan._selection_items)
+        with self.subTest(transition="delete-last"):
+            self.assertFalse(any(a.isEnabled() for a in (copy, delete, duplicate)))
+        toolbar.refresh()
+        self.data.annotations = [
+            BidAnnotation(
+                uid="replacement",
+                annotation_type="rect",
+                page_uid=self.data.page.uid,
+                position=[10.0, 10.0, 40.0, 40.0],
+            )
+        ]
+        self.refresh()
+        self.main_plan.set_selected_uids({"replacement"})
+        with self.subTest(transition="recover"):
+            self.assertTrue(all(a.isEnabled() for a in (copy, delete, duplicate)))
+        self.detached.plan_view.set_selection_enabled(True)
+        self.detached.plan_view.set_selected_uids({"replacement"})
+        self.detached.plan_view.clear_selection()
+        self.assertTrue(all(a.isEnabled() for a in (copy, delete, duplicate)))
+        coordinator._on_takeoff_selection_changed([])
+        self.assertTrue(all(a.isEnabled() for a in (copy, delete, duplicate)))
+
+    def test_takeoff_delete_history_and_recovery_keep_actions_with_current_selection(
+        self,
+    ):
+        from ost_visualizer.domain.entities.condition import Condition
+        from ost_visualizer.domain.entities.takeoff import Takeoff
+        from ost_visualizer.presentation.services.undo_redo_service import (
+            UndoRedoService,
+        )
+        from tests.test_viewer_sync_coordinator_overlay_refresh import (
+            RecordingPathTakeoffRenderer,
+        )
+
+        toolbar, actions, coordinator = self._main_edit_action_projection()
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+
+        def highlight(uids):
+            coordinator.ui_state_manager.highlighted_condition_uids = set(uids)
+
+        coordinator.ui_state_manager.set_highlighted_conditions = highlight
+        condition = Condition(uid="condition-1")
+        takeoff = Takeoff(
+            uid="1",
+            condition_uid=condition.uid,
+            page_uid=self.data.page.uid,
+            area_uid="a1",
+            position=[1.0, 1.0, 20.0, 20.0],
+        )
+        rows = [takeoff]
+        self.data.get_bid_conditions = lambda: {condition.uid: condition}
+        self.data.get_page_takeoffs = lambda uid: (
+            list(rows) if uid == takeoff.page_uid else []
+        )
+        self.data.get_all_takeoffs = lambda: list(rows)
+        self.main_plan._scene_builder._takeoff_renderer = RecordingPathTakeoffRenderer()
+        cut, undo, redo = [QtGui.QAction(self.main_plan) for _ in range(3)]
+        toolbar.set_cut_action(cut)
+        toolbar.set_undo_action(undo)
+        toolbar.set_redo_action(redo)
+        history = UndoRedoService()
+        history.set_active_bid(self.bid_ref)
+        history.set_change_callback(toolbar.refresh)
+        toolbar.set_undo_service(history)
+        self.refresh()
+        toolbar.refresh()
+
+        def project(present):
+            rows[:] = [takeoff] if present else []
+            self.refresh()
+            return True
+
+        self.main_plan.set_selected_uids({takeoff.uid})
+        self.assertTrue(all(a.isEnabled() for a in actions))
+        self.assertFalse(cut.isEnabled())
+        project(False)
+        history.push_local(lambda: project(True), lambda: project(False))
+        for transition, operation, expected_history in (
+            ("deleted", lambda: None, (True, False)),
+            ("undo", history.undo, (False, True)),
+            ("redo", history.redo, (True, False)),
+        ):
+            with self.subTest(transition=transition):
+                operation()
+                self.assertFalse(self.main_plan.has_selection)
+                self.assertFalse(self.main_plan._selection_items)
+                self.assertFalse(any(a.isEnabled() for a in actions))
+                self.assertEqual((undo.isEnabled(), redo.isEnabled()), expected_history)
+                toolbar.refresh()
+                self.assertFalse(any(a.isEnabled() for a in actions))
+        project(True)
+        self.main_plan.set_selected_uids({takeoff.uid})
+        self.assertTrue(all(a.isEnabled() for a in actions))
+        project(False)
+        self.assertFalse(any(a.isEnabled() for a in actions))
+
+    def test_paste_history_projection_does_not_replay_old_result_selection(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            AuthoritativeMutationResult,
+            PlanItemsPastePayload,
+        )
+        from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+            InsertAnnotationSpec,
+        )
+        from ost_visualizer.presentation.services.undo_redo_service import (
+            UndoRedoService,
+        )
+        from tests.test_plan_view_action_handler import (
+            PlanViewActionHandlerTests,
+            FakeWriteService,
+        )
+
+        write = FakeWriteService()
+        handler = PlanViewActionHandlerTests._paste_handler(
+            self, plan_view=self.main_plan, write=write, data=self.data
+        )
+        handler._ui_state = self.state
+        self.data.get_takeoff = lambda _uid: None
+        self.detached._project_write_svc = write
+        self.detached._annotation_write_coordinator = handler._annotation_writes
+        histories = [UndoRedoService(), UndoRedoService()]
+        handler._undo_svc, self.detached._undo_svc = histories
+        for surface, history in zip(
+            (self.main_plan, self.detached.plan_view), histories
+        ):
+            history.set_active_bid(self.bid_ref)
+            surface.undo_requested.connect(history.undo)
+            surface.redo_requested.connect(history.redo)
+        self.addCleanup(self.main_plan.undo_requested.disconnect, histories[0].undo)
+        self.addCleanup(self.main_plan.redo_requested.disconnect, histories[0].redo)
+        spec = InsertAnnotationSpec(
+            self.data.page.uid, "rect", [10.0, 10.0, 40.0, 40.0], "#ff0000", 1.0
+        )
+        payload = PlanItemsPastePayload(
+            source_bid_uid=self.bid_ref.bid_uid,
+            destination_bid_uid=self.bid_ref.bid_uid,
+            annotation_source_uids=("rect/source",),
+            annotation_specs=(spec,),
+        )
+
+        def committed(uid=None):
+            return QueuedMutationResult(
+                database_id=self.bid_ref.file_path,
+                runtime_generation=1,
+                operation_id=uuid.uuid4().hex,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=(
+                    AuthoritativeMutationResult(
+                        created_resource_ids=(uid,),
+                        created_uid_maps=(("annotations", (("rect/source", uid),)),),
+                    )
+                    if uid
+                    else None
+                ),
+            )
+
+        def insert(uid):
+            self.data.annotations.append(
+                BidAnnotation(
+                    uid=uid,
+                    annotation_type="rect",
+                    page_uid=self.data.page.uid,
+                    position=list(spec.position),
+                )
+            )
+            self.refresh()
+
+        for detached in (False, True):
+            for older_pending in (False, True):
+                with self.subTest(detached=detached, older_pending=older_pending):
+                    self.data.annotations = []
+                    self.refresh()
+                    surface = self.detached.plan_view if detached else self.main_plan
+                    other = self.main_plan if detached else self.detached.plan_view
+                    surface.set_selection_enabled(True)
+                    other.set_selection_enabled(True)
+                    history = histories[int(detached)]
+                    history.clear()
+                    insert("other-surface")
+                    other.set_selected_uids({"other-surface"})
+
+                    def paste():
+                        if detached:
+                            self.detached._queue_sql_annotation_insert(
+                                self.bid_ref, [spec], source_uids=["rect/source"]
+                            )
+                        else:
+                            handler._queue_sql_plan_items_paste_payload(
+                                self.bid_ref, self.data.page.uid, payload, ()
+                            )
+                        return write.queued_pastes[-1][3]
+
+                    if older_pending:
+                        older_completion = paste()
+                        # Authoritative insertion precedes B; only A's UI completion is delayed.
+                        insert("older")
+                    completion = paste()
+                    insert("pasted")
+                    paste_result = committed("pasted")
+                    completion(paste_result)
+                    self.assertEqual(surface.get_selected_uids(), ["pasted"])
+                    self.assertTrue(history.can_undo())
+                    surface.undo_requested.emit()
+                    deletion = write.queued_deletes[-1]
+                    self.assertEqual(deletion[3], [("pasted", "rect")])
+                    self.data.annotations = [
+                        a for a in self.data.annotations if a.uid != "pasted"
+                    ]
+                    self.refresh()
+                    deletion[-1](committed())
+                    self.assertEqual(surface.get_selected_uids(), [])
+                    self.assertFalse(surface._selection_items)
+                    self.assertTrue(history.can_redo())
+                    completion(paste_result)
+                    self.assertEqual(surface.get_selected_uids(), [])
+                    self.assertFalse(surface._selection_items)
+                    self.assertFalse(history.can_undo())
+                    self.assertTrue(history.can_redo())
+                    surface.redo_requested.emit()
+                    insert("redone")
+                    write.queued_pastes[-1][3](committed("redone"))
+                    surface.set_selected_uids({"redone"})
+                    completion(paste_result)
+                    if older_pending:
+                        older_completion(committed("older"))
+                    self.assertEqual(surface.get_selected_uids(), ["redone"])
+                    self.assertTrue(surface._selection_items)
+                    self.assertTrue(history.can_undo())
+                    self.assertFalse(history.can_redo())
+                    self.assertEqual(other.get_selected_uids(), ["other-surface"])
+
+    def test_late_edit_results_do_not_replace_selection_after_history_moves(self):
+        from ost_visualizer.presentation.services.undo_redo_service import (
+            UndoRedoService,
+        )
+        from tests.test_plan_view_action_handler import (
+            PlanViewActionHandlerTests,
+            FakeWriteService,
+        )
+
+        write = FakeWriteService()
+        handler = PlanViewActionHandlerTests._paste_handler(
+            self, plan_view=self.main_plan, write=write, data=self.data
+        )
+        handler._ui_state = self.state
+        self.data.get_takeoff = lambda _uid: None
+        self.detached._project_write_svc = write
+        self.detached._annotation_write_coordinator = handler._annotation_writes
+        histories = [UndoRedoService(), UndoRedoService()]
+        handler._undo_svc, self.detached._undo_svc = histories
+        for surface, history in zip(
+            (self.main_plan, self.detached.plan_view), histories
+        ):
+            history.set_active_bid(self.bid_ref)
+            surface.undo_requested.connect(history.undo)
+            surface.redo_requested.connect(history.redo)
+        self.addCleanup(self.main_plan.undo_requested.disconnect, histories[0].undo)
+        self.addCleanup(self.main_plan.redo_requested.disconnect, histories[0].redo)
+        old_position, new_position = [10.0, 10.0, 40.0, 40.0], [20.0, 20.0, 50.0, 50.0]
+        changes = [("old", "rect", old_position, new_position)]
+
+        def result(outcome):
+            return QueuedMutationResult(
+                database_id=self.bid_ref.file_path,
+                runtime_generation=1,
+                operation_id=uuid.uuid4().hex,
+                outcome_status=outcome,
+            )
+
+        for detached in (False, True):
+            for kind in ("geometry", "delete", "properties"):
+                for outcome in (
+                    MutationOutcomeStatus.COMMITTED,
+                    MutationOutcomeStatus.REJECTED,
+                ):
+                    for intent in ("unchanged", "select", "clear", "undo", "redo"):
+                        with self.subTest(
+                            detached=detached, kind=kind, outcome=outcome, intent=intent
+                        ):
+                            self.data.annotations = [
+                                BidAnnotation(
+                                    uid=uid,
+                                    annotation_type="rect",
+                                    page_uid=self.data.page.uid,
+                                    position=list(old_position),
+                                )
+                                for uid in ("old", "newer", "other-surface")
+                            ]
+                            self.refresh()
+                            surface = (
+                                self.detached.plan_view if detached else self.main_plan
+                            )
+                            other_surface = (
+                                self.main_plan if detached else self.detached.plan_view
+                            )
+                            surface.set_selection_enabled(True)
+                            other_surface.set_selection_enabled(True)
+                            surface.set_selected_uids({"old"})
+                            other_surface.set_selected_uids({"other-surface"})
+                            history = histories[int(detached)]
+                            history.clear()
+                            restore = Mock()
+                            if kind == "geometry":
+                                if detached:
+                                    self.detached._queue_sql_annotation_geometry(
+                                        self.bid_ref.file_path, changes
+                                    )
+                                else:
+                                    handler._queue_sql_plan_geometry(
+                                        self.bid_ref, annotation_changes=changes
+                                    )
+                                completion = write.queued_geometry[-1][3]
+                            elif kind == "properties":
+                                before = {"Width": 1.0}
+                                after = {"Width": 4.0}
+                                style_changes = [("old", "rect", before, after)]
+                                restore.side_effect = (
+                                    lambda: surface.restore_annotation_styles(
+                                        style_changes
+                                    )
+                                )
+                                if detached:
+                                    self.detached._queue_sql_annotation_properties(
+                                        self.bid_ref.file_path,
+                                        "annotation_style",
+                                        [("old", "rect", before, after)],
+                                        restore,
+                                    )
+                                else:
+                                    handler._queue_sql_plan_properties(
+                                        self.bid_ref,
+                                        "annotation_style",
+                                        [("old", "rect", after)],
+                                        old_updates=[("old", "rect", before)],
+                                        plan_uids={"old"},
+                                        annotation_identities={("old", "rect")},
+                                        page_uids=(self.data.page.uid,),
+                                        restore=restore,
+                                    )
+                                completion = write.queued_properties[-1][-1]
+                            else:
+                                if detached:
+                                    self.detached._queue_sql_annotation_delete(
+                                        self.bid_ref,
+                                        [self.data.annotations[0]],
+                                        set(),
+                                        {("old", "rect")},
+                                    )
+                                else:
+                                    handler._queue_sql_plan_items_delete(
+                                        self.bid_ref,
+                                        {"old"},
+                                        [],
+                                        [self.data.annotations[0]],
+                                        {},
+                                        set(),
+                                        {("old", "rect")},
+                                    )
+                                completion = write.queued_deletes[-1][-1]
+                            if intent != "unchanged":
+                                surface.set_selected_uids({"newer"})
+                            if intent == "clear":
+                                surface.clear_selection()
+                            if intent in ("undo", "redo"):
+                                before = [("newer", "rect", old_position)]
+                                after = [("newer", "rect", new_position)]
+                                if detached:
+                                    self.detached._push_sql_annotation_geometry_history(
+                                        self.bid_ref,
+                                        before,
+                                        after,
+                                        (self.data.page.uid,),
+                                    )
+                                else:
+                                    handler._push_sql_geometry_history(
+                                        self.bid_ref,
+                                        [],
+                                        [],
+                                        before,
+                                        after,
+                                        [],
+                                        [],
+                                        (self.data.page.uid,),
+                                    )
+                                self.assertTrue(history.can_undo())
+                                for action in (
+                                    [surface.undo_requested.emit]
+                                    if intent == "undo"
+                                    else [
+                                        surface.undo_requested.emit,
+                                        surface.redo_requested.emit,
+                                    ]
+                                ):
+                                    action()
+                                    self.assertFalse(history.can_undo())
+                                    self.assertFalse(history.can_redo())
+                                    queued = write.queued_geometry[-1]
+                                    self.data.annotations[1].position = list(
+                                        queued[2]["annotation_positions"][0][2]
+                                    )
+                                    self.refresh()
+                                    queued[3](result(MutationOutcomeStatus.COMMITTED))
+                                self.assertEqual(history.can_redo(), intent == "undo")
+                                self.assertEqual(history.can_undo(), intent == "redo")
+                            expected = set(surface.get_selected_uids())
+                            history_before = (history.can_undo(), history.can_redo())
+                            if outcome == MutationOutcomeStatus.COMMITTED:
+                                if kind == "delete":
+                                    self.data.annotations.pop(0)
+                                elif kind == "properties":
+                                    self.data.annotations[0].width = 4.0
+                                else:
+                                    self.data.annotations[0].position = list(
+                                        new_position
+                                    )
+                            self.refresh()
+                            if intent == "unchanged":
+                                expected = (
+                                    set()
+                                    if kind == "delete"
+                                    and outcome == MutationOutcomeStatus.COMMITTED
+                                    else {"old"}
+                                )
+                            completion(result(outcome))
+                            if kind == "properties":
+                                self.assertEqual(
+                                    restore.call_count,
+                                    int(outcome == MutationOutcomeStatus.REJECTED),
+                                )
+                            self.assertEqual(set(surface.get_selected_uids()), expected)
+                            self.assertEqual(
+                                bool(surface._selection_items), bool(expected)
+                            )
+                            self.assertEqual(
+                                other_surface.get_selected_uids(), ["other-surface"]
+                            )
+                            if outcome == MutationOutcomeStatus.REJECTED:
+                                self.assertEqual(
+                                    (history.can_undo(), history.can_redo()),
+                                    history_before,
+                                )
+                            else:
+                                self.assertTrue(history.can_undo())
+                                self.assertFalse(history.can_redo())
+
+    def test_deleted_layer_relationship_stays_cleared_across_four_surface_reopen(self):
+        from ost_visualizer.domain.entities.condition import Condition
+        from ost_visualizer.domain.entities.takeoff import Takeoff
+        from tests.test_viewer_sync_coordinator_overlay_refresh import (
+            RecordingPathTakeoffRenderer,
+        )
+
+        page = self.data.page
+        condition = Condition(uid="condition-1", layer_uid="deleted-layer")
+        takeoff = Takeoff(
+            uid="1",
+            condition_uid=condition.uid,
+            page_uid=page.uid,
+            area_uid="a1",
+            position=[1.0, 1.0, 20.0, 20.0],
+        )
+        self.data.get_bid_conditions = lambda: {condition.uid: condition}
+        self.data.get_page_takeoffs = lambda uid: [takeoff] if uid == page.uid else []
+        self.data.get_all_takeoffs = lambda: [takeoff]
+        self.main_plan._scene_builder._takeoff_renderer = RecordingPathTakeoffRenderer()
+        self.detached.plan_view._scene_builder._takeoff_renderer = (
+            RecordingPathTakeoffRenderer()
+        )
+        active = [self.detached.view]
+
+        def create_view(*, bid_ref, target_page_uid, target_named_view_uid):
+            active[0] = AnnotationView(
+                uid=uuid.uuid4().hex,
+                file_path=bid_ref.file_path,
+                bid_uid=bid_ref.bid_uid,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+            return active[0]
+
+        def plan_renderers(*_args):
+            result = renderers()
+            result.takeoff_renderer = RecordingPathTakeoffRenderer()
+            return result
+
+        self.manager.repository = SimpleNamespace(
+            get_active_view=lambda: active[0],
+            create_view=create_view,
+            update_view=lambda _view: None,
+        )
+        self.manager._coord_factory = SimpleNamespace(create=lambda: object())
+        self.manager._infrastructure_provider = SimpleNamespace(
+            create_plan_view_renderers=plan_renderers
+        )
+        coordinator = self.coordinator
+        coordinator._icon_provider = FakeWindowIconProvider()
+        coordinator._color_service = SimpleNamespace(
+            convert_to_rgba=lambda _color: (1.0, 1.0, 1.0, 1.0)
+        )
+        coordinator._plan_view_handler = None
+        coordinator.plan_view = self.main_plan
+        coordinator._mesh_window_action = None
+        coordinator.main_window.menu_controller = None
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator._plan_view_signaler = Mock()
+        main_mesh = OpenGLViewer(None, coordinator._color_service)
+        main_mesh._renderer = MeshRendererBoundary(FakeMeshScene([]))
+        self.addCleanup(main_mesh.deleteLater)
+        self.addCleanup(main_mesh.cleanup)
+        configure_mesh_state(coordinator, view_index=0, opengl_viewer=main_mesh)
+        coordinator.ui_access_manager = self.access
+
+        def create_mesh(**kwargs):
+            window = MeshViewWindow(**kwargs)
+            window.viewer._renderer = MeshRendererBoundary(FakeMeshScene([]))
+            window.viewer.hide()
+            window.show_initial_window = window.show
+            self.addCleanup(delete_later_if_valid, window)
+            self.addCleanup(window.cleanup)
+            return window
+
+        def reopen():
+            self.manager.open_view(self.bid_ref, page.uid)
+            window = self.manager.get_window()
+            self.addCleanup(delete_later_if_valid, window)
+            self.addCleanup(window.cleanup)
+            coordinator.set_mesh_window_visible(True)
+            return window, coordinator.get_mesh_window()
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.MeshViewWindow",
+            side_effect=create_mesh,
+        ):
+            generation = 0
+            for timing in ("after-result", "before-result", "closed-before-delete"):
+                for failed_old_result in (False, True):
+                    with self.subTest(
+                        timing=timing, failed_old_result=failed_old_result
+                    ):
+                        generation += 10
+                        condition.layer_uid, condition.layer_visible = (
+                            "deleted-layer",
+                            True,
+                        )
+                        self.data.hidden_layers.clear()
+                        self.viewer.update_plan_view(page.uid)
+                        detached_plan, detached_mesh = reopen()
+                        coordinator._on_native_scene_updated(
+                            geometries=[
+                                mesh_geometry(page.uid, 0.0, takeoff_uid=takeoff.uid)
+                            ],
+                            scene_identity=MeshSceneIdentity(
+                                self.bid_ref, (page.uid,), generation
+                            ),
+                            scene_failed=False,
+                        )
+                        for plan in (self.main_plan, detached_plan.plan_view):
+                            plan.set_selection_enabled(True)
+                            plan.set_selected_uids({takeoff.uid})
+                            self.assertEqual(
+                                plan.get_selected_uids(),
+                                [takeoff.uid] if plan is self.main_plan else [],
+                            )
+                        pending = MeshSceneIdentity(
+                            self.bid_ref, (page.uid,), generation + 1
+                        )
+                        condition.layer_visible = False
+                        self.data.hidden_layers.add("deleted-layer")
+                        self.viewer.update_plan_view(page.uid)
+                        self.bus.publish(
+                            AppEvents.LAYER_VISIBILITY_CHANGED,
+                            file_path=self.bid_ref.file_path,
+                            bid_uid=self.bid_ref.bid_uid,
+                            layer_uid="deleted-layer",
+                            show=False,
+                        )
+                        self.assertFalse(self.main_plan.get_selected_uids())
+                        coordinator.visualization_service.pending_mesh_scene_identity = (
+                            pending
+                        )
+                        for mesh in (main_mesh, detached_mesh.viewer):
+                            mesh.prepare_scene_refresh(self.bid_ref, [page.uid])
+                        if timing == "closed-before-delete":
+                            self.manager.close_view()
+                            coordinator.set_mesh_window_visible(False)
+                        # Authoritative deletion clears the reference; a hidden replacement
+                        # with the same raw UID must not inherit the old relationship.
+                        condition.layer_uid = None
+                        condition.layer_visible = True
+                        self.data.hidden_layers.add("deleted-layer")
+                        self.viewer.update_plan_view(page.uid)
+                        self.bus.publish(
+                            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                            database_id=self.bid_ref.file_path,
+                            bid_uid=self.bid_ref.bid_uid,
+                            families=["layers"],
+                        )
+                        self.manager.close_view()
+                        coordinator.set_mesh_window_visible(False)
+                        if timing != "after-result":
+                            current_plan, current_mesh = reopen()
+                            self.assertIsNot(current_plan, detached_plan)
+                            self.assertIsNot(current_mesh, detached_mesh)
+                        coordinator.visualization_service.pending_mesh_scene_identity = (
+                            None
+                        )
+                        coordinator._on_native_scene_updated(
+                            geometries=[
+                                mesh_geometry(page.uid, 0.0, takeoff_uid=takeoff.uid)
+                            ],
+                            scene_identity=MeshSceneIdentity(
+                                self.bid_ref, (page.uid,), generation + 2
+                            ),
+                            scene_failed=False,
+                        )
+                        if timing == "after-result":
+                            current_plan, current_mesh = reopen()
+                        coordinator._on_native_scene_updated(
+                            geometries=[],
+                            scene_identity=pending,
+                            scene_failed=failed_old_result,
+                        )
+                        for plan in (self.main_plan, current_plan.plan_view):
+                            self.assertIsNone(
+                                plan._current_conditions[condition.uid].layer_uid
+                            )
+                            self.assertTrue(
+                                plan._uid_to_items[takeoff.uid][0].isVisible()
+                            )
+                            self.assertFalse(plan.get_selected_uids())
+                            plan.set_selected_uids({takeoff.uid})
+                            self.assertEqual(
+                                plan.get_selected_uids(),
+                                [takeoff.uid] if plan is self.main_plan else [],
+                            )
+                        for mesh in (main_mesh, current_mesh.viewer):
+                            self.assertEqual(
+                                mesh._renderer.scene.takeoff_uids, [takeoff.uid]
+                            )
+                            self.assertTrue(mesh.has_renderable_content)
+                        self.assertTrue(current_mesh._zoom_combo.isEnabled())
+                        self.manager.close_view()
+                        coordinator.set_mesh_window_visible(False)
+
+    def test_persisted_detached_preference_waits_for_current_page_after_deletion(self):
+        from ost_visualizer.infrastructure.persistence.repositories.json_workspace_state_repository import (
+            JsonWorkspaceStateRepository,
+        )
+        from ost_visualizer.domain.entities.workspace_state import WorkspaceState
+        from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
+            WorkspaceStateCoordinator,
+        )
+        from ost_visualizer.presentation.main_window import MainWindow
+
+        saved = WorkspaceState()
+        saved.detached_windows.annotation_view.open = True
+        active = [self.detached.view]
+
+        def create_view(*, bid_ref, target_page_uid, target_named_view_uid):
+            active[0] = AnnotationView(
+                uid=uuid.uuid4().hex,
+                bid_uid=bid_ref.bid_uid,
+                file_path=bid_ref.file_path,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+            return active[0]
+
+        self.manager.repository = SimpleNamespace(
+            get_active_view=lambda: active[0],
+            create_view=create_view,
+            update_view=lambda _view: None,
+        )
+        self.manager._coord_factory = SimpleNamespace(create=lambda: object())
+        self.manager._infrastructure_provider = SimpleNamespace(
+            create_plan_view_renderers=lambda *_args: renderers()
+        )
+        self.manager.close_view()
+        owner = SimpleNamespace(
+            ui_state_manager=self.state,
+            plan_view=self.main_plan,
+            _project_data_service=self.data,
+            is_takeoff_tab_active=lambda: True,
+        )
+        owner.get_active_takeoff_page_uid = (
+            lambda: MainWindow.get_active_takeoff_page_uid(owner)
+        )
+        owner.can_open_annotation_window = (
+            lambda: MainWindow.can_open_annotation_window(owner)
+        )
+        selected_bid = [self.bid_ref]
+        self.state.get_selected_bid_ref = lambda: selected_bid[0]
+
+        def open_current(visible, **_window_options):
+            self.assertTrue(visible)
+            self.manager.open_view(selected_bid[0], owner.get_active_takeoff_page_uid())
+
+        restore = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        restore._takeoff_workspace_ready = True
+        restore._schedule_track_detached_window = lambda _key: None
+        restore._shell = SimpleNamespace(
+            can_restore_annotation_window=lambda: MainWindow.can_restore_annotation_window(
+                owner
+            ),
+            set_annotation_window_visible=open_current,
+            is_annotation_window_open=self.manager.is_view_open,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repository = JsonWorkspaceStateRepository(
+                Path(directory) / "workspace.json"
+            )
+            repository.save(saved)
+            for bid_unavailable in (False, True):
+                with self.subTest(bid_unavailable=bid_unavailable):
+                    old_uid = self.data.page.uid
+                    pages = {}
+                    self.data.get_page = pages.get
+                    self.data.get_all_pages = lambda: list(pages.values())
+                    self.data.bid.pages_without_folder.clear()
+                    selected_bid[0] = None if bid_unavailable else self.bid_ref
+                    restore._state = repository.load()
+                    restore._pending_annotation_restore = (
+                        restore._state.detached_windows.annotation_view.open
+                    )
+                    restore._try_restore_annotation_window()
+                    self.assertIsNone(self.manager.get_window())
+                    self.assertTrue(restore._pending_annotation_restore)
+                    current = deepcopy(self.data.page)
+                    current.uid, current.name = uuid.uuid4().hex, "Current Page"
+                    pages[current.uid] = current
+                    self.data.page = current
+                    self.data.bid.pages_without_folder = [current]
+                    selected_bid[0] = self.bid_ref
+                    self.state.active_page_uid = current.uid
+                    restore._try_restore_annotation_window()
+                    window = self.manager.get_window()
+                    self.addCleanup(delete_later_if_valid, window)
+                    self.addCleanup(window.cleanup)
+                    self.assertFalse(restore._pending_annotation_restore)
+                    self.assertEqual(window.plan_view.current_page_uid, current.uid)
+                    self.assertNotEqual(window.view.target_page_uid, old_uid)
+                    restore._try_restore_annotation_window()
+                    self.assertIs(self.manager.get_window(), window)
+                    self.manager.close_view()
 
     def test_remote_page_composition_projects_pixels_and_mode_to_all_surfaces(self):
         self._assert_page_composition_projection(remote=True)
@@ -800,6 +2623,523 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
             assert_surfaces("blue")
             self.assertEqual(len(errors), 2)
+
+    def test_late_original_overlay_results_preserve_newer_four_surface_composition(
+        self,
+    ):
+        original_queue, errors = [], []
+        original_handler = CoverSheetHandler.__new__(CoverSheetHandler)
+        original_handler.window = None
+        original_handler._write_service = SimpleNamespace(
+            queue_cover_sheet_save=lambda _db, _bid, updates, callback: original_queue.append(
+                (updates, callback)
+            )
+            or 1
+        )
+        original_handler._ui_event_coordinator = self.coordinator
+        self.coordinator.present_queued_mutation_error = (
+            lambda _db, title, _result: errors.append(title)
+        )
+        service = FakeProjectWriteService()
+        service.queue_sql_settings = True
+        persistence = DeferredPersistenceManager(
+            service, FakeSqlWorkspaceService(service)
+        )
+        self.addCleanup(persistence.cleanup)
+        self.coordinator._deferred_persistence = persistence
+        self.coordinator._project_write_service = service
+        self.coordinator._save_current_page_view_state = lambda **_options: None
+        self.coordinator.plan_view = self.main_plan
+        self.coordinator._update_plan_view = self.viewer.update_plan_view
+        self.coordinator._update_export_menu_state = lambda: None
+        with tempfile.TemporaryDirectory() as directory:
+            paths = {}
+            for color in ("red", "blue", "green", "yellow"):
+                path = str(Path(directory) / f"{color}.tif")
+                image = QtGui.QImage(64, 64, QtGui.QImage.Format.Format_RGB32)
+                image.fill(QtGui.QColor(color))
+                self.assertTrue(image.save(path))
+                paths[color] = path
+            page = self.data.page
+            page.width_pts = page.height_pts = 64.0
+            page.overlay_rect = (0.0, 0.0, 64.0 / 72.0, 64.0 / 72.0)
+            pages = {page.uid: page}
+            self.data.get_page = lambda uid: pages.get(str(uid))
+            self.data.get_all_pages = lambda: list(pages.values())
+            cache = PageCache()
+            self.addCleanup(cache.clear)
+            provider = NativePageImagePlaneProvider(
+                self.data,
+                self.state,
+                cache,
+                SimpleNamespace(
+                    build_pages=lambda _uids: [
+                        {
+                            "page_width": 64.0,
+                            "page_height": 64.0,
+                            "width": 64.0,
+                            "height": 64.0,
+                            "pdf_page_index": 0,
+                            "rotation": 0,
+                        }
+                    ],
+                    image_layer_visible=lambda _uids: True,
+                ),
+            )
+            for plan in (self.main_plan, self.detached.plan_view):
+                plan._rendering_service = PDFRenderingService(
+                    PageCache(), num_workers=1
+                )
+                plan._load_coordinator = PageLoadStrategyService(
+                    SimpleNamespace(get_page_size=lambda *_args: (64.0, 64.0))
+                )
+                plan.resize(300, 300)
+            self.main_plan.show()
+            self.detached.show()
+            main_mesh = OpenGLViewer(None, FakeColorService())
+            detached_mesh = MeshViewWindow(FakeWindowIconProvider(), FakeColorService())
+            self.addCleanup(main_mesh.deleteLater)
+            self.addCleanup(main_mesh.cleanup)
+            self.addCleanup(detached_mesh.deleteLater)
+            self.addCleanup(detached_mesh.cleanup)
+            self.coordinator.opengl_viewer = main_mesh
+            self.coordinator._mesh_window = detached_mesh
+            for surface in (
+                self.main_plan,
+                self.detached.plan_view,
+                main_mesh,
+                detached_mesh.viewer,
+            ):
+                surface.set_context_menu_command_handlers(
+                    lambda _key: None, lambda _key: {"enabled": True}
+                )
+            for mesh in (main_mesh, detached_mesh.viewer):
+                mesh._renderer = MeshRendererBoundary(FakeMeshScene([]))
+                mesh.set_plan_texture_provider(provider.build_for_scene)
+                mesh.prepare_scene_refresh(self.bid_ref, [page.uid])
+                mesh.apply_mesh_data(
+                    [],
+                    [],
+                    [],
+                    [],
+                    scene_identity=MeshSceneIdentity(self.bid_ref, (page.uid,), 1),
+                    page_floor_elevations={page.uid: 0.0},
+                    takeoff_uids=[],
+                )
+            from tests.test_ui_event_coordinator_takeoffs_changed import (
+                mesh_publication,
+            )
+
+            active = [self.detached.view]
+
+            def create_view(*, bid_ref, target_page_uid, target_named_view_uid):
+                active[0] = AnnotationView(
+                    uid=uuid.uuid4().hex,
+                    file_path=bid_ref.file_path,
+                    bid_uid=bid_ref.bid_uid,
+                    target_page_uid=target_page_uid,
+                    target_named_view_uid=target_named_view_uid,
+                )
+                return active[0]
+
+            def plan_renderers(*_args):
+                result = renderers()
+                result.rendering_service = PDFRenderingService(
+                    PageCache(), num_workers=1
+                )
+                result.load_coordinator = PageLoadStrategyService(
+                    SimpleNamespace(get_page_size=lambda *_args: (64.0, 64.0))
+                )
+                return result
+
+            self.manager.repository = SimpleNamespace(
+                get_active_view=lambda: active[0],
+                create_view=create_view,
+                update_view=lambda _view: None,
+            )
+            self.manager._coord_factory = SimpleNamespace(create=lambda: object())
+            self.manager._infrastructure_provider = SimpleNamespace(
+                create_plan_view_renderers=plan_renderers
+            )
+            coordinator = self.coordinator
+            configure_mesh_state(
+                coordinator,
+                opengl_viewer=main_mesh,
+                mesh_window=detached_mesh,
+                last_mesh_scene=mesh_publication(
+                    ([], [], [], []),
+                    MeshSceneIdentity(self.bid_ref, (page.uid,), 1),
+                    {page.uid: 0.0},
+                ),
+            )
+            coordinator.ui_access_manager = self.access
+            coordinator._plan_texture_provider = provider.build_for_scene
+            coordinator._icon_provider = FakeWindowIconProvider()
+            coordinator._color_service = FakeColorService()
+            coordinator._plan_view_handler = None
+            coordinator._mesh_window_action = None
+            coordinator.main_window.menu_controller = None
+            coordinator._nav = SimpleNamespace(is_refreshing=False)
+            coordinator._plan_view_signaler = Mock()
+
+            def create_mesh(**kwargs):
+                window = MeshViewWindow(**kwargs)
+                window.viewer._renderer = MeshRendererBoundary(FakeMeshScene([]))
+                window.viewer.hide()
+                window.show_initial_window = window.show
+                self.addCleanup(delete_later_if_valid, window)
+                self.addCleanup(window.cleanup)
+                return window
+
+            patcher = patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator.MeshViewWindow",
+                side_effect=create_mesh,
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+            from ost_visualizer.domain.entities.workspace_state import WorkspaceState
+            from ost_visualizer.infrastructure.persistence.repositories.json_workspace_state_repository import (
+                JsonWorkspaceStateRepository,
+            )
+            from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
+                WorkspaceStateCoordinator,
+            )
+            from ost_visualizer.presentation.main_window import MainWindow
+
+            saved_workspace = WorkspaceState()
+            saved_workspace.detached_windows.annotation_view.open = True
+            saved_workspace.detached_windows.mesh_view.open = True
+            workspace_repository = JsonWorkspaceStateRepository(
+                Path(directory) / "workspace.json"
+            )
+            owner = SimpleNamespace(
+                ui_state_manager=self.state,
+                plan_view=self.main_plan,
+                _project_data_service=self.data,
+                is_takeoff_tab_active=lambda: True,
+            )
+            owner.get_active_takeoff_page_uid = (
+                lambda: MainWindow.get_active_takeoff_page_uid(owner)
+            )
+            owner.can_open_annotation_window = (
+                lambda: MainWindow.can_open_annotation_window(owner)
+            )
+
+            def restore_workspace():
+                restore = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+                restore._state = workspace_repository.load()
+                restore._takeoff_workspace_ready = True
+                restore._pending_annotation_restore = (
+                    restore._state.detached_windows.annotation_view.open
+                )
+                restore._pending_mesh_restore = (
+                    restore._state.detached_windows.mesh_view.open
+                )
+                restore._schedule_track_detached_window = lambda _key: None
+                restore._shell = SimpleNamespace(
+                    can_restore_annotation_window=lambda: MainWindow.can_restore_annotation_window(
+                        owner
+                    ),
+                    set_annotation_window_visible=lambda _visible, **options: self.manager.open_view(
+                        self.bid_ref, owner.get_active_takeoff_page_uid(), **options
+                    ),
+                    is_annotation_window_open=self.manager.is_view_open,
+                    is_takeoff_tab_active=lambda: True,
+                    set_mesh_window_visible=coordinator.set_mesh_window_visible,
+                    get_mesh_window=coordinator.get_mesh_window,
+                )
+                restore._try_restore_annotation_window()
+                restore._try_restore_mesh_window()
+                self.assertFalse(restore._pending_annotation_restore)
+                self.assertFalse(restore._pending_mesh_restore)
+
+            def reopen(*, workspace=False):
+                nonlocal detached_mesh
+                old_plan, old_mesh = self.detached, detached_mesh
+                self.manager.close_view()
+                coordinator.set_mesh_window_visible(False)
+                if workspace:
+                    restore_workspace()
+                else:
+                    self.manager.open_view(self.bid_ref, page.uid)
+                self.detached = self.manager.get_window()
+                self.addCleanup(delete_later_if_valid, self.detached)
+                self.addCleanup(self.detached.cleanup)
+                self.detached.plan_view.resize(300, 300)
+                self.detached.show()
+                if not workspace:
+                    coordinator.set_mesh_window_visible(True)
+                detached_mesh = coordinator.get_mesh_window()
+                self.assertIsNot(self.detached, old_plan)
+                self.assertIsNot(detached_mesh, old_mesh)
+                for surface in (self.detached.plan_view, detached_mesh.viewer):
+                    surface.set_context_menu_command_handlers(
+                        lambda _key: None, lambda _key: {"enabled": True}
+                    )
+
+            for original_status in (
+                MutationOutcomeStatus.COMMITTED,
+                MutationOutcomeStatus.REJECTED,
+            ):
+                for overlay_status in (
+                    MutationOutcomeStatus.COMMITTED,
+                    MutationOutcomeStatus.REJECTED,
+                ):
+                    for mode in (0, 1, 2):
+                        for original_first, context in (
+                            (order, context)
+                            for order in (False, True)
+                            for context in (
+                                "same-page",
+                                "navigate",
+                                "replace-page",
+                                "reopen-before",
+                                "reopen-after",
+                                "workspace",
+                                "workspace-replace-page",
+                                "workspace-replace-bid-page",
+                            )
+                        ):
+                            with self.subTest(
+                                original_status=original_status,
+                                overlay_status=overlay_status,
+                                mode=mode,
+                                original_first=original_first,
+                                context=context,
+                            ):
+                                page.image_path, page.overlay_image_path = (
+                                    paths["red"],
+                                    paths["blue"],
+                                )
+                                self.coordinator._project_page_show_mode_if_current(
+                                    self.bid_ref, page.uid, 0
+                                )
+                                if context in {
+                                    "workspace",
+                                    "workspace-replace-page",
+                                    "workspace-replace-bid-page",
+                                }:
+                                    saved_workspace.detached_windows.annotation_view.geometry_b64 = WorkspaceStateCoordinator._encode_byte_array(
+                                        self.detached.saveGeometry()
+                                    )
+                                    workspace_repository.save(saved_workspace)
+                                data = _cover_sheet_data(image_path=page.image_path)
+                                data.bid_uid = self.bid_ref.bid_uid
+                                data.pages_without_folder[0].uid = page.uid
+                                dialog = CoverSheetDialog(
+                                    FakeWindowIconProvider(),
+                                    None,
+                                    data,
+                                    save_cover_sheet_async_fn=lambda updates, completed: original_handler._save_cover_sheet_async(
+                                        self.bid_ref, updates, completed
+                                    ),
+                                )
+                                self.addCleanup(dialog.deleteLater)
+                                self.addCleanup(dialog.reject)
+                                editor = _path_editor(
+                                    dialog, dialog.plan_tree.topLevelItem(0), 4
+                                )
+                                editor.begin_path_edit()
+                                editor.setText(paths["blue"])
+                                editor.editingFinished.emit()
+                                dialog.accept()
+                                self.assertTrue(dialog._operation_pending)
+                                self.coordinator._save_page_overlay_image(
+                                    self.bid_ref.file_path, page.uid, paths["red"]
+                                )
+                                self.assertEqual(
+                                    (page.image_path, page.overlay_image_path),
+                                    (paths["red"], paths["blue"]),
+                                )
+                                if context in {
+                                    "replace-page",
+                                    "workspace-replace-page",
+                                }:
+                                    previous_page = page
+                                    page = deepcopy(page)
+                                    pages[page.uid] = page
+                                    self.data.page = page
+                                    self.data.bid.pages_without_folder = [page]
+                                    self.assertIsNot(page, previous_page)
+                                    if context == "workspace-replace-bid-page":
+                                        previous_bid = self.data.bid
+                                        self.data.bid = deepcopy(previous_bid)
+                                        self.data.bid.pages_without_folder = [page]
+                                        self.assertIsNot(self.data.bid, previous_bid)
+                                # Delay presentation callbacks until a newer authoritative pair
+                                # has projected; SQL execution itself remains FIFO.
+                                page.image_path, page.overlay_image_path = (
+                                    paths["green"],
+                                    paths["yellow"],
+                                )
+                                self.coordinator._project_page_show_mode_if_current(
+                                    self.bid_ref, page.uid, mode
+                                )
+                                texture = main_mesh._current_plan_texture
+                                offset = (
+                                    texture.height_px // 2 * texture.width_px
+                                    + texture.width_px // 2
+                                ) * 4
+                                expected_color = QtGui.QColor(
+                                    *texture.pixels_rgba[offset : offset + 4]
+                                )
+                                if mode != 2:
+                                    self.assertEqual(
+                                        expected_color,
+                                        QtGui.QColor(
+                                            "green" if mode == 0 else "yellow"
+                                        ),
+                                    )
+                                self._wait_for_scene_colors([expected_color] * 2)
+                                textures = [
+                                    mesh._current_plan_texture.pixels_rgba
+                                    for mesh in (main_mesh, detached_mesh.viewer)
+                                ]
+                                self.assertEqual(textures[0], textures[1])
+                                colors = [expected_color] * 2
+                                if context == "navigate":
+                                    other_page = deepcopy(page)
+                                    other_page.uid = "other-page"
+                                    other_page.image_path = paths["blue"]
+                                    other_page.image_show_mode = 0
+                                    pages[other_page.uid] = other_page
+                                    self.data.bid.pages_without_folder = [
+                                        page,
+                                        other_page,
+                                    ]
+                                    self.state.active_page_uid = other_page.uid
+                                    self.viewer.update_plan_view(other_page.uid)
+                                    self.coordinator._update_page_settings_bar(
+                                        other_page.uid
+                                    )
+                                    colors[0] = QtGui.QColor("blue")
+                                    self._wait_for_scene_colors(colors)
+                                callbacks = [
+                                    (original_queue[-1][1], original_status),
+                                    (
+                                        service.queued_setting_callbacks[-1],
+                                        overlay_status,
+                                    ),
+                                ]
+                                if not original_first:
+                                    callbacks.reverse()
+                                if context in {
+                                    "workspace",
+                                    "workspace-replace-page",
+                                    "workspace-replace-bid-page",
+                                }:
+                                    self.detached.plan_view.set_selection_enabled(True)
+                                    self.detached.plan_view.activate_annotation_placement(
+                                        "rect"
+                                    )
+                                    reopen(workspace=True)
+                                    self.assertIsNone(
+                                        self.detached.plan_view.annotation_place_type
+                                    )
+                                    self.assertFalse(
+                                        self.detached.plan_view.get_selected_uids()
+                                    )
+                                elif context == "reopen-before":
+                                    reopen()
+                                prior_errors = len(errors)
+                                for callback, outcome in callbacks:
+                                    if context == "reopen-after":
+                                        self.manager.close_view()
+                                        coordinator.set_mesh_window_visible(False)
+                                    callback(
+                                        QueuedMutationResult(
+                                            database_id=self.bid_ref.file_path,
+                                            runtime_generation=1,
+                                            operation_id=uuid.uuid4().hex,
+                                            outcome_status=outcome,
+                                            message="Save rejected",
+                                        )
+                                    )
+                                    if context == "reopen-after":
+                                        reopen()
+                                    self._wait_for_scene_colors(colors)
+                                    self.assertEqual(
+                                        (
+                                            page.image_path,
+                                            page.overlay_image_path,
+                                            page.image_show_mode,
+                                        ),
+                                        (paths["green"], paths["yellow"], mode),
+                                    )
+                                    for mesh, texture in zip(
+                                        (main_mesh, detached_mesh.viewer), textures
+                                    ):
+                                        self.assertEqual(
+                                            mesh._current_plan_texture.pixels_rgba,
+                                            texture,
+                                        )
+                                        self.assertEqual(
+                                            mesh._renderer.plan_texture_calls[-1][0],
+                                            texture,
+                                        )
+                                    for surface in (
+                                        self.main_plan,
+                                        self.detached.plan_view,
+                                        main_mesh,
+                                        detached_mesh.viewer,
+                                    ):
+                                        menu = QtWidgets.QMenu()
+                                        overlay, original = (
+                                            surface._add_common_context_submenus(menu)[
+                                                -2:
+                                            ]
+                                        )
+                                        surface_mode = (
+                                            0
+                                            if context == "navigate"
+                                            and surface is self.main_plan
+                                            else mode
+                                        )
+                                        self.assertEqual(
+                                            (original.isChecked(), overlay.isChecked()),
+                                            (
+                                                surface_mode in (0, 2),
+                                                surface_mode in (1, 2),
+                                            ),
+                                        )
+                                        menu.deleteLater()
+                                self.assertFalse(dialog._operation_pending)
+                                self.assertEqual(
+                                    len(errors) - prior_errors,
+                                    int(
+                                        original_status
+                                        == MutationOutcomeStatus.REJECTED
+                                    )
+                                    + int(
+                                        overlay_status == MutationOutcomeStatus.REJECTED
+                                    ),
+                                )
+                                self.assertCountEqual(
+                                    errors[prior_errors:],
+                                    (
+                                        ["Cover Sheet"]
+                                        if original_status
+                                        == MutationOutcomeStatus.REJECTED
+                                        else []
+                                    )
+                                    + (
+                                        ["Replace Overlay Image"]
+                                        if overlay_status
+                                        == MutationOutcomeStatus.REJECTED
+                                        else []
+                                    ),
+                                )
+                                if context == "navigate":
+                                    self.assertEqual(
+                                        self.main_plan.current_page_uid, other_page.uid
+                                    )
+                                    self.state.active_page_uid = page.uid
+                                    self.viewer.update_plan_view(page.uid)
+                                    self.coordinator._update_page_settings_bar(page.uid)
+                                    self._wait_for_scene_colors([expected_color] * 2)
+                                    pages.pop(other_page.uid)
+                                    self.data.bid.pages_without_folder = [page]
+                                dialog.reject()
 
     def test_navigation_projects_changed_source_without_image_refresh_event(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2080,6 +4420,13 @@ class MeshRendererBoundary(FakeMeshRenderer):
         pass
 
 
+class LoadedPlanNavigationBoundary(QtWidgets.QWidget):
+    has_selected_takeoffs = False
+    page_geometry_ready = QtCore.Signal()
+    page_cleared = QtCore.Signal()
+    current_page_uid = "page-1"
+
+
 class SceneControlPresentationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -2154,6 +4501,33 @@ class SceneControlPresentationTests(unittest.TestCase):
             if combo.isEditable()
         )
         return bundle, combo
+
+    def test_main_plan_page_loss_clears_navigation_controls_and_recovers(self):
+        bundle, zoom = self._main_components()
+        bundle.view_stack.setCurrentIndex(1)
+        actions = bundle.central_widget.findChild(SceneNavigationControls)._actions
+        self.assertTrue(actions)
+        self.assertTrue(zoom.isEnabled())
+        page = self.main_data.page
+        self.main_data.bid.pages_without_folder.clear()
+        self.main_state.active_page_uid = None
+        self.main_sync.clear_plan_view()
+        self.app.processEvents()
+        with self.subTest(state="no-page"):
+            self.assertFalse(zoom.isEnabled())
+            self.assertEqual(zoom.currentText(), "")
+            self.assertFalse(any(action.isEnabled() for action in actions))
+        bundle.plan_view.zoom_changed.emit(2.0)
+        with self.subTest(state="late-zoom-after-clear"):
+            self.assertEqual(zoom.currentText(), "")
+        self.main_data.bid.pages_without_folder = [page]
+        self.main_state.active_page_uid = page.uid
+        self.main_sync.update_plan_view(page.uid)
+        self.app.processEvents()
+        with self.subTest(state="recovered"):
+            self.assertTrue(zoom.isEnabled())
+            self.assertTrue(zoom.currentText().endswith("%"))
+            self.assertTrue(all(action.isEnabled() for action in actions))
 
     def test_main_zoom_drafts_remain_with_their_view_across_mode_changes(self):
         bundle, combo = self._main_components()
@@ -2329,6 +4703,148 @@ class SceneControlPresentationTests(unittest.TestCase):
                     )
             self.assertEqual(len(windows), 4)
 
+    def test_page_deletion_reopen_rejects_pending_3d_content_and_recovers(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = PresentationUiState()
+        coordinator.project_data = SharedPageData()
+        pages = {}
+        coordinator.project_data.get_page = pages.get
+        coordinator.project_data.get_all_pages = lambda: list(pages.values())
+        selected_pages = [coordinator.project_data.page.uid]
+        coordinator.project_data.get_selected_page_uids = lambda: list(selected_pages)
+        coordinator._icon_provider = FakeWindowIconProvider()
+        coordinator._color_service = SimpleNamespace(
+            convert_to_rgba=lambda _color: (1.0, 1.0, 1.0, 1.0)
+        )
+        coordinator._plan_view_handler = None
+        coordinator.plan_view = None
+        coordinator._mesh_window_action = None
+        coordinator.main_window = SimpleNamespace(menu_controller=None)
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator._plan_view_signaler = Mock()
+        main = OpenGLViewer(None, coordinator._color_service)
+        main._renderer = MeshRendererBoundary(FakeMeshScene([]))
+        self.addCleanup(main.deleteLater)
+        self.addCleanup(main.cleanup)
+        configure_mesh_state(coordinator, view_index=0, opengl_viewer=main)
+        bid_ref = coordinator.ui_state_manager.get_selected_bid_ref()
+
+        def create_window(**kwargs):
+            window = MeshViewWindow(**kwargs)
+            window.viewer._renderer = MeshRendererBoundary(FakeMeshScene([]))
+            window.viewer.hide()
+            window.show_initial_window = window.show
+            self.addCleanup(delete_later_if_valid, window)
+            self.addCleanup(window.cleanup)
+            return window
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.MeshViewWindow",
+            side_effect=create_window,
+        ):
+            generation = 0
+            for closed_when_deleted in (False, True):
+                for failed_old_result in (False, True):
+                    with self.subTest(
+                        closed_when_deleted=closed_when_deleted,
+                        failed_old_result=failed_old_result,
+                    ):
+                        generation += 10
+                        page = coordinator.project_data.page
+                        pages.clear()
+                        pages[page.uid] = page
+                        selected_pages[:] = [page.uid]
+                        coordinator.project_data.bid.pages_without_folder = [page]
+                        coordinator.ui_state_manager.active_page_uid = page.uid
+                        coordinator._request_or_defer_mesh_refresh(selected_pages)
+                        coordinator._on_native_scene_updated(
+                            geometries=[mesh_geometry(page.uid, 0.0)],
+                            scene_identity=MeshSceneIdentity(
+                                bid_ref, (page.uid,), generation
+                            ),
+                            scene_failed=False,
+                        )
+                        coordinator.set_mesh_window_visible(True)
+                        old = coordinator.get_mesh_window()
+                        self.assertTrue(old._zoom_combo.isEnabled())
+                        for surface in (main, old.viewer):
+                            surface.set_selected_takeoffs(["takeoff-1"])
+                            self.assertEqual(
+                                surface._selected_takeoff_uids, ["takeoff-1"]
+                            )
+                        pending = MeshSceneIdentity(
+                            bid_ref, (page.uid,), generation + 1
+                        )
+                        coordinator.visualization_service.pending_mesh_scene_identity = (
+                            pending
+                        )
+                        coordinator._request_or_defer_mesh_refresh(selected_pages)
+                        if closed_when_deleted:
+                            coordinator.set_mesh_window_visible(False)
+                        selected_pages.clear()
+                        pages.clear()
+                        coordinator.project_data.bid.pages_without_folder.clear()
+                        self.assertIsNone(coordinator.project_data.get_page(page.uid))
+                        coordinator.ui_state_manager.active_page_uid = None
+                        coordinator._request_or_defer_mesh_refresh([])
+                        coordinator.visualization_service.pending_mesh_scene_identity = (
+                            None
+                        )
+                        coordinator._on_native_scene_updated(
+                            geometries=[],
+                            scene_identity=MeshSceneIdentity(
+                                bid_ref, (), generation + 2
+                            ),
+                            scene_failed=False,
+                        )
+                        coordinator.set_mesh_window_visible(False)
+                        coordinator.set_mesh_window_visible(True)
+                        reopened = coordinator.get_mesh_window()
+                        self.assertIsNot(reopened, old)
+                        coordinator._on_native_scene_updated(
+                            geometries=[mesh_geometry(page.uid, 0.0)],
+                            scene_identity=pending,
+                            scene_failed=failed_old_result,
+                        )
+                        for surface in (main, reopened.viewer):
+                            self.assertFalse(surface.has_renderable_content)
+                            self.assertIsNone(surface._current_plan_texture)
+                            self.assertFalse(surface._selected_takeoff_uids)
+                        self.assertFalse(reopened._zoom_combo.isEnabled())
+                        self.assertEqual(reopened._zoom_combo.currentText(), "")
+                        self.assertEqual(
+                            coordinator._last_mesh_scene.scene_identity.page_uids, ()
+                        )
+                        replacement = deepcopy(page)
+                        replacement.uid = "replacement-page"
+                        pages[replacement.uid] = replacement
+                        selected_pages[:] = [replacement.uid]
+                        coordinator.project_data.bid.pages_without_folder = [
+                            replacement
+                        ]
+                        coordinator.ui_state_manager.active_page_uid = replacement.uid
+                        coordinator._request_or_defer_mesh_refresh(selected_pages)
+                        coordinator._on_native_scene_updated(
+                            geometries=[
+                                mesh_geometry(
+                                    replacement.uid,
+                                    0.0,
+                                    takeoff_uid="replacement-takeoff",
+                                )
+                            ],
+                            scene_identity=MeshSceneIdentity(
+                                bid_ref, (replacement.uid,), generation + 3
+                            ),
+                            scene_failed=False,
+                        )
+                        for surface in (main, reopened.viewer):
+                            self.assertEqual(
+                                surface._renderer.scene.takeoff_uids,
+                                ["replacement-takeoff"],
+                            )
+                        self.assertTrue(reopened._zoom_combo.isEnabled())
+                        coordinator.set_mesh_window_visible(False)
+
     def test_detached_3d_zoom_menu_uses_its_own_content_and_camera(self):
         parent = QtWidgets.QWidget()
         self.addCleanup(parent.deleteLater)
@@ -2399,14 +4915,17 @@ class SceneControlPresentationTests(unittest.TestCase):
         self.addCleanup(viewer.cleanup)
         viewer._renderer = MeshRendererBoundary(FakeMeshScene([]))
         stack.addWidget(viewer)
-        stack.addWidget(QtWidgets.QWidget())
+        plan = LoadedPlanNavigationBoundary(stack)
+        stack.addWidget(plan)
         zoom = QtWidgets.QComboBox(parent)
         zoom.setEditable(True)
         actions = {
             key: QtGui.QAction(key, parent)
             for key in (ACTION_ZOOM_IN, ACTION_ZOOM_OUT, ACTION_RESET_VIEW)
         }
-        SceneNavigationControls(viewer, list(actions.values()), zoom, parent, stack)
+        SceneNavigationControls(
+            viewer, list(actions.values()), zoom, parent, stack, plan_view=plan
+        )
         bid_ref = BidRef("bid.mdb", "1")
         controller = export_menu_controller(
             MenuUiState(bid_ref), MenuProjectData(bid_ref)
@@ -2415,6 +4934,7 @@ class SceneControlPresentationTests(unittest.TestCase):
         controller.window.is_takeoff_tab_active = lambda: True
         controller.window.opengl_viewer = viewer
         controller.window.get_view_stack = lambda: stack
+        controller.window.get_takeoff_plan_view = lambda: plan
         viewer.set_context_menu_command_handlers(
             lambda _key: None, controller.get_menu_action_state
         )
@@ -2433,6 +4953,14 @@ class SceneControlPresentationTests(unittest.TestCase):
         stack.setCurrentIndex(1)
         controller.update_menu_states()
         self.assertTrue(all(action.isEnabled() for action in actions.values()))
+        plan.current_page_uid = None
+        plan.page_cleared.emit()
+        controller.update_menu_states()
+        self.assertFalse(any(action.isEnabled() for action in actions.values()))
+        plan.current_page_uid = "page-2"
+        plan.page_geometry_ready.emit()
+        controller.update_menu_states()
+        self.assertTrue(all(action.isEnabled() for action in actions.values()))
 
     def test_returning_to_takeoff_does_not_restore_stale_camera_tool_enablement(self):
         parent = QtWidgets.QWidget()
@@ -2442,14 +4970,19 @@ class SceneControlPresentationTests(unittest.TestCase):
         self.addCleanup(viewer.cleanup)
         viewer._renderer = MeshRendererBoundary(FakeMeshScene(["t1"]))
         stack.addWidget(viewer)
-        stack.addWidget(QtWidgets.QWidget())
+        plan = LoadedPlanNavigationBoundary(stack)
+        stack.addWidget(plan)
         zoom = QtWidgets.QComboBox(parent)
         zoom.setEditable(True)
         actions = {key: QtGui.QAction(key, parent) for key in ("pan_tool", "zoom_tool")}
-        SceneNavigationControls(viewer, list(actions.values()), zoom, parent, stack)
+        SceneNavigationControls(
+            viewer, list(actions.values()), zoom, parent, stack, plan_view=plan
+        )
         menu = MenuController.__new__(MenuController)
         menu.window = SimpleNamespace(
-            get_view_stack=lambda: stack, opengl_viewer=viewer
+            get_view_stack=lambda: stack,
+            get_takeoff_plan_view=lambda: plan,
+            opengl_viewer=viewer,
         )
         menu._actions = actions
         menu._tool_action_enabled_state = {}
@@ -2516,13 +5049,16 @@ class SceneControlPresentationTests(unittest.TestCase):
         main_view = OpenGLViewer(stack, color_service)
         self.addCleanup(main_view.cleanup)
         stack.addWidget(main_view)
-        stack.addWidget(QtWidgets.QWidget())
+        plan = LoadedPlanNavigationBoundary(stack)
+        stack.addWidget(plan)
         main_zoom = QtWidgets.QComboBox(main)
         main_zoom.setEditable(True)
         main_actions = [
             QtGui.QAction(name, main) for name in ("Fit", "Zoom in", "Zoom out", "Pan")
         ]
-        SceneNavigationControls(main_view, main_actions, main_zoom, main, stack)
+        SceneNavigationControls(
+            main_view, main_actions, main_zoom, main, stack, plan_view=plan
+        )
         detached = MeshViewWindow(FakeWindowIconProvider(), color_service)
         self.addCleanup(detached.deleteLater)
         self.addCleanup(detached.cleanup)

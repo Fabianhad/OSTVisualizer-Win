@@ -436,6 +436,8 @@ class FakeInitialRestoreWindow(FakeInitialGeometryWindow):
 
 class FakeDetachedPlanView:
     def __init__(self, annotations=None):
+        self.selection_revision = 0
+        self.tool_revision = 0
         self.annotations = {ann.uid: ann for ann in annotations or []}
         self.annotation_place_type = ""
         self.current_page_uid = "p1"
@@ -498,10 +500,16 @@ class FakeDetachedPlanView:
         self.inline_edit_enabled = bool(enabled)
 
     def set_selected_uids(self, uids):
+        if self.selected_uids != set(uids):
+            self.selection_revision += 1
         self.selected_uids = set(uids)
 
+    def begin_deferred_selection(self):
+        self.selection_revision += 1
+        return self.selection_revision
+
     def clear_selection(self):
-        self.selected_uids = set()
+        self.set_selected_uids(set())
 
     def set_pending_mutation_uids(self, uids):
         self.pending_mutation_uids = set(uids)
@@ -4477,7 +4485,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             setattr(manager, attribute, object())
         with self.assertLogs(manager.logger, level="ERROR"):
             manager.shutdown()
-        self.assertEqual(len(event_bus.calls), 9)
+        self.assertEqual(len(event_bus.calls), 10)
+        self.assertIn(AppEvents.FILE_UNLOADED, event_bus.calls)
         self.assertIn(("access-clear", "detached-plan:test"), calls)
         self.assertIn("signaler-delete", calls)
         self.assertIn("window-close", calls)
@@ -6385,12 +6394,15 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window.page_data = SimpleNamespace(page=None)
         window._scale_combo = None
+        navigation_targets = []
+        window._update_combo_to_page = navigation_targets.append
         window.plan_view = FakeDetachedLoadPlanView()
         reveals = []
         window._reveal_named_view_blank_canvas = lambda: reveals.append(True)
         self.assertFalse(DetachedPageViewWindow._load_page_content(window))
         self.assertEqual(window.plan_view.clear_calls, 1)
         self.assertEqual(reveals, [True])
+        self.assertEqual(navigation_targets, [""])
 
     def test_detached_page_load_failure_reveals_deferred_named_view_canvas(self):
         page = Page(uid="p1", name="Page 1")

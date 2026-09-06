@@ -214,6 +214,7 @@ class TakeoffPlanView(
     hotlink_clicked = Signal(object)
     page_geometry_ready = Signal()
     page_fully_loaded = Signal()
+    page_cleared = Signal()
     zoom_changed = Signal(float)
     assign_to_area_requested = Signal(list)
     reassign_condition_requested = Signal(list, str)
@@ -421,6 +422,9 @@ class TakeoffPlanView(
         self._roping_selection_method: str = Config.DEFAULT_ROPING_SELECTION_METHOD
         self._disable_high_resolution_images: bool = False
         self._intelligent_paste_enabled: bool = True
+        self._selection_revision = 0
+        self._tool_revision = 0
+        self._tool_state = (CURSOR_MODE_SELECT, None, None)
         self._use_full_window_crosshairs: bool = False
         self._crosshair_color: str = "#00ff00"
         self._crosshair_line_thickness: int = 1
@@ -3414,6 +3418,7 @@ class TakeoffPlanView(
         )
 
     def _on_selection_changed(self) -> None:
+        self._selection_revision += 1
         pending_uids = set(self._intelligent_paste_pending_uids)
         if pending_uids and not pending_uids.issubset(self._selected_uids):
             self.finish_intelligent_paste_placement()
@@ -3422,6 +3427,14 @@ class TakeoffPlanView(
             and self._selected_text_annotation_uid not in self._selected_uids
         ):
             self._clear_text_selection()
+
+    @property
+    def selection_revision(self) -> int:
+        return self._selection_revision
+
+    def begin_deferred_selection(self) -> int:
+        self._selection_revision += 1
+        return self._selection_revision
 
     def _current_mouse_scene_position(self) -> Optional[QtCore.QPointF]:
         if self._last_mouse_vp_pos is not None:
@@ -4885,7 +4898,11 @@ class TakeoffPlanView(
         saved_cursor = self._persistent_cursor_mode
         preserve_place = not project_changed and self._place_session_uid is not None
         active_load_token = self._current_load_token
-        self.clear(preserve_place_session=preserve_place)
+        self.clear(
+            preserve_place_session=preserve_place,
+            preserve_deferred_selection=not project_changed and not page_changed,
+            notify_page_cleared=False,
+        )
         if hidden_layer_uids is not None:
             self._hidden_layer_uids = {str(uid) for uid in hidden_layer_uids}
         self._current_load_token = active_load_token
@@ -5815,7 +5832,16 @@ class TakeoffPlanView(
         self._update_cursor()
         return True
 
-    def clear(self, preserve_place_session: bool = False):
+    def clear(
+        self,
+        preserve_place_session: bool = False,
+        *,
+        preserve_deferred_selection: bool = False,
+        notify_page_cleared: bool = True,
+    ):
+        had_page = self._current_bid_page_uid is not None
+        if not preserve_deferred_selection:
+            self._selection_revision += 1
         if self._prefetch_coordinator is not None:
             self._prefetch_coordinator.cancel_pending()
         self._reset_render_loading()
@@ -5946,6 +5972,8 @@ class TakeoffPlanView(
         self._saved_scroll_state = None
         self._pending_page_data = None
         self._deferred_page_visual_result = None
+        if notify_page_cleared and had_page:
+            self.page_cleared.emit()
 
     def set_cursor_mode(self, mode: str) -> None:
         if mode in EDITING_CURSOR_MODES and not (
@@ -6170,7 +6198,23 @@ class TakeoffPlanView(
         if was_backout:
             self.backout_mode_changed.emit(False)
 
+    @property
+    def tool_revision(self) -> int:
+        return self._tool_revision
+
     def _apply_cursor_mode(self, mode: str) -> None:
+        tool_state = (
+            mode,
+            (
+                self._annotation_place_type
+                if mode == CURSOR_MODE_ANNOTATION_PLACE
+                else None
+            ),
+            self._place_session_uid if mode == CURSOR_MODE_PLACE else None,
+        )
+        if tool_state != self._tool_state:
+            self._tool_state = tool_state
+            self._tool_revision += 1
         self._cursor_mode = mode
         self._persistent_cursor_mode = mode
         if mode != CURSOR_MODE_ZOOM and not self._right_pan_active:

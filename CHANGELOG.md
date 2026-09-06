@@ -4,6 +4,22 @@
 
 ### Fixed
 
+- Fixed the detached-Plan menu action remaining enabled with no valid Page even
+  though opening was rejected. It recovers with a Page and still allows closing
+  an existing detached window after its Page disappears.
+
+- Fixed detached Plan staying blank when an empty Bid receives its first Page
+  through deferred remote projection. The existing missing-Page fallback now
+  restores the Page, scale, and navigation without reopening the window.
+
+- Fixed open detached Plans retaining the removed database's Page and selection
+  after unload. Matching windows now clear content, navigation, scale, Area, and
+  local history immediately; unrelated database unloads leave them unchanged.
+
+- Fixed Main Plan retaining enabled navigation controls and stale zoom text after
+  its Page disappears. Controls now recover with a valid Page, and late zoom
+  notifications cannot refill the empty field.
+
 - Fixed remote Page display-mode changes leaving Main and detached 3D context
   menus checked against the previous mode after their textures refreshed.
 - Fixed Main and detached 3D page-image planes always rendering Original despite
@@ -59,10 +75,11 @@
   persistence projects the new name through the normal refresh.
 - Fixed stale Takeoff presentation state after empty/refresh transitions. An
   editable Bid with no layers can create its first layer, active-page removal
-  clears the deleted page's scale/Area controls without unloading the Bid, and
-  Condition Summary refreshes retain the current surviving row and branch
-  expansion. Failed layer deletion now restores the authoritative list and
-  reports the correct Access or SQL operation instead of failing silently or
+  clears the deleted page's scale/Area controls without unloading the Bid,
+  reopening a deleted detached Page disables Previous/Next until a valid Page
+  becomes available, and Condition Summary refreshes retain the current surviving
+  row and branch expansion. Failed layer deletion now restores the authoritative
+  list and reports the correct Access or SQL operation instead of failing silently or
   presenting a generic update error. Rejected SQL Check/Uncheck All operations
   restore each layer's prior visibility. Layer dialog visibility refreshes retain
   surviving selections, the current row, and scroll position, and failed layer
@@ -314,6 +331,16 @@
   source rows, reference clipboards are invalidated when their database unloads,
   and late cut completions cannot clear newer clipboard work. Main and detached
   Plan clipboards recognize equivalent Windows paths for the same database.
+  Delayed paste results no longer replace a newer selection or restore cleared
+  handles after navigation, another paste, or a rejected save; uninterrupted
+  pastes retain their normal result selection and rollback behavior.
+  Geometry/property-save and delete completions likewise preserve newer Main
+  and detached selections, including after Undo/Redo, while authoritative
+  rollback and history recording still complete. Annotation insertion respects
+  newer selection or tool intent and does not reactivate its old tool over that
+  intent, even when selection stays unchanged or empty. Annotation-only
+  selection, deletion, and recovery immediately update Main Copy, Delete, and
+  Duplicate actions.
   Mixed annotation paste/delete history, SQL import and recovery correlation,
   dirty previews, selection, and pending completion state now keep table-scoped
   annotation IDs distinct by type across Main and detached Plan rebuilds.
