@@ -36,9 +36,7 @@ class _Cursor:
         return result
 
     def fetchall(self):
-        if self.executed and self.executed[-1][0].startswith(
-            "SELECT [UID], [BidUID]"
-        ):
+        if self.executed and self.executed[-1][0].startswith("SELECT [UID], [BidUID]"):
             return [(self._parameters[0], 7)]
         return [(self._parameters[0],)] if self._parameters else []
 

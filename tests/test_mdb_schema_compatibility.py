@@ -1876,9 +1876,7 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 connection.close()
             cleanup_writer = MdbWriter()
             try:
-                self.assertTrue(
-                    cleanup_writer.delete_pages(str(db_path), ["200"])
-                )
+                self.assertTrue(cleanup_writer.delete_pages(str(db_path), ["200"]))
                 self.assertTrue(
                     cleanup_writer.delete_pages(str(db_path), [duplicate_page_uid])
                 )

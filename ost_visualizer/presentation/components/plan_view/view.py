@@ -113,6 +113,7 @@ from ...visualization.pdf.services.page_render_prefetch_coordinator import (
     PageRenderPrefetchCoordinator,
 )
 from ...visualization.utils.image_effects import page_effect_paper_color
+from ...visualization.utils.source_signature import source_file_signature
 from ..viewer_cursors import OUTLINE_OFFSETS, recolor_pixmap
 from .components.drag_handler import DragHandlerMixin
 from .components.geometry_utils import HandleInfo, polygon_centroid
@@ -2408,6 +2409,8 @@ class TakeoffPlanView(
             "page_index": page.page_index,
             "image_path": page.image_path or "",
             "overlay_image_path": page.overlay_image_path or "",
+            "image_signature": source_file_signature(page.image_path or ""),
+            "overlay_signature": source_file_signature(page.overlay_image_path or ""),
             "show_mode": page.image_show_mode,
             "rotation": page.rotation,
             "flip_x": page.flip_x,

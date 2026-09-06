@@ -1,7 +1,7 @@
 from __future__ import annotations
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Optional, Sequence
 from PySide6 import QtGui
 from ...application.dtos.mesh_geometry_dto import normalize_scene_page_uids
@@ -11,6 +11,9 @@ from ...application.render_quality import (
 )
 from ...domain.services.page_image_plane_transform import native_page_plane_transform
 from .pdf.page_cache import PageCache
+from .pdf.services.composite_renderer import CompositeRenderer
+from .utils.image_effects import apply_page_image_effects
+from ..utils.image_show_mode import mode_to_flags
 
 NATIVE_PLAN_TEXTURE_MAX_DIMENSION = 4096
 NATIVE_PLAN_TEXTURE_MAX_PIXELS = min(
@@ -48,6 +51,7 @@ class NativePageImagePlaneProvider:
         self._project_data = project_data_service
         self._ui_state = ui_state_manager
         self._page_cache = page_cache
+        self._composite_renderer = CompositeRenderer(page_cache)
         self._page_metadata = page_metadata_service
 
     def build_for_scene(
@@ -59,7 +63,15 @@ class NativePageImagePlaneProvider:
         if rendered_page_uid not in page_floor_elevations:
             return None
         page = self._project_data.get_page(rendered_page_uid)
-        if not page or not page.image_path or not os.path.isfile(page.image_path):
+        if not page:
+            return None
+        show_original, show_overlay = mode_to_flags(page.image_show_mode)
+        source_path = (
+            page.image_path
+            if show_original and page.image_path
+            else page.overlay_image_path if show_overlay else None
+        )
+        if not source_path or not os.path.isfile(source_path):
             return None
         page_entries = self._page_metadata.build_pages([rendered_page_uid])
         if not page_entries:
@@ -78,12 +90,35 @@ class NativePageImagePlaneProvider:
             float(page_entry["width"] or 0.0),
             float(page_entry["height"] or 0.0),
         )
-        image = self._page_cache.get_page(
-            page.image_path,
-            int(page_entry["pdf_page_index"] or 0),
-            render_scale,
-            int(page_entry["rotation"] or 0),
-        )
+        unrotated_page = replace(page, rotation=0, flip_x=False, flip_y=False)
+        if show_original and page.image_path:
+            if show_overlay and page.overlay_image_path:
+                image = self._composite_renderer.render_composite(
+                    unrotated_page,
+                    self._project_data.get_current_bid_ref(),
+                    render_scale,
+                    0,
+                )
+            else:
+                image = self._page_cache.get_page(
+                    page.image_path, page.page_index, render_scale, 0
+                )
+        elif show_overlay and page.overlay_image_path:
+            image = self._composite_renderer.render_overlay_only(
+                unrotated_page,
+                render_scale,
+                tint_rgb=(80, 80, 255) if show_original else None,
+            )
+        else:
+            return None
+        if image is not None and not image.isNull():
+            image = apply_page_image_effects(
+                image, invert=page.invert, bitonal=page.bitonal
+            )
+            transform_image = QtGui.QTransform()
+            transform_image.rotate(-int(page.rotation or 0))
+            transform_image.scale(-1 if page.flip_x else 1, -1 if page.flip_y else 1)
+            image = image.transformed(transform_image)
         rgba = qimage_to_rgba_bytes(image)
         if rgba is None:
             return None

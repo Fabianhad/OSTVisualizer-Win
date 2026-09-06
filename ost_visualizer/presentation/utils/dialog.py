@@ -126,6 +126,7 @@ class BasePickerDialog(BaseListDialog):
         self._selected_uid: Optional[str] = selected_uid or None
         self._interactive: bool = True
         self._used_uids: Set[str] = {str(u) for u in (used_uids or set())}
+        self._persisted_deleted_uids: Set[str] = set()
         self._accept_button_text = accept_button_text
         self._show_cancel_button = show_cancel_button
         self._accept_requires_selection = accept_requires_selection
@@ -160,7 +161,7 @@ class BasePickerDialog(BaseListDialog):
         )
         self.tree.itemSelectionChanged.connect(self._update_button_states)
         self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self.tree.itemChanged.connect(self._on_item_changed)
+        self.tree.itemChanged.connect(self._on_tree_item_changed)
         self._configure_tree()
         content_row.addWidget(self.tree, 1)
         btn_layout = QtWidgets.QVBoxLayout()
@@ -279,10 +280,15 @@ class BasePickerDialog(BaseListDialog):
             if (uid := item.data(self._uid_col, self._UID_ROLE)) in to_delete_uids
             and not str(uid).startswith("new_")
         ]
+
+        def deleted(_mapping=None) -> None:
+            self._persisted_deleted_uids.update(str(uid) for uid in real_deleted)
+            self._remove_selected_items(selected, to_delete_uids)
+
         if real_deleted and self._save_async_fn:
             self._run_async_save(
                 {"new": [], "updated": [], "deleted_uids": real_deleted},
-                lambda _mapping: self._remove_selected_items(selected, to_delete_uids),
+                deleted,
             )
             return
         if real_deleted and self._save_fn:
@@ -291,7 +297,13 @@ class BasePickerDialog(BaseListDialog):
             )
             if not save_result_succeeded(result):
                 return
+            deleted()
+            return
         self._remove_selected_items(selected, to_delete_uids)
+
+    @property
+    def persisted_deleted_uids(self) -> frozenset[str]:
+        return frozenset(self._persisted_deleted_uids)
 
     def _remove_selected_items(self, selected, to_delete_uids) -> None:
         for item in selected:
@@ -310,6 +322,13 @@ class BasePickerDialog(BaseListDialog):
 
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         pass
+
+    def _on_tree_item_changed(
+        self, item: QtWidgets.QTreeWidgetItem, column: int
+    ) -> None:
+        self._on_item_changed(item, column)
+        if column == self._name_col:
+            self._on_find_changed(self.edit_find.text())
 
     def _update_button_states(self) -> None:
         if not self._interactive:
@@ -345,16 +364,19 @@ class BasePickerDialog(BaseListDialog):
         if not self._save_fn or self._save_done:
             return True
         self._pre_save()
-        self._items = [r for r in self._items if not r["is_new"] or r["name"].strip()]
-        new_items = [r for r in self._items if r["is_new"]]
-        updated = [r for r in self._items if not r["is_new"]]
+        save_items = [r for r in self._items if not r["is_new"] or r["name"].strip()]
+        new_items = [r for r in save_items if r["is_new"]]
+        updated = [r for r in save_items if not r["is_new"]]
         if new_items or updated:
             result = self._save_fn(
                 {"new": new_items, "updated": updated, "deleted_uids": []}
             )
             if not save_result_succeeded(result):
                 return False
+            self._items = save_items
             self._post_save(save_result_mapping(result))
+        else:
+            self._items = save_items
         self._save_done = True
         return True
 
@@ -404,23 +426,25 @@ class BasePickerDialog(BaseListDialog):
             and not self._save_done
         ):
             self._pre_save()
-            self._items = [
+            save_items = [
                 record
                 for record in self._items
                 if not record["is_new"] or record["name"].strip()
             ]
-            new_items = [record for record in self._items if record["is_new"]]
-            updated = [record for record in self._items if not record["is_new"]]
+            new_items = [record for record in save_items if record["is_new"]]
+            updated = [record for record in save_items if not record["is_new"]]
             if new_items or updated:
                 self._run_async_save(
                     {"new": new_items, "updated": updated, "deleted_uids": []},
                     lambda mapping: self._complete_async_accept(result, mapping),
                 )
                 return
+            self._items = save_items
             self._save_done = True
         super().done(result)
 
     def _complete_async_accept(self, result: int, mapping: Dict[str, Any]) -> None:
+        self._items = [r for r in self._items if not r["is_new"] or r["name"].strip()]
         self._post_save(mapping)
         self._save_done = True
         super().done(result)
@@ -430,6 +454,7 @@ class BasePickerDialog(BaseListDialog):
 
     def _on_cleanup(self) -> None:
         self._items.clear()
+        self._persisted_deleted_uids.clear()
 
     def closeEvent(self, event) -> None:
         self.setFocus()

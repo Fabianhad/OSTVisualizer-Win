@@ -17,9 +17,7 @@ class _Cursor:
         return self
 
     def fetchall(self):
-        if self._last_sql.startswith(
-            "SELECT [UID], [BidUID] FROM [BidLayers]"
-        ):
+        if self._last_sql.startswith("SELECT [UID], [BidUID] FROM [BidLayers]"):
             return [(10, 7), (11, 7)]
         if self._last_sql.startswith("SELECT [UID] FROM [Bids]"):
             return [(7,)]

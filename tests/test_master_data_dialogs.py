@@ -243,9 +243,7 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         )
         self.bar.load_page("page-1", 1.0, 1.0, "area-1")
         self.bar.set_interactive(True)
-
         self.bar.clear_page()
-
         self.assertEqual(self.bar._bid_ref, bid_ref)
         self.assertIsNone(self.bar._page_uid)
         self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
@@ -1816,6 +1814,38 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             {"job_status", "job_statuses_collection"},
         )
 
+    def test_master_picker_rename_reapplies_active_filter(self):
+        for factory, query in (
+            (self._payroll_class_dialog_with_save, "Regular"),
+            (self._job_status_dialog_with_save, "Bidding"),
+        ):
+            with self.subTest(dialog=factory.__name__):
+                dialog = factory(lambda _changes: {})
+                try:
+                    dialog.show()
+                    self.app.processEvents()
+                    dialog.edit_find.setText(query)
+                    item = dialog.tree.topLevelItem(0)
+                    uid = item.data(dialog._uid_col, dialog._UID_ROLE)
+                    dialog.tree.setCurrentItem(item)
+                    dialog.tree.editItem(item, dialog._edit_col)
+                    editor = dialog.tree.viewport().focusWidget()
+                    self.assertIsInstance(editor, QtWidgets.QLineEdit)
+                    editor.selectAll()
+                    QTest.keyClicks(editor, "Different name")
+                    QTest.keyClick(editor, QtCore.Qt.Key.Key_Return)
+                    self.app.processEvents()
+                    self.assertEqual(item.text(dialog._name_col), "Different name")
+                    self.assertTrue(item.isHidden())
+                    self.assertFalse(dialog.btn_delete.isEnabled())
+                    dialog.edit_find.clear()
+                    self.assertFalse(item.isHidden())
+                    self.assertEqual(item.data(dialog._uid_col, dialog._UID_ROLE), uid)
+                finally:
+                    dialog.close()
+                    dialog.cleanup()
+                    dialog.deleteLater()
+
     def test_base_picker_does_not_accept_when_save_returns_false(self):
         dialog = self._payroll_class_dialog_with_save(lambda _changes: False)
         try:
@@ -1826,6 +1856,77 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_master_picker_rejected_save_keeps_blank_draft_editable_for_retry(self):
+        for factory in (
+            self._payroll_class_dialog_with_save,
+            self._job_status_dialog_with_save,
+        ):
+            for asynchronous in (False, True):
+                with self.subTest(dialog=factory.__name__, asynchronous=asynchronous):
+                    submissions = []
+                    completions = []
+
+                    def save(changes):
+                        submissions.append(
+                            {
+                                key: [dict(row) for row in changes[key]]
+                                for key in ("new", "updated")
+                            }
+                        )
+                        return (
+                            False if len(submissions) == 1 else {"new_0": "created-1"}
+                        )
+
+                    def queue(changes, completed):
+                        save(changes)
+                        completions.append(completed)
+                        return True
+
+                    dialog = factory(save)
+                    if asynchronous:
+                        dialog._save_async_fn = queue
+                    try:
+                        dialog.show()
+                        self.app.processEvents()
+                        dialog.btn_new.click()
+                        editor = dialog.tree.findChild(QtWidgets.QLineEdit)
+                        self.assertIsNotNone(editor)
+                        QTest.keyClick(editor, QtCore.Qt.Key.Key_Escape)
+                        self.app.processEvents()
+                        draft = dialog.tree.currentItem()
+                        self.assertEqual(draft.text(dialog._name_col), "")
+                        dialog.btn_select.click()
+                        if asynchronous:
+                            completions.pop()(False, None)
+                        self.assertTrue(dialog.isVisible())
+                        self.assertTrue(dialog.btn_new.isEnabled())
+                        dialog.tree.editItem(draft, dialog._edit_col)
+                        editor = dialog.tree.viewport().focusWidget()
+                        self.assertIsNotNone(editor)
+                        self.assertIsInstance(editor, QtWidgets.QLineEdit)
+                        QTest.keyClicks(editor, "New record")
+                        QTest.keyClick(editor, QtCore.Qt.Key.Key_Return)
+                        self.app.processEvents()
+                        self.assertEqual(draft.text(dialog._name_col), "New record")
+                        dialog.btn_select.click()
+                        if asynchronous:
+                            completions.pop()(True, {"new_0": "created-1"})
+                        self.assertEqual(
+                            [row["name"] for row in submissions[-1]["new"]],
+                            ["New record"],
+                        )
+                        self.assertEqual(
+                            dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
+                        )
+                        self.assertIn(
+                            "New record",
+                            [item.name for item in dialog.get_result().items],
+                        )
+                    finally:
+                        dialog.close()
+                        dialog.cleanup()
+                        dialog.deleteLater()
 
     def test_employees_dialog_does_not_accept_when_save_returns_false(self):
         dialog = self._employee_dialog_with_save(lambda _changes: False)
@@ -1911,6 +2012,331 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_employee_pay_class_save_retry_refreshes_parent_once_by_uid(self):
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                submissions = []
+
+                def save(changes):
+                    submissions.append(changes)
+                    return False if len(submissions) == 1 else {"new_0": "pay-b"}
+
+                def queue(changes, completed):
+                    result = save(changes)
+                    completed(result is not False, result)
+                    return True
+
+                parent = EmployeeDetailDialog(
+                    FakeIconProvider(),
+                    [
+                        EmployeeRecord(
+                            uid="emp-1",
+                            employee_no="1",
+                            first_name="Ava",
+                            pay_class_uid="pay-a",
+                        )
+                    ],
+                    0,
+                    make_workspace_state_model(),
+                    pay_classes=[
+                        PayClass(uid="pay-a", name="Regular"),
+                        PayClass(uid="sibling", name="Regular"),
+                    ],
+                    pay_classes_save_fn=save,
+                    pay_classes_save_async_fn=queue if asynchronous else None,
+                )
+                errors = []
+
+                def exercise_nested():
+                    child = parent._active_payroll_dialog
+                    try:
+                        original = child.tree.currentItem()
+                        self.assertEqual(original.data(0, child._UID_ROLE), "pay-a")
+                        original.setText(0, "Renamed pay class")
+                        child.btn_new.click()
+                        editor = child.tree.viewport().focusWidget()
+                        self.assertIsInstance(editor, QtWidgets.QLineEdit)
+                        QTest.keyClicks(editor, "Created pay class")
+                        QTest.keyClick(editor, QtCore.Qt.Key.Key_Return)
+                        child.tree.setCurrentItem(original)
+                        child.btn_select.click()
+                        self.assertTrue(child.isVisible())
+                        self.assertTrue(child.btn_select.isEnabled())
+                        self.assertEqual(
+                            parent.combo_pay_class.currentText(), "Regular"
+                        )
+                        child.btn_select.click()
+                    except BaseException as exc:
+                        errors.append(exc)
+                    finally:
+                        if child.isVisible():
+                            child.reject()
+
+                try:
+                    parent.edit_first_name.setText("Unsaved employee")
+                    with patch.object(
+                        parent,
+                        "_populate_pay_class_combo",
+                        wraps=parent._populate_pay_class_combo,
+                    ) as refresh:
+                        QtCore.QTimer.singleShot(0, exercise_nested)
+                        parent._btn_pay_class_picker.click()
+                        self.assertEqual(refresh.call_count, 1)
+                    if errors:
+                        raise errors[0]
+                    self.assertEqual(len(submissions), 2)
+                    self.assertEqual(parent.combo_pay_class.currentData(), "pay-a")
+                    self.assertEqual(
+                        parent.combo_pay_class.currentText(), "Renamed pay class"
+                    )
+                    self.assertEqual(parent.edit_first_name.text(), "Unsaved employee")
+                    self.assertEqual(parent.get_current_uid(), "emp-1")
+                    self.assertEqual(
+                        {
+                            parent.combo_pay_class.itemData(i)
+                            for i in range(parent.combo_pay_class.count())
+                        },
+                        {"pay-a", "pay-b", "sibling"},
+                    )
+                finally:
+                    parent.close()
+                    parent.cleanup()
+                    parent.deleteLater()
+
+    def test_employee_pay_class_cancel_projects_only_committed_deletions(self):
+        for asynchronous in (False, True):
+            for deletion_succeeds in (False, True):
+                with self.subTest(
+                    asynchronous=asynchronous, deletion_succeeds=deletion_succeeds
+                ):
+                    persisted = [
+                        PayClass(uid="pay-a", name="Regular"),
+                        PayClass(uid="pay-b", name="Regular"),
+                    ]
+                    writes = []
+
+                    def save(changes):
+                        writes.append(changes)
+                        if not deletion_succeeds:
+                            return False
+                        persisted[:] = [
+                            pc
+                            for pc in persisted
+                            if pc.uid not in changes["deleted_uids"]
+                        ]
+                        return {}
+
+                    def queue(changes, completed):
+                        result = save(changes)
+                        completed(result is not False, result)
+                        return True
+
+                    employee = EmployeeRecord(
+                        uid="emp-1",
+                        employee_no="1",
+                        first_name="Ava",
+                        pay_class_uid="pay-a",
+                    )
+                    parent = EmployeeDetailDialog(
+                        FakeIconProvider(),
+                        [employee],
+                        0,
+                        make_workspace_state_model(),
+                        pay_classes=persisted,
+                        pay_classes_save_fn=save,
+                        pay_classes_save_async_fn=queue if asynchronous else None,
+                    )
+                    errors = []
+
+                    def exercise_nested():
+                        child = parent._active_payroll_dialog
+                        try:
+                            retained = next(
+                                child.tree.topLevelItem(i)
+                                for i in range(child.tree.topLevelItemCount())
+                                if child.tree.topLevelItem(i).data(0, child._UID_ROLE)
+                                == "pay-a"
+                            )
+                            removed = next(
+                                child.tree.topLevelItem(i)
+                                for i in range(child.tree.topLevelItemCount())
+                                if child.tree.topLevelItem(i).data(0, child._UID_ROLE)
+                                == "pay-b"
+                            )
+                            retained.setText(0, "Unsaved rename")
+                            child.tree.setCurrentItem(removed)
+                            with patch(
+                                "ost_visualizer.presentation.utils.dialog.confirm_multi_delete",
+                                return_value=[("Regular", "pay-b")],
+                            ):
+                                child.btn_delete.click()
+                        except BaseException as exc:
+                            errors.append(exc)
+                        finally:
+                            child.reject()
+
+                    try:
+                        parent.edit_first_name.setText("Unsaved employee")
+                        with patch.object(
+                            parent,
+                            "_populate_pay_class_combo",
+                            wraps=parent._populate_pay_class_combo,
+                        ) as refresh:
+                            QtCore.QTimer.singleShot(0, exercise_nested)
+                            parent._btn_pay_class_picker.click()
+                            self.assertEqual(refresh.call_count, int(deletion_succeeds))
+                        if errors:
+                            raise errors[0]
+                        self.assertEqual(len(writes), 1)
+                        self.assertEqual(
+                            [
+                                (
+                                    parent.combo_pay_class.itemData(i),
+                                    parent.combo_pay_class.itemText(i),
+                                )
+                                for i in range(parent.combo_pay_class.count())
+                            ],
+                            [(pc.uid, pc.name) for pc in persisted],
+                        )
+                        self.assertEqual(parent.combo_pay_class.currentData(), "pay-a")
+                        self.assertEqual(
+                            parent.combo_pay_class.currentText(), "Regular"
+                        )
+                        self.assertEqual(
+                            parent.edit_first_name.text(), "Unsaved employee"
+                        )
+                        self.assertEqual(parent.get_current_uid(), "emp-1")
+                    finally:
+                        parent.close()
+                        parent.cleanup()
+                        parent.deleteLater()
+
+    def test_condition_type_delete_preserves_surviving_selection_after_reordered_reload(
+        self,
+    ):
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                persisted = [
+                    CdnType(uid=str(i), name=f"Match {i:02}") for i in range(60)
+                ]
+
+                def save(changes):
+                    persisted[:] = [
+                        item
+                        for item in persisted
+                        if item.uid not in changes["deleted_uids"]
+                    ]
+                    persisted.insert(0, CdnType(uid="new", name="Match 00 added"))
+                    return {}
+
+                def queue(changes, completed):
+                    completed(True, save(changes))
+                    return True
+
+                dialog = ConditionTypesDialog(
+                    FakeIconProvider(),
+                    condition_types=persisted,
+                    save_fn=save,
+                    save_async_fn=queue if asynchronous else None,
+                    reload_fn=lambda: list(persisted),
+                )
+                try:
+                    dialog.show()
+                    self.app.processEvents()
+                    dialog.edit_find.setText("Match")
+                    dialog.tree.setCurrentItem(dialog.tree.topLevelItem(30))
+                    dialog.tree.topLevelItem(31).setSelected(True)
+                    dialog.tree.topLevelItem(32).setSelected(True)
+                    dialog.tree.verticalScrollBar().setValue(20)
+                    scroll = dialog.tree.verticalScrollBar().value()
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.condition_types_dialog.confirm_multi_delete",
+                        return_value=[("Match 31", "31")],
+                    ):
+                        dialog.btn_delete.click()
+                    self.app.processEvents()
+                    self.assertEqual(
+                        {
+                            item.data(0, dialog._UID_ROLE)
+                            for item in dialog.tree.selectedItems()
+                        },
+                        {"30", "32"},
+                    )
+                    self.assertEqual(
+                        dialog.tree.currentItem().data(0, dialog._UID_ROLE), "30"
+                    )
+                    self.assertEqual(dialog.tree.verticalScrollBar().value(), scroll)
+                    self.assertEqual(dialog.edit_find.text(), "Match")
+                    self.assertTrue(dialog.btn_delete.isEnabled())
+                    self.assertFalse(dialog.btn_select.isEnabled())
+                finally:
+                    dialog.close()
+                    dialog.cleanup()
+                    dialog.deleteLater()
+
+    def test_condition_type_delete_last_filter_match_does_not_select_hidden_row(self):
+        for asynchronous in (False, True):
+            for success in (False, True):
+                with self.subTest(asynchronous=asynchronous, success=success):
+                    persisted = [
+                        CdnType(uid="a", name="Alpha"),
+                        CdnType(uid="b", name="Match"),
+                        CdnType(uid="c", name="Zulu"),
+                    ]
+
+                    def save(changes):
+                        if not success:
+                            return False
+                        persisted[:] = [
+                            item
+                            for item in persisted
+                            if item.uid not in changes["deleted_uids"]
+                        ]
+                        return {}
+
+                    def queue(changes, completed):
+                        result = save(changes)
+                        completed(result is not False, result)
+                        return True
+
+                    dialog = ConditionTypesDialog(
+                        FakeIconProvider(),
+                        condition_types=persisted,
+                        current_uid="b",
+                        save_fn=save,
+                        save_async_fn=queue if asynchronous else None,
+                        reload_fn=lambda: list(persisted),
+                    )
+                    try:
+                        dialog.edit_find.setText("Match")
+                        with (
+                            patch(
+                                "ost_visualizer.presentation.dialogs.condition_types_dialog.confirm_multi_delete",
+                                return_value=[("Match", "b")],
+                            ),
+                            patch(
+                                "ost_visualizer.presentation.dialogs.condition_types_dialog.show_warning"
+                            ),
+                        ):
+                            dialog.btn_delete.click()
+                        self.assertEqual(dialog.edit_find.text(), "Match")
+                        if success:
+                            self.assertIsNone(dialog.tree.currentItem())
+                            self.assertEqual(dialog.tree.selectedItems(), [])
+                            self.assertFalse(dialog.btn_select.isEnabled())
+                            self.assertFalse(dialog.btn_delete.isEnabled())
+                            dialog.edit_find.clear()
+                            self.assertIsNone(dialog.tree.currentItem())
+                        else:
+                            self.assertEqual(
+                                dialog.tree.currentItem().data(0, dialog._UID_ROLE), "b"
+                            )
+                            self.assertTrue(dialog.btn_delete.isEnabled())
+                    finally:
+                        dialog.close()
+                        dialog.cleanup()
+                        dialog.deleteLater()
 
     def test_employee_detail_preserves_selected_duplicate_pay_class_uid(self):
         employees = [
@@ -2990,6 +3416,144 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 dialog._on_delete()
             self.assertEqual(delete_many_calls, [["layer-1", "layer-2"]])
             self.assertEqual(reload_calls, ["reload"])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_layers_dialog_write_exceptions_report_once_and_restore_values(self):
+        for operation in ("rename", "visibility", "all_visibility", "move"):
+            with self.subTest(operation=operation):
+                layers = [
+                    self._layer("1", "Original", 1),
+                    self._layer("2", "Second", 2),
+                ]
+                writes = []
+
+                def reject(*args):
+                    writes.append(args)
+                    raise RuntimeError("Database write rejected")
+
+                dialog = LayersDialog(
+                    FakeIconProvider(),
+                    layers=layers,
+                    reload_fn=lambda: list(layers),
+                    update_name_fn=reject,
+                    update_show_fn=reject,
+                    update_all_show_fn=reject,
+                    move_fn=reject,
+                )
+                try:
+                    dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
+                    ) as warning:
+                        if operation == "rename":
+                            dialog.tree.topLevelItem(0).setText(2, "Unpersisted")
+                        elif operation == "visibility":
+                            dialog._checkboxes[0].click()
+                        elif operation == "all_visibility":
+                            dialog.btn_uncheck_all.click()
+                        else:
+                            dialog.btn_move_down.click()
+                    self.assertEqual(len(writes), 1)
+                    self.assertEqual(warning.call_count, 1)
+                    self.assertEqual(
+                        warning.call_args.args[2], "Database write rejected"
+                    )
+                    self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Original")
+                    self.assertEqual(
+                        [box.isChecked() for box in dialog._checkboxes], [True, True]
+                    )
+                    self.assertEqual(
+                        dialog.tree.currentItem().data(0, dialog._UID_ROLE), "1"
+                    )
+                    self.assertTrue(dialog.btn_select.isEnabled())
+                finally:
+                    dialog.close()
+                    dialog.cleanup()
+                    dialog.deleteLater()
+
+    def test_layers_dialog_bulk_visibility_completion_preserves_view_state(self):
+        for success in (False, True):
+            with self.subTest(success=success):
+                layers = [self._layer(str(i), f"Layer {i}", i) for i in range(1, 61)]
+                callbacks = []
+                dialog = LayersDialog(
+                    FakeIconProvider(),
+                    layers=layers,
+                    reload_fn=lambda: list(layers),
+                    update_all_show_async_fn=lambda _show, completed: callbacks.append(
+                        completed
+                    )
+                    or True,
+                )
+                try:
+                    dialog.show()
+                    self.app.processEvents()
+                    dialog.tree.setCurrentItem(dialog.tree.topLevelItem(30))
+                    dialog.tree.topLevelItem(32).setSelected(True)
+                    dialog.tree.verticalScrollBar().setValue(20)
+                    scroll = dialog.tree.verticalScrollBar().value()
+                    dialog.btn_uncheck_all.click()
+                    self.assertFalse(dialog.btn_uncheck_all.isEnabled())
+                    if success:
+                        for layer in layers:
+                            layer.show = False
+                    callbacks.pop()(success)
+                    self.app.processEvents()
+                    self.assertEqual(
+                        {
+                            item.data(0, dialog._UID_ROLE)
+                            for item in dialog.tree.selectedItems()
+                        },
+                        {"31", "33"},
+                    )
+                    self.assertEqual(
+                        dialog.tree.currentItem().data(0, dialog._UID_ROLE), "31"
+                    )
+                    self.assertEqual(dialog.tree.verticalScrollBar().value(), scroll)
+                    self.assertTrue(dialog.btn_delete.isEnabled())
+                    self.assertFalse(dialog.btn_select.isEnabled())
+                    self.assertEqual(
+                        [box.isChecked() for box in dialog._checkboxes],
+                        [not success] * 60,
+                    )
+                finally:
+                    dialog.close()
+                    dialog.cleanup()
+                    dialog.deleteLater()
+
+    def test_layers_dialog_checkbox_refresh_preserves_surviving_selection_by_uid(self):
+        layers = [self._layer(str(i), f"Layer {i}", i) for i in range(1, 5)]
+        callbacks = []
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=layers,
+            reload_fn=lambda: list(layers),
+            update_show_async_fn=lambda _uid, _show, completed: callbacks.append(
+                completed
+            )
+            or True,
+        )
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(1))
+            dialog.tree.topLevelItem(2).setSelected(True)
+            dialog._checkboxes[0].click()
+            # The authoritative reload removes the current row and reorders survivors.
+            layers[:] = [layers[3], layers[2], layers[0]]
+            layers[-1].show = False
+            callbacks.pop()(True)
+            self.assertEqual(
+                [
+                    item.data(0, dialog._UID_ROLE)
+                    for item in dialog.tree.selectedItems()
+                ],
+                ["3"],
+            )
+            self.assertIsNone(dialog.tree.currentItem())
+            self.assertTrue(dialog.btn_select.isEnabled())
+            self.assertFalse(dialog._checkboxes[-1].isChecked())
         finally:
             dialog.close()
             dialog.cleanup()

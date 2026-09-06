@@ -22,7 +22,7 @@ def update_zoom_combo(combo: QtWidgets.QComboBox, factor: float) -> None:
     line_edit_was_blocked = line_edit.blockSignals(True)
     try:
         combo.setCurrentIndex(-1)
-        line_edit.setText(f"{int(factor * 100)}%")
+        line_edit.setText(f"{factor * 100:.0f}%")
     finally:
         line_edit.blockSignals(line_edit_was_blocked)
         combo.blockSignals(combo_was_blocked)

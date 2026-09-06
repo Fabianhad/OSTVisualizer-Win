@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import isclose
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
 from ..actions.action_ids import (
@@ -16,6 +17,7 @@ from ..components.condition_summary import ConditionSummaryTab
 from ..components.conditions_sidebar import ConditionsSidebar
 from ..components.layers_sidebar import BidLayersSidebar
 from ..components.mesh_view import OpenGLViewer
+from ..components.scene_navigation_controls import SceneNavigationControls
 from ..components.page_combo import PageComboBox
 from ..components.page_settings_bar import PageSettingsBar
 from ..components.plan_view.view import TakeoffPlanView
@@ -543,14 +545,53 @@ class ComponentBuilder:
         zoom_combo.setCurrentIndex(-1)
         zoom_combo.setEditText("100%")
         _last_2d_zoom = [1.0]
+        _zoom_drafts = {}
         _popup_open = [False]
         zoom_combo.popup_shown.connect(lambda: _popup_open.__setitem__(0, True))
         zoom_combo.popup_hidden.connect(lambda: _popup_open.__setitem__(0, False))
 
+        def _zoom_context():
+            return (
+                ui_state_manager.get_selected_bid_ref(),
+                plan_view.current_page_uid,
+            )
+
         def _update_combo(factor: float) -> None:
+            index = view_stack.currentIndex()
+            draft = _zoom_drafts.get(index)
+            if draft is not None:
+                context, draft_factor, text = draft
+                if context == _zoom_context() and isclose(draft_factor, factor):
+                    with QtCore.QSignalBlocker(zoom_combo):
+                        zoom_combo.setCurrentIndex(-1)
+                        zoom_combo.setEditText(text)
+                    return
+                _zoom_drafts.pop(index)
             update_zoom_combo(zoom_combo, factor)
 
+        def _remember_zoom_draft(text: str) -> None:
+            index = view_stack.currentIndex()
+            factor = (
+                canvas.get_zoom_percent() / 100.0 if index == 0 else _last_2d_zoom[0]
+            )
+            _zoom_drafts[index] = (_zoom_context(), factor, text)
+
+        zoom_combo.lineEdit().textEdited.connect(_remember_zoom_draft)
+
+        def _discard_replaced_zoom_contexts() -> None:
+            context = _zoom_context()
+            for index, draft in list(_zoom_drafts.items()):
+                if draft[0] != context:
+                    _zoom_drafts.pop(index)
+
+        plan_view.page_geometry_ready.connect(_discard_replaced_zoom_contexts)
+
         def _on_zoom_changed(factor: float) -> None:
+            draft = _zoom_drafts.get(1)
+            if draft is not None and (
+                draft[0] != _zoom_context() or not isclose(draft[1], factor)
+            ):
+                _zoom_drafts.pop(1)
             _last_2d_zoom[0] = factor
             if view_stack.currentIndex() == 1:
                 _update_combo(factor)
@@ -561,6 +602,7 @@ class ComponentBuilder:
             percent = zoom_combo.itemData(index)
             if percent is None:
                 return
+            _zoom_drafts.pop(view_stack.currentIndex(), None)
             percent = float(percent)
             if view_stack.currentIndex() == 0:
                 canvas.set_zoom_percent(percent)
@@ -573,6 +615,7 @@ class ComponentBuilder:
                 _apply_zoom_combo_index(index)
 
         def _apply_zoom_text(text: str) -> None:
+            _zoom_drafts.pop(view_stack.currentIndex(), None)
             percent = parse_zoom_percent(text)
             if percent is None:
                 factor = (
@@ -683,6 +726,7 @@ class ComponentBuilder:
             ui_event_handler.refresh_toolbar()
 
         def _on_zoom_in() -> None:
+            _zoom_drafts.pop(view_stack.currentIndex(), None)
             if view_stack.currentIndex() == 0:
                 pct = canvas.get_zoom_percent() * VIEWER_ZOOM_FACTOR
                 canvas.set_zoom_percent(pct)
@@ -691,6 +735,7 @@ class ComponentBuilder:
                 plan_view.zoom_in()
 
         def _on_zoom_out() -> None:
+            _zoom_drafts.pop(view_stack.currentIndex(), None)
             if view_stack.currentIndex() == 0:
                 pct = canvas.get_zoom_percent() / VIEWER_ZOOM_FACTOR
                 canvas.set_zoom_percent(pct)
@@ -699,12 +744,30 @@ class ComponentBuilder:
                 plan_view.zoom_out()
 
         def _on_3d_zoom_changed(factor: float) -> None:
+            draft = _zoom_drafts.get(0)
+            if draft is not None and (
+                draft[0] != _zoom_context() or not isclose(draft[1], factor)
+            ):
+                _zoom_drafts.pop(0)
             if view_stack.currentIndex() == 0:
                 _update_combo(factor)
 
+        def _on_3d_content_changed() -> None:
+            if not canvas.has_renderable_content:
+                _zoom_drafts.pop(0, None)
+
         plan_view.zoom_changed.connect(_on_zoom_changed)
         canvas.zoom_changed.connect(_on_3d_zoom_changed)
+        canvas.scene_content_changed.connect(_on_3d_content_changed)
         view_stack.currentChanged.connect(_on_view_changed)
+        SceneNavigationControls(
+            canvas,
+            [pan_action, zoom_mode_action, fit_action, zoom_in_action, zoom_out_action],
+            zoom_combo,
+            viewer_container,
+            view_stack,
+            refresh_zoom_fn=lambda: _update_combo(canvas.get_zoom_percent() / 100.0),
+        )
         _TakeoffViewSelectorController(
             view_toolbar,
             view_stack,
@@ -812,6 +875,7 @@ class ComponentBuilder:
         plan_view.cursor_mode_change_requested.connect(_on_cursor_mode_change_requested)
 
         def _on_fit() -> None:
+            _zoom_drafts.pop(view_stack.currentIndex(), None)
             if view_stack.currentIndex() == 0:
                 canvas.reset_view()
                 _update_combo(canvas.get_zoom_percent() / 100.0)

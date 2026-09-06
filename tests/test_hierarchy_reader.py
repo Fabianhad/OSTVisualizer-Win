@@ -168,9 +168,7 @@ class HierarchyReaderTests(unittest.TestCase):
     def _hierarchy_connection(self, project_rows, bid_rows):
         connection = sqlite3.connect(":memory:")
         connection.execute("CREATE TABLE BidProjects (UID, Name TEXT)")
-        connection.execute(
-            "CREATE TABLE Bids (UID, BidProjectUID, JobName TEXT)"
-        )
+        connection.execute("CREATE TABLE Bids (UID, BidProjectUID, JobName TEXT)")
         connection.execute("CREATE TABLE BidPages (UID, BidUID, Name TEXT)")
         connection.execute("CREATE TABLE BidConditions (UID, BidUID)")
         connection.executemany("INSERT INTO BidProjects VALUES (?, ?)", project_rows)
@@ -206,6 +204,7 @@ class HierarchyReaderTests(unittest.TestCase):
                     _SqliteHierarchyReader(connection)._parse_hierarchy(
                         _SqliteConnection(connection), "malformed.mdb"
                     )
+
     def test_orphaned_page_folder_is_recovered_as_a_root(self):
         connection = _Connection(
             folder_rows=[(10, "Recovered", "", 999)],
@@ -250,12 +249,12 @@ class HierarchyReaderTests(unittest.TestCase):
             ((10, 1, "Recovered", 99), (99, 2, "Other bid", None)),
         )
         connection.execute("INSERT INTO BidPages VALUES (20, 1, 'A-101', 10)")
-        folders, pages_without_folder = (
-            _SqliteHierarchyReader(connection)._get_bid_folder_page_structure(
-                _SqliteConnection(connection),
-                "1",
-                _SqliteHierarchySchema(connection),
-            )
+        folders, pages_without_folder = _SqliteHierarchyReader(
+            connection
+        )._get_bid_folder_page_structure(
+            _SqliteConnection(connection),
+            "1",
+            _SqliteHierarchySchema(connection),
         )
         self.assertEqual(list(folders), ["10"])
         self.assertEqual([page.uid for page in folders["10"].pages], ["20"])
@@ -320,7 +319,10 @@ class HierarchyReaderTests(unittest.TestCase):
         self.assertEqual(list(folders["10"].subfolders), ["11"])
         self.assertEqual(list(folders["10"].subfolders["11"].subfolders), ["12"])
         self.assertEqual(
-            [item.uid for item in folders["10"].subfolders["11"].subfolders["12"].pages],
+            [
+                item.uid
+                for item in folders["10"].subfolders["11"].subfolders["12"].pages
+            ],
             ["20"],
         )
         self.assertEqual(pages_without_folder, [])

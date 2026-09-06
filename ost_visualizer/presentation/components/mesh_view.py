@@ -40,6 +40,7 @@ _CameraState = tuple[float, float, float, float, float, float, float]
 
 class OpenGLViewer(QtWidgets.QWidget):
     zoom_changed = Signal(float)
+    scene_content_changed = Signal()
     mesh_clicked = Signal(list)
     elements_deleted = Signal(list)
     assign_to_area_requested = Signal(list)
@@ -1068,6 +1069,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._reconcile_selected_takeoffs_with_scene()
         if is_same_bid and self._camera_initialized_for_scene:
             self._stabilize_preserved_camera_for_current_scene()
+        self.scene_content_changed.emit()
         if not self._has_renderable_content():
             if not is_same_bid or was_loading:
                 self._camera_initialized_for_scene = False
@@ -1111,6 +1113,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._renderer.clear_frame()
         self._current_plan_texture = None
         self._has_visible_plan_texture = False
+        self.scene_content_changed.emit()
         self.update()
 
     def prepare_scene_refresh(self, bid_ref: BidRef, page_uids: Sequence[str]) -> None:
@@ -1129,10 +1132,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         ):
             self._loading_bid_ref = None
             self._scene_refresh_pending = False
-            if self._render_suspended:
-                self.resume_rendering()
-            else:
-                self.update()
+            self.update_plan_texture()
             return
         is_new_bid = bid_ref != self._current_bid_ref
         if is_new_bid:
@@ -1151,6 +1151,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._current_plan_texture = None
         self._has_visible_plan_texture = False
         self.suspend_rendering()
+        self.scene_content_changed.emit()
         self.update()
 
     def _set_scene_request(self, bid_ref: BidRef, page_uids: Sequence[str]) -> None:
@@ -1269,6 +1270,10 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._current_plan_texture = data
         self._has_visible_plan_texture = bool(data.visible)
 
+    @property
+    def has_renderable_content(self) -> bool:
+        return self._has_renderable_content()
+
     def _has_renderable_content(self) -> bool:
         return bool(
             self._renderer
@@ -1276,6 +1281,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         )
 
     def _update_after_plan_texture_change(self) -> None:
+        self.scene_content_changed.emit()
         if not self._has_renderable_content():
             self.suspend_rendering()
             self.update()
@@ -1350,6 +1356,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._current_plan_texture = None
         self._has_visible_plan_texture = False
         self.suspend_rendering()
+        self.scene_content_changed.emit()
         self.update()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:

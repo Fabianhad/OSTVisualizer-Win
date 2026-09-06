@@ -98,7 +98,7 @@ from ...utils.named_view_validation import (
     show_duplicate_named_view_name,
 )
 from ...utils.plan_tool_registry import PlanToolSpec
-from ...utils.scales import ALL_SCALES
+from ...utils.scales import ALL_SCALES, format_custom_scale
 
 NamedViewEntry = Tuple[str, str, str, str]
 _PAGE_LOAD_TIMEOUT_MS = 5000
@@ -863,12 +863,19 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._scale_combo is None:
             return
         self._scale_combo.blockSignals(True)
+        if self._scale_combo.count() > len(ALL_SCALES):
+            self._scale_combo.removeItem(len(ALL_SCALES))
         idx = -1
         for i in range(self._scale_combo.count()):
             data = self._scale_combo.itemData(i)
             if data and abs(data[0] - sf1) < 1e-9 and abs(data[1] - sf2) < 1e-9:
                 idx = i
                 break
+        if idx < 0:
+            label = format_custom_scale(sf1, sf2)
+            if label:
+                idx = self._scale_combo.count()
+                self._scale_combo.addItem(label, (sf1, sf2))
         self._scale_combo.setCurrentIndex(idx)
         self._scale_combo.blockSignals(False)
 
@@ -888,6 +895,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _load_page_content(self) -> bool:
         page = self.page_data.page if self.page_data else None
         if not page:
+            if self._scale_combo is not None:
+                with QtCore.QSignalBlocker(self._scale_combo):
+                    self._scale_combo.setCurrentIndex(-1)
             self.plan_view.clear()
             self._reveal_named_view_blank_canvas()
             return False

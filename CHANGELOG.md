@@ -4,13 +4,69 @@
 
 ### Fixed
 
+- Fixed remote Page display-mode changes leaving Main and detached 3D context
+  menus checked against the previous mode after their textures refreshed.
+- Fixed Main and detached 3D page-image planes always rendering Original despite
+  Overlay/Both controls showing another mode, and omitting Overlay-only pages.
+  Textures now reuse the shared composition, overlay placement, and image-effect
+  pipeline. Local mode/effect changes and rejected display-mode saves update both
+  native textures; Overlay-only content participates in scene availability.
+  Image changes completed during failed regeneration now reach retained scenes,
+  and detached windows reopened while regeneration is pending recover the last
+  accepted scene on failure with current image state.
+- Fixed Main's shared zoom field discarding unsubmitted Plan and 3D text when
+  switching views. Drafts remain local to their view and expire on navigation,
+  zoom changes, explicit commands, or loss of accepted 3D content.
+- Fixed detached 3D context-menu Zoom In, Zoom Out, and Reset View targeting
+  Main's camera and using Main's scene availability. These commands now reuse
+  the detached window's toolbar actions and affect only its own camera.
+- Fixed menu refresh re-enabling Zoom In, Zoom Out, and Reset View for an empty
+  Main 3D scene, including the shared context-menu Zoom commands.
+- Fixed authoritative image refresh retaining old Plan pixels and 3D page-plane
+  textures when replacement content preserves both file size and modification
+  time. Targeted source revisions now invalidate affected cache entries without
+  hashing source files or clearing unrelated cached images.
+- Fixed terminal SQL Overlay replacement/removal failures being logged without
+  an operation error dialog. Rejections now use the shared error presenter;
+  conflict dialogs remain owned by the collaboration coordinator.
+- Fixed Main and detached Plan retaining old pixels after an image file changes
+  at the same path. Surface reuse now checks the same file modification-time and
+  size signature as the raster and composite caches, including effect rendering.
+- Fixed returning to Takeoff restoring stale enabled Pan/Zoom actions after the
+  accepted 3D scene became empty while another tab was active. Tab restoration
+  projects current scene availability through the shared camera-control policy.
+- Fixed Main and detached 3D camera controls retaining enabled actions and stale
+  zoom text after their last geometry or page-image plane disappears. Controls
+  follow accepted scene content, recover when content returns, and remain usable
+  when failed regeneration preserves an accepted scene. Zoom labels round the
+  actual camera percentage instead of truncating floating-point values such as
+  175% to 174%.
+- Fixed scale and Area presentation drift between Main and detached Plan views.
+  Detached scale controls display authoritative custom scales using the shared
+  formatter and clear when their page disappears. Rejected SQL Area changes
+  restore the Main Area picker along with both canvases.
+- Fixed nested master-data editors leaving their parents stale after closing.
+  Cancelling Pay Classes retains committed deletions in the Employee picker
+  without copying cancelled edits, and cancelling Cover Sheet Employee or Job
+  Status pickers preserves typed and cleared parent values. Condition Type
+  deletion preserves surviving selected UIDs and scroll position under filtering
+  instead of selecting an unrelated or hidden row by index.
+- Fixed Pay Class and Job Status editors silently omitting a new row on retry
+  after a rejected save that left the row blank. Draft rows remain editable until
+  saving succeeds, and inline renames immediately update active Find results.
+  Condition and Condition-folder inline renames retain their authoritative
+  labels when a prerequisite flush or SQL mutation is rejected; successful
+  persistence projects the new name through the normal refresh.
 - Fixed stale Takeoff presentation state after empty/refresh transitions. An
   editable Bid with no layers can create its first layer, active-page removal
   clears the deleted page's scale/Area controls without unloading the Bid, and
   Condition Summary refreshes retain the current surviving row and branch
   expansion. Failed layer deletion now restores the authoritative list and
   reports the correct Access or SQL operation instead of failing silently or
-  presenting a generic update error.
+  presenting a generic update error. Rejected SQL Check/Uncheck All operations
+  restore each layer's prior visibility. Layer dialog visibility refreshes retain
+  surviving selections, the current row, and scroll position, and failed layer
+  edits report one error instead of two consecutive warnings.
 - Fixed remaining infrastructure callers that bypassed canonical identity and
   optional-schema contracts. Access master-data creation and import now reserve
   UIDs still named by dangling Bid, Employee, or Condition references, while SQL

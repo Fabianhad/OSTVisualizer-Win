@@ -553,9 +553,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         connection.execute("CREATE TABLE BidNotes (UID INTEGER, BidUID INTEGER)")
         connection.execute("INSERT INTO BidNotes VALUES (10, 2)")
         writer = _SqliteMdbWriter(connection)
-
         max_uid = writer._get_max_uid(_SqliteConnection(connection))
-
         self.assertEqual(max_uid, 2)
 
     def test_page_area_reader_uses_import_export_duplicate_row_precedence(self):
@@ -803,13 +801,10 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                         ]
                     },
                 )
-
                 issues = validate_raw_bid_integrity(raw_data)
-
                 self.assertTrue(
                     any(
-                        issue.table == table
-                        and "ParentUID cycle" in issue.format()
+                        issue.table == table and "ParentUID cycle" in issue.format()
                         for issue in issues
                     ),
                     issues,
@@ -1074,9 +1069,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                         level="ERROR",
                     ) as logs:
                         self.assertFalse(
-                            OstImporter(writer).import_ost(
-                                str(ost_path), "target.mdb"
-                            )
+                            OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                         )
                 self.assertIn(f"{table}.UID=", logs.output[0])
                 self.assertIn("has malformed UID=", logs.output[0])
@@ -1115,9 +1108,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                         level="ERROR",
                     ) as logs:
                         self.assertFalse(
-                            OstImporter(writer).import_ost(
-                                str(ost_path), "target.mdb"
-                            )
+                            OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                         )
                 self.assertIn(expected, logs.output[0])
                 self.assertFalse(writer.called)
@@ -1224,7 +1215,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 self.assertFalse(
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
-        self.assertIn("BidAreas.UID=7 participates in a ParentUID cycle", logs.output[0])
+        self.assertIn(
+            "BidAreas.UID=7 participates in a ParentUID cycle", logs.output[0]
+        )
         self.assertFalse(writer.called)
 
     def test_access_and_sql_writers_receive_same_pruned_takeoff_graph(self):
@@ -1936,9 +1929,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 ),
                 RawBidData(
                     bid_row={"UID": "1"},
-                    global_tables={
-                        "PayClasses": [{"UID": "90", "Name": "New"}]
-                    },
+                    global_tables={"PayClasses": [{"UID": "90", "Name": "New"}]},
                 ),
                 lambda writer, connection, raw: writer._resolve_pay_classes(
                     connection, raw
@@ -1983,9 +1974,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 for statement in inserts:
                     connection.execute(statement)
                 writer = _SqliteMdbWriter(connection)
-
                 result = resolve(writer, _SqliteConnection(connection), raw_data)
-
                 self.assertEqual(result, expected)
                 self.assertEqual(
                     connection.execute(
@@ -2893,11 +2882,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (10, 2, 'Other')"
         )
         connection.commit()
-
         self.assertFalse(
             _SqliteMdbWriter(connection).save_page_area("target.mdb", "20", "10")
         )
-
         self.assertEqual(
             connection.execute("SELECT * FROM BidPageSettings").fetchall(), []
         )

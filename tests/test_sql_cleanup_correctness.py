@@ -963,7 +963,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "has not been generated"):
             str(uid)
 
-    def test_sql_writer_does_not_replace_deferred_identity_with_access_reference_max(self):
+    def test_sql_writer_does_not_replace_deferred_identity_with_access_reference_max(
+        self,
+    ):
         class _Cursor:
             def __init__(self):
                 self.execute_count = 0
@@ -997,10 +999,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             DatabaseSessionRegistry(),
         )
         cursor = _Cursor()
-
         with writer._backend_scope(descriptor.database_id):
             uid = writer._next_uid_preserving_references(cursor, _Schema(), "Bids")
-
         self.assertEqual(cursor.execute_count, 0)
         with self.assertRaisesRegex(RuntimeError, "has not been generated"):
             str(uid)
@@ -1213,7 +1213,6 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         writer._connection = connection
         writer.verify_plan_items_exist("database", "8", ("101",), ())
-
         sql, params = lease.cursor_value.executed
         self.assertIn("DECLARE @ExpectedBidUID bigint=?", sql)
         self.assertIn("target.[BidUID]<>@ExpectedBidUID", sql)
@@ -2049,9 +2048,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         writer = SqlProjectWriter.__new__(SqlProjectWriter)
         writer._connection = lambda _database_id: connection
         writer._schema = lambda _connection: Schema()
-
         writer._run_delete_takeoffs("sql-db", [7], ACCESS_BULK_CHUNK_SIZE)
-
         for column in (
             "ParentUID",
             "TypGroupTakeoffUID",

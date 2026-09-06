@@ -4,7 +4,13 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
-from ..actions.action_ids import ACTION_REDO, ACTION_UNDO
+from ..actions.action_ids import (
+    ACTION_REDO,
+    ACTION_UNDO,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
+    ACTION_RESET_VIEW,
+)
 from ..components.mesh_view import OpenGLViewer
 from ..components.popup_tracking_combo import (
     PopupTrackingComboBox,
@@ -12,6 +18,7 @@ from ..components.popup_tracking_combo import (
     update_zoom_combo,
 )
 from ..components.viewer_cursors import make_zoom_cursor
+from ..components.scene_navigation_controls import SceneNavigationControls
 from ..config import (
     ACTION_ORBIT_LABEL,
     ACTION_ORBIT_TOOLTIP,
@@ -182,6 +189,11 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         IconManager.apply(zoom_out_action, IconId.ZOOM_OUT)
         zoom_out_action.setToolTip(ACTION_ZOOM_OUT_TOOLTIP)
         toolbar.addAction(zoom_out_action)
+        self._camera_actions = {
+            ACTION_ZOOM_IN: zoom_in_action,
+            ACTION_ZOOM_OUT: zoom_out_action,
+            ACTION_RESET_VIEW: fit_action,
+        }
         self._zoom_combo = PopupTrackingComboBox(
             popup_hidden_delay_ms=VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS
         )
@@ -197,8 +209,8 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self.viewer = OpenGLViewer(central, self._color_service)
         self.viewer.set_zoom_cursor(make_zoom_cursor())
         self.viewer.set_context_menu_command_handlers(
-            self._context_menu_command_trigger,
-            self._context_menu_action_state,
+            self._trigger_context_command,
+            self._context_command_state,
         )
         main_layout.addWidget(self.viewer, 1)
         if negative_check_fn:
@@ -244,6 +256,19 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self._zoom_combo.popup_hidden.connect(self._on_zoom_popup_hidden)
         self._zoom_combo.activated.connect(self._on_zoom_combo_activated)
         self._zoom_combo.lineEdit().returnPressed.connect(self._on_zoom_text_entered)
+        SceneNavigationControls(
+            self.viewer,
+            [
+                default_action,
+                pan_action,
+                zoom_mode_action,
+                fit_action,
+                zoom_in_action,
+                zoom_out_action,
+            ],
+            self._zoom_combo,
+            toolbar,
+        )
 
     def _on_zoom_popup_shown(self) -> None:
         self._popup_open = True
@@ -385,7 +410,34 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self._context_menu_command_trigger = trigger_fn
         self._context_menu_action_state = action_state_fn
         if self.viewer:
-            self.viewer.set_context_menu_command_handlers(trigger_fn, action_state_fn)
+            self.viewer.set_context_menu_command_handlers(
+                self._trigger_context_command, self._context_command_state
+            )
+
+    def _trigger_context_command(self, action_key: str) -> None:
+        if self._is_closing:
+            return
+        action = self._camera_actions.get(action_key)
+        if action is not None:
+            if action.isEnabled():
+                action.trigger()
+        elif self._context_menu_command_trigger is not None:
+            self._context_menu_command_trigger(action_key)
+
+    def _context_command_state(self, action_key: str) -> dict:
+        if self._is_closing:
+            return {"enabled": False}
+        action = self._camera_actions.get(action_key)
+        if action is not None:
+            return {
+                "text": action.text(),
+                "enabled": action.isEnabled(),
+                "checkable": action.isCheckable(),
+                "checked": action.isChecked(),
+            }
+        if self._context_menu_action_state is not None:
+            return self._context_menu_action_state(action_key)
+        return {}
 
     def set_selected_context_state_fn(self, fn) -> None:
         if self.viewer:

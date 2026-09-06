@@ -43,6 +43,7 @@ from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.undo_redo_service import UndoRedoService
 from ..utils.qt_callback_bridge import QtVoidCallback
 from ..utils.dialog import delete_later_if_valid
+from ..visualization.utils.source_signature import invalidate_source_files
 from ..coordinators.remote_plan_update_pipeline import RemotePlanUpdatePipeline
 from .ui_access_manager import (
     PlanSurfaceAccessContext,
@@ -331,6 +332,7 @@ class DetachedPageViewManager(IShutdownAware):
         bid_ref = view.bid_ref
         if bid_ref and file_path and bid_ref.file_path != file_path:
             return
+        self._invalidate_view_image_sources(view)
         if external_change:
             self._window.prepare_for_authoritative_refresh()
             if self._window_undo_service is not None:
@@ -423,7 +425,19 @@ class DetachedPageViewManager(IShutdownAware):
         if annotations_changed and (defer_plan_projection or not affects_target_page):
             self._update_window_navigation(view)
         if not defer_plan_projection and affects_target_page:
+            if (
+                not changed_families
+                or CollaborationResourceFamily.PAGES.value in changed_families
+            ):
+                self._invalidate_view_image_sources(view)
             self._refresh_signaler.request()
+
+    def _invalidate_view_image_sources(self, view: AnnotationView) -> None:
+        if view.bid_ref != self.project_data.get_current_bid_ref():
+            return
+        page = self.project_data.get_page(view.target_page_uid)
+        if page is not None:
+            invalidate_source_files((page.image_path, page.overlay_image_path))
 
     def _on_conditions_changed(
         self,

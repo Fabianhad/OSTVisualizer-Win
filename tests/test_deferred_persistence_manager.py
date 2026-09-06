@@ -24,9 +24,11 @@ from ost_visualizer.domain.entities.annotation import (
 )
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
     SidebarCoordinator,
@@ -2146,6 +2148,10 @@ class FakeIndexWidget:
 
 
 class DeferredPersistenceCoordinatorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
     def _install_hidden_2d_mesh_state(self, coordinator):
         mesh_refresh_calls = []
         coordinator._tab_widget = FakeIndexWidget(TAB_INDEX_TAKEOFF)
@@ -2283,9 +2289,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._placement = SimpleNamespace(is_active=False)
         coordinator._sync_page_info_status = lambda: None
         coordinator._update_export_menu_state = lambda: None
-
         coordinator.handle_active_page_changed(None)
-
         self.assertEqual(page_settings_clears, [True])
 
     def test_missing_selected_page_cancels_pending_bid_selected_page_write(self):
@@ -2593,6 +2597,78 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             ),
         )
         return calls
+
+    def test_layer_sidebar_bulk_visibility_failure_and_retry_projection(self):
+        for sql in (False, True):
+            for requested in (False, True):
+                with self.subTest(sql=sql, requested=requested):
+                    coordinator = self._make_visibility_coordinator()
+                    layers = coordinator._visibility_test_layers
+                    layers[:] = [
+                        BidLayer("l1", "bid-1", "Layer 1", True, 1),
+                        BidLayer("other", "bid-1", "Other", False, 2),
+                    ]
+                    original = [layer.show for layer in layers]
+                    sidebar = BidLayersSidebar(None)
+                    sidebar.load_layers(layers)
+                    sidebar.layers_show_all.connect(coordinator._on_layers_show_all)
+                    coordinator._sidebar.bid_layers_sidebar = sidebar
+                    coordinator._sidebar.load_condition_summary_from_memory = (
+                        lambda: None
+                    )
+                    coordinator._project_write_service.uses_sql_collaboration_mutations = (
+                        lambda _path: sql
+                    )
+                    service = FakeProjectWriteService()
+                    service.queue_sql_settings = sql
+                    service.fail_methods.add("update_layer_show")
+                    manager = DeferredPersistenceManager(
+                        service, _workspace_service(service)
+                    )
+                    coordinator._deferred_persistence = manager
+                    try:
+                        button = (
+                            sidebar._select_all_btn
+                            if requested
+                            else sidebar._unselect_all_btn
+                        )
+                        button.click()
+                        self.assertEqual(
+                            [box.isChecked() for box in sidebar._checkboxes],
+                            [requested, requested],
+                        )
+                        self.assertEqual(manager.flush(), sql)
+                        if sql:
+                            for callback in service.queued_setting_callbacks:
+                                callback(
+                                    QueuedMutationResult(
+                                        database_id="a.mdb",
+                                        runtime_generation=1,
+                                        operation_id=str(uuid.uuid4()),
+                                        outcome_status=MutationOutcomeStatus.REJECTED,
+                                    )
+                                )
+                            expected = original
+                        else:
+                            # Access failure remains pending; a later flush retries it.
+                            self.assertEqual(manager.pending_count, 2)
+                            self.assertEqual(
+                                [box.isChecked() for box in sidebar._checkboxes],
+                                [requested, requested],
+                            )
+                            service.fail_methods.clear()
+                            self.assertTrue(manager.flush())
+                            expected = [requested, requested]
+                        self.assertEqual(
+                            [box.isChecked() for box in sidebar._checkboxes], expected
+                        )
+                        self.assertEqual([layer.show for layer in layers], expected)
+                        self.assertEqual(manager.pending_count, 0)
+                    finally:
+                        manager.cancel_for_file("a.mdb")
+                        manager.cleanup()
+                        sidebar.close()
+                        sidebar.deleteLater()
 
     def test_show_all_without_sidebar_queues_all_layers_from_read_service(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -3143,6 +3219,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         area_selections = {"p1": None}
         direct_writes = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._page_settings_bar = None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
@@ -3208,6 +3285,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_page_area_clear_updates_model_to_no_filter(self):
         area_selections = {"p1": "2"}
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._page_settings_bar = None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
@@ -3247,6 +3325,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_page_area_failure_restores_only_originating_page(self):
         area_selections = {"p1": "area-1", "p2": "area-2"}
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._page_settings_bar = None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )

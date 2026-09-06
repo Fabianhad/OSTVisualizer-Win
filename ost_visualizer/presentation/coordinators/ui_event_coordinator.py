@@ -84,6 +84,7 @@ from ..utils.overlay_context_menu import (
 from ..utils.qt_callback_bridge import QtVoidCallback
 from ..utils.view_context_menu import build_selected_takeoff_context_state
 from ..windows.mesh_view_window import MeshViewWindow
+from ..visualization.utils.source_signature import invalidate_source_files
 from .navigation_state_machine import NavigationStateMachine, NavState
 from .placement_coordinator import PlacementCoordinator
 from .sidebar_coordinator import SidebarCoordinator
@@ -1401,6 +1402,9 @@ class UIEventCoordinator:
 
     def _setup_event_subscriptions(self) -> None:
         self._subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
+        self._subscribe(
+            AppEvents.DATABASE_REFRESHED, self._invalidate_refreshed_image_sources
+        )
         self._subscribe(AppEvents.DATABASE_REFRESHED, self._on_database_refreshed)
         self._subscribe(
             AppEvents.DATABASE_CAPABILITIES_CHANGED,
@@ -1417,6 +1421,10 @@ class UIEventCoordinator:
             self._on_conditions_changed,
         )
         self._subscribe(AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed)
+        self._subscribe(
+            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+            self._invalidate_refreshed_image_sources,
+        )
         self._subscribe(
             AppEvents.REMOTE_BID_CONTENT_CHANGED,
             self._on_remote_bid_content_changed,
@@ -2816,6 +2824,38 @@ class UIEventCoordinator:
         self._update_export_menu_state()
         self.main_window.set_database_window_title(file_path)
 
+    def _invalidate_refreshed_image_sources(
+        self,
+        file_path: str = "",
+        database_id: str = "",
+        bid_uid: str = "",
+        families: Optional[List[str]] = None,
+        resource_uids_by_family: Optional[Dict[str, List[str]]] = None,
+        **_event_data,
+    ) -> None:
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        owner_path = database_id or file_path
+        if selected is None or (owner_path and selected.file_path != owner_path):
+            return
+        if bid_uid and selected.bid_uid != bid_uid:
+            return
+        if families and CollaborationResourceFamily.PAGES.value not in families:
+            return
+        page_uids = (resource_uids_by_family or {}).get(
+            CollaborationResourceFamily.PAGES.value
+        )
+        pages = (
+            [self.project_data.get_page(uid) for uid in page_uids]
+            if page_uids
+            else self.project_data.get_all_pages()
+        )
+        invalidate_source_files(
+            path
+            for page in pages
+            if page is not None
+            for path in (page.image_path, page.overlay_image_path)
+        )
+
     def _on_database_refreshed(
         self,
         file_path: str = "",
@@ -3061,6 +3101,7 @@ class UIEventCoordinator:
             self.takeoff_sidebar.restore_selection(valid_pages, active_page)
             if active_page:
                 self._update_page_settings_bar(active_page)
+                self._sync_overlay_display_mode(active_page)
                 if not defer_plan_projection:
                     self._update_plan_view(active_page)
             else:
@@ -3897,6 +3938,8 @@ class UIEventCoordinator:
                 (self._mesh_window, self._is_detached_mesh_visible()),
             ):
                 if surface is not None and is_live:
+                    if cached_scene_matches:
+                        self._replay_mesh_if_current(surface)
                     surface.apply_scene_failure(scene_identity)
             return
         (
@@ -5281,16 +5324,34 @@ class UIEventCoordinator:
         self._save_current_page_view_state(selected_page_override=page_uid)
         if not self._flush_deferred_for_file(file_path):
             return
+        title = (
+            "Replace Overlay Image" if overlay_image_path else "Remove Overlay Image"
+        )
         queued = self._project_write_service.queue_page_setting_if_sql(
             file_path,
             page_uid,
             "overlay_image",
             [overlay_image_path],
+            callback=lambda result: self._on_queued_page_image_complete(result, title),
         )
         if queued is None:
             self._project_write_service.save_page_overlay_image(
                 file_path, page_uid, overlay_image_path
             )
+
+    def _on_queued_page_image_complete(
+        self, result: QueuedMutationResult, title: str
+    ) -> None:
+        if (
+            result.outcome_status
+            in {
+                MutationOutcomeStatus.COMMITTED,
+                MutationOutcomeStatus.CANCELLED_BEFORE_START,
+            }
+            or result.conflict is not None
+        ):
+            return
+        self.present_queued_mutation_error(result.database_id, title, result)
 
     def _on_page_area_changed(
         self, file_path: str, page_uid: str, area_uid: str
@@ -5330,6 +5391,7 @@ class UIEventCoordinator:
         page_area_selections = self.project_data.get_page_area_selections()
         page_area_selections[page_uid] = area_uid if area_uid else None
         self.ui_state_manager.selected_area_uid = area_uid or ""
+        self._update_page_settings_bar(page_uid)
         self._viewer.update_plan_view(page_uid)
         self.main_window.refresh_detached_plan_views()
         self._request_or_defer_mesh_refresh(self.project_data.get_selected_page_uids())
@@ -5379,6 +5441,7 @@ class UIEventCoordinator:
             return
         page.image_show_mode = show_mode
         self._sync_overlay_display_mode(page_uid)
+        self._update_native_page_textures()
         if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(page_uid)
         self.main_window.refresh_detached_plan_views()
@@ -5483,6 +5546,7 @@ class UIEventCoordinator:
         if page is None:
             return
         write_fn(page, value)
+        self._update_native_page_textures()
         if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(page_uid)
         self.main_window.refresh_detached_plan_views()
@@ -5741,7 +5805,6 @@ class UIEventCoordinator:
         )
         if self._sidebar.bid_layers_sidebar:
             layers = self._sidebar.bid_layers_sidebar.get_layers()
-            self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
         elif uses_sql_queue:
             layers = self.project_data.get_bid_layer_snapshot()
         else:
@@ -5749,6 +5812,8 @@ class UIEventCoordinator:
                 bid_ref.file_path, bid_ref.bid_uid
             )
         previous_visibility = {str(layer.uid): bool(layer.show) for layer in layers}
+        if self._sidebar.bid_layers_sidebar:
+            self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
         if not show:
             self._suspend_active_layer_tool()
         self.project_data.set_bid_layer_visibility(layers)

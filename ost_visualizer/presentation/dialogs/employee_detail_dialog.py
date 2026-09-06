@@ -287,6 +287,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         return self._pay_classes
 
     def _open_payroll_class_dialog(self, initial_name: Optional[str] = None) -> None:
+        current_text = self.combo_pay_class.currentText()
         try:
             current_uid = self._selected_pay_class_uid()
         except AmbiguousComboIdentityError:
@@ -318,6 +319,16 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
                 self._populate_pay_class_combo()
                 if accepted:
                     self._select_pay_class_by_uid(res.selected_uid or str(current_uid))
+            elif dialog.persisted_deleted_uids:
+                self._pay_classes = [
+                    pc
+                    for pc in self._pay_classes
+                    if str(pc.uid) not in dialog.persisted_deleted_uids
+                ]
+                self._populate_pay_class_combo()
+                self._select_pay_class_by_uid(current_uid)
+                if not current_uid:
+                    self.combo_pay_class.setEditText(current_text)
         finally:
             self._active_payroll_dialog = None
             try:

@@ -42,6 +42,7 @@ from ..actions.action_ids import (
     ACTION_ZOOM_OUT,
 )
 from ..components.menu_builder import MenuBuilder
+from ..components.scene_navigation_controls import scene_navigation_available
 from ..dialogs.about_dialog import AboutDialog
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..dialogs.new_database_type_dialog import NewDatabaseTypeDialog
@@ -363,7 +364,16 @@ class MenuController:
         ):
             action = self._actions.get(action_key)
             if action:
-                action.setEnabled(takeoff_active)
+                enabled = takeoff_active
+                if enabled and action_key in {
+                    ACTION_ZOOM_IN,
+                    ACTION_ZOOM_OUT,
+                    ACTION_RESET_VIEW,
+                }:
+                    enabled = scene_navigation_available(
+                        self.window.opengl_viewer, self.window.get_view_stack()
+                    )
+                action.setEnabled(enabled)
         self._set_variable_actions_enabled("display_modes_synced", takeoff_active)
         self._set_variable_actions_enabled("display_mode_3d", takeoff_active)
         self._set_variable_actions_enabled("display_mode_2d", takeoff_active)
@@ -574,6 +584,15 @@ class MenuController:
         for action_key in PLAN_TOOL_ACTION_KEYS:
             action = self._actions.get(action_key)
             if not action:
+                continue
+            if action_key in {"pan_tool", "zoom_tool"}:
+                self._tool_action_enabled_state.pop(action_key, None)
+                action.setEnabled(
+                    takeoff_active
+                    and scene_navigation_available(
+                        self.window.opengl_viewer, self.window.get_view_stack()
+                    )
+                )
                 continue
             if takeoff_active:
                 enabled = self._tool_action_enabled_state.pop(

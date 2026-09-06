@@ -1071,6 +1071,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _open_job_statuses_dialog(self, initial_name: Optional[str] = None) -> None:
         current_uid = self.combo_job_status.currentData() or ""
+        draft_text = self._combo_draft_text(self.combo_job_status)
         dialog = JobStatusesDialog(
             self.icon_provider,
             parent=self,
@@ -1108,6 +1109,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self.combo_job_status.setCurrentIndex(matched)
             if matched == -1:
                 self.combo_job_status.lineEdit().clear()
+            if (
+                result != QtWidgets.QDialog.DialogCode.Accepted
+                and draft_text is not None
+            ):
+                self.combo_job_status.setEditText(draft_text)
             self._on_job_status_changed()
         finally:
             self._active_sub_dialog = None
@@ -1121,6 +1127,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _open_employees_dialog(self, initial_first_name: Optional[str] = None) -> None:
         current_uid = self.combo_estimator.currentData() or ""
+        draft_text = self._combo_draft_text(self.combo_estimator)
         dialog = EmployeesDialog(
             self.icon_provider,
             parent=self,
@@ -1161,6 +1168,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self.combo_estimator.setCurrentIndex(matched)
             if matched == -1:
                 self.combo_estimator.lineEdit().clear()
+            if (
+                result != QtWidgets.QDialog.DialogCode.Accepted
+                and draft_text is not None
+            ):
+                self.combo_estimator.setEditText(draft_text)
         finally:
             self._active_sub_dialog = None
             try:
@@ -1170,6 +1182,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _open_employees_picker(self, *_args) -> None:
         self._open_employees_dialog()
+
+    @staticmethod
+    def _combo_draft_text(combo: QtWidgets.QComboBox) -> Optional[str]:
+        text = combo.currentText()
+        return text if text != combo.itemText(combo.currentIndex()) else None
 
     def _open_bid_areas_dialog(self) -> None:
         bid_areas = []

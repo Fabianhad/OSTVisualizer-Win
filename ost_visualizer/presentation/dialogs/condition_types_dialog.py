@@ -189,8 +189,32 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._update_button_states()
 
     def _reload_items(self, select_uid: Optional[str] = None, select_name: str = ""):
+        selected_uids = {
+            str(item.data(0, self._UID_ROLE)) for item in self._valid_selected_items()
+        }
+        current = self.tree.currentItem()
+        current_uid = (
+            str(current.data(0, self._UID_ROLE)) if current is not None else None
+        )
+        vertical = self.tree.verticalScrollBar().value()
+        horizontal = self.tree.horizontalScrollBar().value()
         self._items = list(self._reload_fn())
         self._populate(select_uid, select_name)
+        if select_uid is None and not select_name:
+            with QtCore.QSignalBlocker(self.tree):
+                for row in range(self.tree.topLevelItemCount()):
+                    item = self.tree.topLevelItem(row)
+                    if item.isHidden():
+                        continue
+                    uid = str(item.data(0, self._UID_ROLE))
+                    if uid == current_uid:
+                        self.tree.setCurrentItem(
+                            item, 0, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate
+                        )
+                    item.setSelected(uid in selected_uids)
+                self.tree.verticalScrollBar().setValue(vertical)
+                self.tree.horizontalScrollBar().setValue(horizontal)
+            self._update_button_states()
 
     def _on_new(self) -> None:
         if not self._is_interactive:
@@ -412,10 +436,6 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         selected = self._valid_selected_items()
         if not selected:
             return
-        next_row = min(
-            self.tree.indexOfTopLevelItem(selected[-1]),
-            max(0, self.tree.topLevelItemCount() - len(selected) - 1),
-        )
         pairs = [(item.text(0), str(item.data(0, self._UID_ROLE))) for item in selected]
         selected_uids = [uid for _, uid in pairs]
         try:
@@ -437,8 +457,6 @@ class ConditionTypesDialog(QtWidgets.QDialog):
 
             def deleted(_mapping) -> None:
                 self._reload_items()
-                if self.tree.topLevelItemCount():
-                    self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
 
             self._run_async_save(
                 {"new": [], "updated": [], "deleted_uids": deleted_uids},
@@ -454,8 +472,6 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             show_warning(self, "Condition Types", "Failed to delete condition type.")
             return
         self._reload_items()
-        if self.tree.topLevelItemCount():
-            self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
 
     def _blocked_delete_uids(self, uids: List[str]) -> Set[str]:
         if self._blocked_delete_uids_fn is None:

@@ -2161,6 +2161,18 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
         self.selection_enabled = None
         self.editing_enabled = None
         self.inline_edit_enabled = None
+        self.current_page_uid = None
+        self.is_view_state_stable = False
+
+    def load_page(self, *, page, **_options):
+        self.current_page_uid = page.uid
+        return True
+
+    def prefetch_nearby_pages(self, *_args):
+        pass
+
+    def clear(self):
+        self.current_page_uid = None
 
     def set_selection_enabled(self, enabled):
         self.selection_enabled = bool(enabled)
@@ -2496,6 +2508,33 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 )
             )
             self.assertTrue(window._scale_combo.isEnabled())
+        finally:
+            window.cleanup()
+            window.deleteLater()
+
+    def test_detached_last_page_deletion_clears_scale_and_reopen_restores_it(self):
+        window = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            page = Page(uid="page-1", name="Drawing")
+            page.scale_factor1, page.scale_factor2 = window._scale_combo.itemData(0)
+            window.update_page(PageViewDto(page=page))
+            self.assertEqual(window._scale_combo.currentIndex(), 0)
+            self.assertEqual(window.plan_view.current_page_uid, page.uid)
+            window.set_access_state(PlanSurfaceAccessState())
+            window.update_navigation(Bid(uid="bid-1", name="Empty Bid"))
+            window.update_page(PageViewDto(page=None))
+            self.assertIsNone(window.plan_view.current_page_uid)
+            self.assertFalse(window._scale_combo.isEnabled())
+            self.assertEqual(window._scale_combo.currentText(), "")
+            self.assertEqual(window._scale_combo.currentIndex(), -1)
+            self.assertIsNone(window.current_area_selection_target())
+            self.assertFalse(window._btn_prev.isEnabled())
+            self.assertFalse(window._btn_next.isEnabled())
+            page.scale_factor1, page.scale_factor2 = window._scale_combo.itemData(1)
+            window.set_access_state(_full_plan_surface_access())
+            window.update_page(PageViewDto(page=page))
+            self.assertTrue(window._scale_combo.isEnabled())
+            self.assertEqual(window._scale_combo.currentIndex(), 1)
         finally:
             window.cleanup()
             window.deleteLater()
@@ -4230,6 +4269,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = object()
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: view.bid_ref,
+            get_page=lambda _uid: Page(uid="p1", name="Page"),
+        )
         manager._refresh_signaler = SimpleNamespace(
             request=lambda: calls.append("refresh")
         )
@@ -4250,6 +4293,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             prepare_for_authoritative_refresh=lambda: calls.append("cancel")
         )
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: view.bid_ref,
+            get_page=lambda _uid: Page(uid="p1", name="Page"),
+        )
         manager._window_undo_service = SimpleNamespace(
             clear=lambda: calls.append("undo")
         )
@@ -6337,6 +6384,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def test_detached_missing_page_reveals_deferred_named_view_canvas(self):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window.page_data = SimpleNamespace(page=None)
+        window._scale_combo = None
         window.plan_view = FakeDetachedLoadPlanView()
         reveals = []
         window._reveal_named_view_blank_canvas = lambda: reveals.append(True)

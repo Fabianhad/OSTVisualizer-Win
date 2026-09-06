@@ -247,6 +247,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
             QtCore.Qt.Key.Key_Z,
             QtCore.Qt.KeyboardModifier.ControlModifier,
         )
+        QTest.keyRelease(detached_target, QtCore.Qt.Key.Key_Control)
         app.processEvents()
         self.assertEqual(detached_calls, [True])
         self.assertEqual(main_calls, [])
@@ -258,6 +259,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
             QtCore.Qt.Key.Key_Z,
             QtCore.Qt.KeyboardModifier.ControlModifier,
         )
+        QTest.keyRelease(main_target, QtCore.Qt.Key.Key_Control)
         app.processEvents()
         self.assertEqual(detached_calls, [True])
         self.assertEqual(main_calls, [True])
@@ -287,6 +289,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
             QtCore.Qt.Key.Key_Z,
             QtCore.Qt.KeyboardModifier.ControlModifier,
         )
+        QTest.keyRelease(editor, QtCore.Qt.Key.Key_Control)
         app.processEvents()
         self.assertEqual(editor.text(), "before")
         self.assertEqual(shortcut_calls, [])
@@ -311,6 +314,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
 
     def _make_page_plane_viewer(self, textures):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
+        viewer.scene_content_changed = SimpleNamespace(emit=lambda: None)
         renderer = FakeMeshRenderer(FakeMeshScene([]))
         viewer._destroyed = False
         viewer._renderer = renderer
@@ -651,6 +655,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
 
     def test_programmatic_clear_scene_does_not_broadcast_empty_mesh_selection(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
+        viewer.scene_content_changed = SimpleNamespace(emit=lambda: None)
         viewer._destroyed = False
         scene = FakeMeshScene(["selected"])
         renderer = FakeMeshRenderer(scene)
@@ -996,6 +1001,8 @@ class TestMeshViewLifecycle(unittest.TestCase):
 
     def test_failed_same_bid_refresh_keeps_last_accepted_scene_visible(self):
         viewer, renderer = self._make_page_plane_viewer([])
+        authoritative_texture = viewer._current_plan_texture
+        viewer._plan_texture_provider = lambda _pages, _floors: authoritative_texture
         renderer.scene.takeoff_uids = ["takeoff-existing"]
         renderer.scene.condition_uids = ["condition-existing"]
         bid_ref = viewer._current_bid_ref
@@ -1557,6 +1564,8 @@ class TestMeshViewLifecycle(unittest.TestCase):
 
     def test_hidden_view_stays_suspended_when_same_scene_refresh_fails(self):
         viewer, renderer = self._make_page_plane_viewer([])
+        authoritative_texture = viewer._current_plan_texture
+        viewer._plan_texture_provider = lambda _pages, _floors: authoritative_texture
         renderer.scene.takeoff_uids = ["takeoff-existing"]
         renderer.scene.condition_uids = ["condition-existing"]
         bid_ref = viewer._current_bid_ref

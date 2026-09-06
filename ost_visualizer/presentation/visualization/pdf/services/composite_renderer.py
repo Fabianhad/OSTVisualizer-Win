@@ -76,6 +76,34 @@ class CompositeRenderer:
         self._store_composite(cache_key, composited)
         return composited
 
+    def render_overlay_only(
+        self, page: Page, render_scale: float, *, tint_rgb=None
+    ) -> Optional[QImage]:
+        overlay_scale = baseline_render_scale(
+            is_pdf=is_pdf_suffix(page.overlay_image_path)
+        )
+        if tint_rgb is None:
+            overlay = self._page_cache.get_page(
+                page.overlay_image_path, 0, overlay_scale, 0
+            )
+        else:
+            overlay = self._page_cache.get_tinted_page(
+                page.overlay_image_path, 0, overlay_scale, 0, tint_rgb=tint_rgb
+            )
+        if overlay is None or overlay.isNull():
+            return None
+        canvas_w = max(1, round(page.effective_width_pts * render_scale))
+        canvas_h = max(1, round(page.effective_height_pts * render_scale))
+        result = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32)
+        result.fill(QColor(255, 255, 255))
+        painter = QPainter(result)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            self._draw_overlay_image(painter, overlay, page, canvas_w, canvas_h)
+        finally:
+            painter.end()
+        return result
+
     def _build_cache_key(
         self,
         page: Page,

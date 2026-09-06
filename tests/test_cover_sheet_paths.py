@@ -91,14 +91,18 @@ def _app():
 class _FakeSchema:
     def column_exists(self, table, column):
         return (
-            table == "Bids"
-            and column in {"MeasureBase", "JobStatusUID", "EstimatorUID"}
-        ) or (
-            table == "BidAreas"
-            and column in {"UID", "BidUID", "ParentUID", "Name", "Sequence", "GUID"}
-        ) or (
-            table == "BidPageFolders"
-            and column in {"UID", "BidUID", "ParentUID", "Name"}
+            (
+                table == "Bids"
+                and column in {"MeasureBase", "JobStatusUID", "EstimatorUID"}
+            )
+            or (
+                table == "BidAreas"
+                and column in {"UID", "BidUID", "ParentUID", "Name", "Sequence", "GUID"}
+            )
+            or (
+                table == "BidPageFolders"
+                and column in {"UID", "BidUID", "ParentUID", "Name"}
+            )
         )
 
     def require_column(self, table, column):
@@ -130,7 +134,10 @@ class _FakeCursor:
             return [(value, 7) for value in self.last_args]
         if self.last_query and "FROM [BidAreas] WHERE [BidUID]" in self.last_query:
             return [(5, None)]
-        if self.last_query and "FROM [BidPageFolders] WHERE [BidUID]" in self.last_query:
+        if (
+            self.last_query
+            and "FROM [BidPageFolders] WHERE [BidUID]" in self.last_query
+        ):
             return [(5, None)]
         if self.last_query and "SELECT [UID] FROM [BidComments]" in self.last_query:
             return []
@@ -3445,6 +3452,79 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertEqual(completions, [True])
         self.assertEqual(errors, [])
 
+    def test_original_source_rejection_keeps_cover_sheet_draft_retryable_and_snapshot_unchanged(
+        self,
+    ):
+        queued = []
+        errors = []
+        handler = CoverSheetHandler.__new__(CoverSheetHandler)
+        handler.window = None
+        handler._write_service = SimpleNamespace(
+            queue_cover_sheet_save=lambda database_id, bid_uid, updates, callback: queued.append(
+                (updates, callback)
+            )
+            or 1
+        )
+        handler._ui_event_coordinator = SimpleNamespace(
+            present_queued_mutation_error=lambda database_id, title, result: errors.append(
+                (title, result.message)
+            )
+        )
+        original = _cover_sheet_data(
+            image_path="original.tif", overlay_image_path="overlay.tif"
+        )
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            original,
+            save_cover_sheet_async_fn=lambda updates, completed: handler._save_cover_sheet_async(
+                BidRef("database", "7"), updates, completed
+            ),
+        )
+        try:
+            item = dialog.plan_tree.topLevelItem(0)
+            for path in ("replacement.tif", ""):
+                editor = _path_editor(dialog, item, 4)
+                editor.begin_path_edit()
+                editor.setText(path)
+                editor.editingFinished.emit()
+                dialog.accept()
+                self.assertTrue(dialog._operation_pending)
+                before = len(errors)
+                queued[-1][1](
+                    QueuedMutationResult(
+                        database_id="database",
+                        runtime_generation=1,
+                        operation_id="00000000-0000-0000-0000-000000000001",
+                        outcome_status=MutationOutcomeStatus.REJECTED,
+                        message="Original source save rejected",
+                    )
+                )
+                self.assertFalse(dialog._operation_pending)
+                self.assertFalse(dialog._save_done)
+                self.assertEqual(_first_page_update(dialog)["image_path"], path)
+                self.assertEqual(
+                    original.pages_without_folder[0].image_path, "original.tif"
+                )
+                self.assertEqual(len(errors), before + 1)
+                self.assertEqual(
+                    errors[-1], ("Cover Sheet", "Original source save rejected")
+                )
+            dialog.accept()
+            queued[-1][1](
+                QueuedMutationResult(
+                    database_id="database",
+                    runtime_generation=1,
+                    operation_id="00000000-0000-0000-0000-000000000001",
+                    outcome_status=MutationOutcomeStatus.COMMITTED,
+                )
+            )
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(len(errors), 2)
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+
     def test_cover_sheet_bulk_delete_closes_without_modal_or_input_residue(self):
         data = _cover_sheet_data()
         data.pages_without_folder = [
@@ -3508,8 +3588,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         per_page_statement_count = (
             4  # owner lookup plus MasterPage, comment, and takeoff reference scans
             + 1  # BidPercents
-            + len(TAKEOFF_REFERENCE_TABLES)
-            * len(TAKEOFF_ANNOTATION_REFERENCE_COLUMNS)
+            + len(TAKEOFF_REFERENCE_TABLES) * len(TAKEOFF_ANNOTATION_REFERENCE_COLUMNS)
             + len(PAGE_DELETE_CHILD_TABLES)
             + 1  # BidTakeoffs
             + 2  # BidHotLinks
@@ -4555,6 +4634,237 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             finally:
                 dialog.close()
                 dialog.deleteLater()
+
+    def test_nested_authoritative_master_changes_preserve_cover_sheet_context(self):
+        for kind in ("employee", "job_status"):
+            for operation in (
+                "rename",
+                "delete_current",
+                "delete_sibling",
+                "delete_unrelated",
+            ):
+                with self.subTest(kind=kind, operation=operation):
+                    data = _cover_sheet_data_with_pages(50)
+                    data.employees = [
+                        Employee(uid=uid, first_name=name)
+                        for uid, name in (("1", "Same"), ("2", "Same"), ("3", "Other"))
+                    ]
+                    data.job_statuses = [
+                        JobStatus(uid=uid, name=name)
+                        for uid, name in (("1", "Same"), ("2", "Same"), ("3", "Other"))
+                    ]
+                    data.estimator_uid = data.job_status_uid = "2"
+                    authoritative = (
+                        data.employees if kind == "employee" else data.job_statuses
+                    )
+                    saves, reloads, errors = [], [], []
+
+                    def save(changes):
+                        saves.append(changes)
+                        authoritative[:] = [
+                            row
+                            for row in authoritative
+                            if row.uid not in changes["deleted_uids"]
+                        ]
+                        for update in changes["updated"]:
+                            uid = update.uid if kind == "employee" else update["uid"]
+                            row = next(row for row in authoritative if row.uid == uid)
+                            if kind == "employee":
+                                row.first_name = update.first_name
+                            else:
+                                row.name = update["name"]
+                        return {}
+
+                    dialog = CoverSheetDialog(
+                        _FakeIconProvider(),
+                        None,
+                        data,
+                        save_employees_fn=save,
+                        save_job_statuses_fn=save,
+                        reload_employees_fn=lambda: reloads.append(kind)
+                        or (list(authoritative), data.pay_classes),
+                        reload_job_statuses_fn=lambda: reloads.append(kind)
+                        or list(authoritative),
+                    )
+
+                    def edit_nested():
+                        child = dialog._active_sub_dialog
+                        try:
+                            if operation == "rename":
+                                if kind == "employee":
+                                    record = next(
+                                        row
+                                        for row in child._employees
+                                        if row.uid == "2"
+                                    )
+                                    record.first_name = "Renamed"
+                                    child._populate(select_uid="2")
+                                else:
+                                    child.tree.currentItem().setText(1, "Renamed")
+                                child.accept()
+                            else:
+                                uid = {
+                                    "delete_current": "2",
+                                    "delete_sibling": "1",
+                                    "delete_unrelated": "3",
+                                }[operation]
+                                column = 0 if kind == "employee" else 1
+                                item = next(
+                                    child.tree.topLevelItem(i)
+                                    for i in range(child.tree.topLevelItemCount())
+                                    if child.tree.topLevelItem(i).data(
+                                        column, child._UID_ROLE
+                                    )
+                                    == uid
+                                )
+                                child.tree.setCurrentItem(item)
+                                module = (
+                                    "employees_dialog" if kind == "employee" else None
+                                )
+                                confirm_path = (
+                                    f"ost_visualizer.presentation.dialogs.{module}.confirm_multi_delete"
+                                    if module
+                                    else "ost_visualizer.presentation.utils.dialog.confirm_multi_delete"
+                                )
+                                with mock.patch(
+                                    confirm_path,
+                                    return_value=[(item.text(column), uid)],
+                                ):
+                                    child._on_delete()
+                                child.reject()
+                        except BaseException as exc:
+                            errors.append(exc)
+                        finally:
+                            if child.isVisible():
+                                child.reject()
+
+                    try:
+                        dialog.show()
+                        self.app.processEvents()
+                        dialog.edit_project_name.setText("Unsaved project")
+                        dialog.edit_notes.setPlainText("Unsaved notes")
+                        dialog.plan_tree.setCurrentItem(
+                            dialog.plan_tree.topLevelItem(20)
+                        )
+                        dialog.plan_tree.topLevelItem(22).setSelected(True)
+                        dialog.plan_tree.verticalScrollBar().setValue(10)
+                        selected = list(dialog.plan_tree.selectedItems())
+                        current = dialog.plan_tree.currentItem()
+                        scroll = dialog.plan_tree.verticalScrollBar().value()
+                        QtCore.QTimer.singleShot(0, edit_nested)
+                        if kind == "employee":
+                            dialog._btn_employees.click()
+                            combo = dialog.combo_estimator
+                        else:
+                            dialog._btn_job_status_picker.click()
+                            combo = dialog.combo_job_status
+                        if errors:
+                            raise errors[0]
+                        expected_uid = "" if operation == "delete_current" else "2"
+                        expected_label = (
+                            "Renamed"
+                            if operation == "rename"
+                            else "Same" if expected_uid else ""
+                        )
+                        self.assertEqual(combo.currentData() or "", expected_uid)
+                        self.assertEqual(combo.currentText(), expected_label)
+                        self.assertEqual(
+                            dialog.edit_project_name.text(), "Unsaved project"
+                        )
+                        self.assertEqual(
+                            dialog.edit_notes.toPlainText(), "Unsaved notes"
+                        )
+                        self.assertEqual(dialog.plan_tree.selectedItems(), selected)
+                        self.assertIs(dialog.plan_tree.currentItem(), current)
+                        self.assertEqual(
+                            dialog.plan_tree.verticalScrollBar().value(), scroll
+                        )
+                        self.assertEqual(len(saves), 1)
+                        self.assertEqual(reloads, [kind])
+                    finally:
+                        dialog.close()
+                        dialog.deleteLater()
+
+    def test_nested_picker_cancel_preserves_cover_sheet_combo_and_page_drafts(self):
+        for kind in ("employee", "job_status"):
+            for draft in ("Typed unsaved value", ""):
+                with self.subTest(kind=kind, draft=draft):
+                    data = _cover_sheet_data_with_pages(50)
+                    data.employees = [
+                        Employee(uid="e1", first_name="Alice"),
+                        Employee(uid="e2", first_name="Alice"),
+                    ]
+                    data.estimator_uid = "e2"
+                    data.job_statuses = [
+                        JobStatus(uid="s1", name="Open"),
+                        JobStatus(uid="s2", name="Open"),
+                    ]
+                    data.job_status_uid = "s2"
+                    reloads = []
+                    dialog = CoverSheetDialog(
+                        _FakeIconProvider(),
+                        None,
+                        data,
+                        reload_employees_fn=lambda: reloads.append("employee")
+                        or (list(data.employees), data.pay_classes),
+                        reload_job_statuses_fn=lambda: reloads.append("job_status")
+                        or list(data.job_statuses),
+                    )
+                    errors = []
+
+                    def cancel_nested():
+                        child = dialog._active_sub_dialog
+                        try:
+                            child.tree.setCurrentItem(child.tree.topLevelItem(0))
+                        except BaseException as exc:
+                            errors.append(exc)
+                        finally:
+                            child.reject()
+
+                    try:
+                        dialog.show()
+                        self.app.processEvents()
+                        combo = (
+                            dialog.combo_estimator
+                            if kind == "employee"
+                            else dialog.combo_job_status
+                        )
+                        combo.setEditText(draft)
+                        original_uid = combo.currentData()
+                        dialog.edit_project_name.setText("Unsaved project")
+                        dialog.edit_notes.setPlainText("Unsaved notes")
+                        dialog.plan_tree.setCurrentItem(
+                            dialog.plan_tree.topLevelItem(20)
+                        )
+                        dialog.plan_tree.topLevelItem(22).setSelected(True)
+                        dialog.plan_tree.verticalScrollBar().setValue(10)
+                        selected = list(dialog.plan_tree.selectedItems())
+                        current = dialog.plan_tree.currentItem()
+                        scroll = dialog.plan_tree.verticalScrollBar().value()
+                        QtCore.QTimer.singleShot(0, cancel_nested)
+                        if kind == "employee":
+                            dialog._btn_employees.click()
+                        else:
+                            dialog._btn_job_status_picker.click()
+                        if errors:
+                            raise errors[0]
+                        self.assertEqual(combo.currentText(), draft)
+                        self.assertEqual(combo.currentData(), original_uid)
+                        self.assertEqual(
+                            dialog.edit_project_name.text(), "Unsaved project"
+                        )
+                        self.assertEqual(
+                            dialog.edit_notes.toPlainText(), "Unsaved notes"
+                        )
+                        self.assertEqual(dialog.plan_tree.selectedItems(), selected)
+                        self.assertIs(dialog.plan_tree.currentItem(), current)
+                        self.assertEqual(
+                            dialog.plan_tree.verticalScrollBar().value(), scroll
+                        )
+                        self.assertEqual(reloads, [kind])
+                    finally:
+                        dialog.close()
+                        dialog.deleteLater()
 
     def test_employee_picker_cancel_restores_existing_estimator_selection(self):
         data = _cover_sheet_data()

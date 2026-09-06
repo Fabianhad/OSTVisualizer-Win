@@ -432,15 +432,9 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             annotation_source_uids=(),
             annotation_specs=(),
         )
-
-        service.queue_plan_items_paste(
-            "database", payload, lambda _result: None
-        )
-
+        service.queue_plan_items_paste("database", payload, lambda _result: None)
         request, _execute, _callback = provider.requests[0]
-        self.assertIn(
-            ResourceRef("area", "area-1", 7), request.dependency_resources
-        )
+        self.assertIn(ResourceRef("area", "area-1", 7), request.dependency_resources)
 
     def test_sql_plan_paste_locks_existing_hot_link_named_view_dependency(self):
         service, provider = self._queued_project_service()
@@ -459,9 +453,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 ),
             ),
         )
-
         service.queue_plan_items_paste("database", payload, lambda _result: None)
-
         request, _execute, _callback = provider.requests[0]
         self.assertIn(
             ResourceRef("annotation", annotation_resource_id("namedview", "55"), 7),
@@ -486,11 +478,9 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 ),
             ),
         )
-
         service.queue_plan_items_paste("database", payload, lambda _result: None)
         request, execute, _callback = provider.requests[0]
         result = execute()
-
         self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         inserted_spec = service._insert_annotations.calls[0][2][0]
         self.assertIsNone(inserted_spec.properties["BidPageViewUID"])
@@ -529,9 +519,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 ),
             ),
         )
-
         service.queue_plan_items_paste("database", payload, lambda _result: None)
-
         request, execute, _callback = provider.requests[0]
         self.assertNotIn(
             ResourceRef("annotation", annotation_resource_id("namedview", "55"), 7),

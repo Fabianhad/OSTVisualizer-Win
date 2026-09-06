@@ -213,10 +213,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 ("load", list(layers), set(used_uids))
             ),
         )
-
         coordinator.load_bid_layers_sidebar()
         coordinator.load_bid_layers_sidebar_from_memory()
-
         self.assertEqual(calls, [("load", [], set()), ("load", [], set())])
 
     def _show_compact_sidebar(self, sidebar: ConditionsSidebar) -> None:
@@ -2018,6 +2016,162 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(accepted, [])
         self.assertEqual(ignored, [True])
         self.assertEqual(moved, [])
+
+    def test_condition_tree_inline_rename_projects_authoritative_result(self):
+        app = _app()
+        for kind in ("condition", "folder"):
+            for outcome in (
+                "escape",
+                "flush_rejected",
+                "sql_rejected",
+                "mdb_rejected",
+                "sql_committed",
+                "mdb_committed",
+            ):
+                with self.subTest(kind=kind, outcome=outcome):
+                    conditions, folders = self._foldered_conditions()
+                    sidebar = ConditionsSidebar(None)
+                    sidebar.load_conditions(conditions, folders, "Project")
+                    sidebar.set_edit_enabled(True)
+                    sidebar.set_create_folder_enabled(True)
+                    callbacks = []
+                    writes = []
+                    errors = []
+
+                    def queue(*args):
+                        writes.append(args[:-1])
+                        callbacks.append(args[-1])
+                        return True
+
+                    def reject(*args):
+                        writes.append(args)
+                        if outcome == "mdb_committed":
+                            project_saved_name()
+                        return SimpleNamespace(
+                            success=outcome == "mdb_committed", error="Rejected"
+                        )
+
+                    def save_folder(*args):
+                        return reject(*args).success
+
+                    def project_saved_name():
+                        target = (
+                            conditions["c1"] if kind == "condition" else folders["f1"]
+                        )
+                        target.name = "Requested name"
+                        refresh()
+
+                    def refresh():
+                        sidebar.load_conditions(conditions, folders, "Project")
+
+                    coordinator = SimpleNamespace(
+                        ui_access_manager=SimpleNamespace(
+                            is_allowed=lambda _feature: True
+                        ),
+                        conditions_sidebar=sidebar,
+                        flush_deferred_for_file=lambda _path: outcome
+                        != "flush_rejected",
+                        refresh_conditions_ui=refresh,
+                        highlight_sidebar=sidebar.highlight_conditions,
+                        present_queued_mutation_error=lambda *args: errors.append(args),
+                    )
+                    handler = ConditionActionHandler(
+                        coordinator=coordinator,
+                        project_write_service=SimpleNamespace(
+                            uses_sql_collaboration_mutations=lambda _path: outcome.startswith(
+                                "sql_"
+                            ),
+                            queue_conditions_update=queue,
+                            queue_condition_folder_rename=queue,
+                            update_condition=reject,
+                            rename_condition_folder=save_folder,
+                        ),
+                        project_read_service=None,
+                        project_data=SimpleNamespace(get_bid=lambda _ref: conditions),
+                        ui_state_manager=SimpleNamespace(
+                            get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+                        ),
+                        workspace_state_model=make_workspace_state_model(),
+                    )
+                    sidebar.condition_renamed.connect(handler.on_condition_renamed)
+                    sidebar.folder_renamed.connect(handler.on_folder_renamed)
+                    try:
+                        sidebar.show()
+                        sidebar.tree.expandAll()
+                        app.processEvents()
+                        if kind == "condition":
+                            item = sidebar._condition_items["c1"]
+                            column = 1
+                            sidebar.tree.setCurrentItem(item)
+                            sidebar.tree.editItem(item, column)
+                        else:
+                            item = sidebar._folder_items["f1"]
+                            column = 0
+                            sidebar.start_folder_edit("f1")
+                        original = item.text(column)
+                        editor = sidebar.tree.viewport().focusWidget()
+                        self.assertIsInstance(editor, QtWidgets.QLineEdit)
+                        editor.selectAll()
+                        QTest.keyClicks(editor, "Requested name")
+                        QTest.keyClick(
+                            editor,
+                            (
+                                QtCore.Qt.Key.Key_Escape
+                                if outcome == "escape"
+                                else QtCore.Qt.Key.Key_Return
+                            ),
+                        )
+                        app.processEvents()
+                        if callbacks:
+                            self.assertEqual(item.text(column), original)
+                            if outcome == "sql_committed":
+                                project_saved_name()
+                            callbacks.pop()(
+                                QueuedMutationResult(
+                                    database_id="db.mdb",
+                                    runtime_generation=1,
+                                    operation_id="00000000-0000-0000-0000-000000000001",
+                                    outcome_status=(
+                                        MutationOutcomeStatus.COMMITTED
+                                        if outcome == "sql_committed"
+                                        else MutationOutcomeStatus.REJECTED
+                                    ),
+                                )
+                            )
+                        restored = (
+                            sidebar._condition_items["c1"]
+                            if kind == "condition"
+                            else sidebar._folder_items["f1"]
+                        )
+                        committed = outcome.endswith("committed")
+                        self.assertEqual(
+                            restored.text(column),
+                            "Requested name" if committed else original,
+                        )
+                        self.assertEqual(
+                            len(writes),
+                            0 if outcome in ("escape", "flush_rejected") else 1,
+                        )
+                        self.assertEqual(len(errors), int(outcome == "sql_rejected"))
+                        self.assertEqual(
+                            conditions["c1"].name,
+                            (
+                                "Requested name"
+                                if committed and kind == "condition"
+                                else "Condition 1"
+                            ),
+                        )
+                        self.assertEqual(
+                            folders["f1"].name,
+                            (
+                                "Requested name"
+                                if committed and kind == "folder"
+                                else "Folder 1"
+                            ),
+                        )
+                    finally:
+                        sidebar.close()
+                        sidebar.deleteLater()
 
     def test_condition_tree_rebuild_cancels_active_folder_editor(self):
         sidebar = ConditionsSidebar(None)

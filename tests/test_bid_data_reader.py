@@ -115,15 +115,11 @@ def _owner_validation_reader(takeoffs):
             return list(takeoffs), {}
 
         @staticmethod
-        def _parse_bid_annotations_for_bid(
-            _connection, _bid_uid, _layers, _schema
-        ):
+        def _parse_bid_annotations_for_bid(_connection, _bid_uid, _layers, _schema):
             return []
 
         @staticmethod
-        def _parse_bid_condition_folders_for_bid(
-            _connection, _bid_uid, _schema
-        ):
+        def _parse_bid_condition_folders_for_bid(_connection, _bid_uid, _schema):
             return {}
 
         @staticmethod
@@ -189,15 +185,11 @@ class BidDataReaderTests(unittest.TestCase):
                 )
 
             @staticmethod
-            def _parse_bid_annotations_for_bid(
-                _connection, _bid_uid, _layers, _schema
-            ):
+            def _parse_bid_annotations_for_bid(_connection, _bid_uid, _layers, _schema):
                 return []
 
             @staticmethod
-            def _parse_bid_condition_folders_for_bid(
-                _connection, _bid_uid, _schema
-            ):
+            def _parse_bid_condition_folders_for_bid(_connection, _bid_uid, _schema):
                 return {}
 
             @staticmethod

@@ -3597,6 +3597,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         cancelled_pages = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
         coordinator._plan_view_handler = None
         coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
@@ -3654,6 +3656,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         restored_navigation = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
         coordinator._plan_view_handler = None
         coordinator._pending_takeoff_page_uids = None
         coordinator.ui_state_manager = SimpleNamespace(
@@ -3714,6 +3718,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         invalidated = []
         reprojected = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
         coordinator._pending_takeoff_page_uids = None
         ui_state = SimpleNamespace(
             selected_page_uids=["page-b"],
@@ -5483,10 +5490,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 (database_id, title, presented)
             )
         )
-
         coordinator._on_layer_deleted("layer-1")
         queued["callback"](result)
-
         self.assertEqual(calls[0], "reload")
         self.assertEqual(calls[1], ("sql-database", "Delete Layer", result))
 

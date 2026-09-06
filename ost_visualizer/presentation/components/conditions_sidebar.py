@@ -855,6 +855,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             )
             self._restore_condition_item_name(item, condition.name)
             return
+        self._restore_condition_item_name(item, condition.name)
         self.condition_renamed.emit(condition_uid, new_name)
 
     def _on_context_menu(self, pos: QtCore.QPoint) -> None:
@@ -1397,6 +1398,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             )
             item.setText(_COL_NO, original_name)
             return
+        item.setText(_COL_NO, original_name)
         self.folder_renamed.emit(folder_uid, new_name)
 
     def _sibling_folder_name_exists(

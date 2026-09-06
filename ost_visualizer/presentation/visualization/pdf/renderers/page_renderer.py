@@ -1,5 +1,4 @@
 import logging
-import os
 from pathlib import Path
 from typing import Dict, Optional
 from PySide6.QtCore import Qt
@@ -8,6 +7,7 @@ from .....application.render_quality import RASTER_NATIVE_RENDER_SCALE
 from .....domain.entities.file_extensions import TIFF_EXTENSIONS, is_pdf_suffix
 from .. import ost_pdf
 from ..pdfium_lock import pdfium_lock
+from ...utils.source_signature import SourceFileSignature, source_file_signature
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +19,11 @@ class PageRenderer:
     def __init__(self):
         self._pdf_renderer = None
         self._current_pdf_path: Optional[str] = None
-        self._current_pdf_signature: Optional[tuple[int, int]] = None
+        self._current_pdf_signature: SourceFileSignature = None
 
     @staticmethod
-    def _file_signature(file_path: str) -> Optional[tuple[int, int]]:
-        try:
-            stat = os.stat(file_path)
-        except OSError:
-            return None
-        return int(stat.st_mtime_ns), int(stat.st_size)
+    def _file_signature(file_path: str) -> SourceFileSignature:
+        return source_file_signature(file_path)
 
     def _ensure_pdf_open_locked(self, file_path: str):
         renderer = self._get_pdf_renderer()

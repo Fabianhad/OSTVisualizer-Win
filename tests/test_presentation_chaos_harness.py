@@ -1803,6 +1803,9 @@ class DetachedChaosProjectData:
     def get_current_bid_ref(self):
         return self.bid_ref
 
+    def get_page(self, page_uid):
+        return next((page for page in self.pages if page.uid == page_uid), None)
+
     def get_bid(self, _bid_ref):
         return SimpleBid(self.pages)
 

@@ -7598,6 +7598,16 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             annotation_renderer=annotation_renderer or FakeAnnotationRenderer(),
             linear_geometry=FakeLinearGeometry(),
         )
+        # Release test-owned windows before another test enters a native popup
+        # loop. cleanup() releases services, but does not destroy the Qt widget.
+        owned = [view]
+        view.destroyed.connect(lambda: owned.clear())
+
+        def release_view():
+            if owned:
+                delete(owned[0])
+
+        self.addCleanup(release_view)
         # Production window composition projects access immediately after
         # constructing the view. Tests exercising edit workflows must model
         # that contract explicitly.

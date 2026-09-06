@@ -488,6 +488,36 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(self.view._rename_item[2], "C:/jobs/two.mdb")
         self.view.reset()
 
+    def test_project_inline_rename_rejection_and_escape_keep_authoritative_label(self):
+        for completion in ("enter", "focus_loss", "escape"):
+            with self.subTest(completion=completion):
+                calls = []
+                self.view.on_rename_project = lambda *args: calls.append(args) or False
+                self.view.build_complete_structure(self._loaded_file([]))
+                self.view.show()
+                item = self._find_item("project-1")
+                self.view._start_project_rename(item, "project-1", "C:/jobs/test.mdb")
+                self.app.processEvents()
+                editor = self.view.top_tree.viewport().focusWidget()
+                self.assertIsInstance(editor, QtWidgets.QLineEdit)
+                QtTest.QTest.keyClicks(editor, "Rejected name")
+                if completion == "focus_loss":
+                    self.view.top_tree.setFocus()
+                else:
+                    key = (
+                        QtCore.Qt.Key.Key_Escape
+                        if completion == "escape"
+                        else QtCore.Qt.Key.Key_Return
+                    )
+                    QtTest.QTest.keyClick(editor, key)
+                self.app.processEvents()
+                self.view.top_tree.setFocus()
+                self.app.processEvents()
+                self.assertEqual(item.text(0), "Source")
+                self.assertEqual(len(calls), 0 if completion == "escape" else 1)
+                self.assertIs(self.view.top_tree.currentItem(), item)
+                self.assertIsNone(self.view._rename_item)
+
     def test_reset_cancels_active_rename_before_deleting_tree_item(self):
         rename_calls = []
         self.view.on_rename_project = lambda *args: rename_calls.append(args)

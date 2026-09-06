@@ -1,4 +1,3 @@
-import os
 import threading
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -12,6 +11,7 @@ from ....application.render_quality import (
 )
 from ....domain.entities.file_extensions import is_pdf_suffix
 from ..utils.image_effects import tint_image
+from ..utils.source_signature import SourceFileSignature, source_file_signature
 from .renderers.page_renderer import PageRenderer
 
 _MIB = 1024 * 1024
@@ -31,7 +31,7 @@ _IMAGE_BYTES_PER_PIXEL = 4
 _CACHEABLE_RENDER_HEADROOM = 0.95
 _CANCEL_TOKEN_KEY = "native_cancel_token"
 _render_context = threading.local()
-_FileSignature = Optional[tuple[int, int]]
+_FileSignature = SourceFileSignature
 _PageMetadataCacheKey = tuple[str, _FileSignature, int]
 _PageCountCacheKey = tuple[str, _FileSignature]
 
@@ -173,11 +173,7 @@ class PageCache:
 
     @staticmethod
     def _file_signature(file_path: str) -> _FileSignature:
-        try:
-            stat = os.stat(file_path)
-        except OSError:
-            return None
-        return int(stat.st_mtime_ns), int(stat.st_size)
+        return source_file_signature(file_path)
 
     def file_signature(self, file_path: str) -> _FileSignature:
         return self._file_signature(file_path)

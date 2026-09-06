@@ -238,8 +238,28 @@ class LayersDialog(QtWidgets.QDialog):
     def _reload_items(
         self, select_uid: Optional[str] = None, select_name: str = ""
     ) -> None:
+        selected_uids = {
+            item.data(0, self._UID_ROLE) for item in self.tree.selectedItems()
+        }
+        current = self.tree.currentItem()
+        current_uid = current.data(0, self._UID_ROLE) if current is not None else None
+        vertical = self.tree.verticalScrollBar().value()
+        horizontal = self.tree.horizontalScrollBar().value()
         self._layers = self._filter_layers_for_mode(list(self._reload_fn()))
-        self._populate(select_uid, select_name)
+        with QtCore.QSignalBlocker(self.tree):
+            self._populate(select_uid, select_name)
+            if select_uid is None and not select_name:
+                for row in range(self.tree.topLevelItemCount()):
+                    item = self.tree.topLevelItem(row)
+                    uid = item.data(0, self._UID_ROLE)
+                    if uid == current_uid:
+                        self.tree.setCurrentItem(
+                            item, 0, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate
+                        )
+                    item.setSelected(uid in selected_uids)
+                self.tree.verticalScrollBar().setValue(vertical)
+                self.tree.horizontalScrollBar().setValue(horizontal)
+        self._update_button_states()
 
     def _selected_items(self) -> List[QtWidgets.QTreeWidgetItem]:
         return self.tree.selectedItems()
@@ -389,16 +409,17 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._set_item_text(item, layer.name),
             )
             return
+        failure_message = "Failed to rename layer."
         try:
             success = self._update_name_fn(layer.uid, new_name)
         except Exception as exc:
-            show_warning(self, "Rename Layer", str(exc))
+            failure_message = str(exc)
             success = False
         if success:
             self._reload_items(select_uid=layer.uid)
         else:
-            show_warning(self, "Rename Layer", "Failed to rename layer.")
             self._set_item_text(item, layer.name)
+            show_warning(self, "Rename Layer", failure_message)
 
     def _commit_new_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
         name = item.text(2).strip()
@@ -535,20 +556,21 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda completed: self._update_show_async_fn(
                     layer_uid, checked, completed
                 ),
-                lambda _value=None: self._reload_items(select_uid=layer_uid),
+                lambda _value=None: self._reload_items(),
                 lambda: self._set_layer_show_locally(layer_uid, previous),
             )
             return
+        failure_message = "Failed to update layer visibility."
         try:
             success = self._update_show_fn(layer_uid, checked)
         except Exception as exc:
-            show_warning(self, "Layer Visibility", str(exc))
+            failure_message = str(exc)
             success = False
         if success:
             self._set_layer_show_locally(layer_uid, checked)
         else:
             self._set_layer_show_locally(layer_uid, previous)
-            show_warning(self, "Layer Visibility", "Failed to update layer visibility.")
+            show_warning(self, "Layer Visibility", failure_message)
 
     def _set_all_show(self, show: bool) -> None:
         if not self._is_interactive:
@@ -560,15 +582,16 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._reload_items(),
             )
             return
+        failure_message = "Failed to update layer visibility."
         try:
             success = self._update_all_show_fn(show)
         except Exception as exc:
-            show_warning(self, "Layer Visibility", str(exc))
+            failure_message = str(exc)
             success = False
         if success:
             self._set_all_show_locally(show)
         else:
-            show_warning(self, "Layer Visibility", "Failed to update layer visibility.")
+            show_warning(self, "Layer Visibility", failure_message)
 
     def _set_layer_show_locally(self, layer_uid: str, show: bool) -> None:
         for row, layer in enumerate(self._layers):
@@ -609,14 +632,15 @@ class LayersDialog(QtWidgets.QDialog):
                 lambda: self._reload_items(select_uid=layer.uid),
             )
             return
+        failure_message = "Failed to move layer."
         try:
             success = self._move_fn(layer.uid, neighbor_uid)
         except Exception as exc:
-            show_warning(self, "Move Layer", str(exc))
+            failure_message = str(exc)
             success = False
         self._reload_items(select_uid=layer.uid)
         if not success:
-            show_warning(self, "Move Layer", "Failed to move layer.")
+            show_warning(self, "Move Layer", failure_message)
 
     def _update_button_states(self) -> None:
         if not self._is_interactive:

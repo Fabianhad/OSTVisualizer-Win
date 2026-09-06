@@ -112,6 +112,35 @@ Threading and events:
   own the suspended state even while regeneration is pending; the canonical
   renderer-resume operation must enforce that invariant for both success and
   failure completions.
+  Plan surface reuse and raster/composite cache lookups share the source-file
+  modification-time/size signature and explicit source revision; a stable Page
+  UID and image path do not establish that previously rendered pixels are current.
+  Authoritative page/database refreshes advance only the affected image-source
+  revisions before projecting surfaces, including detached views. Normal cache
+  lookups do not hash source files, and source revision eviction never reuses a
+  previously issued revision identity.
+  Main and detached camera controls project the viewer's accepted renderable
+  content, including visible page-image planes. Empty content clears zoom text
+  and disables camera controls; a retained scene after regeneration failure stays
+  usable. Repeated availability projection must not overwrite a typed zoom draft
+  or a Main 2D control while the 3D surface is inactive.
+  Detached 3D context-menu zoom and reset commands reuse that window's toolbar
+  actions for both enablement and execution; camera state remains surface-local.
+  Main's shared zoom field retains separate unsubmitted Plan and 3D drafts across
+  view switches while page/Bid context and actual zoom stay unchanged. Submission,
+  camera commands, navigation, and loss of accepted 3D content discard the
+  corresponding draft; inactive-view notifications must not replace active text.
+  Native 3D page-image planes project the Page's shared Original/Overlay/Both
+  display mode, placement, rotation, and image effects. Reuse the existing
+  compositor and effect functions; do not read Original directly while showing
+  Overlay/Both as selected. Local display-mode/effect projection and rollback
+  refresh both native textures. A source-free page supplies no image plane.
+  Remote Page projection also synchronizes shared image-mode controls; rebuilding
+  native scene content alone does not update the context-menu checked state.
+  Failed same-scene regeneration retains accepted geometry but reprojects current
+  authoritative image state. A detached window opened during regeneration must
+  receive the matching accepted scene through the validated replay path before
+  failure is delivered; a destroyed window's scene snapshot is not its owner.
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
@@ -521,9 +550,18 @@ State and identity:
   active Page projection. Losing the active Page clears and disables only the
   Page-owned scale/Area selection instead of displaying state from a deleted
   Page or treating the Bid itself as unloaded.
+  Detached scale controls use the shared custom-scale formatter and clear their
+  value when the Page disappears. Page Area projection, including rejection
+  rollback, refreshes the Main settings bar as well as all affected canvases.
 - Condition Summary authoritative refreshes preserve the current row and
   expanded branches only while their complete logical tree paths still exist;
   removed rows clear selection and action availability.
+- Condition and Condition-folder inline rename labels remain authoritative until
+  successful persistence projects the new name. Submission, a blocked prerequisite
+  flush, or SQL rejection must not leave an unpersisted label on the tree.
+- Nested picker cancellation discards drafts but retains confirmed catalog
+  deletions in the parent. Cover Sheet catalog refresh preserves cancelled
+  pickers' parent combo draft text separately from the selected master-data UID.
 - Plan mutation completions may restore previews, selections, editor properties,
   or placement tools only while their captured database, bid, and page still own
   that surface. Pending or granted geometry edit leases are released when the

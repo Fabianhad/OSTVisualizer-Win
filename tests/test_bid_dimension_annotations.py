@@ -336,7 +336,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ((7, 1, original_a), (8, 2, original_b)),
         )
         conn.commit()
-
         self.assertFalse(
             _DimensionWriteOps(conn).save_annotation_positions(
                 "malformed.mdb",
@@ -347,9 +346,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            conn.execute(
-                "SELECT Position FROM BidNamedViews ORDER BY UID"
-            ).fetchall(),
+            conn.execute("SELECT Position FROM BidNamedViews ORDER BY UID").fetchall(),
             [(original_a,), (original_b,)],
         )
 
@@ -654,7 +651,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(hotlinks[0].hotlink_target_view_uid, "29280")
         self.assertIn(hotlinks[0].hotlink_target_view_uid, named_view_uids)
 
-    def test_dangling_hotlink_target_and_layer_remain_inspectable_on_legacy_reload(self):
+    def test_dangling_hotlink_target_and_layer_remain_inspectable_on_legacy_reload(
+        self,
+    ):
         hotlink = SimpleNamespace(
             UID=68459,
             BidPageUID=133230,
@@ -1472,7 +1471,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         conn.execute("INSERT INTO BidNamedViews VALUES (7, 2, 20)")
         conn.commit()
-
         result = _DimensionWriteOps(conn).insert_annotations(
             "bid.mdb",
             "1",
@@ -1487,7 +1485,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 )
             ],
         )
-
         self.assertEqual(result, [])
         self.assertEqual(conn.execute("SELECT * FROM BidHotLinks").fetchall(), [])
 
@@ -1503,7 +1500,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         conn.execute("INSERT INTO BidPages VALUES (10, 2)")
         conn.commit()
-
         result = _DimensionWriteOps(conn).insert_annotations(
             "bid.mdb",
             "1",
@@ -1518,7 +1514,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 )
             ],
         )
-
         self.assertEqual(result, [])
         self.assertEqual(
             conn.execute("SELECT * FROM BidAnnotationRects").fetchall(), []
@@ -1538,7 +1533,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         conn.execute("INSERT INTO BidPages VALUES (10, 1)")
         conn.execute("INSERT INTO BidLayers VALUES (7, 2)")
         conn.commit()
-
         result = _DimensionWriteOps(conn).insert_annotations(
             "bid.mdb",
             "1",
@@ -1554,7 +1548,6 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 )
             ],
         )
-
         self.assertEqual(result, [])
         self.assertEqual(
             conn.execute("SELECT * FROM BidAnnotationRects").fetchall(), []
@@ -1927,7 +1920,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
             """
         )
-        conn.execute("INSERT INTO BidNamedViews (UID, BidUID, Name) VALUES (1, 1, 'Lobby')")
+        conn.execute(
+            "INSERT INTO BidNamedViews (UID, BidUID, Name) VALUES (1, 1, 'Lobby')"
+        )
         conn.execute(
             "INSERT INTO BidHotLinks (UID, BidUID, BidPageViewUID) VALUES (1, 1, 1)"
         )
@@ -1961,11 +1956,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         conn.execute("INSERT INTO BidNamedViews VALUES (1, 1, 'Lobby')")
         conn.execute("INSERT INTO BidHotLinks VALUES (2, 1, 1)")
         conn.commit()
-
         result = _DimensionWriteOps(conn).delete_annotations(
             "bid.mdb", [("1", "namedview")]
         )
-
         self.assertFalse(result)
         self.assertEqual(
             conn.execute("SELECT * FROM BidHotLinks").fetchall(), [(2, 1, 1)]

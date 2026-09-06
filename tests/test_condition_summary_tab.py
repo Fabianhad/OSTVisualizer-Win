@@ -712,10 +712,8 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self.assertIsNotNone(parent)
         self.tab.tree.setCurrentItem(current)
         parent.setExpanded(False)
-
         self.takeoffs[0].x = 12.0
         self._load(grouping)
-
         rebuilt_current = self.tab.tree.currentItem()
         self.assertIsNotNone(rebuilt_current)
         rebuilt_node = rebuilt_current.data(0, QtCore.Qt.ItemDataRole.UserRole)
