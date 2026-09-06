@@ -31,10 +31,20 @@ class BaseWriteService:
         self._event_bus = event_bus
         self.logger = logger or logging.getLogger(__name__)
 
-    def reload_and_notify(self, file_path: str) -> bool:
+    def reload_and_notify(
+        self,
+        file_path: str,
+        *,
+        image_sources_unchanged: bool = False,
+        mesh_scene_unchanged: bool = False,
+    ) -> bool:
         if not self.reload_database(file_path):
             return False
-        self.notify_database_refreshed(file_path)
+        self.notify_database_refreshed(
+            file_path,
+            image_sources_unchanged=image_sources_unchanged,
+            mesh_scene_unchanged=mesh_scene_unchanged,
+        )
         return True
 
     def reload_database(self, file_path: str) -> bool:
@@ -44,8 +54,19 @@ class BaseWriteService:
             self.logger.warning("Failed to reload database", exc_info=True)
             return False
 
-    def notify_database_refreshed(self, file_path: str) -> None:
-        self._event_bus.publish(AppEvents.DATABASE_REFRESHED, file_path=file_path)
+    def notify_database_refreshed(
+        self,
+        file_path: str,
+        *,
+        image_sources_unchanged: bool = False,
+        mesh_scene_unchanged: bool = False,
+    ) -> None:
+        self._event_bus.publish(
+            AppEvents.DATABASE_REFRESHED,
+            file_path=file_path,
+            image_sources_unchanged=image_sources_unchanged,
+            mesh_scene_unchanged=mesh_scene_unchanged,
+        )
 
 
 class DatabaseMutationWriteService(BaseWriteService):

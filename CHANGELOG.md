@@ -4,6 +4,47 @@
 
 ### Fixed
 
+- Ordinary Layer renames now preserve PDF source revisions and accepted native
+  meshes when effective Layer identity, visibility, ordering, and flags are
+  unchanged. Reserved-role renames and membership changes remain conservative
+  across MDB and immediate/deferred SQL projection.
+- Matching complete PDF viewport composites with PDF or TIFF Overlays now share
+  bounded cache/in-flight ownership, avoiding repeated TIFF crop/tint/composition.
+  Keys include the clipped viewport and existing composition inputs; incomplete
+  source/metadata fallbacks stay uncached and old source results are rejected.
+
+- Remote display-mode, inversion, and bitonal updates now refresh Main/detached
+  3D textures without regenerating unchanged meshes, matching local projection.
+  Immediate and deferred SQL reconciliation retain conservative handling for
+  source, geometry, mixed, and unknown changes.
+
+- Page-name-only saves and immediate/deferred SQL projection retain accepted 3D
+  scenes without clearing surfaces or regenerating meshes. Other Page changes
+  retain conservative scene invalidation.
+- Main and detached native textures reuse matching Overlay-only canvases through
+  the shared composite cache, including placement, tint, dimensions, calibration,
+  and source revisions. Obsolete source completions cannot populate that cache.
+
+- Matching Plan and native texture consumers now share bounded full-composite
+  caching and in-flight work through PageCache. Source changes reject stale
+  completions; cache clears prevent old work from repopulating the cache. Page
+  dimensions now participate in composite keys.
+
+- Overlay-placement saves now recompose without rerasterizing unchanged PDFs.
+  Classified SQL inversion and bitonal updates reuse source rasters and base
+  composites while updating effect pixels in Plan and native page textures.
+
+- Page rename refreshes now reuse unchanged PDF rasters in Main and detached Plan
+  and native page textures. Local saves and classified SQL name/scale updates
+  preserve source revisions while page labels still refresh.
+
+- Scale-only saves and classified SQL scale projections now preserve PDF source
+  revisions and cached rasters while updating Plan controls and calibrated 3D
+  dimensions. Unclassified and image-changing refreshes retain invalidation.
+
+- Fixed stale PDF text Copy menus in Main and detached Plan copying a newer
+  selection after the Page or selected text changed while the menu was open.
+
 - Fixed the detached-Plan menu action remaining enabled with no valid Page even
   though opening was rejected. It recovers with a Page and still allows closing
   an existing detached window after its Page disappears.

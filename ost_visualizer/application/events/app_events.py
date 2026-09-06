@@ -14,6 +14,8 @@ class FileOpenedEvent:
 class DatabaseRefreshedEvent:
     file_path: str = ""
     external_change: bool = False
+    image_sources_unchanged: bool = False
+    mesh_scene_unchanged: bool = False
 
 
 @dataclass
@@ -50,6 +52,9 @@ class RemoteBidContentChangedEvent:
     affected_page_uids_by_family: dict = field(default_factory=dict)
     defer_plan_projection: bool = False
     local_completion: bool = False
+    image_sources_unchanged: bool = False
+    mesh_scene_unchanged: bool = False
+    page_texture_only: bool = False
 
 
 @dataclass
@@ -79,6 +84,8 @@ class RemotePlanProjectionRequestedEvent:
     affected_page_uids_by_family: dict[str, tuple[str, ...]] = field(
         default_factory=dict
     )
+    mesh_scene_unchanged: bool = False
+    page_texture_only: bool = False
 
 
 @dataclass

@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, field, replace
+from ..layer_change_impact import layer_rename_preserves_rendering
 import uuid
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 from ...domain.entities.file_state import normalize_path
@@ -5110,7 +5111,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             lambda: self._save_page_scale.execute(db_path, page_uid, sf1, sf2),
             ("scale",),
         )
-        return self._reload_after_success(db_path, success)
+        return success and self.reload_and_notify(db_path, image_sources_unchanged=True)
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
@@ -5123,7 +5124,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             lambda: self._save_page_name.execute(db_path, page_uid, name),
             ("name",),
         )
-        return self._reload_after_success(db_path, success)
+        return success and self.reload_and_notify(
+            db_path, image_sources_unchanged=True, mesh_scene_unchanged=True
+        )
 
     def save_page_scales(
         self, db_path: str, page_uids: List[str], sf1: float, sf2: float
@@ -5161,7 +5164,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             and mutation.value
             else (False, False)
         )
-        if any_success and not self.reload_and_notify(db_path):
+        if any_success and not self.reload_and_notify(
+            db_path, image_sources_unchanged=True
+        ):
             return False
         return all_success
 
@@ -5226,7 +5231,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             return WriteReloadResult(None, write_success=False, reload_success=False)
         reload_success = True
         if publish_database_refreshed_after_write:
-            reload_success = self.reload_and_notify(db_path)
+            reload_success = self.reload_and_notify(
+                db_path, image_sources_unchanged=True
+            )
         return WriteReloadResult(
             None,
             write_success=True,
@@ -5544,6 +5551,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
     def update_layer_name(self, db_path: str, layer_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
+        before = [
+            replace(layer) for layer in self._project_data.get_bid_layer_snapshot()
+        ]
         resource = ResourceRef("layer", layer_uid, self._active_bid_uid_for(db_path))
         success = self._execute_boolean_resource_mutation(
             db_path,
@@ -5552,7 +5562,15 @@ class ProjectWriteService(DatabaseMutationWriteService):
             lambda: self._update_layer_name.execute(db_path, layer_uid, name),
             ("name",),
         )
-        return self._reload_after_success(db_path, success)
+        if not success or not self.reload_database(db_path):
+            return False
+        unchanged = layer_rename_preserves_rendering(
+            before, self._project_data.get_bid_layer_snapshot()
+        )
+        self.notify_database_refreshed(
+            db_path, image_sources_unchanged=unchanged, mesh_scene_unchanged=unchanged
+        )
+        return True
 
     def update_default_layer_name(
         self, db_path: str, layer_uid: str, name: str

@@ -2,7 +2,7 @@ import threading
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional
+from typing import Callable, Dict, Iterator, List, Optional
 from PySide6.QtGui import QImage
 from ....application.render_quality import (
     quantize_constrained_render_scale,
@@ -25,6 +25,8 @@ _FRAME_CACHE_MAX_BYTES = 8 * _REPRESENTATIVE_PLAN_SHEET_BYTES
 _FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * _MIB
 _TINTED_CACHE_MAX_BYTES = 8 * _REPRESENTATIVE_PLAN_SHEET_BYTES
 _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
+_COMPOSITE_CACHE_MAX_BYTES = 8 * _REPRESENTATIVE_PLAN_SHEET_BYTES
+_COMPOSITE_CACHE_MAX_ENTRIES = 10
 _PREFETCH_SHARED_CACHE_MAX_BYTES = _PAGE_CACHE_MAX_BYTES
 _BASE_RASTER_MAX_PIXELS = 20_000_000
 _IMAGE_BYTES_PER_PIXEL = 4
@@ -111,6 +113,69 @@ class PageCache:
         self._in_flight: set[CacheKey] = set()
         self._frame_in_flight: set[FrameCacheKey] = set()
         self._in_flight_condition = threading.Condition(self._lock)
+        self._composite_cache: OrderedDict[tuple, QImage] = OrderedDict()
+        self._composite_in_flight: set[tuple] = set()
+        self._composite_generation = 0
+
+    def get_composite(
+        self,
+        key: tuple,
+        render: Callable[[], tuple[Optional[QImage], bool]],
+        *,
+        cancelled_check: Optional[Callable[[], bool]] = None,
+        is_current: Callable[[], bool],
+        wait_for_in_flight: bool = True,
+    ) -> Optional[QImage]:
+        def cancelled():
+            return cancelled_check is not None and cancelled_check()
+
+        if cancelled():
+            return None
+        with self._in_flight_condition:
+            generation = self._composite_generation
+            flight = (generation, key)
+            while flight in self._composite_in_flight and wait_for_in_flight:
+                self._in_flight_condition.wait(timeout=0.05)
+                if cancelled() or not is_current():
+                    return None
+                if generation != self._composite_generation:
+                    generation = self._composite_generation
+                    flight = (generation, key)
+            if key in self._composite_cache:
+                self._composite_cache.move_to_end(key)
+                return self._composite_cache[key] if is_current() else None
+            owns_flight = flight not in self._composite_in_flight
+            if owns_flight:
+                self._composite_in_flight.add(flight)
+        try:
+            image, cacheable = render()
+            with self._in_flight_condition:
+                if cancelled() or not is_current():
+                    return None
+                if generation != self._composite_generation:
+                    return image
+                if cacheable and image is not None and not image.isNull():
+                    self._store_cache_image(
+                        self._composite_cache,
+                        key,
+                        image,
+                        _COMPOSITE_CACHE_MAX_BYTES,
+                        self.PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES,
+                    )
+                    while len(self._composite_cache) > _COMPOSITE_CACHE_MAX_ENTRIES:
+                        self._composite_cache.popitem(last=False)
+                return image
+        finally:
+            if owns_flight:
+                with self._in_flight_condition:
+                    self._composite_in_flight.discard(flight)
+                    self._in_flight_condition.notify_all()
+
+    def clear_composites(self) -> None:
+        with self._in_flight_condition:
+            self._composite_generation += 1
+            self._composite_cache.clear()
+            self._in_flight_condition.notify_all()
 
     def _get_renderer(self) -> PageRenderer:
         renderer = self._local.__dict__.get("renderer")
@@ -250,6 +315,7 @@ class PageCache:
             self._cache_size_bytes(self._cache)
             + self._cache_size_bytes(self._frame_cache)
             + self._cache_size_bytes(self._tinted_cache)
+            + self._cache_size_bytes(self._composite_cache)
         )
 
     def can_accept_prefetch_render(
@@ -541,6 +607,7 @@ class PageCache:
         return list(text_runs)
 
     def clear(self):
+        self.clear_composites()
         with self._lock:
             self._cache.clear()
             self._frame_cache.clear()

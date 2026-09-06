@@ -1,4 +1,6 @@
 from __future__ import annotations
+from dataclasses import replace
+from ..layer_change_impact import layer_rename_preserves_rendering
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
 from ...domain.services.project_data_service import ProjectDataService
@@ -139,6 +141,17 @@ class RemoteChangeReconciliationService:
                 BidRef(batch.database_id, str(bid_uid)), areas
             ):
                 return ReconciliationResult(applied=False)
+        layer_name_only = bool(active_changes) and all(
+            change.resource.resource_type == CollaborationResourceType.LAYER.value
+            and change.operation == ChangeOperation.UPDATE
+            and set(change.changed_fields) == {"name"}
+            for change in active_changes
+        )
+        previous_layers = (
+            [replace(layer) for layer in self._project_data.get_bid_layer_snapshot()]
+            if layer_name_only
+            else []
+        )
         bid_data = hydrated.bid_data_by_bid.get(bid_uid)
         families = set()
         affected_page_uids_by_family: dict[str, tuple[str, ...]] = {}
@@ -260,7 +273,51 @@ class RemoteChangeReconciliationService:
                 defer_plan_projection=projection_barrier is not None,
                 local_completion=local_completion,
             )
+        layer_rendering_unchanged = (
+            layer_name_only
+            and layer_rename_preserves_rendering(
+                previous_layers, self._project_data.get_bid_layer_snapshot()
+            )
+        )
+        page_texture_only = bool(active_changes) and all(
+            change.resource.resource_type == CollaborationResourceType.PAGE.value
+            and change.operation == ChangeOperation.UPDATE
+            and bool(change.changed_fields)
+            and set(change.changed_fields).issubset({"show_mode", "invert", "bitonal"})
+            for change in active_changes
+        )
+        mesh_scene_unchanged = (
+            layer_rendering_unchanged
+            or bool(active_changes)
+            and all(
+                change.resource.resource_type == CollaborationResourceType.PAGE.value
+                and change.operation == ChangeOperation.UPDATE
+                and set(change.changed_fields) == {"name"}
+                for change in active_changes
+            )
+        )
         if families:
+            image_sources_unchanged = (
+                layer_rendering_unchanged
+                or bool(active_changes)
+                and all(
+                    change.resource.resource_type
+                    == CollaborationResourceType.PAGE.value
+                    and change.operation == ChangeOperation.UPDATE
+                    and bool(change.changed_fields)
+                    and set(change.changed_fields).issubset(
+                        {
+                            "scale",
+                            "name",
+                            "overlay_rect",
+                            "invert",
+                            "bitonal",
+                            "show_mode",
+                        }
+                    )
+                    for change in active_changes
+                )
+            )
             resource_uids_by_family = {
                 family: sorted(
                     {
@@ -292,6 +349,9 @@ class RemoteChangeReconciliationService:
                 affected_page_uids_by_family=affected_page_uids_by_family,
                 defer_plan_projection=projection_barrier is not None,
                 local_completion=local_completion,
+                image_sources_unchanged=image_sources_unchanged,
+                mesh_scene_unchanged=mesh_scene_unchanged,
+                page_texture_only=page_texture_only,
             )
         condition_projection_required = (
             condition_projection_changed
@@ -312,6 +372,8 @@ class RemoteChangeReconciliationService:
                 projected_condition_uids = tuple(sorted(conditions or ()))
             self._event_bus.publish(
                 AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+                mesh_scene_unchanged=mesh_scene_unchanged,
+                page_texture_only=page_texture_only,
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
                 runtime_generation=projection_barrier.runtime_generation,

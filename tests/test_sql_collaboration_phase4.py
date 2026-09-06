@@ -763,6 +763,7 @@ class _ProjectData:
         self.page_delete_content = {}
         self.removed_transient_takeoff_uids = []
         self.annotations = []
+        self.layers = []
 
     def get_current_bid_ref(self):
         return self.bid_ref
@@ -788,9 +789,14 @@ class _ProjectData:
     def replace_remote_bid_families(self, bid_ref, bid_data, families):
         if bid_ref != self.bid_ref:
             return False
+        if CollaborationResourceFamily.LAYERS.value in families:
+            self.layers = list(bid_data.bid_layers)
         if CollaborationResourceFamily.ANNOTATIONS.value in families:
             self.annotations = list(bid_data.bid_annotations)
         return True
+
+    def get_bid_layer_snapshot(self):
+        return list(self.layers)
 
     def get_all_annotations(self):
         return list(self.annotations)
@@ -870,6 +876,166 @@ def _batch(
 
 
 class SqlCollaborationPhase4Tests(unittest.TestCase):
+    def test_layer_rename_impact_matches_local_and_remote_projection(self):
+        from ost_visualizer.domain.entities.layer import BidLayer
+        from dataclasses import replace
+
+        for name, fields, changes, expected in (
+            ("Walls", ("name",), {"name": "Partitions"}, True),
+            ("Image", ("name",), {"name": "Partitions"}, False),
+            ("Walls", ("name",), {"name": "Annotation"}, False),
+            ("Walls", ("show",), {"show": False}, False),
+            ("Walls", ("name", "unknown"), {"name": "Partitions"}, False),
+            ("Walls", ("name",), {"name": "Partitions", "show": False}, False),
+        ):
+            for local in (False, True):
+                for deferred in (False, True):
+                    with self.subTest(
+                        name=name, fields=fields, local=local, deferred=deferred
+                    ):
+                        data = _ProjectData("database")
+                        data.layers = [BidLayer("20", "8", name, True, 1)]
+                        updated = replace(data.layers[0], **changes)
+                        events = _EventBus()
+                        tokens, drafts = _token_service()
+                        service = RemoteChangeReconciliationService(
+                            data, events, tokens, drafts, ConflictResolutionService()
+                        )
+                        change = _change(
+                            "database",
+                            ResourceRef("layer", "20", 8),
+                            changed_fields=fields,
+                        )
+                        barrier = (
+                            RemoteProjectionBarrier(
+                                database_id="database",
+                                runtime_generation=1,
+                                is_runtime_current=lambda *_args: True,
+                                on_complete=lambda _ok: None,
+                            )
+                            if deferred
+                            else None
+                        )
+                        result = service.apply(
+                            HydratedDatabaseChangeBatch(
+                                _batch("database", "epoch", 1, 2, (change,)),
+                                bid_data_by_bid={
+                                    8: BidLoadResult(bid_layers=[updated])
+                                },
+                            ),
+                            local_completion=local,
+                            projection_barrier=barrier,
+                        )
+                        self.assertTrue(result.applied)
+                        self.assertEqual(data.layers, [updated])
+                        for event, payload in events.published:
+                            if event is AppEvents.REMOTE_BID_CONTENT_CHANGED:
+                                self.assertEqual(
+                                    payload["mesh_scene_unchanged"], expected
+                                )
+                                self.assertEqual(
+                                    payload["image_sources_unchanged"], expected
+                                )
+                            elif event is AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED:
+                                self.assertEqual(
+                                    payload["mesh_scene_unchanged"], expected
+                                )
+
+    def test_page_refresh_preserves_sources_only_for_known_metadata_updates(self):
+        for fields, operation, expected in (
+            (("scale",), ChangeOperation.UPDATE, True),
+            (("name",), ChangeOperation.UPDATE, True),
+            (("name", "scale"), ChangeOperation.UPDATE, True),
+            (("name", "overlay_image"), ChangeOperation.UPDATE, False),
+            (("name",), ChangeOperation.DELETE, False),
+            ((), ChangeOperation.UPDATE, False),
+            (("scale", "overlay_image"), ChangeOperation.UPDATE, False),
+            (("overlay_image",), ChangeOperation.UPDATE, False),
+            (("image_path",), ChangeOperation.UPDATE, False),
+            (("show_mode",), ChangeOperation.UPDATE, True),
+            (("show_mode", "invert", "bitonal"), ChangeOperation.UPDATE, True),
+            (("show_mode", "scale"), ChangeOperation.UPDATE, True),
+            (("show_mode", "unknown"), ChangeOperation.UPDATE, False),
+            (("invert",), ChangeOperation.UPDATE, True),
+            (("bitonal",), ChangeOperation.UPDATE, True),
+            (("invert", "overlay_image"), ChangeOperation.UPDATE, False),
+            (("overlay_rect",), ChangeOperation.UPDATE, True),
+            (("overlay_rect", "overlay_image"), ChangeOperation.UPDATE, False),
+            (("scale",), ChangeOperation.DELETE, False),
+        ):
+            for local_completion in (False, True):
+                with self.subTest(
+                    fields=fields, operation=operation, local=local_completion
+                ):
+                    events = _EventBus()
+                    tokens, drafts = _token_service()
+                    service = RemoteChangeReconciliationService(
+                        _ProjectData("database"),
+                        events,
+                        tokens,
+                        drafts,
+                        ConflictResolutionService(),
+                    )
+                    change = _change(
+                        "database",
+                        ResourceRef("page", "20", 8),
+                        changed_fields=fields,
+                        operation=operation,
+                    )
+                    hydrated = HydratedDatabaseChangeBatch(
+                        _batch("database", "epoch", 1, 2, (change,)),
+                        bid_data_by_bid={
+                            8: BidLoadResult(pages={"20": Page(uid="20", name="Sheet")})
+                        },
+                        cover_sheet_by_bid={8: object()},
+                        page_delete_content_uids_by_bid={8: frozenset()},
+                    )
+                    self.assertTrue(
+                        service.apply(
+                            hydrated, local_completion=local_completion
+                        ).applied
+                    )
+                    content = [
+                        payload
+                        for event, payload in events.published
+                        if event is AppEvents.REMOTE_BID_CONTENT_CHANGED
+                    ]
+                    self.assertEqual(len(content), 1)
+                    self.assertEqual(content[0]["image_sources_unchanged"], expected)
+                    self.assertEqual(
+                        content[0]["mesh_scene_unchanged"],
+                        fields == ("name",) and operation == ChangeOperation.UPDATE,
+                    )
+                    texture_only = (
+                        bool(fields)
+                        and set(fields).issubset({"show_mode", "invert", "bitonal"})
+                        and operation == ChangeOperation.UPDATE
+                    )
+                    self.assertEqual(content[0]["page_texture_only"], texture_only)
+                    events.published.clear()
+                    barrier = RemoteProjectionBarrier(
+                        database_id="database",
+                        runtime_generation=1,
+                        is_runtime_current=lambda *_args: True,
+                        on_complete=lambda _success: None,
+                    )
+                    service.apply(
+                        hydrated,
+                        local_completion=local_completion,
+                        projection_barrier=barrier,
+                    )
+                    projections = [
+                        payload
+                        for event, payload in events.published
+                        if event is AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED
+                    ]
+                    self.assertEqual(len(projections), 1)
+                    self.assertEqual(projections[0]["page_texture_only"], texture_only)
+                    self.assertEqual(
+                        projections[0]["mesh_scene_unchanged"],
+                        fields == ("name",) and operation == ChangeOperation.UPDATE,
+                    )
+
     def test_session_rejects_multiple_database_metadata_rows(self):
         expected_guid = "00000000-0000-0000-0000-000000000123"
         inserted_sessions = []

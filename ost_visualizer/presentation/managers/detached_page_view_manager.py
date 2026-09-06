@@ -344,7 +344,10 @@ class DetachedPageViewManager(IShutdownAware):
         self,
         file_path: str = "",
         external_change: bool = False,
+        image_sources_unchanged: bool = False,
+        mesh_scene_unchanged: bool = False,
     ) -> None:
+        del mesh_scene_unchanged  # Plan projection is independent of mesh work.
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
@@ -353,7 +356,8 @@ class DetachedPageViewManager(IShutdownAware):
         bid_ref = view.bid_ref
         if bid_ref and file_path and bid_ref.file_path != file_path:
             return
-        self._invalidate_view_image_sources(view)
+        if not image_sources_unchanged:
+            self._invalidate_view_image_sources(view)
         if external_change:
             self._window.prepare_for_authoritative_refresh()
             if self._window_undo_service is not None:
@@ -407,6 +411,7 @@ class DetachedPageViewManager(IShutdownAware):
         affected_page_uids_by_family: Optional[dict[str, tuple[str, ...]]] = None,
         defer_plan_projection: bool = False,
         local_completion: bool = False,
+        image_sources_unchanged: bool = False,
         **_event_data,
     ) -> None:
         view = self.repository.get_active_view()
@@ -446,7 +451,7 @@ class DetachedPageViewManager(IShutdownAware):
         if annotations_changed and (defer_plan_projection or not affects_target_page):
             self._update_window_navigation(view)
         if not defer_plan_projection and affects_target_page:
-            if (
+            if not image_sources_unchanged and (
                 not changed_families
                 or CollaborationResourceFamily.PAGES.value in changed_families
             ):
@@ -553,8 +558,15 @@ class DetachedPageViewManager(IShutdownAware):
         resource_uids_by_family: dict[str, tuple[str, ...]],
         barrier: RemoteProjectionBarrier,
         affected_page_uids_by_family: Optional[dict[str, tuple[str, ...]]] = None,
+        mesh_scene_unchanged: bool = False,
+        page_texture_only: bool = False,
     ) -> None:
-        del condition_uids, resource_uids_by_family
+        del (
+            condition_uids,
+            resource_uids_by_family,
+            mesh_scene_unchanged,
+            page_texture_only,
+        )
         plan_families = {
             CollaborationResourceFamily.ANNOTATIONS.value,
             CollaborationResourceFamily.LAYERS.value,

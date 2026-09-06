@@ -309,7 +309,7 @@ def _plan_view_with_tracking_viewport(cursor_mode="select"):
     return view, viewport
 
 
-class FakeFrameCacheAdapter:
+class FakeFrameCacheAdapter(PageCache):
     def file_signature(self, _file_path):
         return None
 
@@ -340,6 +340,7 @@ class FakeFrameCacheAdapter:
 
 class FakeCompositeFramePageCache(FakeFrameCacheAdapter):
     def __init__(self, source_size=(100.0, 100.0)):
+        super().__init__()
         self.calls = []
         self.source_size = source_size
 
@@ -449,6 +450,7 @@ class FakeOverlayMovementPageCache(FakeFrameCacheAdapter):
 
 class FakeShiftedSourceMarkerTifPageCache(FakeFrameCacheAdapter):
     def __init__(self):
+        super().__init__()
         self.page_scales = []
 
     def get_page(
@@ -3693,8 +3695,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
 
     def test_composite_base_pdf_overlay_uses_stable_overlay_scale(self):
-        class FakePageCache:
+        class FakePageCache(PageCache):
             def __init__(self):
+                super().__init__()
                 self.calls = []
 
             def file_signature(self, _file_path):
@@ -3737,8 +3740,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
 
     def test_composite_cache_key_uses_quantized_render_scale(self):
-        class FakePageCache:
+        class FakePageCache(PageCache):
             def __init__(self):
+                super().__init__()
                 self.calls = []
 
             def file_signature(self, _file_path):

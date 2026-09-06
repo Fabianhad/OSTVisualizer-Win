@@ -2763,6 +2763,104 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(len(detached.scene_refreshes), 1)
         self.assertTrue(coordinator._pending_dirty_mesh_refresh)
 
+    def test_page_name_save_preserves_accepted_scene_without_mesh_generation(self):
+        from ost_visualizer.application.services.base_write_service import (
+            BaseWriteService,
+        )
+        from ost_visualizer.application.services.project_write_service import (
+            ProjectWriteService,
+        )
+
+        coordinator, bid_ref, embedded, detached = (
+            self._make_3d_page_selection_coordinator()
+        )
+        coordinator.handle_page_selection(["page-a"])
+        coordinator.visualization_service.mesh_pages.clear()
+        embedded.scene_refreshes.clear()
+        detached.scene_refreshes.clear()
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda _path: True
+        )
+        coordinator._placement = SimpleNamespace()
+        coordinator._nav = SimpleNamespace(start_refresh=lambda *_args, **_kwargs: True)
+        coordinator._do_file_refresh = lambda: None
+        coordinator._finish_refresh = lambda: coordinator._update_page_selection(
+            ["page-a"]
+        )
+        bus = EventBus()
+        bus.subscribe(AppEvents.DATABASE_REFRESHED, coordinator._on_database_refreshed)
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        BaseWriteService.__init__(service, lambda _path: True, bus)
+        service._bid_write_guard = SimpleNamespace(
+            blocks_active_locked_bid_write=lambda _path: False
+        )
+        service._active_bid_uid_for = lambda _path: 1
+        service._execute_boolean_resource_mutation = (
+            lambda _path, _resources, _operation, save, _fields: save()
+        )
+        service._save_page_name = SimpleNamespace(execute=lambda *_args: True)
+        self.assertTrue(service.save_page_name(bid_ref.file_path, "page-a", "Renamed"))
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+        self.assertEqual(embedded.clear_calls, 0)
+        self.assertEqual(detached.clear_calls, 0)
+        self.assertEqual(embedded.scene_refreshes, [])
+        self.assertEqual(detached.scene_refreshes, [])
+
+    def test_ordinary_layer_rename_preserves_accepted_scene_without_generation(self):
+        from ost_visualizer.application.services.base_write_service import (
+            BaseWriteService,
+        )
+        from ost_visualizer.application.services.project_write_service import (
+            ProjectWriteService,
+        )
+
+        coordinator, bid_ref, embedded, detached = (
+            self._make_3d_page_selection_coordinator()
+        )
+        coordinator.handle_page_selection(["page-a"])
+        coordinator.visualization_service.mesh_pages.clear()
+        embedded.scene_refreshes.clear()
+        detached.scene_refreshes.clear()
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda _path: True
+        )
+        coordinator._placement = SimpleNamespace()
+        coordinator._nav = SimpleNamespace(start_refresh=lambda *_args, **_kwargs: True)
+        coordinator._do_file_refresh = lambda: None
+        coordinator._finish_refresh = lambda: coordinator._update_page_selection(
+            ["page-a"]
+        )
+        bus = EventBus()
+        bus.subscribe(AppEvents.DATABASE_REFRESHED, coordinator._on_database_refreshed)
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        BaseWriteService.__init__(service, lambda _path: True, bus)
+        service._bid_write_guard = SimpleNamespace(
+            blocks_active_locked_bid_write=lambda _path: False
+        )
+        service._active_bid_uid_for = lambda _path: 1
+        service._execute_boolean_resource_mutation = (
+            lambda _path, _resources, _operation, save, _fields: save()
+        )
+        layers = [BidLayer("layer-1", "1", "Walls", True, 1)]
+        service._project_data = SimpleNamespace(
+            get_bid_layer_snapshot=lambda: list(layers)
+        )
+        service._update_layer_name = SimpleNamespace(execute=lambda *_args: True)
+
+        def reload(_path):
+            layers[0] = BidLayer("layer-1", "1", "Renamed walls", True, 1)
+            return True
+
+        service._reload_database = reload
+        self.assertTrue(
+            service.update_layer_name(bid_ref.file_path, "layer-1", "Renamed walls")
+        )
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+        self.assertEqual(embedded.clear_calls, 0)
+        self.assertEqual(detached.clear_calls, 0)
+        self.assertEqual(embedded.scene_refreshes, [])
+        self.assertEqual(detached.scene_refreshes, [])
+
     def test_elevation_change_keeps_accepted_meshes_until_replacement_is_ready(self):
         coordinator, bid_ref, embedded, detached = (
             self._make_3d_page_selection_coordinator()
@@ -3419,6 +3517,16 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(loaded[0][1], {"25"})
         self.assertEqual(mesh_refreshes, [[]])
         self.assertEqual(coordinator._placement.reconciliation_calls, 1)
+        mesh_refreshes.clear()
+        coordinator._on_remote_bid_content_changed(
+            database_id=database_id,
+            bid_uid=bid_uid,
+            families=["layers"],
+            mesh_scene_unchanged=True,
+            image_sources_unchanged=True,
+        )
+        self.assertEqual(mesh_refreshes, [])
+        self.assertEqual(len(loaded), 2)
 
     def test_combined_remote_annotation_and_layer_update_projects_main_once(self):
         bid_ref = BidRef("sql-db", "bid-1")
@@ -3646,6 +3754,102 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
         self.assertEqual(cancelled_pages, [("sql-db", "bid-1", None)])
+
+    def test_remote_page_scene_impact_controls_immediate_and_deferred_generation(self):
+        bid_ref = BidRef("sql-db", "bid-1")
+        page = Page(uid="page-1", name="Page 1", sequence=1)
+        cancelled_pages = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._plan_view_handler = None
+        coordinator._pending_takeoff_page_uids = None
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-1",
+            selected_page_uids=["page-1"],
+            get_selected_bid_ref=lambda: bid_ref,
+            set_page_selection=lambda _pages: None,
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: page if uid == "page-1" else None,
+            get_all_pages=lambda: [page],
+            select_pages=lambda pages: list(pages),
+        )
+        coordinator._deferred_persistence = SimpleNamespace(
+            invalidate_page_visual_revisions=lambda *_args: None,
+            cancel_pages=lambda database_id, bid_uid, page_uids: cancelled_pages.append(
+                (database_id, bid_uid, page_uids)
+            ),
+        )
+        coordinator._undo_service = None
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+        coordinator._viewer = FakeViewer()
+        coordinator._sidebar = SimpleNamespace(
+            bid_layers_sidebar=None,
+            load_takeoff_sidebar_from_memory=lambda *_args: None,
+            update_conditions_quantities=lambda **_kwargs: None,
+        )
+        coordinator._bid_data_cache = {}
+        coordinator.takeoff_sidebar = SimpleNamespace(
+            restore_selection=lambda _pages, _active: None
+        )
+        coordinator._update_page_settings_bar = lambda _page_uid: None
+        coordinator._request_or_defer_mesh_refresh = lambda _pages: None
+        coordinator._apply_pending_hotlink_named_view_focus = lambda **_kwargs: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+        mesh_calls = []
+        coordinator._request_or_defer_mesh_refresh = lambda pages: mesh_calls.append(
+            list(pages)
+        )
+        coordinator.project_data.get_selected_page_uids = lambda: ["page-1"]
+        coordinator._is_cleaning_up = False
+        texture_calls = []
+        coordinator._update_native_page_textures = lambda: texture_calls.append(True)
+        for unchanged, texture_only in ((True, False), (False, False), (False, True)):
+            with self.subTest(unchanged=unchanged):
+                mesh_calls.clear()
+                texture_calls.clear()
+                coordinator._on_remote_bid_content_changed(
+                    database_id=bid_ref.file_path,
+                    bid_uid=bid_ref.bid_uid,
+                    families=["pages"],
+                    mesh_scene_unchanged=unchanged,
+                    page_texture_only=texture_only,
+                )
+                self.assertEqual(
+                    mesh_calls, [] if unchanged or texture_only else [["page-1"]]
+                )
+                self.assertEqual(len(texture_calls), int(texture_only))
+                self.assertEqual(coordinator._viewer.plan_pages[-1], "page-1")
+                mesh_calls.clear()
+                texture_calls.clear()
+                barrier = RemoteProjectionBarrier(
+                    database_id=bid_ref.file_path,
+                    runtime_generation=1,
+                    is_runtime_current=lambda *_args: True,
+                    on_complete=lambda _ok: None,
+                )
+                coordinator._on_remote_plan_projection_requested(
+                    database_id=bid_ref.file_path,
+                    bid_uid=bid_ref.bid_uid,
+                    runtime_generation=1,
+                    families=("pages",),
+                    condition_uids=(),
+                    condition_changed_fields=None,
+                    condition_change_operations=(),
+                    areas_changed=False,
+                    resource_uids_by_family={"pages": ("page-1",)},
+                    barrier=barrier,
+                    mesh_scene_unchanged=unchanged,
+                    page_texture_only=texture_only,
+                )
+                self.assertEqual(
+                    mesh_calls, [] if unchanged or texture_only else [["page-1"]]
+                )
+                self.assertEqual(len(texture_calls), int(texture_only))
 
     def test_remote_page_removal_republishes_scene_for_remaining_checked_pages(self):
         bid_ref = BidRef("sql-db", "bid-1")

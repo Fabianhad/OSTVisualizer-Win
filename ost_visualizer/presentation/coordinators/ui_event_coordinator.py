@@ -2831,8 +2831,11 @@ class UIEventCoordinator:
         bid_uid: str = "",
         families: Optional[List[str]] = None,
         resource_uids_by_family: Optional[Dict[str, List[str]]] = None,
+        image_sources_unchanged: bool = False,
         **_event_data,
     ) -> None:
+        if image_sources_unchanged:
+            return
         selected = self.ui_state_manager.get_selected_bid_ref()
         owner_path = database_id or file_path
         if selected is None or (owner_path and selected.file_path != owner_path):
@@ -2860,7 +2863,10 @@ class UIEventCoordinator:
         self,
         file_path: str = "",
         external_change: bool = False,
+        image_sources_unchanged: bool = False,
+        mesh_scene_unchanged: bool = False,
     ) -> None:
+        del image_sources_unchanged  # Consumed by the source-invalidation subscriber.
         if file_path:
             if external_change:
                 self._deferred_persistence.cancel_for_file(file_path)
@@ -2879,7 +2885,7 @@ class UIEventCoordinator:
         ):
             return
         selected_bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        if selected_bid_ref is not None:
+        if selected_bid_ref is not None and not mesh_scene_unchanged:
             selected_pages = list(self.ui_state_manager.selected_page_uids)
             self._clear_mesh_views_for_scene_update()
             self._mark_mesh_scene_dirty(selected_pages)
@@ -2979,7 +2985,11 @@ class UIEventCoordinator:
         affected_page_uids_by_family: Optional[Dict[str, List[str]]] = None,
         defer_plan_projection: bool = False,
         local_completion: bool = False,
+        image_sources_unchanged: bool = False,
+        mesh_scene_unchanged: bool = False,
+        page_texture_only: bool = False,
     ) -> None:
+        del image_sources_unchanged  # Consumed by the source-invalidation subscriber.
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
             return
@@ -3109,7 +3119,10 @@ class UIEventCoordinator:
                     self._page_settings_bar.clear_page()
                 self._viewer.clear_plan_view()
             if not defer_plan_projection:
-                self._request_or_defer_mesh_refresh(valid_pages)
+                if page_texture_only:
+                    self._update_native_page_textures()
+                elif not mesh_scene_unchanged:
+                    self._request_or_defer_mesh_refresh(valid_pages)
         if layers_changed and self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.load_layers(
                 self.project_data.get_bid_layer_snapshot(),
@@ -3122,6 +3135,7 @@ class UIEventCoordinator:
             self._update_plan_view_for_active()
         if (
             layers_changed
+            and not mesh_scene_unchanged
             and CollaborationResourceFamily.TAKEOFFS.value not in changed_families
             and not pages_changed
             and not defer_plan_projection
@@ -3427,6 +3441,8 @@ class UIEventCoordinator:
         resource_uids_by_family: dict[str, tuple[str, ...]],
         barrier: RemoteProjectionBarrier,
         affected_page_uids_by_family: Optional[Dict[str, tuple[str, ...]]] = None,
+        mesh_scene_unchanged: bool = False,
+        page_texture_only: bool = False,
     ) -> None:
         selected_bid_ref = self.ui_state_manager.get_selected_bid_ref()
         requested_bid_ref = BidRef(database_id, bid_uid)
@@ -3442,7 +3458,15 @@ class UIEventCoordinator:
             )
         )
         if (
-            not self._is_cleaning_up
+            page_texture_only
+            and not self._is_cleaning_up
+            and selected_bid_ref == requested_bid_ref
+        ):
+            self._update_native_page_textures()
+        if (
+            not page_texture_only
+            and not self._is_cleaning_up
+            and not mesh_scene_unchanged
             and selected_bid_ref == requested_bid_ref
             and (
                 areas_changed

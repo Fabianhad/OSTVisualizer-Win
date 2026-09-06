@@ -108,6 +108,8 @@ Threading and events:
   intent, another insertion/paste, or navigation
   supersedes it; same-page projection preserves it without coupling selection to
   rendering generations. Persisted results and undo history still complete.
+  PDF text context-menu Copy captures the Page owner and exact text selection;
+  replacement, clearing, or reselection invalidates the captured command.
   Project Tree multi-selection does not replace the active bid:
   toolbar and shortcut duplication target that one active bid, while context-menu
   duplication captures and revalidates the exact right-clicked bid. Other
@@ -124,9 +126,43 @@ Threading and events:
   modification-time/size signature and explicit source revision; a stable Page
   UID and image path do not establish that previously rendered pixels are current.
   Authoritative page/database refreshes advance only the affected image-source
-  revisions before projecting surfaces, including detached views. Normal cache
-  lookups do not hash source files, and source revision eviction never reuses a
+  revisions before projecting surfaces, including detached views.
+  Scale, Page-name, and overlay-placement refreshes preserve image-source revisions;
+  SQL projection may make that claim only for completely classified scale/name/
+  overlay-rectangle/inversion/bitonal updates. Placement still recomposes, while
+  inversion and bitonal conversion reuse the base composite. Geometry,
+  overlay-coordinate calibration, controls, and 3D world dimensions still refresh.
+  Normal cache lookups do not hash source files, and source revision eviction never reuses a
   previously issued revision identity.
+  Ordinary Layer rename impact compares copied effective Layer snapshots before
+  and after authoritative projection. Preserve raster revisions and mesh scenes
+  only when UIDs, visibility, ordering, and flags match and changed names neither
+  enter nor leave reserved image/annotation/comments roles. Plan/sidebar projection
+  still updates labels and authoritative references. Unknown changes stay conservative.
+  Complete PDF viewport compositions with PDF or TIFF Overlays share PageCache
+  ownership, keyed by
+  clipped viewport plus source/revision, resolution, rotation, and composition
+  inputs. Incomplete Overlay and missing-metadata raster fallbacks remain
+  uncached; source changes reject obsolete in-flight output. Raster completion
+  is cacheable only after its source crop, tint, and draw succeed.
+  Classified SQL Page updates containing only show_mode, invert, and bitonal
+  carry `page_texture_only` through immediate and deferred projection. Refresh
+  both native page textures without replacing accepted geometry. Source,
+  calibration, placement, mixed, and unknown changes retain conservative impact.
+  Page-name-only refreshes carry `mesh_scene_unchanged` through local reload and
+  immediate/deferred SQL projection. Preserve accepted native scenes while normal
+  label/Plan projection runs; do not infer this flag from unchanged image sources,
+  since calibration, visibility, or geometry can still require scene work.
+  Overlay-only canvases use the shared composite cache with source revision,
+  canvas dimensions, effective page dimensions, calibration, placement/rotation,
+  and tint identity. Final image effects remain downstream.
+  Full base composites belong to PageCache, shared by matching Plan and native
+  texture consumers. Keys include source signatures/revisions, resolution,
+  raster rotation, display state, overlay transform/calibration, and effective
+  page dimensions. Inversion/bitonal and final flips are applied afterward.
+  Matching requests may share in-flight work; cancellation remains request-local.
+  Source changes reject obsolete composition completion. Cache clearing prevents
+  old work from repopulating the cache without cancelling still-valid consumers.
   Main and detached camera controls project the viewer's accepted renderable
   content, including visible page-image planes. Empty content clears zoom text
   and disables camera controls; a retained scene after regeneration failure stays

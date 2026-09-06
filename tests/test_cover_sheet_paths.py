@@ -3729,7 +3729,14 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         publish_calls = [call for call in calls if call[0] == "publish"]
         self.assertEqual(len(publish_calls), 1)
         self.assertIs(publish_calls[0][1], AppEvents.DATABASE_REFRESHED)
-        self.assertEqual(publish_calls[0][2], {"file_path": "bid.mdb"})
+        self.assertEqual(
+            publish_calls[0][2],
+            {
+                "file_path": "bid.mdb",
+                "image_sources_unchanged": False,
+                "mesh_scene_unchanged": False,
+            },
+        )
         self.assertTrue(
             all(
                 value is None

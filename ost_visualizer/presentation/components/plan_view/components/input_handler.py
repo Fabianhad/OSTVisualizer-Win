@@ -2908,12 +2908,22 @@ class InputHandlerMixin:
         )
 
     def _add_pdf_text_context_clipboard_actions(self, menu: QMenu) -> None:
+        owner = self._context_menu_owner()
+        selection = self._selected_pdf_text_selection
+
+        def copy_owned_text() -> None:
+            if (
+                self._context_menu_owner_is_current(owner)
+                and self._selected_pdf_text_selection is selection
+            ):
+                self.copy_selected_pdf_text()
+
         ContextMenuManager.add_action(
             menu,
             ContextMenuManager.action_spec(
                 None,
                 "Copy",
-                callback=self.copy_selected_pdf_text,
+                callback=copy_owned_text,
                 enabled=self.has_selected_pdf_text(),
                 action_key="copy",
             ),

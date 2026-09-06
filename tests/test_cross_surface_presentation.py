@@ -348,6 +348,143 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.assertTrue(self.detached._scale_combo.currentText())
         self.assertFalse(self.detached.plan_view.get_selected_uids())
 
+    def test_annotation_width_context_rejects_changed_targets_on_both_plans(self):
+        from ost_visualizer.presentation.components.plan_view.components import (
+            input_handler,
+        )
+
+        for surface in (self.main_plan, self.detached.plan_view):
+            for transition in (
+                "unchanged",
+                "replacement",
+                "selection",
+                "page",
+                "clear",
+            ):
+                with self.subTest(
+                    main=surface is self.main_plan, transition=transition
+                ):
+                    original = BidAnnotation(
+                        uid="context-a",
+                        annotation_type="rect",
+                        page_uid=self.data.page.uid,
+                        width=1.0,
+                        position=[1.0, 1.0, 20.0, 20.0],
+                    )
+                    other = BidAnnotation(
+                        uid="context-b",
+                        annotation_type="rect",
+                        page_uid=self.data.page.uid,
+                        width=1.0,
+                        position=[30.0, 1.0, 50.0, 20.0],
+                    )
+                    self.data.annotations = [original, other]
+                    self.refresh()
+                    surface.set_selection_enabled(True)
+                    surface.set_editing_enabled(True)
+                    surface.set_selected_uids({original.uid})
+                    surface.set_context_menu_command_handlers(
+                        lambda _key: None, lambda _key: {"enabled": True}
+                    )
+                    state = surface._selected_annotation_style_context_state()
+                    replacement = deepcopy(original)
+
+                    class TransitionMenu(QtWidgets.QMenu):
+                        def exec(menu, _point):
+                            width_menu = next(
+                                child
+                                for child in menu.findChildren(QtWidgets.QMenu)
+                                if child.title() == "Line Width"
+                            )
+                            action = next(
+                                action
+                                for action in width_menu.actions()
+                                if action.text() == "4px"
+                            )
+                            if transition == "replacement":
+                                surface._current_annotations[original.uid] = replacement
+                            elif transition == "selection":
+                                surface.set_selected_uids({other.uid})
+                            elif transition == "page":
+                                surface._current_page = deepcopy(surface._current_page)
+                            elif transition == "clear":
+                                surface.clear_selection()
+                            action.trigger()
+                            menu.deleteLater()
+                            return action
+
+                    event = QtGui.QContextMenuEvent(
+                        QtGui.QContextMenuEvent.Reason.Mouse,
+                        QtCore.QPoint(5, 5),
+                        QtCore.QPoint(5, 5),
+                    )
+                    # Persistence is outside this menu test; inspect the actual local style mutation.
+                    with QtCore.QSignalBlocker(surface), patch.object(
+                        input_handler, "QMenu", TransitionMenu
+                    ):
+                        surface._show_annotation_context_menu(event, state, None)
+                    self.assertEqual(
+                        original.width, 4.0 if transition == "unchanged" else 1.0
+                    )
+                    self.assertEqual(replacement.width, 1.0)
+                    self.assertEqual(other.width, 1.0)
+
+    def test_pdf_text_context_copy_rejects_replaced_page_or_selection(self):
+        from ost_visualizer.presentation.components.plan_view.components.pdf_text import (
+            PdfTextRect,
+            PdfTextSelection,
+        )
+
+        clipboard = self.app.clipboard()
+        previous_text = clipboard.text()
+        self.addCleanup(clipboard.setText, previous_text)
+        rect = PdfTextRect(1.0, 1.0, 20.0, 10.0)
+        for surface in (self.main_plan, self.detached.plan_view):
+            for transition in (
+                "unchanged",
+                "selection",
+                "page",
+                "page-and-selection",
+                "clear",
+                "reselect",
+            ):
+                with self.subTest(
+                    surface=surface is self.main_plan, transition=transition
+                ):
+                    surface._show_pdf_text_selection(
+                        PdfTextSelection("Original", (rect,))
+                    )
+                    menu = QtWidgets.QMenu(surface)
+                    surface._add_pdf_text_context_clipboard_actions(menu)
+                    action = menu.actions()[0]
+                    self.assertEqual(action.text(), "Copy")
+                    self.assertTrue(action.isEnabled())
+                    if transition in {"page", "page-and-selection"}:
+                        surface._current_page = deepcopy(surface._current_page)
+                    if transition in {"selection", "page-and-selection"}:
+                        surface._show_pdf_text_selection(
+                            PdfTextSelection("New selection", (rect,))
+                        )
+                    elif transition == "reselect":
+                        surface._clear_pdf_text_selection()
+                        surface._show_pdf_text_selection(
+                            PdfTextSelection("Original", (rect,))
+                        )
+                    elif transition == "clear":
+                        surface._clear_pdf_text_selection()
+                    clipboard.setText("Unchanged clipboard")
+                    action.trigger()
+                    self.assertEqual(
+                        clipboard.text(),
+                        (
+                            "Original"
+                            if transition == "unchanged"
+                            else "Unchanged clipboard"
+                        ),
+                    )
+                    menu.deleteLater()
+                    surface._clear_pdf_text_selection()
+
     def test_detached_plan_action_tracks_empty_page_and_open_window_recovery(self):
         from ost_visualizer.presentation.actions.action_ids import (
             ACTION_ANNOTATION_WINDOW,
@@ -2117,7 +2254,10 @@ class CrossSurfacePresentationTests(unittest.TestCase):
     def test_page_image_modes_project_matching_pixels_to_plan_and_both_3d_views(self):
         self._assert_page_composition_projection(remote=False)
 
-    def _assert_page_composition_projection(self, *, remote):
+    def test_remote_effects_and_modes_refresh_textures_without_mesh_generation(self):
+        self._assert_page_composition_projection(remote=True, texture_only=True)
+
+    def _assert_page_composition_projection(self, *, remote, texture_only=False):
         with tempfile.TemporaryDirectory() as directory:
             for name, color in (("original", "red"), ("overlay", "blue")):
                 image = QtGui.QImage(64, 64, QtGui.QImage.Format.Format_RGB32)
@@ -2245,13 +2385,53 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             def project_mode(mode):
                 if remote:
                     page.image_show_mode = mode
-                    self.bus.publish(
-                        AppEvents.REMOTE_BID_CONTENT_CHANGED,
-                        database_id=self.bid_ref.file_path,
-                        bid_uid=self.bid_ref.bid_uid,
-                        families=["pages"],
-                        resource_uids_by_family={"pages": [page.uid]},
-                    )
+                    if texture_only:
+                        from tests.test_sql_collaboration_phase4 import (
+                            _ProjectData,
+                            _token_service,
+                            _batch,
+                            _change,
+                            ResourceRef,
+                            HydratedDatabaseChangeBatch,
+                            BidLoadResult,
+                            RemoteChangeReconciliationService,
+                            ConflictResolutionService,
+                        )
+
+                        data = _ProjectData(self.bid_ref.file_path)
+                        data.bid_ref = self.bid_ref
+                        tokens, drafts = _token_service()
+                        service = RemoteChangeReconciliationService(
+                            data, self.bus, tokens, drafts, ConflictResolutionService()
+                        )
+                        change = _change(
+                            self.bid_ref.file_path,
+                            ResourceRef("page", page.uid, 1),
+                            changed_fields=("show_mode", "invert", "bitonal"),
+                        )
+                        service.apply(
+                            HydratedDatabaseChangeBatch(
+                                _batch(
+                                    self.bid_ref.file_path, "epoch", 1, 2, (change,)
+                                ),
+                                bid_data_by_bid={
+                                    1: BidLoadResult(pages={page.uid: page})
+                                },
+                                cover_sheet_by_bid={1: object()},
+                                page_delete_content_uids_by_bid={1: frozenset()},
+                            )
+                        )
+                        self.assertEqual(
+                            generation, 1, "Texture-only change regenerated meshes"
+                        )
+                    else:
+                        self.bus.publish(
+                            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                            database_id=self.bid_ref.file_path,
+                            bid_uid=self.bid_ref.bid_uid,
+                            families=["pages"],
+                            resource_uids_by_family={"pages": [page.uid]},
+                        )
                 else:
                     self.coordinator._project_page_show_mode_if_current(
                         self.bid_ref, page.uid, mode
@@ -2268,12 +2448,13 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                 )
                 for mode in (0, 1, 2)
             ]
-            cases += [
-                (1, False, True, False, False),
-                (0, True, False, False, False),
-                (0, False, False, False, False),
-                (1, False, True, False, False),
-            ]
+            if not texture_only:
+                cases += [
+                    (1, False, True, False, False),
+                    (0, True, False, False, False),
+                    (0, False, False, False, False),
+                    (1, False, True, False, False),
+                ]
             for mode, original_present, overlay_present, invert, bitonal in cases:
                 with self.subTest(
                     mode=mode,
@@ -2350,6 +2531,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                         detached_mesh._zoom_combo.isEnabled(),
                         original_present or overlay_present,
                     )
+            if texture_only:
+                return
             page.image_path, page.overlay_image_path = original_path, overlay_path
             page.invert = page.bitonal = False
             page.overlay_rect = (32.0 / 72.0, 16.0 / 72.0, 32.0 / 72.0, 16.0 / 72.0)
@@ -3322,6 +3505,561 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             )
             self.assertEqual(texture(), b"\x00\x00\xff\xff")
             self.assertIs(cache.get_page(str(unrelated), 0, 1.0, 0), unrelated_image)
+
+    def test_pdf_scale_projection_reuses_raster_on_both_plans(self):
+        self._assert_pdf_scale_projection(database_refresh=False)
+
+    def test_overlay_placement_save_recomposes_without_pdf_rasterization(self):
+        self._assert_overlay_placement_refresh(remote=False)
+
+    def test_remote_overlay_placement_recomposes_without_pdf_rasterization(self):
+        self._assert_overlay_placement_refresh(remote=True)
+
+    def test_remote_inversion_reuses_pdf_raster_and_composition(self):
+        self._assert_overlay_placement_refresh(remote=True, setting_kind="invert")
+
+    def test_remote_bitonal_reuses_pdf_raster_and_composition(self):
+        self._assert_overlay_placement_refresh(remote=True, setting_kind="bitonal")
+
+    def test_local_inversion_reuses_pdf_raster_and_composition(self):
+        self._assert_overlay_placement_refresh(remote=False, setting_kind="invert")
+
+    def test_local_bitonal_reuses_pdf_raster_and_composition(self):
+        self._assert_overlay_placement_refresh(remote=False, setting_kind="bitonal")
+
+    def test_local_tiff_overlay_placement_composes_once_per_resolution(self):
+        self._assert_overlay_placement_refresh(remote=False, raster_overlay=True)
+
+    def test_remote_tiff_overlay_placement_composes_once_per_resolution(self):
+        self._assert_overlay_placement_refresh(remote=True, raster_overlay=True)
+
+    def _assert_overlay_placement_refresh(
+        self, *, remote, setting_kind="overlay_rect", raster_overlay=False
+    ):
+        from contextlib import ExitStack
+        from ost_visualizer.application.services.base_write_service import (
+            BaseWriteService,
+        )
+        from ost_visualizer.application.services.project_write_service import (
+            ProjectWriteService,
+        )
+        from ost_visualizer.application.services.page_visualization_metadata_service import (
+            PageVisualizationMetadataService,
+        )
+        from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
+            PageRenderer,
+        )
+        from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
+            CompositeRenderer,
+        )
+        from tests.test_native_page_image_plane import (
+            FakeProjectData as PlaneProjectData,
+        )
+
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:
+            paths = []
+            for color in ("red", "blue"):
+                if raster_overlay and color == "blue":
+                    path = str(Path(directory) / "blue.tif")
+                    image = QtGui.QImage(64, 64, QtGui.QImage.Format.Format_RGB32)
+                    image.fill(QtGui.QColor(color))
+                    image.setDotsPerMeterX(2835)
+                    image.setDotsPerMeterY(2835)
+                    self.assertTrue(image.save(path))
+                    paths.append(path)
+                    continue
+                path = str(Path(directory) / f"{color}.pdf")
+                writer = QtGui.QPdfWriter(path)
+                writer.setResolution(72)
+                writer.setPageSize(
+                    QtGui.QPageSize(QtCore.QSizeF(64, 64), QtGui.QPageSize.Unit.Point)
+                )
+                writer.setPageMargins(QtCore.QMarginsF(0, 0, 0, 0))
+                painter = QtGui.QPainter(writer)
+                painter.fillRect(QtCore.QRectF(0, 0, 64, 64), QtGui.QColor(color))
+                painter.end()
+                del writer
+                paths.append(path)
+            page = self.data.page
+            page.image_path, page.overlay_image_path = paths
+            page.width_pts = page.height_pts = 64.0
+            page.scale_factor1 = page.scale_factor2 = 1.0
+            page.image_show_mode = 2
+            page.overlay_rect = (0.0, 0.0, 64.0 / 72.0, 64.0 / 72.0)
+            cache = PageCache()
+            cleanup.callback(cache.clear)
+            plane_data = PlaneProjectData(page)
+            plane_data.get_current_bid_ref = lambda: self.bid_ref
+            providers = [
+                NativePageImagePlaneProvider(
+                    plane_data,
+                    self.state,
+                    cache,
+                    PageVisualizationMetadataService(plane_data),
+                )
+                for _ in range(2)
+            ]
+            for surface in (self.main_plan, self.detached.plan_view):
+                surface._rendering_service = PDFRenderingService(cache, num_workers=1)
+                cleanup.callback(surface._rendering_service.shutdown)
+                surface._load_coordinator = PageLoadStrategyService(
+                    SimpleNamespace(get_page_size=lambda *_args: (64.0, 64.0))
+                )
+                surface.set_disable_high_resolution_images(True)
+                surface.resize(300, 300)
+                surface.show()
+
+            def planes():
+                return [
+                    provider.build_for_scene([page.uid], {page.uid: 0.0})
+                    for provider in providers
+                ]
+
+            def center(plane):
+                image = QtGui.QImage(
+                    plane.pixels_rgba,
+                    plane.width_px,
+                    plane.height_px,
+                    QtGui.QImage.Format.Format_RGBA8888,
+                )
+                return image.pixelColor(plane.width_px // 2, plane.height_px // 2)
+
+            with patch.object(
+                PageRenderer, "render", autospec=True, side_effect=PageRenderer.render
+            ) as raster, patch.object(
+                CompositeRenderer,
+                "_composite_images",
+                autospec=True,
+                side_effect=CompositeRenderer._composite_images,
+            ) as compose:
+                before_planes = planes()
+                self.refresh()
+                self._wait_for_scene_colors([center(before_planes[0])] * 2)
+                raster_count, composition_count = raster.call_count, compose.call_count
+                source_signatures = [cache.file_signature(path) for path in paths]
+                if setting_kind == "invert":
+                    page.invert = True
+                elif setting_kind == "bitonal":
+                    page.bitonal = True
+                else:
+                    page.overlay_rect = (0.0, 0.0, 16.0 / 72.0, 16.0 / 72.0)
+                self.bus.subscribe(
+                    AppEvents.DATABASE_REFRESHED,
+                    self.coordinator._invalidate_refreshed_image_sources,
+                )
+                if remote:
+                    self.bus.subscribe(
+                        AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                        self.coordinator._invalidate_refreshed_image_sources,
+                    )
+                    from tests.test_sql_collaboration_phase4 import (
+                        _ProjectData,
+                        _token_service,
+                        _batch,
+                        _change,
+                        ResourceRef,
+                        HydratedDatabaseChangeBatch,
+                        BidLoadResult,
+                        RemoteChangeReconciliationService,
+                        ConflictResolutionService,
+                    )
+
+                    projection_data = _ProjectData(self.bid_ref.file_path)
+                    projection_data.bid_ref = self.bid_ref
+                    tokens, drafts = _token_service()
+                    reconciliation = RemoteChangeReconciliationService(
+                        projection_data,
+                        self.bus,
+                        tokens,
+                        drafts,
+                        ConflictResolutionService(),
+                    )
+                    bid_uid = int(self.bid_ref.bid_uid)
+                    change = _change(
+                        self.bid_ref.file_path,
+                        ResourceRef("page", page.uid, bid_uid),
+                        changed_fields=(setting_kind,),
+                    )
+                    hydrated = HydratedDatabaseChangeBatch(
+                        _batch(self.bid_ref.file_path, "epoch", 1, 2, (change,)),
+                        bid_data_by_bid={
+                            bid_uid: BidLoadResult(pages={page.uid: page})
+                        },
+                        cover_sheet_by_bid={bid_uid: object()},
+                        page_delete_content_uids_by_bid={bid_uid: frozenset()},
+                    )
+                    self.assertTrue(reconciliation.apply(hydrated).applied)
+                else:
+                    service = ProjectWriteService.__new__(ProjectWriteService)
+                    BaseWriteService.__init__(service, lambda _path: True, self.bus)
+                    service._bid_write_guard = SimpleNamespace(
+                        blocks_active_locked_bid_write=lambda _path: False
+                    )
+                    service._active_bid_uid_for = lambda _path: int(
+                        self.bid_ref.bid_uid
+                    )
+                    service._execute_boolean_resource_mutation = (
+                        lambda _path, _resources, _operation, save, _fields: save()
+                    )
+                    if setting_kind == "invert":
+                        service._save_page_invert = SimpleNamespace(
+                            execute=lambda *_args: True
+                        )
+                        self.assertTrue(
+                            service.save_page_invert(
+                                self.bid_ref.file_path, page.uid, True
+                            )
+                        )
+                    elif setting_kind == "bitonal":
+                        service._save_page_bitonal = SimpleNamespace(
+                            execute=lambda *_args: True
+                        )
+                        self.assertTrue(
+                            service.save_page_bitonal(
+                                self.bid_ref.file_path, page.uid, True
+                            )
+                        )
+                    else:
+                        service._save_page_overlay_rect = SimpleNamespace(
+                            execute=lambda *_args: True
+                        )
+                        result = service.save_page_overlay_rect_result(
+                            self.bid_ref.file_path, page.uid, page.overlay_rect
+                        )
+                        self.assertTrue(result.write_success and result.reload_success)
+                self.viewer.update_plan_view(page.uid)
+                self.coordinator._update_page_settings_bar(page.uid)
+                if not remote and setting_kind in {"invert", "bitonal"}:
+                    self.manager.refresh_active_view()
+                after_planes = planes()
+                self._wait_for_scene_colors([center(after_planes[0])] * 2)
+                self.assertNotEqual(
+                    before_planes[0].pixels_rgba, after_planes[0].pixels_rgba
+                )
+                self.assertEqual(
+                    after_planes[0].pixels_rgba, after_planes[1].pixels_rgba
+                )
+                if setting_kind == "overlay_rect":
+                    self.assertEqual(compose.call_count - composition_count, 2)
+                else:
+                    self.assertEqual(
+                        compose.call_count,
+                        composition_count,
+                        f"PDF raster calls: {raster_count} -> {raster.call_count}",
+                    )
+                self.assertEqual(
+                    raster.call_count,
+                    raster_count,
+                    f"compositions: {composition_count} -> {compose.call_count}",
+                )
+                self.assertEqual(
+                    [cache.file_signature(path) for path in paths], source_signatures
+                )
+
+    def test_ordinary_layer_rename_reuses_pdf_rasters_on_main_and_detached(self):
+        self._assert_pdf_scale_projection(
+            database_refresh=True, setting_kind="layer_name"
+        )
+
+    def test_page_rename_preserves_pdf_rasters_and_updates_detached_label(self):
+        self._assert_pdf_scale_projection(database_refresh=True, setting_kind="name")
+
+    def test_remote_page_rename_preserves_pdf_rasters_and_updates_detached_label(self):
+        self._assert_pdf_scale_projection(
+            database_refresh=True, remote=True, setting_kind="name"
+        )
+
+    def test_pdf_scale_save_reuses_raster_on_both_plans(self):
+        self._assert_pdf_scale_projection(database_refresh=True)
+
+    def test_pdf_remote_scale_projection_reuses_raster_on_both_plans(self):
+        self._assert_pdf_scale_projection(database_refresh=True, remote=True)
+
+    def test_pdf_sql_scale_completion_reuses_raster_on_both_plans(self):
+        self._assert_pdf_scale_projection(
+            database_refresh=True, remote=True, local_completion=True
+        )
+
+    def _assert_pdf_scale_projection(
+        self,
+        *,
+        database_refresh,
+        remote=False,
+        local_completion=False,
+        setting_kind="scale",
+    ):
+        from contextlib import ExitStack
+        from ost_visualizer.application.services.base_write_service import (
+            BaseWriteService,
+        )
+        from ost_visualizer.application.services.project_write_service import (
+            ProjectWriteService,
+        )
+        from ost_visualizer.application.services.page_visualization_metadata_service import (
+            PageVisualizationMetadataService,
+        )
+        from tests.test_native_page_image_plane import (
+            FakeProjectData as PlaneProjectData,
+        )
+        from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
+            PageRenderer,
+        )
+
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:
+            path = str(Path(directory) / "scale.pdf")
+
+            def write_pdf(destination, color):
+                writer = QtGui.QPdfWriter(destination)
+                writer.setResolution(72)
+                writer.setPageSize(
+                    QtGui.QPageSize(QtCore.QSizeF(64, 64), QtGui.QPageSize.Unit.Point)
+                )
+                writer.setPageMargins(QtCore.QMarginsF(0, 0, 0, 0))
+                painter = QtGui.QPainter(writer)
+                painter.fillRect(QtCore.QRectF(0, 0, 64, 64), QtGui.QColor(color))
+                painter.end()
+
+            write_pdf(path, "red")
+            page = self.data.page
+            page.image_path = path
+            page.width_pts = page.height_pts = 64.0
+            page.scale_factor1, page.scale_factor2 = 1.0, 12.0
+            cache = PageCache()
+            cleanup.callback(cache.clear)
+            plane_data = PlaneProjectData(page)
+            plane_provider = NativePageImagePlaneProvider(
+                plane_data,
+                self.state,
+                cache,
+                PageVisualizationMetadataService(plane_data),
+            )
+            for surface in (self.main_plan, self.detached.plan_view):
+                surface._rendering_service = PDFRenderingService(cache, num_workers=1)
+                cleanup.callback(surface._rendering_service.shutdown)
+                surface._load_coordinator = PageLoadStrategyService(
+                    SimpleNamespace(get_page_size=lambda *_args: (64.0, 64.0))
+                )
+                surface.set_disable_high_resolution_images(True)
+                surface.resize(300, 300)
+                surface.show()
+            original_render = PageRenderer.render
+            with patch.object(
+                PageRenderer, "render", autospec=True, side_effect=original_render
+            ) as render:
+                self.refresh()
+                self._wait_for_scene_colors([QtGui.QColor("red")] * 2)
+                before_plane = plane_provider.build_for_scene(
+                    [page.uid], {page.uid: 0.0}
+                )
+                self.assertIsNotNone(before_plane)
+                before_count = render.call_count
+                self.assertGreater(before_count, 0)
+                before_cache = dict(cache._cache)
+                before_rects = [
+                    surface._scene.sceneRect()
+                    for surface in (self.main_plan, self.detached.plan_view)
+                ]
+
+                def pixels(surface):
+                    image = QtGui.QImage(64, 64, QtGui.QImage.Format.Format_ARGB32)
+                    image.fill(QtCore.Qt.GlobalColor.transparent)
+                    painter = QtGui.QPainter(image)
+                    surface._scene.render(
+                        painter, QtCore.QRectF(0, 0, 64, 64), surface._scene.sceneRect()
+                    )
+                    painter.end()
+                    return image
+
+                before_pixels = [
+                    pixels(surface)
+                    for surface in (self.main_plan, self.detached.plan_view)
+                ]
+                if setting_kind == "name":
+                    page.name = "Renamed sheet"
+                elif setting_kind != "layer_name":
+                    page.scale_factor2 = 24.0
+                if database_refresh:
+                    self.bus.subscribe(
+                        AppEvents.DATABASE_REFRESHED,
+                        self.coordinator._invalidate_refreshed_image_sources,
+                    )
+                    if remote:
+                        self.bus.subscribe(
+                            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                            self.coordinator._invalidate_refreshed_image_sources,
+                        )
+                        self.bus.publish(
+                            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                            database_id=self.bid_ref.file_path,
+                            bid_uid=self.bid_ref.bid_uid,
+                            families=["pages"],
+                            resource_uids_by_family={"pages": [page.uid]},
+                            image_sources_unchanged=True,
+                            local_completion=local_completion,
+                        )
+                    else:
+                        service = ProjectWriteService.__new__(ProjectWriteService)
+                        BaseWriteService.__init__(service, lambda _path: True, self.bus)
+                        service._bid_write_guard = SimpleNamespace(
+                            blocks_active_locked_bid_write=lambda _path: False
+                        )
+                        service._active_bid_uid_for = lambda _path: int(
+                            self.bid_ref.bid_uid
+                        )
+                        service._execute_boolean_resource_mutation = (
+                            lambda _path, _resources, _operation, save, _fields: save()
+                        )
+                        if setting_kind == "layer_name":
+                            from ost_visualizer.domain.entities.layer import BidLayer
+
+                            layers = [
+                                BidLayer(
+                                    "layer-1", self.bid_ref.bid_uid, "Walls", True, 1
+                                )
+                            ]
+                            service._project_data = SimpleNamespace(
+                                get_bid_layer_snapshot=lambda: list(layers)
+                            )
+                            service._update_layer_name = SimpleNamespace(
+                                execute=lambda *_args: True
+                            )
+
+                            def reload_layers(_path):
+                                layers[0] = BidLayer(
+                                    "layer-1",
+                                    self.bid_ref.bid_uid,
+                                    "Partitions",
+                                    True,
+                                    1,
+                                )
+                                return True
+
+                            service._reload_database = reload_layers
+                            self.assertTrue(
+                                service.update_layer_name(
+                                    self.bid_ref.file_path, "layer-1", "Partitions"
+                                )
+                            )
+                        elif setting_kind == "name":
+                            service._save_page_name = SimpleNamespace(
+                                execute=lambda *_args: True
+                            )
+                            self.assertTrue(
+                                service.save_page_name(
+                                    self.bid_ref.file_path, page.uid, page.name
+                                )
+                            )
+                        else:
+                            service._save_page_scale = SimpleNamespace(
+                                execute=lambda *_args: True
+                            )
+                            self.assertTrue(
+                                service.save_page_scale(
+                                    self.bid_ref.file_path, page.uid, 1.0, 24.0
+                                )
+                            )
+                self.refresh()
+                self._wait_for_scene_colors([QtGui.QColor("red")] * 2)
+                self.assertEqual(
+                    self.bar.scale_combo.currentText(),
+                    self.detached._scale_combo.currentText(),
+                )
+                self.assertEqual(
+                    self.detached._scale_combo.currentData(), (1.0, page.scale_factor2)
+                )
+                if setting_kind == "name":
+                    self.assertIn(
+                        "Renamed sheet", self.detached._page_combo.currentText()
+                    )
+                self.assertEqual(
+                    before_rects,
+                    [
+                        surface._scene.sceneRect()
+                        for surface in (self.main_plan, self.detached.plan_view)
+                    ],
+                )
+                self.assertEqual(
+                    before_pixels,
+                    [
+                        pixels(surface)
+                        for surface in (self.main_plan, self.detached.plan_view)
+                    ],
+                )
+                after_plane = plane_provider.build_for_scene(
+                    [page.uid], {page.uid: 0.0}
+                )
+                self.assertEqual(after_plane.pixels_rgba, before_plane.pixels_rgba)
+                dimension_factor = 2 if setting_kind == "scale" else 1
+                self.assertEqual(
+                    after_plane.page_width, before_plane.page_width * dimension_factor
+                )
+                self.assertEqual(
+                    after_plane.page_height, before_plane.page_height * dimension_factor
+                )
+                self.assertEqual(render.call_count, before_count)
+                self.assertEqual(set(cache._cache), set(before_cache))
+                for key, image in before_cache.items():
+                    self.assertIs(cache._cache[key], image)
+                # Calibrated OverlayRect is rescaled by normal scale persistence.
+                # Its physical placement and composed pixels therefore survive.
+                from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
+                    CompositeRenderer,
+                )
+
+                overlay = QtGui.QImage(16, 16, QtGui.QImage.Format.Format_RGB32)
+                overlay.fill(QtGui.QColor("blue"))
+                page.overlay_image_path = str(Path(directory) / "overlay.tif")
+                self.assertTrue(overlay.save(page.overlay_image_path))
+                page.image_show_mode = 1
+                page.overlay_rect = (2.0, 2.0, 12.0, 12.0)
+                compositor = CompositeRenderer(cache)
+                composition = compositor.render_composite(page, self.bid_ref, 1.0, 0)
+                self.assertIsNotNone(composition)
+                calls = render.call_count
+                page.scale_factor2 *= 2
+                page.overlay_rect = tuple(value * 2 for value in page.overlay_rect)
+                self.assertEqual(
+                    compositor.render_composite(page, self.bid_ref, 1.0, 0), composition
+                )
+                self.assertEqual(render.call_count, calls)
+                # Changing calibration alone with an unchanged stored rectangle
+                # really does change composition, but still not PDF rasterization.
+                page.scale_factor2 *= 2
+                self.assertNotEqual(
+                    compositor.render_composite(page, self.bid_ref, 1.0, 0), composition
+                )
+                self.assertEqual(render.call_count, calls)
+                # A genuine source replacement must still miss the raster cache.
+                replacement_path = str(Path(directory) / "replacement.pdf")
+                write_pdf(replacement_path, "blue")
+                page.image_path = replacement_path
+                page.image_show_mode = 0
+                refresh_service = BaseWriteService(lambda _path: True, self.bus)
+                refresh_service.reload_and_notify(self.bid_ref.file_path)
+                self.refresh()
+                self._wait_for_scene_colors([QtGui.QColor("blue")] * 2)
+                blue_plane = plane_provider.build_for_scene([page.uid], {page.uid: 0.0})
+                self.assertGreater(render.call_count, calls)
+                self.assertNotEqual(blue_plane.pixels_rgba, before_plane.pixels_rgba)
+                # Replace content in place, preserving both size and timestamp.
+                # The explicit refresh must advance the source incarnation.
+                calls = render.call_count
+                old_stat = os.stat(replacement_path)
+                replacement_bytes = Path(path).read_bytes()
+                self.assertLessEqual(len(replacement_bytes), old_stat.st_size)
+                replacement_bytes = replacement_bytes.ljust(old_stat.st_size, b" ")
+                self.assertEqual(len(replacement_bytes), old_stat.st_size)
+                with open(replacement_path, "r+b") as destination:
+                    destination.write(replacement_bytes)
+                os.utime(
+                    replacement_path, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns)
+                )
+                refresh_service.reload_and_notify(self.bid_ref.file_path)
+                self.refresh()
+                self._wait_for_scene_colors([QtGui.QColor("red")] * 2)
+                red_plane = plane_provider.build_for_scene([page.uid], {page.uid: 0.0})
+                self.assertEqual(red_plane.pixels_rgba, before_plane.pixels_rgba)
+                self.assertGreater(render.call_count, calls)
 
     def test_custom_scale_has_same_label_in_main_and_detached_after_refresh(self):
         original_count = self.detached._scale_combo.count()
