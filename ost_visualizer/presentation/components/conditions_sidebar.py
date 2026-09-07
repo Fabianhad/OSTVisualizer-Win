@@ -425,6 +425,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._selected_condition_uids[:] if preserve_tree_state else []
         )
         selected_folders = self._selected_folder_uids[:] if preserve_tree_state else []
+        current_key = self._item_kind_uid(self.tree.currentItem())
         sorting_enabled = self.tree.isSortingEnabled()
         updates_enabled = self.tree.updatesEnabled()
         signals_blocked = self.tree.signalsBlocked()
@@ -486,7 +487,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
         if pending_condition:
             self.highlight_conditions({pending_condition})
         elif selected_conditions or selected_folders:
-            self._restore_context_selection(selected_conditions, selected_folders)
+            self._restore_context_selection(
+                selected_conditions, selected_folders, current_key=current_key
+            )
             if preserve_scroll:
                 self.tree.verticalScrollBar().setValue(scroll_value)
         elif preserve_scroll:
@@ -553,7 +556,11 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self.group_by_type_changed.emit(enabled)
 
     def _restore_context_selection(
-        self, condition_uids: List[str], folder_uids: List[str]
+        self,
+        condition_uids: List[str],
+        folder_uids: List[str],
+        *,
+        current_key: Optional[Tuple[Optional[str], str]] = None,
     ) -> None:
         self._block_selection_signal = True
         try:
@@ -569,8 +576,22 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 if item:
                     item.setSelected(True)
                     first_item = first_item or item
-            if first_item and not self._item_has_collapsed_parent(first_item):
-                self.tree.setCurrentItem(first_item)
+            current_item = first_item
+            if current_key is not None:
+                kind, uid = current_key
+                current_item = None
+                if kind == _TYPE_CONDITION:
+                    current_item = self._condition_items.get(uid)
+                elif kind == _TYPE_FOLDER:
+                    current_item = self._folder_items.get(uid)
+            if current_item is None or not self._item_has_collapsed_parent(
+                current_item
+            ):
+                self.tree.setCurrentItem(
+                    current_item,
+                    _COL_NO,
+                    QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+                )
         finally:
             self._block_selection_signal = False
         self._sync_button_states()

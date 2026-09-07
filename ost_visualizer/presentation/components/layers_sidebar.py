@@ -172,9 +172,16 @@ class BidLayersSidebar(QtWidgets.QWidget):
         prev_selected = (
             self._pending_select_uid or pending_new_prev_uid or self._selected_uid
         )
+        reveal_selection = self._pending_select_uid is not None
         self._pending_select_uid = None
         v_scroll = self._table.verticalScrollBar()
         v_pos = v_scroll.value() if v_scroll else 0
+        top_item = self._table.itemAt(1, 1)
+        top_row = self._table.indexOfTopLevelItem(top_item)
+        top_key = None
+        if 0 <= top_row < len(self._layers):
+            top_layer = self._layers[top_row]
+            top_key = (top_layer.bid_uid, top_layer.uid)
         self._layers = layers
         self._checkboxes.clear()
         self._block_item_changed = True
@@ -183,6 +190,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._table.clear()
         self._table.setHeaderLabels(["Show", "Layer"])
         restore_row = -1
+        restore_top_item = None
         for row, layer in enumerate(layers):
             item = QtWidgets.QTreeWidgetItem(["", layer.name])
             flags = (
@@ -206,15 +214,28 @@ class BidLayersSidebar(QtWidgets.QWidget):
             self._checkboxes.append(checkbox)
             if layer.uid == prev_selected:
                 restore_row = row
+            if (layer.bid_uid, layer.uid) == top_key:
+                restore_top_item = item
         self._table.blockSignals(False)
         self._table.setUpdatesEnabled(True)
         self._block_item_changed = False
         if restore_row >= 0:
             self._selected_uid = self._layers[restore_row].uid
-            self._restore_row_selection(restore_row)
+            auto_scroll = self._table.hasAutoScroll()
+            if not reveal_selection:
+                self._table.setAutoScroll(False)
+            try:
+                self._restore_row_selection(restore_row)
+            finally:
+                self._table.setAutoScroll(auto_scroll)
         else:
             self._selected_uid = None
-        if v_scroll is not None:
+        self._table.doItemsLayout()
+        if restore_top_item is not None and not reveal_selection:
+            self._table.scrollToItem(
+                restore_top_item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+            )
+        elif v_scroll is not None:
             v_scroll.setValue(v_pos)
         self._sync_top_buttons()
         self._refresh_selection_buttons()

@@ -464,6 +464,8 @@ class ProjectView(QtWidgets.QWidget):
         self.top_tree.customContextMenuRequested.connect(self._on_context_menu)
 
     def build_complete_structure(self, loaded_files: List[LoadedFile]) -> None:
+        top_item = self.top_tree.itemAt(1, 1)
+        top_key = self._get_node_key(top_item) if top_item is not None else ""
         selection_snapshot = self.get_selected_node_state() or self._selected_node_state
         self._clear_tree_items()
         self._loaded_files = loaded_files or []
@@ -476,7 +478,23 @@ class ProjectView(QtWidgets.QWidget):
             item.setFlags(QtCore.Qt.ItemFlag.NoItemFlags)
             self.top_tree.addTopLevelItem(item)
             return
-        self._build_multi_file_structure(self._loaded_files)
+        auto_scroll = self.top_tree.hasAutoScroll()
+        if top_key:
+            self.top_tree.setAutoScroll(False)
+        try:
+            self._build_multi_file_structure(self._loaded_files)
+            if top_key:
+                self.top_tree.doItemsLayout()
+
+                def restore_anchor(item: QtWidgets.QTreeWidgetItem) -> None:
+                    if self._get_node_key(item) == top_key:
+                        self.top_tree.scrollToItem(
+                            item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+                        )
+
+                self._walk_items(restore_anchor)
+        finally:
+            self.top_tree.setAutoScroll(auto_scroll)
         if self._pending_rename_uid:
             self._start_pending_rename()
 

@@ -5244,6 +5244,78 @@ class SceneControlPresentationTests(unittest.TestCase):
         )
         return bundle, combo
 
+    def test_inactive_plan_reactivation_keeps_projected_page_state(self):
+        bundle, zoom = self._main_components()
+        bundle.view_stack.setCurrentIndex(1)
+        page = self.main_data.page
+        actions = bundle.central_widget.findChild(SceneNavigationControls)._actions
+        for transition in ("rename", "replace", "delete", "first-page"):
+            with self.subTest(transition=transition):
+                bundle.view_stack.setCurrentIndex(0)
+                if transition == "rename":
+                    page.name = "Renamed while inactive"
+                elif transition == "replace":
+                    page = deepcopy(page)
+                    page.name = "Replacement while inactive"
+                    self.main_data.page = page
+                    self.main_data.bid.pages_without_folder = [page]
+                elif transition == "delete":
+                    self.main_data.bid.pages_without_folder = []
+                    self.main_state.active_page_uid = None
+                else:
+                    self.main_data.bid.pages_without_folder = [page]
+                    self.main_state.active_page_uid = page.uid
+                if transition == "delete":
+                    self.main_sync.clear_plan_view()
+                else:
+                    self.main_sync.update_plan_view(page.uid)
+                self.app.processEvents()
+                with patch.object(
+                    self.main_sync,
+                    "update_plan_view",
+                    wraps=self.main_sync.update_plan_view,
+                ) as update:
+                    bundle.view_stack.setCurrentIndex(1)
+                    self.app.processEvents()
+                    self.assertEqual(update.call_count, 0)
+                if transition == "delete":
+                    self.assertIsNone(bundle.plan_view._current_page)
+                    self.assertFalse(zoom.isEnabled())
+                    self.assertEqual(zoom.currentText(), "")
+                    self.assertFalse(any(action.isEnabled() for action in actions))
+                    self.assertFalse(bundle.plan_view._selected_uids)
+                else:
+                    self.assertIs(bundle.plan_view._current_page, page)
+                    self.assertEqual(bundle.plan_view._current_page.name, page.name)
+                    self.assertTrue(zoom.isEnabled())
+                    self.assertTrue(all(action.isEnabled() for action in actions))
+
+    def test_inactive_3d_reactivation_keeps_empty_and_recovered_controls(self):
+        bundle, zoom = self._main_components()
+        bundle.view_stack.setCurrentIndex(0)
+        for available in (False, True, False, True):
+            with self.subTest(available=available):
+                bundle.view_stack.setCurrentIndex(1)
+                if available:
+                    bundle.opengl_viewer._renderer.scene = FakeMeshScene(["current"])
+                    bundle.opengl_viewer.scene_content_changed.emit()
+                else:
+                    bundle.opengl_viewer.clear_scene()
+                with patch.object(
+                    bundle.opengl_viewer,
+                    "apply_mesh_data",
+                    wraps=bundle.opengl_viewer.apply_mesh_data,
+                ) as rebuild:
+                    bundle.view_stack.setCurrentIndex(0)
+                    self.app.processEvents()
+                    self.assertEqual(rebuild.call_count, 0)
+                self.assertEqual(zoom.isEnabled(), available)
+                self.assertEqual(bundle.opengl_viewer.has_renderable_content, available)
+                if available:
+                    self.assertTrue(zoom.currentText().endswith("%"))
+                else:
+                    self.assertEqual(zoom.currentText(), "")
+
     def test_main_plan_page_loss_clears_navigation_controls_and_recovers(self):
         bundle, zoom = self._main_components()
         bundle.view_stack.setCurrentIndex(1)

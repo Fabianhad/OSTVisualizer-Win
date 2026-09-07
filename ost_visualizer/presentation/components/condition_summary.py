@@ -322,7 +322,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
                         node.condition_uid,
                         node.folder_uid,
                         node.group_level,
-                        node.label,
+                        "" if node.folder_uid else node.label,
                         node.values.area,
                     )
                 )
