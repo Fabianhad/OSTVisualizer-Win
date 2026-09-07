@@ -2,6 +2,7 @@ from dataclasses import replace
 from typing import List, Optional, Set
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
+from ...application.events.app_events import AppEvents
 from ...domain.entities.employee import Employee, PayClass
 from ..config import (
     COMPACT_SPACING,
@@ -15,6 +16,7 @@ from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.dialog import (
+    authoritative_save_is_current,
     delete_later_if_valid,
     save_result_mapping,
     save_result_succeeded,
@@ -46,11 +48,22 @@ class EmployeesDialog(QtWidgets.QDialog):
         pay_classes_save_fn=None,
         pay_classes_save_async_fn=None,
         menu_mode: bool = False,
+        used_uids_fn=None,
+        pay_class_usage_fn=None,
+        reload_pay_classes_fn=None,
+        reload_employees_fn=None,
+        event_bus=None,
+        database_id: str = "",
     ):
         super().__init__(parent)
+        self._master_data_event_bus = event_bus
+        self._master_data_database_id = database_id
+        self._reload_pay_classes_fn = reload_pay_classes_fn
+        self._reload_employees_fn = reload_employees_fn
         self.icon_provider = icon_provider
         self._save_fn = save_fn
         self._save_async_fn = save_async_fn
+        self._pay_class_usage_fn = pay_class_usage_fn
         self._pay_classes_save_fn = pay_classes_save_fn
         self._pay_classes_save_async_fn = pay_classes_save_async_fn
         self._menu_mode = menu_mode
@@ -60,9 +73,11 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._new_counter: int = 0
         self._selected_uid: Optional[str] = selected_uid or None
         self._used_uids: Set[str] = used_uids or set()
+        self._used_uids_fn = used_uids_fn
         self._interactive_requested: bool = True
         self._interactive: bool = True
         self._active_detail_dialog = None
+        self._pending_authoritative_changes = set()
         self._operation_pending = False
         self._deleted_uids: set[str] = set()
         self._pay_classes: List[PayClassRecord] = [
@@ -70,6 +85,7 @@ class EmployeesDialog(QtWidgets.QDialog):
         ]
         for emp in employees or []:
             self._employees.append(EmployeeRecord.from_employee(emp))
+        self._employee_baselines = {str(e.uid): replace(e) for e in self._employees}
         self._setup_ui()
         self._populate()
         self._header_controller = PersistentHeaderController(
@@ -89,6 +105,93 @@ class EmployeesDialog(QtWidgets.QDialog):
         )
         if initial_first_name is not None:
             self._on_new_with_first_name(initial_first_name)
+        if event_bus is not None:
+            callback = self._on_master_data_changed
+            event_bus.subscribe(AppEvents.REMOTE_MASTER_DATA_CHANGED, callback)
+            self.destroyed.connect(
+                lambda: event_bus.unsubscribe(
+                    AppEvents.REMOTE_MASTER_DATA_CHANGED, callback
+                )
+            )
+
+    def _on_master_data_changed(self, database_id: str = "", families=()) -> None:
+        if not isValid(self) or database_id != self._master_data_database_id:
+            return
+        if {"employees", "pay_classes"}.intersection(
+            families
+        ) and self._reload_employees_fn is not None:
+            employees, pay_classes = self._reload_employees_fn()
+            if "employees" in families:
+                self.refresh_employees(employees, pay_classes)
+            else:
+                self.refresh_pay_classes(pay_classes)
+            return
+        if "pay_classes" in families and self._reload_pay_classes_fn is not None:
+            self.refresh_pay_classes(self._reload_pay_classes_fn())
+
+    def refresh_employees(self, employees, pay_classes=None) -> None:
+        if pay_classes is not None:
+            self._pay_classes = [
+                PayClassRecord.from_pay_class(pc) for pc in pay_classes
+            ]
+        authoritative = {str(e.uid): EmployeeRecord.from_employee(e) for e in employees}
+        rows = {
+            str(
+                self.tree.topLevelItem(i).data(0, self._UID_ROLE)
+            ): self.tree.topLevelItem(i)
+            for i in range(self.tree.topLevelItemCount())
+        }
+        retained = []
+        removed_current = False
+        for record in self._employees:
+            uid = str(record.uid)
+            if record.is_new:
+                retained.append(record)
+                continue
+            if uid not in authoritative:
+                item = rows[uid]
+                removed_current = removed_current or item is self.tree.currentItem()
+                self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(item))
+                continue
+            updated = record.with_authoritative_updates(
+                self._employee_baselines[uid], authoritative[uid]
+            )
+            retained.append(updated)
+            for column, text in enumerate(
+                (
+                    updated.employee_no,
+                    updated.display_name,
+                    updated.home_phone,
+                    updated.mobile_phone,
+                )
+            ):
+                if rows[uid].text(column) != text:
+                    rows[uid].setText(column, text)
+        retained_uids = {str(e.uid) for e in retained}
+        for uid, record in authoritative.items():
+            if uid not in retained_uids:
+                retained.append(record)
+                self._add_tree_item(record)
+        self._employees = retained
+        if self._operation_pending:
+            self._pending_authoritative_changes.update(
+                uid
+                for uid in self._employee_baselines.keys() | authoritative.keys()
+                if self._employee_baselines.get(uid) != authoritative.get(uid)
+            )
+        self._employee_baselines = authoritative
+        if removed_current:
+            self.tree.setCurrentItem(None)
+        if str(self._selected_uid or "") not in authoritative:
+            self._selected_uid = None
+        self._update_button_states()
+        if self._active_detail_dialog is not None:
+            self._active_detail_dialog.refresh_employees(employees, pay_classes)
+
+    def refresh_pay_classes(self, pay_classes) -> None:
+        self._pay_classes = [PayClassRecord.from_pay_class(pc) for pc in pay_classes]
+        if self._active_detail_dialog is not None:
+            self._active_detail_dialog.refresh_pay_classes(pay_classes)
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("Employees")
@@ -278,8 +381,10 @@ class EmployeesDialog(QtWidgets.QDialog):
             self.icon_provider,
             editable_employees,
             current_index,
+            employee_baselines=self._employee_baselines,
             parent=self,
             pay_classes=pay_classes,
+            pay_class_usage_fn=self._pay_class_usage_fn,
             pay_classes_save_fn=self._pay_classes_save_fn,
             pay_classes_save_async_fn=self._pay_classes_save_async_fn,
             workspace_state_model=self._workspace_state_model,
@@ -332,6 +437,7 @@ class EmployeesDialog(QtWidgets.QDialog):
         for employee in new_employees:
             employee.uid = str(uid_map[employee.uid])
             employee.is_new = False
+            self._employee_baselines[str(employee.uid)] = replace(employee)
         return str(persisted_current_uid)
 
     def _on_delete(self) -> None:
@@ -349,6 +455,12 @@ class EmployeesDialog(QtWidgets.QDialog):
             (_emp_name(item.data(0, self._UID_ROLE)), item.data(0, self._UID_ROLE))
             for item in selected_items
         ]
+        if self._used_uids_fn is not None:
+            try:
+                self._used_uids = {str(uid) for uid in self._used_uids_fn()}
+            except Exception:
+                show_warning(self, "Delete Employee", "Failed to validate usage.")
+                return
         to_delete = confirm_multi_delete(
             self, "Delete Employee", pairs, self._used_uids
         )
@@ -420,18 +532,41 @@ class EmployeesDialog(QtWidgets.QDialog):
                 "deleted_uids": sorted(self._deleted_uids),
             }
             if any(changes.values()):
+                previous = {
+                    uid: replace(employee.to_employee(), uid="")
+                    for uid, employee in self._employee_baselines.items()
+                }
+                submitted = {
+                    str(employee.uid): replace(employee.to_employee(), uid="")
+                    for employee in changes["new"] + changes["updated"]
+                }
+                submitted.update({str(uid): None for uid in changes["deleted_uids"]})
+                changed_during_save = self._pending_authoritative_changes = set()
                 new_uids = {employee.uid for employee in new_employees}
                 self._operation_pending = True
                 self._apply_interactivity()
 
                 def completed(success: bool, mapping=None) -> None:
-                    if not isValid(self):
+                    if not isValid(self) or self._save_async_fn is None:
                         return
                     self._operation_pending = False
                     self._apply_interactivity()
                     if not success:
                         return
                     uid_map = mapping if isinstance(mapping, dict) else {}
+                    current = {
+                        uid: replace(employee.to_employee(), uid="")
+                        for uid, employee in self._employee_baselines.items()
+                    }
+                    if not authoritative_save_is_current(
+                        previous, current, submitted, uid_map, changed_during_save
+                    ):
+                        show_warning(
+                            self,
+                            "Employees",
+                            "These records changed while saving. Review the current values and try again.",
+                        )
+                        return
                     if not new_uids.issubset(uid_map):
                         show_warning(self, "Employees", "Failed to create employee.")
                         return
@@ -479,15 +614,24 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._window_state.apply_show_state()
 
     def cleanup(self) -> None:
+        if self._master_data_event_bus is not None:
+            self._master_data_event_bus.unsubscribe(
+                AppEvents.REMOTE_MASTER_DATA_CHANGED, self._on_master_data_changed
+            )
+            self._master_data_event_bus = None
+        self._reload_pay_classes_fn = None
+        self._reload_employees_fn = None
         self.icon_provider = None
         self._save_fn = None
         self._save_async_fn = None
+        self._pay_class_usage_fn = None
         self._pay_classes_save_fn = None
         self._pay_classes_save_async_fn = None
         self._active_detail_dialog = None
         self._employees.clear()
         self._pay_classes.clear()
         self._used_uids.clear()
+        self._used_uids_fn = None
         self._deleted_uids.clear()
 
     def closeEvent(self, event) -> None:

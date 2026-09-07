@@ -302,6 +302,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._allow_apply = True
         self._saved_form_state = ()
         self._active_sub_dialog: Optional[QtWidgets.QDialog] = None
+        self._closed = False
         self._type_edit_identity_uid: Optional[str] = None
         self._general_tab_built = False
         self._height_edit: Optional[_DimensionLineEdit] = None
@@ -1000,7 +1001,19 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._cdn_types = {cdn.uid: cdn for cdn in values}
         return list(self._cdn_types.values())
 
+    def _nested_result_is_current(self, condition: Optional[Condition]) -> bool:
+        return (
+            isValid(self)
+            and not self._closed
+            and condition is not None
+            and self._current_condition() is condition
+            and self._interactive_enabled
+            and self._has_license
+            and not self._read_only
+        )
+
     def _open_condition_types_dialog(self, *_args) -> None:
+        condition = self._current_condition()
         current_name = self._type_edit.text().strip()
         dialog = ConditionTypesDialog(
             self._icon_provider,
@@ -1019,7 +1032,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
-            if not isValid(self) or not isValid(dialog):
+            if not self._nested_result_is_current(condition) or not isValid(dialog):
                 return
             accepted = result == QtWidgets.QDialog.DialogCode.Accepted
             self._reload_condition_types()
@@ -1115,13 +1128,14 @@ class EditConditionDialog(QtWidgets.QDialog):
         return {str(uid) for uid in self._layer_used_uids_fn()}
 
     def _open_layers_dialog(self, *_args) -> None:
+        condition = self._current_condition()
         current_name = self._layer_edit.text().strip()
         dialog = LayersDialog(
             self._icon_provider,
             parent=self,
             layers=self._reload_layers(),
             current_name=current_name,
-            used_uids=self._used_layer_uids(),
+            used_uids_fn=self._used_layer_uids,
             reload_fn=self._reload_layers,
             insert_fn=self._layer_insert_fn,
             delete_many_fn=self._layer_delete_many_fn,
@@ -1139,7 +1153,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
-            if not isValid(self) or not isValid(dialog):
+            if not self._nested_result_is_current(condition) or not isValid(dialog):
                 return
             accepted = result == QtWidgets.QDialog.DialogCode.Accepted
             self._reload_layers()
@@ -1837,6 +1851,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         if active_sub_dialog:
             active_sub_dialog.set_interactive(editable)
 
+    def done(self, result: int) -> None:
+        self._closed = True
+        super().done(result)
+
     def closeEvent(self, event) -> None:
         if self._save_pending:
             event.ignore()
@@ -1852,4 +1870,5 @@ class EditConditionDialog(QtWidgets.QDialog):
             elif reply is None:
                 event.ignore()
                 return
+        self._closed = True
         event.accept()

@@ -2174,6 +2174,11 @@ class OptionsPreferencesTests(unittest.TestCase):
                 pages_with_takeoffs=None,
                 pages_requiring_delete_confirmation=None,
                 pdf_metadata_pool=None,
+                employee_usage_fn=None,
+                pay_class_usage_fn=None,
+                job_status_usage_fn=None,
+                event_bus=None,
+                database_id="",
             ):
                 captured.update(
                     save_job_statuses_async_fn=save_job_statuses_async_fn,

@@ -48,10 +48,16 @@ def _add_overflow_action(
     menu.addAction(action)
 
     def _show_target_page() -> None:
-        QtCore.QTimer.singleShot(
-            0,
-            lambda: render_page(target_start) if isValid(menu) else None,
-        )
+        def render_if_current() -> None:
+            if (
+                isValid(menu)
+                and isValid(action)
+                and menu.isVisible()
+                and action in menu.actions()
+            ):
+                render_page(target_start)
+
+        QtCore.QTimer.singleShot(0, render_if_current)
 
     button.clicked.connect(_show_target_page)
     return action

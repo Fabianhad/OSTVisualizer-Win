@@ -6009,6 +6009,44 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(write_service.insert_calls, [])
         self.assertEqual(plan_view.activate_calls, [])
 
+    def test_detached_hotlink_dialog_return_does_not_write_after_same_uid_page_replacement(
+        self,
+    ):
+        write_service = FakeAnnotationWriteService()
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._access_state = _full_plan_surface_access()
+        window.page_data = FakeDetachedPageData()
+        window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._named_views = [("nv1", "p1", "Page 1", "Lobby")]
+
+        class RetargetingDialog:
+            def __init__(self, _named_views, parent=None):
+                pass
+
+            def exec(self):
+                window.page_data.page = SimpleNamespace(uid="p1")
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def result_data(self):
+                return SimpleNamespace(create_new=True, named_view_uid="")
+
+        with patch(
+            "ost_visualizer.presentation.windows.components.window."
+            "SelectNamedViewDialog",
+            RetargetingDialog,
+        ):
+            window._on_hotlink_placement_requested([5.0, 6.0], "p1")
+        self.assertEqual(write_service.insert_calls, [])
+        self.assertEqual(plan_view.activate_calls, [])
+
     def test_detached_named_view_delete_with_linked_hotlink_no_or_close_cancels(self):
         for response in (False, None):
             with self.subTest(response=response):

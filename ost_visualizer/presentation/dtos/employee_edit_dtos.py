@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from ...domain.entities.employee import Employee, PayClass
 
 
@@ -55,6 +55,19 @@ class EmployeeRecord:
             email=emp.email,
             pay_class_uid=emp.pay_class_uid,
         )
+
+    def with_authoritative_updates(
+        self, previous: "EmployeeRecord", current: "EmployeeRecord"
+    ) -> "EmployeeRecord":
+        draft_values = asdict(self)
+        previous_values = asdict(previous)
+        for name, value in asdict(current).items():
+            if (
+                name not in {"uid", "is_new"}
+                and draft_values[name] == previous_values[name]
+            ):
+                draft_values[name] = value
+        return EmployeeRecord(**draft_values)
 
     def to_employee(self) -> Employee:
         return Employee(

@@ -37,6 +37,7 @@ from ...domain.entities.takeoff import Takeoff
 from ...domain.services.page_scale_transform import (
     PageScale,
     rescale_position_between_page_scales,
+    rescale_annotation_position_between_page_scales,
 )
 from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
@@ -1156,7 +1157,8 @@ class PlanViewActionHandler:
                 (
                     uid,
                     annotation_type,
-                    rescale_position_between_page_scales(
+                    rescale_annotation_position_between_page_scales(
+                        annotation_type,
                         position,
                         captured_scales.get(key),
                         self._annotation_scale_for_key(*key),
@@ -1190,7 +1192,8 @@ class PlanViewActionHandler:
         return [
             replace(
                 spec,
-                position=rescale_position_between_page_scales(
+                position=rescale_annotation_position_between_page_scales(
+                    spec.annotation_type,
                     spec.position,
                     captured_scales.get(str(spec.page_uid)),
                     self._page_scale_for_page_uid(spec.page_uid),
@@ -1207,7 +1210,8 @@ class PlanViewActionHandler:
         return [
             replace(
                 annotation,
-                position=rescale_position_between_page_scales(
+                position=rescale_annotation_position_between_page_scales(
+                    annotation.annotation_type,
                     annotation.position,
                     captured_scales.get(str(annotation.page_uid)),
                     self._page_scale_for_page_uid(annotation.page_uid),
@@ -2510,6 +2514,7 @@ class PlanViewActionHandler:
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not page_uid or len(position) < 2:
             return
+        page_identities = self._capture_page_identities((str(page_uid),))
         self._plan_view.cancel_place_mode()
         dialog = SelectNamedViewDialog(
             self._collect_named_view_choices(),
@@ -2519,7 +2524,9 @@ class PlanViewActionHandler:
         if (
             not isValid(dialog)
             or not isValid(self._plan_view)
-            or not self._plan_context_is_current(bid_ref, (str(page_uid),))
+            or not self._plan_context_is_current(
+                bid_ref, (str(page_uid),), page_identities
+            )
             or not self._is_allowed(Feature.PLACE_ANNOTATIONS)
         ):
             return

@@ -42,6 +42,7 @@ class JobStatusesDialog(BasePickerDialog):
         save_fn=None,
         save_async_fn=None,
         menu_mode: bool = False,
+        used_uids_fn=None,
     ):
         items = [
             {
@@ -59,6 +60,7 @@ class JobStatusesDialog(BasePickerDialog):
             items=items,
             selected_uid=selected_uid,
             used_uids=used_job_status_uids,
+            used_uids_fn=used_uids_fn,
             initial_name=initial_name,
             save_fn=save_fn,
             save_async_fn=save_async_fn,

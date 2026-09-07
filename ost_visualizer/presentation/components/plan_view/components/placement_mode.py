@@ -3,6 +3,7 @@ import math
 import os
 import weakref
 from typing import NamedTuple
+from shiboken6 import isValid
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainterPath, QPen
@@ -1250,9 +1251,9 @@ class PlacementModeMixin:
         def _restore() -> None:
             view = weak_self()
             item = weak_item()
-            if view is None or item is None:
+            if view is None or item is None or not isValid(view) or not isValid(item):
                 return
-            if not view._place_flashing:
+            if not view._place_flashing or item not in view._place_preview_items:
                 return
             item.setPen(QPen(red))
             item.setBrush(QBrush(red))

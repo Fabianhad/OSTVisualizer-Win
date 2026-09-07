@@ -668,9 +668,11 @@ class ComponentBuilder:
             return project_read_service.get_bid_areas(file_path, bid_uid)
 
         page_settings_bar = PageSettingsBar(
+            get_page_fn=project_data_service.get_page,
             icon_provider=self.window.icon_provider,
             event_bus=event_bus,
             load_areas_fn=load_bid_areas,
+            used_area_uids_fn=project_data_service.get_area_uids_with_takeoff,
             save_areas_fn=project_write_service.save_bid_areas_result,
             save_areas_async_fn=ui_event_handler.save_bid_areas_async,
             uses_async_areas_fn=(

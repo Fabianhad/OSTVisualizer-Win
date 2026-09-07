@@ -126,10 +126,8 @@ class CoverSheetHandler:
             data.used_job_status_uids = self._project_data.get_used_job_status_uids(
                 file_path
             )
-            used_employee_uids = self._project_data.get_used_employee_uids(file_path)
             bid_areas = self._project_data.get_bid_area_snapshot()
         else:
-            used_employee_uids = self._read_service.get_employee_uids_in_use(file_path)
             bid_areas = []
         pages_with_takeoffs = (
             {
@@ -205,7 +203,17 @@ class CoverSheetHandler:
             self.icon_provider,
             self.window,
             data,
-            used_employee_uids=used_employee_uids,
+            event_bus=self._event_bus,
+            database_id=file_path,
+            employee_usage_fn=lambda: (
+                self._project_data if uses_sql_queue else self._read_service
+            ).get_master_data_uids_in_use(file_path, "employees"),
+            pay_class_usage_fn=lambda: (
+                self._project_data if uses_sql_queue else self._read_service
+            ).get_master_data_uids_in_use(file_path, "pay_classes"),
+            job_status_usage_fn=lambda: (
+                self._project_data if uses_sql_queue else self._read_service
+            ).get_master_data_uids_in_use(file_path, "job_statuses"),
             has_license=self._ui_access_manager.has_license(),
             context=context,
             save_job_statuses_async_fn=(

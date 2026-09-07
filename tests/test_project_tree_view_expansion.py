@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -106,6 +107,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         view = ProjectView(None, _EventBus())
         view._find_project_item = lambda *_args: calls.append(True) or (None, None)
         view.schedule_rename("project-1", "C:/jobs/test.mdb")
+        calls.clear()
         delete(view)
         self.app.processEvents()
         self.assertEqual(calls, [])
@@ -138,6 +140,25 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
                 item.setSelected(True)
         self.app.processEvents()
         return selected
+
+    def test_authoritative_master_labels_project_by_bid_identity(self):
+        loaded = self._loaded_file(["bid-1", "bid-2"])
+        loaded[0].projects[0].bids[0].estimator = "Old employee"
+        loaded[0].projects[0].bids[0].status = "Old status"
+        self.view.build_complete_structure(loaded)
+        self._select_bid_items("bid-1")
+        for estimator, status in (("Same", "Same"), ("", "")):
+            replacement = self._loaded_file(["bid-1", "bid-2"])
+            replacement[0].projects[0].bids[0].estimator = estimator
+            replacement[0].projects[0].bids[0].status = status
+            replacement[0].projects[0].bids[1].estimator = "Same"
+            replacement[0].projects[0].bids[1].status = "Same"
+            self.view.build_complete_structure(replacement)
+            item = self._find_item("bid-1")
+            self.assertEqual(item.text(5), estimator)
+            self.assertEqual(item.text(2), self.view._display_status(status))
+            self.assertTrue(item.isSelected())
+            self.assertFalse(self._find_item("bid-2").isSelected())
 
     def test_delete_replacement_selects_next_bid_in_same_folder(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
@@ -476,12 +497,55 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             ["Duplicate", "Duplicate"],
         )
 
+    def test_queued_project_rename_does_not_edit_replacement_or_hidden_owner(self):
+        for transition in (
+            "current",
+            "replace",
+            "hide",
+            "disabled",
+            "reopen",
+            "repeat",
+            "new",
+        ):
+            with self.subTest(transition=transition):
+                self.view.setEnabled(True)
+                self.view.build_complete_structure(
+                    [] if transition == "new" else self._loaded_file([])
+                )
+                self.view.show()
+                with patch.object(
+                    self.view,
+                    "_start_project_rename",
+                    wraps=self.view._start_project_rename,
+                ) as start:
+                    self.view.schedule_rename("project-1", "C:/jobs/test.mdb")
+                    if transition == "repeat":
+                        self.view.schedule_rename("project-1", "C:/jobs/test.mdb")
+                    elif transition == "reopen":
+                        self.view.hide()
+                        self.view.show()
+                    elif transition in ("replace", "new"):
+                        self.view.build_complete_structure(self._loaded_file([]))
+                    elif transition == "hide":
+                        self.view.hide()
+                    elif transition == "disabled":
+                        self.view.setEnabled(False)
+                    self.app.processEvents()
+                    self.assertEqual(
+                        start.call_count,
+                        1 if transition in ("current", "repeat", "new") else 0,
+                    )
+                    if transition not in ("current", "repeat", "new"):
+                        self.assertIsNone(self.view._rename_item)
+                self.view.reset()
+
     def test_scheduled_rename_targets_matching_database_for_duplicate_project_uid(self):
         loaded_files = self._loaded_file([], file_path="C:/jobs/one.mdb")
         loaded_files[0].projects[0].uid = "project-shared"
         loaded_files.extend(self._loaded_file([], file_path="C:/jobs/two.mdb"))
         loaded_files[1].projects[0].uid = "project-shared"
         self.view.build_complete_structure(loaded_files)
+        self.view.show()
         self.view.schedule_rename("project-shared", "C:/jobs/two.mdb")
         self.app.processEvents()
         self.assertIsNotNone(self.view._rename_item)

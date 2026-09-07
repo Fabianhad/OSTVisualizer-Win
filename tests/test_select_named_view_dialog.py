@@ -124,6 +124,8 @@ class SelectNamedViewDialogTests(unittest.TestCase):
                 ("nv-2", "p2", "Page B", "Lobby"),
             ]
         )
+        self.addCleanup(delete, dialog)
+        dialog.show()
         line_edit = dialog._named_view_combo.lineEdit()
         completer = dialog._named_view_combo.completer()
         self.assertIsNotNone(line_edit)

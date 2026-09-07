@@ -47,14 +47,18 @@ class PageSettingsBar(QtWidgets.QWidget):
         save_areas_async_fn: Optional[Callable] = None,
         parent=None,
         *,
+        get_page_fn: Callable,
         uses_async_areas_fn: Optional[Callable[[str], bool]] = None,
+        used_area_uids_fn: Optional[Callable[[], Set[str]]] = None,
     ):
         super().__init__(parent)
         self._icon_provider = icon_provider
         self._event_bus = event_bus
         self._access = ui_access_manager
         self._workspace_state_model = workspace_state_model
+        self._get_page_fn = get_page_fn
         self._load_areas_fn = load_areas_fn
+        self._used_area_uids_fn = used_area_uids_fn
         self._save_areas_fn = save_areas_fn
         self._save_areas_async_fn = save_areas_async_fn
         self._uses_async_areas_fn = uses_async_areas_fn
@@ -250,6 +254,10 @@ class PageSettingsBar(QtWidgets.QWidget):
             self._sync_interactive_controls()
         self.presentation_state_changed.emit()
 
+    def closeEvent(self, event) -> None:
+        self.set_interactive(False)
+        super().closeEvent(event)
+
     def _on_area_browse(self) -> None:
         if (
             not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
@@ -267,6 +275,9 @@ class PageSettingsBar(QtWidgets.QWidget):
         if sync_save_fn is None and not use_async_save:
             return
         page_uid = self._page_uid
+        page = self._get_page_fn(page_uid)
+        if page is None:
+            return
         areas = []
         try:
             areas = self._load_areas_fn(bid_ref.file_path, bid_ref.bid_uid)
@@ -321,6 +332,7 @@ class PageSettingsBar(QtWidgets.QWidget):
             save_fn=_save_fn,
             save_async_fn=_save_async_fn,
             used_uids=self._bid_areas_in_use,
+            used_uids_fn=self._used_area_uids_fn,
             on_saved_fn=_on_saved,
             bid_ref=bid_ref,
             workspace_state_model=self._workspace_state_model,
@@ -329,7 +341,15 @@ class PageSettingsBar(QtWidgets.QWidget):
         saved_changes = False
         try:
             result = exec_with_ost_blocking(dlg, self._event_bus)
-            if not isValid(self) or not isValid(dlg):
+            if (
+                not isValid(self)
+                or not isValid(dlg)
+                or not self._interactive
+                or not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+                or self._bid_ref != bid_ref
+                or self._page_uid != page_uid
+                or self._get_page_fn(page_uid) is not page
+            ):
                 return
             if result == QtWidgets.QDialog.DialogCode.Accepted:
                 selected_uid = dlg.get_selected_uid()

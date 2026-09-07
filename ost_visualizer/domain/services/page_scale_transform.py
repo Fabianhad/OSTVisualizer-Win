@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Iterable, List, Optional, Tuple
+from ..entities.annotation import ANNOTATION_TYPE_TEXT, annotation_rotation_index
 
 PageScale = Tuple[float, float]
 SCALE_EPSILON = 1e-9
@@ -48,3 +49,20 @@ def rescale_position_between_page_scales(
     if abs(factor - 1.0) <= SCALE_EPSILON:
         return list(position)
     return rescale_position_values(position, factor)
+
+
+def rescale_annotation_position_between_page_scales(
+    annotation_type: str,
+    position: Iterable[float],
+    source_scale: Optional[PageScale],
+    target_scale: Optional[PageScale],
+) -> List[object]:
+    original = list(position)
+    scaled = rescale_position_between_page_scales(original, source_scale, target_scale)
+    index = annotation_rotation_index(annotation_type, original)
+    if index is not None:
+        if annotation_type == ANNOTATION_TYPE_TEXT:
+            scaled[index:] = original[index:]
+        else:
+            scaled[index] = original[index]
+    return scaled

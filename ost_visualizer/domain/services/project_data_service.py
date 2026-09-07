@@ -124,6 +124,19 @@ class ProjectDataService:
     def get_pay_class_snapshot(self, database_id: str) -> list:
         return deepcopy(list(self._pay_classes_by_database.get(database_id, ())))
 
+    def get_master_data_uids_in_use(self, database_id: str, kind: str) -> set[str]:
+        if kind == "employees":
+            return self.get_used_employee_uids(database_id)
+        if kind == "job_statuses":
+            return self.get_used_job_status_uids(database_id)
+        if kind == "pay_classes":
+            return {
+                str(employee.pay_class_uid)
+                for employee in self._employees_by_database.get(database_id, ())
+                if employee.pay_class_uid
+            }
+        raise ValueError("Unsupported master-data usage kind")
+
     def get_used_job_status_uids(self, database_id: str) -> set[str]:
         return set(self._used_job_status_uids_by_database.get(database_id, ()))
 

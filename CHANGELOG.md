@@ -4,6 +4,34 @@
 
 ### Fixed
 
+- Bid Area dialogs and pickers now query current usage at deletion time instead
+  of retaining opening snapshots; failed usage queries leave the dialog unchanged.
+- Nested Condition Layer editors now validate current usage at deletion time,
+  avoiding stale in-use decisions and the unnecessary opening usage scan.
+- Layer deletion confirmation now reads current content usage, fixing stale
+  in-use warnings after annotation removal/moves and missing warnings after insert.
+- Mixed Area/Layer/Condition/Takeoff batches now refresh quantities, Summary, and
+  Area usage once, while updating each affected Page indicator and Layer controls.
+- Multi-Page Takeoff refreshes scan Bid Area usage once instead of once per Page;
+  remote Area picker refreshes reuse the same usage result for their controls.
+- Mixed Condition/Takeoff projection now calculates quantities and Condition
+  Summary once from final authoritative data. SQL Takeoff changes carry old and
+  new Page ownership so moves/deletions update usage on every affected Page.
+- Remote Takeoff changes now update usage indicators on the affected Pages,
+  including non-active Pages. Deferred Plan completion no longer recalculates
+  the same Takeoff quantities a second time.
+- Conditions sidebar quantities now refresh from authoritative Takeoff changes
+  even when Plan projection is deferred or unnecessary, including remote changes
+  on another Page in the selected 3D Page set.
+- Annotation history replay now preserves rotation when adapting saved positions
+  to current page calibration, including geometry undo/redo, insert/paste redo,
+  and delete undo. Takeoff length offsets retain their existing scaling.
+- Page-scale writes preserve the canonical annotation angle slot (including leading
+  Ink rotation) without rounding it. Coordinate serialization retains three decimal
+  places even for large coordinates instead of truncating to six significant digits.
+- Page calibration now rescales Legend XML coordinates instead of treating their
+  Position blob as a numeric list, preserving Legend metadata. Text/Rectangle/Oval
+  rotation values remain unchanged while their coordinates rescale.
 - Ordinary Layer renames now preserve PDF source revisions and accepted native
   meshes when effective Layer identity, visibility, ordering, and flags are
   unchanged. Reserved-role renames and membership changes remain conservative
@@ -12,55 +40,43 @@
   bounded cache/in-flight ownership, avoiding repeated TIFF crop/tint/composition.
   Keys include the clipped viewport and existing composition inputs; incomplete
   source/metadata fallbacks stay uncached and old source results are rejected.
-
 - Remote display-mode, inversion, and bitonal updates now refresh Main/detached
   3D textures without regenerating unchanged meshes, matching local projection.
   Immediate and deferred SQL reconciliation retain conservative handling for
   source, geometry, mixed, and unknown changes.
-
 - Page-name-only saves and immediate/deferred SQL projection retain accepted 3D
   scenes without clearing surfaces or regenerating meshes. Other Page changes
   retain conservative scene invalidation.
 - Main and detached native textures reuse matching Overlay-only canvases through
   the shared composite cache, including placement, tint, dimensions, calibration,
   and source revisions. Obsolete source completions cannot populate that cache.
-
 - Matching Plan and native texture consumers now share bounded full-composite
   caching and in-flight work through PageCache. Source changes reject stale
   completions; cache clears prevent old work from repopulating the cache. Page
   dimensions now participate in composite keys.
-
 - Overlay-placement saves now recompose without rerasterizing unchanged PDFs.
   Classified SQL inversion and bitonal updates reuse source rasters and base
   composites while updating effect pixels in Plan and native page textures.
-
 - Page rename refreshes now reuse unchanged PDF rasters in Main and detached Plan
   and native page textures. Local saves and classified SQL name/scale updates
   preserve source revisions while page labels still refresh.
-
 - Scale-only saves and classified SQL scale projections now preserve PDF source
   revisions and cached rasters while updating Plan controls and calibrated 3D
   dimensions. Unclassified and image-changing refreshes retain invalidation.
-
 - Fixed stale PDF text Copy menus in Main and detached Plan copying a newer
   selection after the Page or selected text changed while the menu was open.
-
 - Fixed the detached-Plan menu action remaining enabled with no valid Page even
   though opening was rejected. It recovers with a Page and still allows closing
   an existing detached window after its Page disappears.
-
 - Fixed detached Plan staying blank when an empty Bid receives its first Page
   through deferred remote projection. The existing missing-Page fallback now
   restores the Page, scale, and navigation without reopening the window.
-
 - Fixed open detached Plans retaining the removed database's Page and selection
   after unload. Matching windows now clear content, navigation, scale, Area, and
   local history immediately; unrelated database unloads leave them unchanged.
-
 - Fixed Main Plan retaining enabled navigation controls and stale zoom text after
   its Page disappears. Controls now recover with a valid Page, and late zoom
   notifications cannot refill the empty field.
-
 - Fixed remote Page display-mode changes leaving Main and detached 3D context
   menus checked against the previous mode after their textures refreshed.
 - Fixed Main and detached 3D page-image planes always rendering Original despite

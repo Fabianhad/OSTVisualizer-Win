@@ -511,6 +511,11 @@ class _FakeCoverSheetDialog:
         pages_with_takeoffs=None,
         pages_requiring_delete_confirmation=None,
         pdf_metadata_pool=None,
+        employee_usage_fn=None,
+        pay_class_usage_fn=None,
+        job_status_usage_fn=None,
+        event_bus=None,
+        database_id="",
     ):
         self.deleted = False
         self.save_async = save_cover_sheet_async_fn
@@ -3117,6 +3122,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 bid_areas=None,
                 save_fn=None,
                 used_uids=None,
+                used_uids_fn=None,
                 on_saved_fn=None,
                 has_license=True,
                 bid_ref=None,
@@ -3185,6 +3191,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 bid_areas=None,
                 save_fn=None,
                 used_uids=None,
+                used_uids_fn=None,
                 on_saved_fn=None,
                 has_license=True,
                 bid_ref=None,

@@ -275,6 +275,7 @@ class ComponentBuilderTests(unittest.TestCase):
             event_bus=None,
             refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=_AllowPageSettingsAccess(),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
         bid_ref = BidRef("example.mdb", "bid-1")
         source.load_bid_areas(
@@ -341,6 +342,7 @@ class ComponentBuilderTests(unittest.TestCase):
             event_bus=None,
             refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=_AllowPageSettingsAccess(),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
         action = add_overflow_widget(
             toolbar,

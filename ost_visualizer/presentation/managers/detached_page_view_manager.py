@@ -347,7 +347,7 @@ class DetachedPageViewManager(IShutdownAware):
         image_sources_unchanged: bool = False,
         mesh_scene_unchanged: bool = False,
     ) -> None:
-        del mesh_scene_unchanged  # Plan projection is independent of mesh work.
+        del mesh_scene_unchanged
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()

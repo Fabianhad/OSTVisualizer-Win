@@ -3,7 +3,22 @@ from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
 from ..config import COMPACT_SPACING, RELAXED_MARGINS, RELAXED_SPACING
 from .condition_tree_style import apply_tree_indentation
-from .messagebox import confirm_multi_delete
+from .messagebox import confirm_multi_delete, show_warning
+
+
+def authoritative_save_is_current(
+    previous, current, submitted, uid_map, changed_uids=()
+) -> bool:
+    for uid, intended in submitted.items():
+        current_uid = str(uid_map.get(uid, uid))
+        value = current.get(current_uid)
+        if (
+            uid in changed_uids
+            or current_uid in changed_uids
+            or value != previous.get(uid)
+        ) and value != intended:
+            return False
+    return True
 
 
 class ItemRecord(TypedDict):
@@ -120,12 +135,14 @@ class BasePickerDialog(BaseListDialog):
         accept_button_text: str = "Select",
         show_cancel_button: bool = True,
         accept_requires_selection: bool = True,
+        used_uids_fn=None,
     ) -> None:
         super().__init__(icon_provider, parent, save_fn, save_async_fn)
         self._items: List[ItemRecord] = list(items or [])
         self._selected_uid: Optional[str] = selected_uid or None
         self._interactive: bool = True
         self._used_uids: Set[str] = {str(u) for u in (used_uids or set())}
+        self._used_uids_fn = used_uids_fn
         self._persisted_deleted_uids: Set[str] = set()
         self._accept_button_text = accept_button_text
         self._show_cancel_button = show_cancel_button
@@ -134,6 +151,10 @@ class BasePickerDialog(BaseListDialog):
         self._populate()
         if initial_name:
             self._on_new_with_name(initial_name)
+
+    def cleanup(self) -> None:
+        self._used_uids_fn = None
+        super().cleanup()
 
     def _setup_ui(self) -> None:
         self._setup_window(self._window_title)
@@ -268,6 +289,14 @@ class BasePickerDialog(BaseListDialog):
             (item.text(self._name_col), item.data(self._uid_col, self._UID_ROLE))
             for item in selected
         ]
+        if self._used_uids_fn is not None:
+            try:
+                self._used_uids = {str(uid) for uid in self._used_uids_fn()}
+            except Exception:
+                show_warning(
+                    self, self._delete_confirm_title, "Failed to validate usage."
+                )
+                return
         to_delete = confirm_multi_delete(
             self, self._delete_confirm_title, pairs, self._used_uids
         )
@@ -393,19 +422,34 @@ class BasePickerDialog(BaseListDialog):
         if selected_uid in result:
             self._selected_uid = str(result[selected_uid])
 
+    def _capture_async_save_state(self, changes):
+        return None
+
+    def _async_save_state_is_current(self, state, mapping) -> bool:
+        return True
+
     def _run_async_save(self, changes: dict, on_success) -> None:
         if self._operation_pending or self._save_async_fn is None:
             return
+        save_state = self._capture_async_save_state(changes)
         self._operation_pending = True
         self.set_interactive(False)
 
         def completed(success: bool, mapping=None) -> None:
-            if not isValid(self):
+            if not isValid(self) or self._save_async_fn is None:
                 return
             self._operation_pending = False
             self.set_interactive(True)
             if success:
-                on_success(mapping if isinstance(mapping, dict) else {})
+                uid_map = mapping if isinstance(mapping, dict) else {}
+                if not self._async_save_state_is_current(save_state, uid_map):
+                    show_warning(
+                        self,
+                        self._window_title,
+                        "These records changed while saving. Review the current values and try again.",
+                    )
+                    return
+                on_success(uid_map)
 
         try:
             started = self._save_async_fn(changes, completed)

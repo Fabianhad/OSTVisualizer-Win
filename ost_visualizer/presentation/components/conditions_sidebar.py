@@ -493,7 +493,12 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self.tree.verticalScrollBar().setValue(scroll_value)
         pending = self._pending_folder_edit_uid
         self._pending_folder_edit_uid = None
-        if pending and pending in self._folder_items:
+        if (
+            pending
+            and pending in self._folder_items
+            and self.tree.isVisible()
+            and self.tree.isEnabled()
+        ):
             self.start_folder_edit(pending)
         self._sync_button_states()
 
@@ -1329,6 +1334,15 @@ class ConditionsSidebar(QtWidgets.QWidget):
             return
         parent_uid = self._resolve_folder_context_uid() or ""
         self.create_folder_requested.emit(parent_uid)
+
+    def hideEvent(self, event) -> None:
+        self._pending_folder_edit_uid = None
+        super().hideEvent(event)
+
+    def changeEvent(self, event) -> None:
+        if event.type() == QtCore.QEvent.Type.EnabledChange and not self.isEnabled():
+            self._pending_folder_edit_uid = None
+        super().changeEvent(event)
 
     def set_pending_folder_edit(self, folder_uid: str) -> None:
         if folder_uid and folder_uid in self._folder_items:

@@ -17,6 +17,16 @@ ANNOTATION_TYPE_RECT = "rect"
 ANNOTATION_TYPE_TEXT = "text"
 
 
+def annotation_rotation_index(
+    annotation_type: str, position: List[float]
+) -> Optional[int]:
+    if annotation_type == ANNOTATION_TYPE_INK:
+        return 0 if len(position) % 2 else None
+    if annotation_type == ANNOTATION_TYPE_TEXT:
+        return 4 if len(position) >= 5 else None
+    return len(position) - 1 if len(position) % 2 else None
+
+
 @dataclass
 class BidAnnotation:
     LINEAR_TYPES: ClassVar[frozenset] = frozenset(
@@ -149,14 +159,8 @@ class BidAnnotation:
 
     @property
     def stored_rotation_rad(self) -> float:
-        pos = self.position
-        if self.is_ink:
-            return pos[0] if len(pos) % 2 == 1 else 0.0
-        if self.is_text:
-            return pos[4] if len(pos) >= 5 else 0.0
-        if len(pos) % 2 == 1:
-            return pos[-1]
-        return 0.0
+        index = annotation_rotation_index(self.annotation_type, self.position)
+        return self.position[index] if index is not None else 0.0
 
     @property
     def has_valid_position(self) -> bool:

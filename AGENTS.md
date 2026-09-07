@@ -200,6 +200,32 @@ Threading and events:
 - Native 3D rendering uses physical pixels for viewports, framebuffers, and
   picking. Qt layouts and input remain in logical coordinates and cross the
   device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
+- Authoritative Takeoff events refresh derived sidebar quantities even when Plan
+  projection is deferred or skipped for an unaffected active Page. In 3D these
+  quantities cover the selected Page set, not only the active 2D Page.
+  Remote Takeoff projection carries affected Page IDs into usage-indicator and
+  Area-usage refresh. Deferred Plan completion must not repeat the Takeoff
+  quantity calculation already performed by authoritative projection.
+  Multi-Page Takeoff control projection scans Bid-wide Area usage once, then
+  updates every affected Page indicator and the active Page usage together.
+  Area picker reload reuses that event's usage result; do not retain it across events.
+  Mixed authoritative batches assign Summary and Page-usage work through explicit
+  event facts: Area projection owns Area usage, Takeoff projection owns affected
+  Page indicators, and an existing Condition/Layer rebuild owns aggregates.
+  Separate later batches recompute normally; do not retain deduplication state.
+  Mixed SQL batches declare when the Condition family has already projected;
+  its rebuild owns quantities and Summary once from the final hydrated data.
+  Takeoff projection still refreshes Page/Area usage using old and new Page
+  ownership, including deletion; renderer completion does not recalculate totals.
+- Layer deletion confirmation refreshes its in-use set from current authoritative
+  content on demand. Annotation/Takeoff changes on other Pages must not leave a
+  stale warning or require a Layer-tree rebuild before the next confirmation.
+  Nested Condition Layer editors pass the existing backend-aware usage query to
+  deletion validation instead of freezing its opening result. Query failure
+  leaves the dialog intact and must not authorize deletion from stale usage.
+  Bid Area editors and pickers likewise query their existing usage provider at
+  deletion time. Keep the separate child-Area restriction, preserve current
+  selection on query failure, and avoid scanning merely to open the editor.
 - Condition persistence publishes one backend-neutral condition-change event
   after authoritative projection. Changed fields and mutation operation determine
   whether Plan or native-mesh regeneration is required; same-bid regeneration
@@ -274,6 +300,15 @@ Persistence:
 - Saved databases use stable backend-aware descriptors in `file_state.json`.
   SQL passwords belong only in Windows Credential Manager; never place them in
   JSON, logs, exception text, labels, command lines, snapshots, or `repr` output.
+- `BidLegends.Position` stores a Legends XML blob, not a semicolon coordinate
+  list. Page calibration rescales only Legends/Legend dX and dY attributes,
+  preserving IDs, fonts, visibility, and extension metadata. Malformed Legend
+  XML rejects the scale write. Annotation rotation slots follow the domain position
+  contract (Ink first, Text index four, otherwise an odd trailing value); calibration
+  preserves their precision. Annotation undo/redo snapshots and insert/paste/delete
+  replay use that same rotation-slot contract when adapting to current calibration.
+  Coordinate serialization uses three decimal places,
+  not six significant digits. Curved Takeoff offsets remain scalable lengths.
 - MDB `BidPages.OverlayRect` uses the page's calibrated OST coordinate space:
   units per sheet inch are `ScaleFactor2 / ScaleFactor1`. Page view state
   remains a separate 96-unit coordinate space. Overlay loading, rendering,

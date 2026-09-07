@@ -7,6 +7,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
 from PySide6.QtCore import QDate
+from ....application.events.app_events import AppEvents
 from ....domain.entities.cover_sheet import CoverSheetData
 from ....domain.entities.employee import Employee
 from ....domain.entities.file_extensions import is_pdf_suffix
@@ -160,8 +161,15 @@ class CoverSheetDialog(QtWidgets.QDialog):
         pages_with_takeoffs: Optional[set] = None,
         pages_requiring_delete_confirmation: Optional[set] = None,
         pdf_metadata_pool: Optional[IRunnablePool] = None,
+        employee_usage_fn=None,
+        pay_class_usage_fn=None,
+        job_status_usage_fn=None,
+        event_bus=None,
+        database_id: str = "",
     ):
         super().__init__(parent)
+        self._master_data_event_bus = event_bus
+        self._master_data_database_id = database_id
         self.icon_provider = icon_provider
         self.data = cover_sheet_data
         self._workspace_state_model = workspace_state_model
@@ -211,6 +219,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._reload_bid_areas_fn = reload_bid_areas_fn
             self._refresh_fn = refresh_fn
         self._get_used_area_uids_fn = get_used_area_uids_fn
+        self._employee_usage_fn = employee_usage_fn
+        self._pay_class_usage_fn = pay_class_usage_fn
+        self._job_status_usage_fn = job_status_usage_fn
         self._page_rows: Dict[str, CoverSheetPageRow] = {}
         self._page_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
         self._folder_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
@@ -254,6 +265,71 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._workspace_state_model,
             _DIALOG_WINDOW_STATE_KEY,
         )
+        if event_bus is not None:
+            callback = self._on_master_data_changed
+            event_bus.subscribe(AppEvents.REMOTE_MASTER_DATA_CHANGED, callback)
+            self.destroyed.connect(
+                lambda: event_bus.unsubscribe(
+                    AppEvents.REMOTE_MASTER_DATA_CHANGED, callback
+                )
+            )
+
+    def _on_master_data_changed(self, database_id: str = "", families=()) -> None:
+        if (
+            self._closed
+            or not isValid(self)
+            or database_id != self._master_data_database_id
+        ):
+            return
+        if {"employees", "pay_classes"}.intersection(
+            families
+        ) and self._reload_employees_fn:
+            employees, pay_classes = self._reload_employees_fn()
+            self._all_employees = list(employees)
+            self.data.pay_classes = list(pay_classes)
+            if isinstance(self._active_sub_dialog, EmployeesDialog):
+                if "employees" in families:
+                    self._active_sub_dialog.refresh_employees(
+                        self._all_employees, self.data.pay_classes
+                    )
+                else:
+                    self._active_sub_dialog.refresh_pay_classes(self.data.pay_classes)
+            self._refresh_master_combo(
+                self.combo_estimator,
+                [
+                    (employee.display_name, employee.uid)
+                    for employee in self._all_employees
+                ],
+            )
+        if "job_statuses" in families and self._reload_job_statuses_fn:
+            self.data.job_statuses = self._reload_job_statuses_fn()
+            self._refresh_master_combo(
+                self.combo_job_status,
+                [(status.name, status.uid) for status in self.data.job_statuses],
+            )
+            self._on_job_status_changed()
+
+    def _refresh_master_combo(self, combo, items) -> None:
+        if items == [
+            (combo.itemText(i), combo.itemData(i)) for i in range(combo.count())
+        ]:
+            return
+        uid = combo.currentData()
+        draft = self._combo_draft_text(combo)
+        self._replace_combo_items(combo, items)
+        index = next(
+            (
+                i
+                for i in range(combo.count())
+                if uid is not None and str(combo.itemData(i)) == str(uid)
+            ),
+            -1,
+        )
+        combo.setCurrentIndex(index)
+        if index == -1:
+            combo.lineEdit().clear()
+        if draft is not None:
+            combo.setEditText(draft)
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("New Project" if self._create_mode else "Cover Sheet")
@@ -780,6 +856,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._closed = True
             self._metadata_loader.result_ready.disconnect(self._on_pdf_metadata_result)
             self._metadata_loader.close()
+        if self._master_data_event_bus is not None:
+            self._master_data_event_bus.unsubscribe(
+                AppEvents.REMOTE_MASTER_DATA_CHANGED, self._on_master_data_changed
+            )
         super().done(result)
 
     def _setup_pref_tab(self) -> QtWidgets.QWidget:
@@ -1078,6 +1158,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             job_statuses=self.data.job_statuses,
             selected_uid=str(current_uid),
             used_job_status_uids=self.data.used_job_status_uids,
+            used_uids_fn=self._job_status_usage_fn,
             initial_name=initial_name,
             save_fn=self._save_job_statuses_fn,
             save_async_fn=self._save_job_statuses_async_fn,
@@ -1086,7 +1167,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
-            if not isValid(self) or not isValid(dialog):
+            if not isValid(self) or self._closed or not isValid(dialog):
                 return
             selected_uid = str(current_uid)
             if result == QtWidgets.QDialog.DialogCode.Accepted:
@@ -1134,6 +1215,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
             employees=self._all_employees,
             selected_uid=str(current_uid),
             used_uids=self._used_employee_uids,
+            used_uids_fn=self._employee_usage_fn,
+            pay_class_usage_fn=self._pay_class_usage_fn,
             pay_classes=self.data.pay_classes,
             initial_first_name=initial_first_name,
             save_fn=self._save_employees_fn,
@@ -1145,7 +1228,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._active_sub_dialog = dialog
         try:
             result = dialog.exec()
-            if not isValid(self) or not isValid(dialog):
+            if not isValid(self) or self._closed or not isValid(dialog):
                 return
             selected_uid = str(current_uid)
             if result == QtWidgets.QDialog.DialogCode.Accepted:
@@ -1202,9 +1285,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     "database, then try again.",
                 )
                 return
-        used_uids = (
-            self._get_used_area_uids_fn() if self._get_used_area_uids_fn else None
-        )
 
         def save_bid_areas(changes):
             if not self._save_bid_areas_fn:
@@ -1225,7 +1305,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             bid_areas=bid_areas,
             save_fn=save_bid_areas if self._save_bid_areas_fn else None,
             save_async_fn=self._save_bid_areas_async_fn,
-            used_uids=used_uids,
+            used_uids_fn=self._get_used_area_uids_fn,
             has_license=self._has_license,
             bid_ref=self._bid_ref,
             workspace_state_model=self._workspace_state_model,
@@ -1234,7 +1314,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         saved_changes = False
         try:
             dialog.exec()
-            if not isValid(self) or not isValid(dialog):
+            if not isValid(self) or self._closed or not isValid(dialog):
                 return
             saved_changes = dialog.has_saved_changes()
         finally:

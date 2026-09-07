@@ -368,6 +368,7 @@ class ProjectView(QtWidgets.QWidget):
         self.on_project_view_options_changed: Optional[Callable[[], None]] = None
         self._pending_rename_uid: Optional[str] = None
         self._pending_rename_file_path: Optional[str] = None
+        self._pending_rename_item: Optional[QtWidgets.QTreeWidgetItem] = None
         self._rename_item: Optional[Tuple] = None
         self._rename_editor_connected = False
         self._loaded_files: List[LoadedFile] = []
@@ -394,6 +395,7 @@ class ProjectView(QtWidgets.QWidget):
     ) -> None:
         self._pending_rename_uid = project_uid
         self._pending_rename_file_path = file_path
+        self._pending_rename_item, _ = self._find_project_item(project_uid, file_path)
         QtCore.QTimer.singleShot(0, self._start_pending_rename)
 
     def _build_ui(self) -> None:
@@ -694,13 +696,27 @@ class ProjectView(QtWidgets.QWidget):
         uid = self._pending_rename_uid
         if not uid:
             return
+        if not self.isVisible() or not self.isEnabled():
+            self._clear_pending_rename()
+            return
         pending_file_path = self._pending_rename_file_path
         item, file_path = self._find_project_item(uid, pending_file_path)
         if not item:
             return
+        captured_item = self._pending_rename_item
+        self._clear_pending_rename()
+        if captured_item is not None and item is not captured_item:
+            return
+        self._start_project_rename(item, uid, file_path)
+
+    def _clear_pending_rename(self) -> None:
         self._pending_rename_uid = None
         self._pending_rename_file_path = None
-        self._start_project_rename(item, uid, file_path)
+        self._pending_rename_item = None
+
+    def hideEvent(self, event) -> None:
+        self._clear_pending_rename()
+        super().hideEvent(event)
 
     def _find_project_item(
         self, uid: str, file_path: Optional[str] = None
@@ -2031,6 +2047,7 @@ class ProjectView(QtWidgets.QWidget):
         self._clear_tree_items()
         self._pending_rename_uid = None
         self._pending_rename_file_path = None
+        self._pending_rename_item = None
         self._loaded_files = []
         self.current_bid_ref = None
         self._selected_node_state = None
@@ -2097,6 +2114,7 @@ class ProjectView(QtWidgets.QWidget):
         self.on_project_view_options_changed = None
         self._pending_rename_uid = None
         self._pending_rename_file_path = None
+        self._pending_rename_item = None
         self._cancel_active_rename()
         self._rename_editor_connected = False
         self._loaded_files = None

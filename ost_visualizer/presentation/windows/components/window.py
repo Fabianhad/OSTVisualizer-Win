@@ -2549,6 +2549,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
             return
+        page_identities = self._capture_page_identities((str(page_uid),))
         self.plan_view.cancel_place_mode()
         dialog = SelectNamedViewDialog(self._named_views, parent=self)
         result_code = dialog.exec()
@@ -2556,7 +2557,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             not isValid(dialog)
             or not isValid(self.plan_view)
             or self._is_closing
-            or not self._annotation_context_is_current(bid_ref, (str(page_uid),))
+            or not self._annotation_context_is_current(
+                bid_ref, (str(page_uid),), page_identities
+            )
             or not self._annotation_placement_enabled()
         ):
             return

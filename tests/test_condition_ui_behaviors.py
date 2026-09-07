@@ -313,8 +313,10 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                         ]
                         self.assertEqual(len(checked), 1)
                         self.assertTrue(str(checked[0]).endswith("-10"))
+                        submenu.show()
                         submenu.actions()[-1].defaultWidget().click()
                         self.app.processEvents()
+                        submenu.close()
                         self.assertEqual(
                             submenu.actions()[0].text(),
                             COMPACT_CONTEXT_MENU_PREVIOUS_TEXT,
@@ -347,6 +349,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         menu = QtWidgets.QMenu()
         sidebar._add_layer_submenu(menu, ["c1"], True)
         submenu = menu.actions()[0].menu()
+        submenu.show()
         submenu.actions()[-1].defaultWidget().click()
         sidebar.load_conditions(
             {"c1": Condition(uid="c1", name="Replacement", ref_no=1)},
@@ -354,6 +357,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "Project",
         )
         self.app.processEvents()
+        submenu.close()
         next(
             action
             for action in submenu.actions()
@@ -2443,6 +2447,86 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         ):
             button._pick_color()
         self.assertEqual(changes, [])
+
+    def test_nested_layer_delete_uses_action_time_usage_without_rebuild(self):
+        from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
+        from ost_visualizer.domain.entities.layer import BidLayer
+
+        parent = self._make_dialog(Condition(uid="c1", name="Condition", ref_no=1))
+        parent._icon_provider = SimpleNamespace(set_window_icon=lambda widget: None)
+        parent._has_license = True
+        self.addCleanup(lambda: delete(parent))
+        layers = [
+            BidLayer(
+                uid="layer-1", bid_uid="bid-1", name="Custom", show=True, sequence=1
+            )
+        ]
+        used = {"layer-1"}
+        queries = []
+        deletes = []
+        parent._layer_delete_many_fn = lambda uids: deletes.append(uids)
+        reloads = []
+        parent._layer_reload_fn = lambda: reloads.append(True) or list(layers)
+
+        def usage():
+            queries.append(True)
+            return set(used)
+
+        parent._layer_used_uids_fn = usage
+
+        def interact(child):
+            self.assertEqual(queries, [])
+            row = child.tree.topLevelItem(0)
+            child.tree.setCurrentItem(row)
+            # Content on another Page was removed after the nested editor opened.
+            used.clear()
+            with patch.object(
+                QtWidgets.QMessageBox, "warning"
+            ) as warning, patch.object(
+                QtWidgets.QMessageBox,
+                "question",
+                return_value=QtWidgets.QMessageBox.StandardButton.No,
+            ) as question:
+                child._on_delete()
+            self.assertEqual(warning.call_count, 0)
+            self.assertEqual(question.call_count, 1)
+            self.assertEqual(len(queries), 1)
+            # New authoritative content makes the same Layer used again.
+            used.add("layer-1")
+            with patch.object(
+                QtWidgets.QMessageBox, "warning"
+            ) as warning, patch.object(
+                QtWidgets.QMessageBox,
+                "question",
+                return_value=QtWidgets.QMessageBox.StandardButton.No,
+            ) as question:
+                child._on_delete()
+            self.assertEqual(warning.call_count, 1)
+            self.assertEqual(question.call_count, 0)
+            self.assertEqual(len(queries), 2)
+            self.assertIs(child.tree.currentItem(), row)
+            self.assertEqual(reloads, [True])
+
+            def fail_usage():
+                queries.append(True)
+                raise RuntimeError("Usage read failed")
+
+            parent._layer_used_uids_fn = fail_usage
+            with patch(
+                "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
+            ) as error, patch.object(QtWidgets.QMessageBox, "question") as question:
+                child._on_delete()
+            error.assert_called_once_with(
+                child, "Delete Layer", "Failed to validate layer usage."
+            )
+            self.assertEqual(question.call_count, 0)
+            self.assertEqual(deletes, [])
+            self.assertIs(child.tree.currentItem(), row)
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch.object(LayersDialog, "exec", interact):
+            parent._open_layers_dialog()
+        self.assertEqual(len(queries), 3)
 
     def test_layers_dialog_return_stops_after_parent_is_destroyed(self):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)

@@ -43,6 +43,7 @@ class BidAreasDialog(BaseListDialog):
         bid_ref: Optional[BidRef] = None,
         *,
         save_async_fn=None,
+        used_uids_fn: Optional[Callable[[], Set[str]]] = None,
     ):
         super().__init__(icon_provider, parent, save_fn)
         self._bid_ref = bid_ref
@@ -50,6 +51,7 @@ class BidAreasDialog(BaseListDialog):
         self._new_uids: Set[str] = set()
         self._deleted_uids: List[str] = []
         self._used_uids: Set[str] = used_uids or set()
+        self._used_uids_fn = used_uids_fn
         self._on_saved_fn = on_saved_fn
         self._has_license: bool = has_license
         self._is_interactive: bool = has_license
@@ -429,6 +431,7 @@ class BidAreasDialog(BaseListDialog):
     def cleanup(self) -> None:
         if not self._save_in_progress:
             self.flush_pending_save()
+        self._used_uids_fn = None
         super().cleanup()
 
     def _on_new(self) -> None:
@@ -457,6 +460,12 @@ class BidAreasDialog(BaseListDialog):
             return
         name = item.text(0) or "(empty)"
         uid = item.data(0, self._UID_ROLE)
+        if self._used_uids_fn is not None:
+            try:
+                self._used_uids = {str(value) for value in self._used_uids_fn()}
+            except Exception:
+                show_warning(self, "Delete Bid Area", "Failed to validate area usage.")
+                return
         blocked = self._used_uids | ({str(uid)} if item.childCount() > 0 else set())
         to_delete = confirm_multi_delete(
             self, "Delete Bid Area", [(name, uid)], blocked
@@ -673,6 +682,7 @@ class BidAreaPickerDialog(BidAreasDialog):
         bid_ref: Optional[BidRef] = None,
         *,
         save_async_fn=None,
+        used_uids_fn: Optional[Callable[[], Set[str]]] = None,
     ):
         self._selected_uid: Optional[str] = None
         super().__init__(
@@ -683,6 +693,7 @@ class BidAreaPickerDialog(BidAreasDialog):
             save_fn=save_fn,
             save_async_fn=save_async_fn,
             used_uids=used_uids,
+            used_uids_fn=used_uids_fn,
             on_saved_fn=on_saved_fn,
             bid_ref=bid_ref,
         )

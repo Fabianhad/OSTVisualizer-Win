@@ -38,6 +38,10 @@ class RenamePageDialog(QtWidgets.QDialog):
         self._save_pending = False
         self._interactive_requested = True
         self._current_index = self._resolve_current_index(current_page_uid)
+        self._focus_request = None
+        self._focus_timer = QtCore.QTimer(self)
+        self._focus_timer.setSingleShot(True)
+        self._focus_timer.timeout.connect(self._restore_initial_focus)
         self._setup_ui()
         self._load_current_page()
 
@@ -195,11 +199,38 @@ class RenamePageDialog(QtWidgets.QDialog):
             return
         super().closeEvent(event)
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        QtCore.QTimer.singleShot(
-            0, lambda: self._select_new_name() if isValid(self) else None
+    def _focus_editor_state(self) -> tuple:
+        edit = self._new_name_edit
+        return (
+            edit.text(),
+            edit.cursorPosition(),
+            edit.selectionStart(),
+            edit.selectedText(),
         )
 
+    def _restore_initial_focus(self) -> None:
+        request = self._focus_request
+        self._focus_request = None
+        if (
+            request is not None
+            and self.isVisible()
+            and self._new_name_edit.isEnabled()
+            and self._current_page() is request[0]
+            and self._focus_editor_state() == request[1]
+        ):
+            self._select_new_name()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._focus_request = (self._current_page(), self._focus_editor_state())
+        self._focus_timer.start(0)
+
+    def hideEvent(self, event) -> None:
+        self._focus_timer.stop()
+        self._focus_request = None
+        super().hideEvent(event)
+
     def cleanup(self) -> None:
-        pass
+        if isValid(self):
+            self._focus_timer.stop()
+        self._focus_request = None

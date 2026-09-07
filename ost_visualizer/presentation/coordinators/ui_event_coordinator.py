@@ -420,6 +420,11 @@ class UIEventCoordinator:
             sidebar.set_toggle_callback(self._on_layer_visibility_toggled)
             sidebar.layer_added.connect(self._on_layer_added)
             sidebar.layer_deleted.connect(self._on_layer_deleted)
+            sidebar.layer_usage_refresh_requested.connect(
+                lambda: sidebar.set_used_layer_uids(
+                    self.project_data.get_layer_uids_in_use()
+                )
+            )
             sidebar.layers_show_all.connect(self._on_layers_show_all)
             sidebar.layer_moved.connect(self._on_layer_moved)
             sidebar.layer_renamed.connect(self._on_layer_renamed)
@@ -1625,7 +1630,6 @@ class UIEventCoordinator:
                 bid_ref.file_path, bid_ref.bid_uid
             )
         )
-        used_uids = self.project_data.get_area_uids_with_takeoff()
         area_bid_uid = (
             int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
         )
@@ -1673,7 +1677,7 @@ class UIEventCoordinator:
                 if uses_sql_queue
                 else None
             ),
-            used_uids=used_uids,
+            used_uids_fn=self.project_data.get_area_uids_with_takeoff,
             has_license=True,
             bid_ref=bid_ref,
             workspace_state_model=self._workspace_state_model,
@@ -1785,13 +1789,9 @@ class UIEventCoordinator:
         if uses_sql_queue:
             employees = self.project_data.get_employee_snapshot(file_path)
             pay_classes = self.project_data.get_pay_class_snapshot(file_path)
-            used_employee_uids = self.project_data.get_used_employee_uids(file_path)
         else:
             employees, pay_classes = (
                 self._project_read_service.get_employees_and_pay_classes(file_path)
-            )
-            used_employee_uids = self._project_read_service.get_employee_uids_in_use(
-                file_path
             )
         resources = (
             ResourceRef(
@@ -1818,7 +1818,22 @@ class UIEventCoordinator:
             self._icon_provider,
             parent=self.main_window,
             employees=employees,
-            used_uids=used_employee_uids,
+            event_bus=self.event_bus,
+            database_id=file_path,
+            reload_employees_fn=lambda: (
+                (
+                    self.project_data.get_employee_snapshot(file_path),
+                    self.project_data.get_pay_class_snapshot(file_path),
+                )
+                if uses_sql_queue
+                else self._project_read_service.get_employees_and_pay_classes(file_path)
+            ),
+            used_uids_fn=lambda: (
+                self.project_data if uses_sql_queue else self._project_read_service
+            ).get_master_data_uids_in_use(file_path, "employees"),
+            pay_class_usage_fn=lambda: (
+                self.project_data if uses_sql_queue else self._project_read_service
+            ).get_master_data_uids_in_use(file_path, "pay_classes"),
             pay_classes=pay_classes,
             save_fn=lambda changes: self._save_master_employees_result(
                 file_path, changes
@@ -1880,7 +1895,6 @@ class UIEventCoordinator:
         )
         if uses_sql_queue:
             job_statuses = self.project_data.get_job_status_snapshot(file_path)
-            used_job_status_uids = self.project_data.get_used_job_status_uids(file_path)
         else:
             bid_ref = self.ui_state_manager.get_selected_bid_ref()
             data = (
@@ -1895,9 +1909,6 @@ class UIEventCoordinator:
                 data.job_statuses
                 if data
                 else self._project_read_service.get_job_statuses(file_path)
-            )
-            used_job_status_uids = (
-                data.used_job_status_uids if data is not None else set()
             )
         resources = (
             ResourceRef(
@@ -1921,7 +1932,9 @@ class UIEventCoordinator:
             self._icon_provider,
             parent=self.main_window,
             job_statuses=job_statuses,
-            used_job_status_uids=used_job_status_uids,
+            used_uids_fn=lambda: (
+                self.project_data if uses_sql_queue else self._project_read_service
+            ).get_master_data_uids_in_use(file_path, "job_statuses"),
             save_fn=lambda changes: self._save_master_job_statuses(file_path, changes),
             save_async_fn=(
                 (
@@ -2053,17 +2066,11 @@ class UIEventCoordinator:
             file_path
         )
         if uses_sql_queue:
-            employees = self.project_data.get_employee_snapshot(file_path)
             pay_classes = self.project_data.get_pay_class_snapshot(file_path)
         else:
-            employees, pay_classes = (
-                self._project_read_service.get_employees_and_pay_classes(file_path)
+            _, pay_classes = self._project_read_service.get_employees_and_pay_classes(
+                file_path
             )
-        used_pay_class_uids = {
-            str(employee.pay_class_uid)
-            for employee in employees
-            if employee.pay_class_uid
-        }
         resources = (
             ResourceRef(
                 CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
@@ -2086,7 +2093,18 @@ class UIEventCoordinator:
             self._icon_provider,
             parent=self.main_window,
             pay_classes=pay_classes,
-            used_pay_class_uids=used_pay_class_uids,
+            event_bus=self.event_bus,
+            database_id=file_path,
+            reload_pay_classes_fn=lambda: (
+                self.project_data.get_pay_class_snapshot(file_path)
+                if uses_sql_queue
+                else self._project_read_service.get_employees_and_pay_classes(
+                    file_path
+                )[1]
+            ),
+            used_uids_fn=lambda: (
+                self.project_data if uses_sql_queue else self._project_read_service
+            ).get_master_data_uids_in_use(file_path, "pay_classes"),
             save_fn=lambda changes: self._save_master_pay_classes(file_path, changes),
             save_async_fn=(
                 (
@@ -2866,7 +2884,7 @@ class UIEventCoordinator:
         image_sources_unchanged: bool = False,
         mesh_scene_unchanged: bool = False,
     ) -> None:
-        del image_sources_unchanged  # Consumed by the source-invalidation subscriber.
+        del image_sources_unchanged
         if file_path:
             if external_change:
                 self._deferred_persistence.cancel_for_file(file_path)
@@ -2920,6 +2938,8 @@ class UIEventCoordinator:
         update_shell: bool = True,
         update_plan: bool = True,
         update_mesh: bool = True,
+        refresh_aggregates: bool = True,
+        refresh_area_usage: bool = True,
     ) -> None:
         affected_page_uids = list(
             dict.fromkeys(str(uid) for uid in (page_uids or ()) if uid)
@@ -2927,8 +2947,10 @@ class UIEventCoordinator:
         if not affected_page_uids and page_uid:
             affected_page_uids = [str(page_uid)]
         active_page_uid = self.ui_state_manager.active_page_uid
-        for affected_page_uid in affected_page_uids:
-            self._refresh_takeoff_dependent_page_controls(affected_page_uid)
+        if affected_page_uids:
+            self._refresh_takeoff_dependent_page_controls(
+                page_uids=affected_page_uids, refresh_area_usage=refresh_area_usage
+            )
         active_page_affected = not affected_page_uids or (
             active_page_uid in affected_page_uids
         )
@@ -2937,13 +2959,15 @@ class UIEventCoordinator:
                 active_page_uid,
                 condition_uids=condition_uids,
                 takeoff_uids=takeoff_uids,
+                refresh_quantities=refresh_aggregates,
             )
         elif update_plan and not active_page_uid:
             self._update_plan_view_for_active(
                 condition_uids=condition_uids,
                 takeoff_uids=takeoff_uids,
+                refresh_quantities=refresh_aggregates,
             )
-        elif update_plan:
+        elif refresh_aggregates:
             self._sidebar.update_conditions_quantities(condition_uids=condition_uids)
         if update_mesh:
             selected_page_uids = self.project_data.get_selected_page_uids()
@@ -2951,7 +2975,7 @@ class UIEventCoordinator:
                 selected_page_uids,
                 dirty_page_uids=affected_page_uids or None,
             )
-        if self._is_summary_tab_active():
+        if refresh_aggregates and self._is_summary_tab_active():
             self._load_condition_summary()
         if update_shell:
             self._update_export_menu_state()
@@ -2988,8 +3012,10 @@ class UIEventCoordinator:
         image_sources_unchanged: bool = False,
         mesh_scene_unchanged: bool = False,
         page_texture_only: bool = False,
+        condition_family_projected: bool = False,
+        area_family_projected: bool = False,
     ) -> None:
-        del image_sources_unchanged  # Consumed by the source-invalidation subscriber.
+        del image_sources_unchanged
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
             return
@@ -3001,6 +3027,10 @@ class UIEventCoordinator:
         )
         layers_changed = CollaborationResourceFamily.LAYERS.value in changed_families
         pages_changed = CollaborationResourceFamily.PAGES.value in changed_families
+        layer_conditions_refresh = bool(
+            layers_changed and self._sidebar.bid_layers_sidebar
+        )
+        aggregates_projected = condition_family_projected or layer_conditions_refresh
         if (
             not local_completion
             and self._remote_bid_change_invalidates_plan_interaction(
@@ -3047,10 +3077,15 @@ class UIEventCoordinator:
                 )
             self._on_takeoffs_changed(
                 page_uid=self.ui_state_manager.active_page_uid,
+                page_uids=affected_pages.get(
+                    CollaborationResourceFamily.TAKEOFFS.value
+                ),
                 takeoff_uids=(
                     changed_uids.get(CollaborationResourceFamily.TAKEOFFS.value) or None
                 ),
                 update_shell=False,
+                refresh_aggregates=not aggregates_projected,
+                refresh_area_usage=not area_family_projected,
                 update_plan=not defer_plan_projection,
                 update_mesh=not defer_plan_projection,
             )
@@ -3128,11 +3163,17 @@ class UIEventCoordinator:
                 self.project_data.get_bid_layer_snapshot(),
                 used_uids=self.project_data.get_layer_uids_in_use(),
             )
-            self._sidebar.refresh_conditions_from_memory()
+            if not condition_family_projected:
+                self._sidebar.refresh_conditions_from_memory()
         if layers_changed:
             self._reconcile_active_placement()
         if layers_changed and not pages_changed and not defer_plan_projection:
-            self._update_plan_view_for_active()
+            self._update_plan_view_for_active(
+                refresh_quantities=not (
+                    aggregates_projected
+                    or CollaborationResourceFamily.TAKEOFFS.value in changed_families
+                )
+            )
         if (
             layers_changed
             and not mesh_scene_unchanged
@@ -3207,7 +3248,9 @@ class UIEventCoordinator:
         self._sidebar.refresh_conditions_from_memory()
         self._restore_sidebar_highlight(valid_highlights, reveal=False)
         if not defer_plan_projection and plan_refresh_required:
-            self._update_plan_view_for_active(condition_uids=condition_uids)
+            self._update_plan_view_for_active(
+                condition_uids=condition_uids, refresh_quantities=False
+            )
         if not defer_plan_projection and condition_changes_require_mesh_refresh(
             changed_fields or (), operations
         ):
@@ -3223,6 +3266,8 @@ class UIEventCoordinator:
         area_uids: Optional[List[str]] = None,
         defer_plan_projection: bool = False,
         local_completion: bool = False,
+        takeoff_family_pending: bool = False,
+        summary_refresh_required: bool = True,
     ) -> None:
         del area_uids
         selected = self.ui_state_manager.get_selected_bid_ref()
@@ -3238,23 +3283,26 @@ class UIEventCoordinator:
             self._undo_service.clear()
         if self._page_settings_bar:
             selected_area_uid = self._page_settings_bar.get_selected_area_uid()
+            bid_areas = self.project_data.get_area_uids_with_takeoff()
             self._page_settings_bar.load_bid_areas(
                 selected,
                 areas=self.project_data.get_bid_area_snapshot(),
-                areas_with_takeoff=self.project_data.get_area_uids_with_takeoff(),
+                areas_with_takeoff=bid_areas,
                 selected_uid=selected_area_uid,
             )
             self.ui_state_manager.selected_area_uid = (
                 self._page_settings_bar.get_selected_area_uid() or ""
             )
             self._refresh_takeoff_dependent_page_controls(
-                self.ui_state_manager.active_page_uid
+                self.ui_state_manager.active_page_uid,
+                bid_areas=bid_areas,
+                refresh_page_usage=not takeoff_family_pending,
             )
         if not defer_plan_projection:
             self._request_or_defer_mesh_refresh(
                 self.project_data.get_selected_page_uids()
             )
-        if self._is_summary_tab_active():
+        if summary_refresh_required and self._is_summary_tab_active():
             self._sidebar.load_condition_summary_from_memory()
 
     def _on_collaboration_state_changed(
@@ -3517,8 +3565,6 @@ class UIEventCoordinator:
                 completion=lambda success: self._complete_remote_plan_projection(
                     token,
                     success,
-                    condition_uids,
-                    CollaborationResourceFamily.TAKEOFFS.value in families,
                 ),
             )
         except Exception:
@@ -3531,17 +3577,9 @@ class UIEventCoordinator:
         self,
         token: RemoteProjectionToken,
         success: bool,
-        condition_uids: tuple[str, ...],
-        takeoffs_changed: bool,
     ) -> None:
         if success and not self._is_cleaning_up:
             self._apply_pending_hotlink_named_view_focus(require_stable=True)
-            if condition_uids:
-                self._sidebar.update_conditions_quantities(
-                    condition_uids=list(condition_uids)
-                )
-            elif takeoffs_changed:
-                self._sidebar.update_conditions_quantities()
         token.complete(success)
 
     def _on_synchronization_conflict(
@@ -3614,15 +3652,32 @@ class UIEventCoordinator:
             return
         self.main_window.project_view.restore_bid_selection(bid_ref)
 
-    def _refresh_takeoff_dependent_page_controls(self, page_uid: str) -> None:
-        has_takeoffs = self.project_data.has_takeoffs_for_pages([page_uid])
-        if self.takeoff_sidebar:
-            self.takeoff_sidebar.set_page_has_takeoffs(page_uid, has_takeoffs)
-        if not self._page_settings_bar:
+    def _refresh_takeoff_dependent_page_controls(
+        self,
+        page_uid: str = "",
+        *,
+        page_uids=None,
+        bid_areas=None,
+        refresh_area_usage=True,
+        refresh_page_usage=True,
+    ) -> None:
+        affected_pages = list(
+            dict.fromkeys(page_uids if page_uids is not None else [page_uid])
+        )
+        if refresh_page_usage and self.takeoff_sidebar:
+            for uid in affected_pages:
+                self.takeoff_sidebar.set_page_has_takeoffs(
+                    uid, self.project_data.has_takeoffs_for_pages([uid])
+                )
+        if not refresh_area_usage or not self._page_settings_bar:
             return
-        bid_areas = self.project_data.get_area_uids_with_takeoff()
-        if page_uid == self.ui_state_manager.active_page_uid:
-            page_areas = self.project_data.get_area_uids_with_takeoff_for_page(page_uid)
+        if bid_areas is None:
+            bid_areas = self.project_data.get_area_uids_with_takeoff()
+        active_page_uid = self.ui_state_manager.active_page_uid
+        if active_page_uid in affected_pages:
+            page_areas = self.project_data.get_area_uids_with_takeoff_for_page(
+                active_page_uid
+            )
             self._page_settings_bar.update_area_usage(bid_areas, page_areas)
         else:
             self._page_settings_bar.update_area_usage(bid_areas)
@@ -4394,20 +4449,28 @@ class UIEventCoordinator:
         self._sidebar.load_takeoff_sidebar(bid_ref, self._bid_data_cache)
 
     def _update_plan_view_for_active(
-        self, condition_uids=None, takeoff_uids=None
+        self, condition_uids=None, takeoff_uids=None, refresh_quantities=True
     ) -> None:
         self._viewer.update_plan_view_for_active(changed_takeoff_uids=takeoff_uids)
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
+        if not refresh_quantities:
+            return
         if condition_uids is None:
             self._sidebar.update_conditions_quantities()
         else:
             self._sidebar.update_conditions_quantities(condition_uids=condition_uids)
 
     def _update_plan_view(
-        self, page_uid: Optional[str], condition_uids=None, takeoff_uids=None
+        self,
+        page_uid: Optional[str],
+        condition_uids=None,
+        takeoff_uids=None,
+        refresh_quantities=True,
     ) -> None:
         self._viewer.update_plan_view(page_uid, changed_takeoff_uids=takeoff_uids)
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
+        if not refresh_quantities:
+            return
         if condition_uids is None:
             self._sidebar.update_conditions_quantities()
         else:

@@ -1,4 +1,6 @@
 import pyodbc
+from ....domain.entities.annotation import annotation_rotation_index
+from ...database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ...database.bid_owned_identity import (
     require_existing_bid_scoped_uid_match,
     require_single_bid_scope_for_uids,
@@ -10,6 +12,7 @@ from ....domain.services.page_scale_transform import (
     rescale_position_values,
 )
 from .constants import PAGE_CONTENT_TABLES
+from .legend_position import rescale_legend_position
 from .overlay_rect import (
     overlay_path_storage_identity,
     parse_overlay_rect_storage,
@@ -173,6 +176,13 @@ class PageOperationsMixin:
                 raw_position = r.Position
                 if not raw_position:
                     continue
+                if table == "BidLegends":
+                    cursor.execute(
+                        "UPDATE [BidLegends] SET [Position]=? WHERE [UID]=?",
+                        rescale_legend_position(raw_position, factor),
+                        int(r.UID),
+                    )
+                    continue
                 position = parse_position_storage(raw_position)
                 if not position:
                     self.logger.warning(
@@ -184,9 +194,25 @@ class PageOperationsMixin:
                 scaled = [
                     float(value) for value in rescale_position_values(position, factor)
                 ]
+                preserve_indices = frozenset()
+                annotation_type = ANNOTATION_TYPE_BY_TABLE.get(table)
+                if annotation_type is not None:
+                    rotation_index = annotation_rotation_index(
+                        annotation_type, position
+                    )
+                    if rotation_index is not None:
+                        preserve_indices = frozenset(
+                            range(rotation_index, len(position))
+                            if table == "BidTexts"
+                            else (rotation_index,)
+                        )
+                        for index in preserve_indices:
+                            scaled[index] = position[index]
                 cursor.execute(
                     f"UPDATE [{table}] SET [Position]=? WHERE [UID]=?",
-                    serialize_position_for_table(table, scaled),
+                    serialize_position_for_table(
+                        table, scaled, preserve_indices=preserve_indices
+                    ),
                     int(r.UID),
                 )
 

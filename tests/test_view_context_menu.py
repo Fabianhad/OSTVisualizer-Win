@@ -128,8 +128,10 @@ class ViewContextMenuTests(unittest.TestCase):
             self.assertEqual(
                 submenu.actions()[-1].text(), COMPACT_CONTEXT_MENU_NEXT_TEXT
             )
+            submenu.show()
             submenu.actions()[-1].defaultWidget().click()
             self.app.processEvents()
+            submenu.close()
             self.assertEqual(
                 submenu.actions()[0].text(), COMPACT_CONTEXT_MENU_PREVIOUS_TEXT
             )

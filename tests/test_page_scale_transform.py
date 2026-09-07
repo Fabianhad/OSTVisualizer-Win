@@ -32,5 +32,29 @@ class PageScaleTransformTests(unittest.TestCase):
         self.assertIsNot(scaled, position)
 
 
+class AnnotationSnapshotTransformTests(unittest.TestCase):
+    def test_round_trip_preserves_angles_and_does_not_mutate_snapshots(self):
+        from ost_visualizer.domain.services.page_scale_transform import (
+            rescale_annotation_position_between_page_scales,
+        )
+
+        for kind, values in (
+            ("ink", [0.123456789, 96.0, 48.0, 192.0, 96.0]),
+            ("rect", [96.0, 48.0, 192.0, 96.0, 0.123456789]),
+            ("text", [96.0, 48.0, 192.0, 96.0, 0.123456789]),
+        ):
+            with self.subTest(kind=kind):
+                original = list(values)
+                for _ in range(20):
+                    scaled = rescale_annotation_position_between_page_scales(
+                        kind, values, (1, 96), (1, 48)
+                    )
+                    values = rescale_annotation_position_between_page_scales(
+                        kind, scaled, (1, 48), (1, 96)
+                    )
+                self.assertEqual(values, original)
+                self.assertIsNot(values, original)
+
+
 if __name__ == "__main__":
     unittest.main()

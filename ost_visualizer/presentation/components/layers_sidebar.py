@@ -12,6 +12,7 @@ from ..utils.tree_widget import set_tree_item_row_height
 class BidLayersSidebar(QtWidgets.QWidget):
     layer_added = Signal(str, int)
     layer_deleted = Signal(str)
+    layer_usage_refresh_requested = Signal()
     layers_show_all = Signal(bool)
     layer_moved = Signal(str, int)
     layer_renamed = Signal(str, str)
@@ -381,10 +382,14 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._connect_pending_new_editor_signal()
         self._start_edit(row)
 
+    def set_used_layer_uids(self, used_uids: Set[str]) -> None:
+        self._used_uids = set(used_uids)
+
     def _on_delete_clicked(self) -> None:
         layer = self._get_selected_layer()
         if not layer:
             return
+        self.layer_usage_refresh_requested.emit()
         items = [(layer.name, layer.uid)]
         to_delete = confirm_multi_delete(self, "Delete Layer", items, self._used_uids)
         if to_delete is None:

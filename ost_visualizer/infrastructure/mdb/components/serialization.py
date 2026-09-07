@@ -13,18 +13,26 @@ TEXT_POSITION_TABLES: FrozenSet[str] = frozenset(
 )
 
 
-def encode_position(position: Iterable[float]) -> bytes:
+def encode_position(
+    position: Iterable[float], *, preserve_indices: frozenset[int] = frozenset()
+) -> bytes:
     parts = []
-    for value in position:
-        rounded = round(float(value), 3)
-        parts.append(f"{rounded:g}")
+    for index, value in enumerate(position):
+        if index in preserve_indices:
+            parts.append(str(float(value)))
+        else:
+            rounded = round(float(value), 3)
+            parts.append(f"{rounded:.3f}".rstrip("0").rstrip("."))
     return (";".join(parts) + "\n").encode(POSITION_TEXT_ENCODING)
 
 
 def serialize_position_for_table(
-    table: str, position: Iterable[float]
+    table: str,
+    position: Iterable[float],
+    *,
+    preserve_indices: frozenset[int] = frozenset(),
 ) -> Union[bytes, str]:
-    position_bytes = encode_position(position)
+    position_bytes = encode_position(position, preserve_indices=preserve_indices)
     if table in TEXT_POSITION_TABLES:
         return position_bytes.decode(POSITION_TEXT_ENCODING)
     return position_bytes

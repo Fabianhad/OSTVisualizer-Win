@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import List, Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
@@ -32,11 +33,22 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         pay_classes: Optional[List[PayClass]] = None,
         pay_classes_save_fn=None,
         pay_classes_save_async_fn=None,
+        pay_class_usage_fn=None,
+        employee_baselines=None,
     ):
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._employees = list(employees)
+        self._employee_baselines = (
+            dict(employee_baselines)
+            if employee_baselines is not None
+            else {str(e.uid): replace(e) for e in employees}
+        )
+        self._employee_removed = False
+        self._closed = False
+        self._interactive = True
         self._current_index = current_index
+        self._pay_class_usage_fn = pay_class_usage_fn
         self._pay_classes_save_fn = pay_classes_save_fn
         self._pay_classes_save_async_fn = pay_classes_save_async_fn
         self._workspace_state_model = workspace_state_model
@@ -157,6 +169,104 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         outer.addLayout(btn_layout)
         set_fixed_width_auto_height(self, EMPLOYEES_DETAIL_WIDTH)
 
+    def refresh_employees(self, employees, pay_classes=None) -> None:
+        if self._employee_removed:
+            return
+        authoritative = {str(e.uid): EmployeeRecord.from_employee(e) for e in employees}
+        current = self._employees[self._current_index] if self._employees else None
+        if current is None:
+            return
+        current_uid = str(current.uid)
+        if not current.is_new and current_uid not in authoritative:
+            self._employee_removed = True
+            self._current_index = -1
+            if self._active_payroll_dialog is not None:
+                self._active_payroll_dialog.reject()
+            self.set_interactive(False)
+            self.reject()
+            return
+        widgets = {
+            "employee_no": self.edit_employee_no,
+            "first_name": self.edit_first_name,
+            "last_name": self.edit_last_name,
+            "address1": self.edit_address1,
+            "address2": self.edit_address2,
+            "city": self.edit_city,
+            "state": self.edit_state,
+            "zip": self.edit_zip,
+            "home_phone": self.edit_home_phone,
+            "mobile_phone": self.edit_mobile_phone,
+            "email": self.edit_email,
+        }
+        pay_text = self.combo_pay_class.currentText()
+        pay_draft = pay_text != self.combo_pay_class.itemText(
+            self.combo_pay_class.currentIndex()
+        )
+        current = replace(
+            current,
+            **{name: widget.text() for name, widget in widgets.items()},
+            pay_class_uid=str(self.combo_pay_class.currentData() or "")
+        )
+        merged = []
+        for record in self._employees:
+            uid = str(record.uid)
+            draft = current if uid == current_uid else record
+            if draft.is_new:
+                merged.append(draft)
+            elif uid in authoritative:
+                updated = draft.with_authoritative_updates(
+                    self._employee_baselines[uid], authoritative[uid]
+                )
+                if uid == current_uid and pay_draft:
+                    updated = replace(updated, pay_class_uid=draft.pay_class_uid)
+                merged.append(updated)
+        self._employees = merged
+        self._employee_baselines = authoritative
+        self._current_index = next(
+            i for i, e in enumerate(merged) if str(e.uid) == current_uid
+        )
+        if pay_classes is not None:
+            self.refresh_pay_classes(pay_classes)
+        updated = merged[self._current_index]
+        values = vars(updated)
+        for name, widget in widgets.items():
+            if widget.text() != values[name]:
+                widget.setText(values[name])
+        if not pay_draft and str(self.combo_pay_class.currentData() or "") != str(
+            updated.pay_class_uid
+        ):
+            self._select_pay_class_by_uid(updated.pay_class_uid)
+        if pay_draft:
+            self.combo_pay_class.setEditText(pay_text)
+        self.btn_previous.setEnabled(self._current_index > 0)
+        self.btn_next.setEnabled(self._current_index < len(merged) - 1)
+
+    def refresh_pay_classes(self, pay_classes) -> None:
+        if self._active_payroll_dialog is not None:
+            self._active_payroll_dialog.refresh_pay_classes(pay_classes)
+        current_uid = self.combo_pay_class.currentData()
+        text = self.combo_pay_class.currentText()
+        draft = (
+            text
+            if text
+            != self.combo_pay_class.itemText(self.combo_pay_class.currentIndex())
+            else None
+        )
+        records = [PayClassRecord.from_pay_class(pc) for pc in pay_classes]
+        if [(pc.uid, pc.name) for pc in records] == [
+            (pc.uid, pc.name) for pc in self._pay_classes
+        ]:
+            return
+        self._pay_classes = records
+        valid_uids = {str(pc.uid) for pc in records}
+        for employee in self._employees:
+            if employee.pay_class_uid and str(employee.pay_class_uid) not in valid_uids:
+                employee.pay_class_uid = ""
+        self._populate_pay_class_combo()
+        self._select_pay_class_by_uid(str(current_uid or ""))
+        if draft is not None:
+            self.combo_pay_class.setEditText(draft)
+
     def _populate_pay_class_combo(self) -> None:
         self.combo_pay_class.blockSignals(True)
         self.combo_pay_class.clear()
@@ -253,6 +363,8 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         return True
 
     def _on_ok(self) -> None:
+        if self._employee_removed:
+            return
         if not self._validate_current():
             return
         self._save_current()
@@ -279,7 +391,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         return self._employees
 
     def get_current_uid(self) -> Optional[str]:
-        if self._employees:
+        if self._employees and not self._employee_removed:
             return self._employees[self._current_index].uid
         return None
 
@@ -287,6 +399,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         return self._pay_classes
 
     def _open_payroll_class_dialog(self, initial_name: Optional[str] = None) -> None:
+        employee_uid = self.get_current_uid()
         current_text = self.combo_pay_class.currentText()
         try:
             current_uid = self._selected_pay_class_uid()
@@ -300,6 +413,7 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
             pay_classes=pay_classes,
             selected_uid=str(current_uid),
             used_pay_class_uids=used_uids,
+            used_uids_fn=self._pay_class_usage_fn,
             initial_name=initial_name,
             save_fn=self._pay_classes_save_fn,
             save_async_fn=self._pay_classes_save_async_fn,
@@ -308,7 +422,14 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         self._active_payroll_dialog = dialog
         try:
             result = dialog.exec()
-            if not isValid(self) or not isValid(dialog):
+            if (
+                not isValid(self)
+                or self._closed
+                or not self._interactive
+                or employee_uid is None
+                or self.get_current_uid() != employee_uid
+                or not isValid(dialog)
+            ):
                 return
             accepted = result == QtWidgets.QDialog.DialogCode.Accepted
             if accepted or not dialog.was_cancelled:
@@ -337,6 +458,8 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
                 delete_later_if_valid(dialog)
 
     def set_interactive(self, enabled: bool) -> None:
+        enabled = enabled and not self._employee_removed
+        self._interactive = bool(enabled)
         for edit in (
             self.edit_first_name,
             self.edit_last_name,
@@ -366,12 +489,19 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
         remove_minimize_maximize(self)
 
     def cleanup(self) -> None:
+        self._closed = True
         self.icon_provider = None
+        self._pay_class_usage_fn = None
         self._pay_classes_save_fn = None
         self._pay_classes_save_async_fn = None
         self._active_payroll_dialog = None
         self._employees.clear()
         self._pay_classes.clear()
 
+    def done(self, result: int) -> None:
+        self._closed = True
+        super().done(result)
+
     def closeEvent(self, event) -> None:
+        self._closed = True
         event.accept()

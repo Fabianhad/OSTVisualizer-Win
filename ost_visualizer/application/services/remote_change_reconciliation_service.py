@@ -171,6 +171,14 @@ class RemoteChangeReconciliationService:
                     affected_page_uids_by_family[
                         CollaborationResourceFamily.ANNOTATIONS.value
                     ] = annotation_page_uids
+            if CollaborationResourceFamily.TAKEOFFS.value in families:
+                affected_page_uids_by_family[
+                    CollaborationResourceFamily.TAKEOFFS.value
+                ] = self._resolve_takeoff_page_ownership(
+                    active_changes,
+                    self._project_data.get_all_takeoffs(),
+                    bid_data.bid_takeoffs,
+                )
             if projection_barrier is not None and "takeoffs" in families:
                 transient_takeoff_uids = (
                     projection_barrier.resource_uid_aliases_by_family.get(
@@ -267,6 +275,12 @@ class RemoteChangeReconciliationService:
         if areas is not None:
             self._event_bus.publish(
                 AppEvents.REMOTE_AREAS_CHANGED,
+                takeoff_family_pending=CollaborationResourceFamily.TAKEOFFS.value
+                in families,
+                summary_refresh_required=(
+                    not (conditions is not None and folders is not None)
+                    and CollaborationResourceFamily.TAKEOFFS.value not in families
+                ),
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
                 area_uids=sorted(str(area.uid) for area in areas),
@@ -342,6 +356,9 @@ class RemoteChangeReconciliationService:
             }
             self._event_bus.publish(
                 AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                area_family_projected=areas is not None,
+                condition_family_projected=conditions is not None
+                and folders is not None,
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
                 families=sorted(families),
@@ -394,6 +411,34 @@ class RemoteChangeReconciliationService:
                 affected_page_uids_by_family=affected_page_uids_by_family,
             )
         return ReconciliationResult(applied=True)
+
+    @staticmethod
+    def _resolve_takeoff_page_ownership(
+        active_changes, previous_takeoffs, authoritative_takeoffs
+    ) -> tuple[str, ...]:
+        takeoffs = (*previous_takeoffs, *authoritative_takeoffs)
+        changed_uids = {
+            str(change.resource.resource_id)
+            for change in active_changes
+            if change.resource.resource_type == CollaborationResourceType.TAKEOFF.value
+        }
+        collection_changed = any(
+            change.resource.resource_type
+            == CollaborationResourceType.TAKEOFFS_COLLECTION.value
+            for change in active_changes
+        )
+        known_uids = {str(takeoff.uid) for takeoff in takeoffs}
+        if collection_changed or not changed_uids.issubset(known_uids):
+            changed_uids = known_uids
+        return tuple(
+            sorted(
+                {
+                    str(takeoff.page_uid)
+                    for takeoff in takeoffs
+                    if str(takeoff.uid) in changed_uids and takeoff.page_uid
+                }
+            )
+        )
 
     @staticmethod
     def _resolve_annotation_page_ownership(

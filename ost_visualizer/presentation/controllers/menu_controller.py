@@ -880,6 +880,17 @@ class MenuController:
             self.window,
             data,
             has_license=self.ui_access_manager.has_license(),
+            event_bus=self._event_bus,
+            database_id=file_path,
+            employee_usage_fn=lambda: (
+                self.project_data if uses_sql_queue else self._project_read_service
+            ).get_master_data_uids_in_use(file_path, "employees"),
+            pay_class_usage_fn=lambda: (
+                self.project_data if uses_sql_queue else self._project_read_service
+            ).get_master_data_uids_in_use(file_path, "pay_classes"),
+            job_status_usage_fn=lambda: (
+                self.project_data if uses_sql_queue else self._project_read_service
+            ).get_master_data_uids_in_use(file_path, "job_statuses"),
             save_job_statuses_fn=lambda ch: (
                 self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA)
                 and self._flush_deferred_for_file(file_path)

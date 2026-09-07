@@ -2223,6 +2223,50 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.removed_annotation_uids, ["ann-1"])
         self.assertEqual(plan_view.selected, {"ann-2"})
 
+    def test_annotation_insert_redo_after_calibration_preserves_angle(self):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 1
+        data.pages["p1"].scale_factor2 = 96
+        plan_view = FakePlanView()
+        plan_view.annotation_key_map = {
+            ("ann-1", "rect"): "ann-1",
+            ("ann-2", "rect"): "ann-2",
+        }
+        ann_write = FakeAnnotationWriteService()
+        ann_write.next_uids = ["ann-1", "ann-2"]
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
+        )
+        handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0, 0.123456789], "p1")
+        ann_write.next_uids = ["ann-2"]
+        undo.undo()
+        data.pages["p1"].scale_factor2 = 48
+        undo.redo()
+        self.assertEqual(
+            ann_write.insert_calls[-1][2][0].position, [0.5, 1.0, 2.5, 3.0, 0.123456789]
+        )
+        self.assertEqual([call[4] for call in ann_write.insert_calls], [False, False])
+        self.assertEqual(
+            ann_write.delete_calls, [("bid.mdb", [("ann-1", "rect")], False)]
+        )
+        self.assertEqual(
+            [event[0] for event in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED] * 3,
+        )
+        self.assertEqual(data.removed_annotation_uids, ["ann-1"])
+        self.assertEqual(plan_view.selected, {"ann-2"})
+
     def test_empty_text_annotation_commit_is_not_written(self):
         ann_write = FakeAnnotationWriteService()
         plan_view = FakePlanView()
@@ -2576,6 +2620,40 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
             def result_data(self):
                 raise AssertionError("stale hotlink dialog result must not be read")
+
+        with patch.object(handler_module, "SelectNamedViewDialog", RetargetingDialog):
+            handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+        self.assertEqual(ann_write.insert_calls, [])
+        self.assertEqual(plan_view.activated_annotations, [])
+
+    def test_hotlink_dialog_return_does_not_write_after_same_uid_page_replacement(self):
+        ann_write = FakeAnnotationWriteService()
+        plan_view = FakePlanView()
+        ui_state = FakeUiState()
+        data = FakeProjectData()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=ui_state,
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
+        )
+
+        class RetargetingDialog(handler_module.QtWidgets.QDialog):
+            def __init__(self, _named_views, parent=None):
+                super().__init__()
+
+            def exec(self):
+                data.pages["p1"] = SimpleNamespace(uid="p1")
+                return handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def result_data(self):
+                return SimpleNamespace(create_new=True, named_view_uid="")
 
         with patch.object(handler_module, "SelectNamedViewDialog", RetargetingDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
@@ -5220,6 +5298,67 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ),
         )
 
+    def test_rotated_annotation_history_after_calibration_preserves_angle(
+        self,
+    ):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type=ANNOTATION_TYPE_RECT,
+                page_uid="p1",
+                position=[0.0, 0.0, 96.0, 96.0, 0.123456789],
+            )
+        ]
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_positions_flushed(
+            [],
+            [
+                (
+                    "a1",
+                    ANNOTATION_TYPE_RECT,
+                    [0.0, 0.0, 96.0, 96.0, 0.123456789],
+                    [0.0, 0.0, 120.0, 120.0, 0.123456789],
+                )
+            ],
+        )
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        data.annotations[0].position = [0.0, 0.0, 80.0, 80.0, 0.123456789]
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            ann_write.position_calls[1],
+            (
+                "bid.mdb",
+                [("a1", ANNOTATION_TYPE_RECT, [0.0, 0.0, 64.0, 64.0, 0.123456789])],
+                False,
+            ),
+        )
+        self.assertEqual(
+            ann_write.position_calls[2],
+            (
+                "bid.mdb",
+                [("a1", ANNOTATION_TYPE_RECT, [0.0, 0.0, 80.0, 80.0, 0.123456789])],
+                False,
+            ),
+        )
+
     def test_failed_annotation_position_save_registers_takeoff_position_undo(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -6435,6 +6574,43 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [0.0, 0.0, 64.0, 64.0],
         )
 
+    def test_rotated_annotation_delete_undo_preserves_angle(self):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type=ANNOTATION_TYPE_RECT,
+            page_uid="p1",
+            position=[0.0, 0.0, 96.0, 96.0, 0.123456789],
+        )
+        data.annotations = [annotation]
+        plan_view = FakePlanView(data)
+        plan_view.annotations["rect-item"] = annotation
+        plan_view.annotation_key_map = {("ann-1", ANNOTATION_TYPE_RECT): "rect-item"}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_elements_deleted(["rect-item"])
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        undo.undo()
+        self.assertEqual(
+            ann_write.insert_calls[0][2][0].position,
+            [0.0, 0.0, 64.0, 64.0, 0.123456789],
+        )
+
     def test_mixed_delete_undo_uses_canonical_annotation_projection(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -7223,6 +7399,56 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
+    def test_curved_takeoff_paste_replay_preserves_length_offset_semantics(self):
+        source = Takeoff(
+            uid="source",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[10.0, 20.0, 106.0, 20.0, 58.0, 30.0, 9.0],
+            curve=1,
+            parent_uid="0",
+        )
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        plan_view = FakePlanView(data)
+        plan_view.intelligent_paste_enabled = False
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler._clipboard_svc = FakeClipboard([source])
+        handler.on_paste_requested()
+        undo.undo()
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        undo.redo()
+        self.assertEqual(write.calls[0][2][0].position, [11, 21, 107, 21, 59, 31, 9])
+        expected = [22 / 3, 14, 214 / 3, 14, 118 / 3, 62 / 3, 6]
+        for actual, value in zip(write.calls[1][2][0].position, expected):
+            self.assertAlmostEqual(actual, value)
+        for _ in range(20):
+            undo.undo()
+            data.pages["p1"].scale_factor1 = 0.125
+            undo.redo()
+            self.assertEqual(
+                write.calls[-1][2][0].position, [11, 21, 107, 21, 59, 31, 9]
+            )
+            undo.undo()
+            data.pages["p1"].scale_factor1 = 0.1875
+            undo.redo()
+        self.assertEqual(source.position, [10, 20, 106, 20, 58, 30, 9])
+
     def test_takeoff_paste_with_unknown_extras_keeps_full_reload(self):
         source = self._copied_takeoff()
         data = FakeProjectData()
@@ -7543,6 +7769,27 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             plan_view.selected,
             {"takeoff-restored", "shared-new", "shared-new_oval"},
         )
+
+    def test_annotation_copy_translation_round_trip_preserves_payload_slots(self):
+        from ost_visualizer.presentation.utils.annotation_paste import (
+            translate_annotation_position,
+        )
+
+        for kind, position in (
+            ("text", [100, 200, 50, 60, 0.123456789]),
+            ("ink", [0.123456789, 100, 200, 300, 400]),
+            ("rect", [100, 200, 300, 400, 0.123456789]),
+        ):
+            with self.subTest(kind=kind):
+                annotation = BidAnnotation("a1", kind, position=list(position))
+                for _ in range(20):
+                    translated = translate_annotation_position(annotation, 0.25, -0.5)
+                    self.assertEqual(annotation.position, position)
+                    moved = BidAnnotation("a1", kind, position=translated)
+                    annotation.position = translate_annotation_position(
+                        moved, -0.25, 0.5
+                    )
+                    self.assertEqual(annotation.position, position)
 
     def test_intelligent_paste_text_annotation_moves_center_only(self):
         source = self._copied_annotation(

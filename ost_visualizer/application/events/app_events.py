@@ -41,6 +41,8 @@ class RemoteAreasChangedEvent:
     area_uids: list = field(default_factory=list)
     defer_plan_projection: bool = False
     local_completion: bool = False
+    takeoff_family_pending: bool = False
+    summary_refresh_required: bool = True
 
 
 @dataclass
@@ -55,6 +57,8 @@ class RemoteBidContentChangedEvent:
     image_sources_unchanged: bool = False
     mesh_scene_unchanged: bool = False
     page_texture_only: bool = False
+    condition_family_projected: bool = False
+    area_family_projected: bool = False
 
 
 @dataclass

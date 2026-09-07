@@ -138,6 +138,7 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
             event_bus=EventBus(),
             refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
 
     def tearDown(self):
@@ -273,6 +274,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             event_bus=EventBus(),
             refresh_areas_fn=lambda _file_path: None,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
         bar.load_bid_areas(BidRef("db.mdb", "bid-1"), areas=[])
         bar.load_page("page-1", 1.0, 1.0, "")
@@ -1224,6 +1226,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 bid_areas=None,
                 save_fn=None,
                 used_uids=None,
+                used_uids_fn=None,
                 on_saved_fn=None,
                 bid_ref=None,
                 *,
@@ -1260,6 +1263,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             save_areas_fn=save_areas,
             refresh_areas_fn=refresh_areas,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
         area_changes = []
         bar.area_change_requested.connect(
@@ -1306,6 +1310,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 bid_areas=None,
                 save_fn=None,
                 used_uids=None,
+                used_uids_fn=None,
                 on_saved_fn=None,
                 bid_ref=None,
                 *,
@@ -1333,6 +1338,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             save_areas_fn=lambda *args, **kwargs: save_calls.append((args, kwargs)),
             refresh_areas_fn=refresh_calls.append,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
         bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
         bar.load_page("page-1", 1.0, 1.0, "")
@@ -1372,6 +1378,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 "destroyed page settings must not refresh areas"
             ),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
         bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
         bar.load_page("page-1", 1.0, 1.0, "")
@@ -1422,6 +1429,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 bid_areas=None,
                 save_fn=None,
                 used_uids=None,
+                used_uids_fn=None,
                 on_saved_fn=None,
                 bid_ref=None,
                 *,
@@ -1466,6 +1474,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             save_areas_async_fn=save_async,
             refresh_areas_fn=refresh_calls.append,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
         )
         bar.load_bid_areas(BidRef("sql-database", "bid-1"))
         bar.load_page("page-1", 1.0, 1.0, "")
@@ -1523,6 +1532,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                     uses_async_areas_fn=lambda _file_path, value=uses_async: value,
                     refresh_areas_fn=lambda _file_path: None,
                     ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+                    get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
                 )
                 bar.load_bid_areas(
                     BidRef(database_id, "bid-1"),
@@ -1546,6 +1556,94 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 ("sql-database", True, {"area-1"}, True),
             ],
         )
+
+    def test_open_areas_dialog_checks_current_usage_at_delete(self):
+        used = {"area-1"}
+        fail_query = False
+        scans = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("db.mdb", "bid-1")
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: bid_ref
+        )
+        coordinator.ui_access_manager = SimpleNamespace(is_allowed=lambda feature: True)
+
+        def usage():
+            scans.append(True)
+            if fail_query:
+                raise RuntimeError("usage query failed")
+            return set(used)
+
+        coordinator.project_data = SimpleNamespace(get_area_uids_with_takeoff=usage)
+        coordinator._project_read_service = SimpleNamespace(
+            get_bid_areas=lambda *args: [BidArea("area-1", "bid-1", "", "Area 1", 1)]
+        )
+        coordinator._project_write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda path: False
+        )
+        coordinator._icon_provider = FakeIconProvider()
+        coordinator.main_window = None
+        coordinator._workspace_state_model = make_workspace_state_model()
+
+        def interact(dialog, *args):
+            nonlocal fail_query
+            try:
+                item = dialog.tree.topLevelItem(0)
+                dialog.tree.setCurrentItem(item)
+                used.clear()
+                with (
+                    patch.object(QtWidgets.QMessageBox, "warning") as warning,
+                    patch.object(
+                        QtWidgets.QMessageBox,
+                        "question",
+                        return_value=QtWidgets.QMessageBox.StandardButton.No,
+                    ) as question,
+                ):
+                    dialog._on_delete()
+                self.assertEqual(warning.call_count, 0)
+                self.assertEqual(question.call_count, 1)
+                self.assertEqual(len(scans), 1)
+                used.add("area-1")
+                with (
+                    patch.object(QtWidgets.QMessageBox, "warning") as warning,
+                    patch.object(QtWidgets.QMessageBox, "question") as question,
+                ):
+                    dialog._on_delete()
+                self.assertEqual(warning.call_count, 1)
+                self.assertEqual(question.call_count, 0)
+                self.assertEqual(len(scans), 2)
+                self.assertIs(dialog.tree.currentItem(), item)
+                self.assertEqual(dialog._deleted_uids, [])
+                fail_query = True
+                with (
+                    patch(
+                        "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+                    ) as warning,
+                    patch.object(QtWidgets.QMessageBox, "question") as question,
+                ):
+                    dialog._on_delete()
+                warning.assert_called_once_with(
+                    dialog, "Delete Bid Area", "Failed to validate area usage."
+                )
+                self.assertEqual(question.call_count, 0)
+                self.assertEqual(len(scans), 3)
+                self.assertEqual(dialog._deleted_uids, [])
+                self.assertIs(dialog.tree.currentItem(), item)
+                # Parent relationships still block deletion independently of usage.
+                fail_query = False
+                used.clear()
+                item.addChild(dialog._make_item("child", "Child"))
+                with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+                    dialog._on_delete()
+                self.assertEqual(warning.call_count, 1)
+                self.assertEqual(dialog._deleted_uids, [])
+                item.takeChild(0)
+            finally:
+                dialog.cleanup()
+                delete(dialog)
+
+        coordinator._exec_with_collaboration_lease = interact
+        coordinator.open_areas_dialog()
 
     def test_open_areas_dialog_refreshes_once_after_saved_changes(self):
         reload_calls = []
@@ -1588,6 +1686,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 bid_areas=None,
                 save_fn=None,
                 used_uids=None,
+                used_uids_fn=None,
                 on_saved_fn=None,
                 has_license=True,
                 bid_ref=None,
@@ -2707,6 +2806,8 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 pay_classes=None,
                 pay_classes_save_fn=None,
                 pay_classes_save_async_fn=None,
+                pay_class_usage_fn=None,
+                employee_baselines=None,
                 workspace_state_model=make_workspace_state_model(),
             ):
                 self._employees = list(employees)
@@ -3337,6 +3438,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator.main_window = main_window
         coordinator._workspace_state_model = make_workspace_state_model()
         coordinator._icon_provider = FakeIconProvider()
+        coordinator.event_bus = EventBus()
         coordinator._editable_master_data_file_path = lambda: "master-data.mdb"
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False
@@ -3624,6 +3726,141 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_layer_delete_confirmation_uses_current_annotation_ownership(self):
+        from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
+        from ost_visualizer.domain.entities.annotation import (
+            BidAnnotation,
+            ANNOTATION_TYPE_TEXT,
+        )
+        from ost_visualizer.domain.services.project_data_service import (
+            ProjectDataService,
+        )
+
+        model = OstAggregate(None)
+        data = ProjectDataService(model)
+        sidebar = BidLayersSidebar(None)
+        self.addCleanup(lambda: delete(sidebar))
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)], {"layer-1"})
+        sidebar.table.setCurrentItem(sidebar.table.topLevelItem(0))
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = data
+        coordinator._sidebar = SimpleNamespace(bid_layers_sidebar=None)
+        coordinator._toolbar = SimpleNamespace(
+            set_bid_layers_sidebar=lambda widget: None
+        )
+        coordinator.set_bid_layers_sidebar(sidebar)
+        original_row = sidebar.table.topLevelItem(0)
+        usage_scans = []
+        original_usage = data.get_layer_uids_in_use
+
+        def usage():
+            usage_scans.append(True)
+            return original_usage()
+
+        data.get_layer_uids_in_use = usage
+        for label, annotations, in_use in (
+            ("last annotation deleted", [], False),
+            (
+                "undo/recreate on another Page",
+                [
+                    BidAnnotation(
+                        uid="a1",
+                        annotation_type=ANNOTATION_TYPE_TEXT,
+                        page_uid="other",
+                        layer_uid="layer-1",
+                    )
+                ],
+                True,
+            ),
+            (
+                "move to another Layer",
+                [
+                    BidAnnotation(
+                        uid="a1",
+                        annotation_type=ANNOTATION_TYPE_TEXT,
+                        page_uid="third",
+                        layer_uid="layer-2",
+                    )
+                ],
+                False,
+            ),
+            (
+                "move back",
+                [
+                    BidAnnotation(
+                        uid="a1",
+                        annotation_type=ANNOTATION_TYPE_TEXT,
+                        page_uid="other",
+                        layer_uid="layer-1",
+                    )
+                ],
+                True,
+            ),
+            ("redo deletion", [], False),
+        ):
+            with self.subTest(workflow=label):
+                model.set_annotations(annotations)
+                usage_scans.clear()
+                with (
+                    patch.object(QtWidgets.QMessageBox, "warning") as warning,
+                    patch.object(
+                        QtWidgets.QMessageBox,
+                        "question",
+                        return_value=QtWidgets.QMessageBox.StandardButton.No,
+                    ) as question,
+                ):
+                    sidebar._delete_btn.click()
+                self.assertEqual(warning.call_count, int(in_use))
+                self.assertEqual(question.call_count, int(not in_use))
+                self.assertIs(sidebar.table.currentItem(), original_row)
+                self.assertEqual(len(usage_scans), 1)
+        # An initially unused Layer must acquire the warning without a reload.
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)], set())
+        sidebar.table.setCurrentItem(sidebar.table.topLevelItem(0))
+        model.set_annotations(
+            [
+                BidAnnotation(
+                    uid="a2",
+                    annotation_type=ANNOTATION_TYPE_TEXT,
+                    page_uid="other",
+                    layer_uid="layer-1",
+                )
+            ]
+        )
+        with (
+            patch.object(QtWidgets.QMessageBox, "warning") as warning,
+            patch.object(
+                QtWidgets.QMessageBox,
+                "question",
+                return_value=QtWidgets.QMessageBox.StandardButton.No,
+            ) as question,
+        ):
+            sidebar._delete_btn.click()
+        self.assertEqual(warning.call_count, 1)
+        self.assertEqual(question.call_count, 0)
+        from ost_visualizer.domain.entities.condition import Condition
+        from ost_visualizer.domain.entities.page import Page
+        from ost_visualizer.domain.entities.takeoff import Takeoff
+
+        model.set_annotations([])
+        model.bid_conditions = {"c1": Condition(uid="c1", layer_uid="layer-1")}
+        page = Page(uid="other", name="Other")
+        model.set_pages({"other": page})
+        takeoff = Takeoff(uid="t1", condition_uid="c1", page_uid="other")
+        for current in ([takeoff], [], [takeoff]):
+            page.takeoffs = current
+            with (
+                patch.object(QtWidgets.QMessageBox, "warning") as warning,
+                patch.object(
+                    QtWidgets.QMessageBox,
+                    "question",
+                    return_value=QtWidgets.QMessageBox.StandardButton.No,
+                ) as question,
+            ):
+                sidebar._delete_btn.click()
+            self.assertEqual(warning.call_count, int(bool(current)))
+            self.assertEqual(question.call_count, int(not current))
 
     def test_layers_dialog_and_sidebar_checkbox_state_stay_synchronized(self):
         sidebar = BidLayersSidebar(None)

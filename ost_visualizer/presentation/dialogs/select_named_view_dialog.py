@@ -2,7 +2,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 from PySide6 import QtCore, QtWidgets
-from shiboken6 import isValid
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
@@ -39,6 +38,9 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         self._new_radio = QtWidgets.QRadioButton("Create a new Named View")
         self._named_view_combo = QtWidgets.QComboBox()
         self._result = SelectNamedViewResult(create_new=False)
+        self._completion_timer = QtCore.QTimer(self)
+        self._completion_timer.setSingleShot(True)
+        self._completion_timer.timeout.connect(self._show_current_completions)
         self._build_ui()
         self._sync_state()
 
@@ -127,14 +129,16 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
                 self._queue_show_current_completions()
         return super().eventFilter(watched, event)
 
+    def hideEvent(self, event) -> None:
+        self._completion_timer.stop()
+        super().hideEvent(event)
+
     def _queue_show_current_completions(self) -> None:
-        QtCore.QTimer.singleShot(
-            0,
-            lambda: self._show_current_completions() if isValid(self) else None,
-        )
+        if not self._completion_timer.isActive():
+            self._completion_timer.start(0)
 
     def _show_current_completions(self) -> None:
-        if not self._named_view_combo.isEnabled():
+        if not self.isVisible() or not self._named_view_combo.isEnabled():
             return
         line_edit = self._named_view_combo.lineEdit()
         completer = self._named_view_combo.completer()

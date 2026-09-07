@@ -368,6 +368,26 @@ class SettingsReaderMixin:
             )
             return []
 
+    def get_master_data_uids_in_use(self, file_path: str, kind: str) -> set[str]:
+        if kind not in {"employees", "job_statuses", "pay_classes"}:
+            raise ValueError("Unsupported master-data usage kind")
+        with self._connection(file_path) as connection:
+            if kind == "employees":
+                return self._parse_used_employee_uids(connection)
+            if kind == "job_statuses":
+                return self._parse_used_job_status_uids(connection)
+            schema = self._schema(connection)
+            if schema.optional_table_missing("Employees") or not schema.column_exists(
+                "Employees", "PayClassUID"
+            ):
+                return set()
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT DISTINCT [PayClassUID] FROM [Employees] "
+                    "WHERE [PayClassUID] IS NOT NULL"
+                )
+                return {str(row[0]) for row in cursor.fetchall() if row[0] is not None}
+
     def get_employee_uids_in_use(self, file_path: str) -> set:
         try:
             with self._connection(file_path) as connection:

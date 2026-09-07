@@ -149,6 +149,9 @@ class SharedPageData(FakeProjectData):
     def get_selected_page_uids(self):
         return [self.page.uid]
 
+    def get_area_uids_with_takeoff(self):
+        return set()
+
     def get_area_uids_with_takeoff_for_page(self, _page_uid):
         return set()
 
@@ -189,6 +192,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             lambda: None,
             self.access,
             make_workspace_state_model(),
+            get_page_fn=self.data.get_page,
         )
         self.addCleanup(self.bar.deleteLater)
         self.bar.load_bid_areas(

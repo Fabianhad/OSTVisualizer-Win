@@ -52,12 +52,14 @@ class LayersDialog(QtWidgets.QDialog):
         update_all_show_async_fn=None,
         has_license: bool = True,
         mode: LayersDialogMode = LayersDialogMode.SELECT,
+        used_uids_fn: Optional[Callable[[], Set[str]]] = None,
     ) -> None:
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._mode = mode
         self._layers = self._filter_layers_for_mode(list(layers or []))
         self._used_uids = {str(uid) for uid in (used_uids or set())}
+        self._used_uids_fn = used_uids_fn
         self._reload_fn = reload_fn
         self._insert_fn = insert_fn
         self._delete_many_fn = delete_many_fn
@@ -494,6 +496,12 @@ class LayersDialog(QtWidgets.QDialog):
             max(0, self.tree.topLevelItemCount() - len(selected) - 1),
         )
         pairs = [(item.text(2), str(item.data(0, self._UID_ROLE))) for item in selected]
+        if self._used_uids_fn is not None:
+            try:
+                self._used_uids = {str(uid) for uid in self._used_uids_fn()}
+            except Exception:
+                show_warning(self, "Delete Layer", "Failed to validate layer usage.")
+                return
         to_delete = confirm_multi_delete(self, "Delete Layer", pairs, self._used_uids)
         if to_delete is None:
             return
@@ -763,6 +771,7 @@ class LayersDialog(QtWidgets.QDialog):
         self._disconnect_pending_new_editor_signal()
         self.icon_provider = None
         self._reload_fn = None
+        self._used_uids_fn = None
         self._insert_fn = None
         self._delete_many_fn = None
         self._update_show_fn = None

@@ -84,6 +84,9 @@ class ProjectReadService:
             self.logger.warning("Failed to load cover sheet data", exc_info=True)
             return None
 
+    def get_master_data_uids_in_use(self, file_path: str, kind: str) -> set[str]:
+        return self._reader.get_master_data_uids_in_use(file_path, kind)
+
     def get_employee_uids_in_use(self, file_path: str) -> set:
         try:
             return self._reader.get_employee_uids_in_use(file_path)

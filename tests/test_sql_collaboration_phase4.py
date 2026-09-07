@@ -763,6 +763,7 @@ class _ProjectData:
         self.page_delete_content = {}
         self.removed_transient_takeoff_uids = []
         self.annotations = []
+        self.takeoffs = []
         self.layers = []
 
     def get_current_bid_ref(self):
@@ -793,10 +794,15 @@ class _ProjectData:
             self.layers = list(bid_data.bid_layers)
         if CollaborationResourceFamily.ANNOTATIONS.value in families:
             self.annotations = list(bid_data.bid_annotations)
+        if CollaborationResourceFamily.TAKEOFFS.value in families:
+            self.takeoffs = list(bid_data.bid_takeoffs)
         return True
 
     def get_bid_layer_snapshot(self):
         return list(self.layers)
+
+    def get_all_takeoffs(self):
+        return list(self.takeoffs)
 
     def get_all_annotations(self):
         return list(self.annotations)
@@ -3054,6 +3060,96 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             [True, True],
         )
 
+    def test_mixed_batch_marks_single_aggregate_owners(self):
+        for has_condition in (False, True):
+            for deferred in (False, True):
+                for local in (False, True):
+                    with self.subTest(
+                        condition=has_condition, deferred=deferred, local=local
+                    ):
+                        database_id = "database"
+                        events = _EventBus()
+                        data = _ProjectData(database_id)
+                        data.conditions = {"42": Condition(uid="42")}
+                        tokens, drafts = _token_service()
+                        service = RemoteChangeReconciliationService(
+                            data, events, tokens, drafts, ConflictResolutionService()
+                        )
+                        takeoff = Takeoff(uid="30", condition_uid="42", page_uid="20")
+                        changes = [
+                            _change(database_id, ResourceRef("area", "6", 8), 1),
+                            _change(database_id, ResourceRef("takeoff", "30", 8), 2),
+                            _change(database_id, ResourceRef("layer", "7", 8), 3),
+                        ]
+                        if has_condition:
+                            changes.append(
+                                _change(
+                                    database_id, ResourceRef("condition", "42", 8), 4
+                                )
+                            )
+                        hydrated = HydratedDatabaseChangeBatch(
+                            _batch(database_id, "epoch", 1, 4, tuple(changes)),
+                            conditions_by_bid=(
+                                {8: data.conditions} if has_condition else {}
+                            ),
+                            condition_folders_by_bid={8: {}} if has_condition else {},
+                            areas_by_bid={
+                                8: (
+                                    BidArea(
+                                        uid="6",
+                                        bid_uid="8",
+                                        parent_uid="0",
+                                        name="New",
+                                        sequence=1,
+                                    ),
+                                )
+                            },
+                            bid_data_by_bid={
+                                8: BidLoadResult(
+                                    bid_takeoffs=[takeoff],
+                                    pages={
+                                        "20": Page(
+                                            uid="20", name="Sheet", takeoffs=[takeoff]
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                        barrier = (
+                            RemoteProjectionBarrier(
+                                database_id=database_id,
+                                runtime_generation=5,
+                                is_runtime_current=lambda *args: True,
+                                on_complete=lambda success: None,
+                            )
+                            if deferred
+                            else None
+                        )
+                        self.assertTrue(
+                            service.apply(
+                                hydrated, barrier, local_completion=local
+                            ).applied
+                        )
+                        area = next(
+                            payload
+                            for event, payload in events.published
+                            if event == AppEvents.REMOTE_AREAS_CHANGED
+                        )
+                        content = next(
+                            payload
+                            for event, payload in events.published
+                            if event == AppEvents.REMOTE_BID_CONTENT_CHANGED
+                        )
+                        self.assertTrue(area["takeoff_family_pending"])
+                        self.assertFalse(area["summary_refresh_required"])
+                        self.assertTrue(content["area_family_projected"])
+                        self.assertEqual(
+                            content["condition_family_projected"], has_condition
+                        )
+                        self.assertEqual(
+                            content["affected_page_uids_by_family"]["takeoffs"], ("20",)
+                        )
+
     def test_local_area_completion_is_identified_on_granular_event(self):
         database_id = "database"
         events = _EventBus()
@@ -3191,6 +3287,107 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(content_events[0]["families"], ["takeoffs"])
         self.assertEqual(len(projection_events), 1)
 
+    def test_remote_takeoff_projection_carries_old_and_new_page_ownership(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        project_data.conditions = {"10": Condition(uid="10")}
+        project_data.takeoffs = [
+            Takeoff(
+                uid="takeoff-1",
+                condition_uid="10",
+                page_uid="page-1",
+            )
+        ]
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        moved_takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="10",
+            page_uid="page-2",
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("takeoff", "takeoff-1", 8),
+                        2,
+                    ),
+                ),
+            ),
+            bid_data_by_bid={
+                8: BidLoadResult(
+                    bid_takeoffs=[moved_takeoff],
+                    pages={
+                        "page-2": Page(
+                            uid="page-2", name="Second", takeoffs=[moved_takeoff]
+                        )
+                    },
+                )
+            },
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        self.assertTrue(service.apply(hydrated, barrier).applied)
+        content = next(
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_BID_CONTENT_CHANGED
+        )
+        projection = next(
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED
+        )
+        self.assertEqual(
+            content["affected_page_uids_by_family"],
+            {"takeoffs": ("page-1", "page-2")},
+        )
+        self.assertEqual(
+            projection["affected_page_uids_by_family"],
+            {"takeoffs": ("page-1", "page-2")},
+        )
+        # The old Page must still be projected when its final Takeoff is deleted.
+        events.published.clear()
+        deletion = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                2,
+                3,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("takeoff", "takeoff-1", 8),
+                        3,
+                        operation=ChangeOperation.DELETE,
+                    ),
+                ),
+            ),
+            bid_data_by_bid={8: BidLoadResult()},
+        )
+        self.assertTrue(service.apply(deletion).applied)
+        content = next(
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_BID_CONTENT_CHANGED
+        )
+        self.assertEqual(
+            content["affected_page_uids_by_family"], {"takeoffs": ("page-2",)}
+        )
+        self.assertFalse(content["condition_family_projected"])
+
     def test_remote_annotation_projection_carries_old_and_new_page_ownership(self):
         database_id = "database"
         events = _EventBus()
@@ -3296,6 +3493,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             for event, payload in events.published
             if event == AppEvents.REMOTE_BID_CONTENT_CHANGED
         )
+        self.assertTrue(content["condition_family_projected"])
         projection = next(
             payload
             for event, payload in events.published
