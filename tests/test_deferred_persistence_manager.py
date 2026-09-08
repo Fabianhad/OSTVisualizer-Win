@@ -1566,6 +1566,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "singleShot",
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
+            window.handlers = SimpleNamespace(
+                file_ops=SimpleNamespace(maintenance_pending=False)
+            )
             MainWindow.closeEvent(window, event)
             scheduled.pop()()
         self.assertTrue(event.ignored)
@@ -1637,6 +1640,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "singleShot",
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
+            window.handlers = SimpleNamespace(
+                file_ops=SimpleNamespace(maintenance_pending=False)
+            )
             MainWindow.closeEvent(window, event)
             self.assertEqual(calls, ["hide"])
             self.assertEqual(len(scheduled), 1)
@@ -1681,7 +1687,13 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "singleShot",
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
+            window.handlers = SimpleNamespace(
+                file_ops=SimpleNamespace(maintenance_pending=False)
+            )
             MainWindow.closeEvent(window, first)
+            window.handlers = SimpleNamespace(
+                file_ops=SimpleNamespace(maintenance_pending=False)
+            )
             MainWindow.closeEvent(window, second)
         self.assertTrue(first.ignored)
         self.assertTrue(second.ignored)
@@ -1735,6 +1747,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "quit",
             side_effect=lambda: calls.append("qt_quit"),
         ):
+            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
             MainWindow.closeEvent(window, event)
         self.assertEqual(
             calls,
@@ -1796,7 +1809,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "quit",
             side_effect=lambda: calls.append("qt_quit"),
         ):
+            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
             MainWindow.closeEvent(window, first)
+            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
             MainWindow.closeEvent(window, second)
         self.assertTrue(second.accepted)
         self.assertEqual(
@@ -1861,6 +1876,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "quit",
             side_effect=lambda: calls.append("qt_quit"),
         ):
+            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
             MainWindow.closeEvent(window, event)
         self.assertEqual(len(captured.output), 3)
         self.assertEqual(
@@ -1913,6 +1929,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "singleShot",
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
+            window.handlers = SimpleNamespace(
+                file_ops=SimpleNamespace(maintenance_pending=False)
+            )
             MainWindow.closeEvent(window, event)
             scheduled.pop()()
         self.assertTrue(event.ignored)
@@ -1944,6 +1963,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
                 window, False, "cleanup failed"
             )
             event = FakeCloseEvent()
+            window.handlers = SimpleNamespace(
+                file_ops=SimpleNamespace(maintenance_pending=False)
+            )
             MainWindow.closeEvent(window, event)
         finally:
             main_window.show_critical = old_critical

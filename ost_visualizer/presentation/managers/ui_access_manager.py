@@ -540,6 +540,14 @@ class UIAccessManager:
             database_id=database_id,
         )
 
+    def can_maintain_database(self, database_id: str) -> bool:
+        return bool(database_id) and not self._feature_blocked(
+            Feature.EDIT_PROJECT_TREE_STRUCTURE,
+            require_current_selection=False,
+            resource=None,
+            database_id=database_id,
+        )
+
     def can_close_database(self, database_id: str) -> bool:
         return bool(database_id) and not self._feature_blocked(
             Feature.UNLOAD_FILE,

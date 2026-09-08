@@ -3422,6 +3422,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )()
 
         class _Dialog:
+            maintenance_requested = SimpleNamespace(connect=lambda _callback: None)
+
             def __init__(
                 self,
                 _icon_provider,
@@ -3433,6 +3435,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 credential_store=None,
                 sql_database_creator=None,
                 schema_change_allowed_fn=None,
+                maintenance_allowed_fn=None,
             ):
                 _ = (
                     workspace_state_model,
@@ -3440,6 +3443,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                     credential_store,
                     sql_database_creator,
                     schema_change_allowed_fn,
+                    maintenance_allowed_fn,
                 )
 
             def exec(self):
@@ -3523,6 +3527,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self.file_entries = list(entries)
 
         class _Dialog:
+            maintenance_requested = SimpleNamespace(connect=lambda _callback: None)
+
             def __init__(
                 self,
                 _icon_provider,
@@ -3534,6 +3540,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 credential_store=None,
                 sql_database_creator=None,
                 schema_change_allowed_fn=None,
+                maintenance_allowed_fn=None,
             ):
                 _ = (
                     workspace_state_model,
@@ -3541,6 +3548,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                     credential_store,
                     sql_database_creator,
                     schema_change_allowed_fn,
+                    maintenance_allowed_fn,
                 )
 
             def exec(self):
@@ -3623,6 +3631,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self.file_entries = list(entries)
 
         class _Dialog:
+            maintenance_requested = SimpleNamespace(connect=lambda _callback: None)
+
             def __init__(
                 self,
                 _icon_provider,
@@ -3634,6 +3644,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 credential_store=None,
                 sql_database_creator=None,
                 schema_change_allowed_fn=None,
+                maintenance_allowed_fn=None,
             ):
                 _ = (
                     workspace_state_model,
@@ -3641,6 +3652,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                     credential_store,
                     sql_database_creator,
                     schema_change_allowed_fn,
+                    maintenance_allowed_fn,
                 )
 
             def exec(self):
@@ -3758,6 +3770,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self.file_entries = list(entries)
 
         class _Dialog:
+            maintenance_requested = SimpleNamespace(connect=lambda _callback: None)
+
             def __init__(
                 self,
                 _icon_provider,
@@ -3769,6 +3783,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 credential_store=None,
                 sql_database_creator=None,
                 schema_change_allowed_fn=None,
+                maintenance_allowed_fn=None,
             ):
                 _ = (
                     workspace_state_model,
@@ -3776,6 +3791,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                     credential_store,
                     sql_database_creator,
                     schema_change_allowed_fn,
+                    maintenance_allowed_fn,
                 )
 
             def exec(self):

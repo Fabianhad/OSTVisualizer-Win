@@ -533,6 +533,8 @@ class PersistentHeaderTests(unittest.TestCase):
         received_models = []
 
         class Dialog:
+            maintenance_requested = SimpleNamespace(connect=lambda _callback: None)
+
             def __init__(
                 self,
                 _icon_provider,
@@ -545,6 +547,7 @@ class PersistentHeaderTests(unittest.TestCase):
                 credential_store,
                 sql_database_creator,
                 schema_change_allowed_fn,
+                maintenance_allowed_fn,
             ):
                 received_models.append(workspace_state_model)
 

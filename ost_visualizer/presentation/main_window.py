@@ -690,6 +690,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _create_handlers(self) -> SimpleNamespace:
         handlers = SimpleNamespace()
         handlers.file_ops = FileOperationHandler(
+            database_maintenance_service=self.app_controller.get_service(
+                "database_maintenance_service"
+            ),
             window=self,
             icon_provider=self.icon_provider,
             event_bus=self.event_bus,
@@ -2375,6 +2378,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self.handlers.file_ops.maintenance_pending:
+            event.ignore()
+            return
         if self._application_shutdown_finalized:
             event.accept()
             return

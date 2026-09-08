@@ -1,3 +1,4 @@
+import logging
 from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.events.app_events import AppEvents
@@ -9,7 +10,8 @@ from ..dialogs.sql_database_dialog import (
 )
 from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
-from ..utils.messagebox import show_warning
+from ..utils.messagebox import confirm, show_info, show_warning
+from ..components.progress_dialog import ProgressDialog
 from ...domain.entities.database_descriptor import (
     DatabaseBackend,
     DatabaseDescriptor,
@@ -17,6 +19,8 @@ from ...domain.entities.database_descriptor import (
     credential_target_for,
 )
 from ...domain.entities.file_state import FileEntry
+
+logger = logging.getLogger(__name__)
 
 
 class FileOperationHandler:
@@ -40,7 +44,9 @@ class FileOperationHandler:
         database_descriptor_registry=None,
         sql_database_creator=None,
         database_capability_service=None,
+        database_maintenance_service=None,
     ):
+        self._database_maintenance = database_maintenance_service
         self.window = window
         self.icon_provider = icon_provider
         self.event_bus = event_bus
@@ -60,6 +66,7 @@ class FileOperationHandler:
         self._database_capability_service = database_capability_service
         self._workspace_state_model = workspace_state_model
         self._file_operation_pending = False
+        self._maintenance_active = False
         self._file_operation_serial = 0
 
     def open_files(self) -> None:
@@ -82,6 +89,7 @@ class FileOperationHandler:
             self._file_state_model.file_entries,
             self._working_directory_service,
             workspace_state_model=self._workspace_state_model,
+            maintenance_allowed_fn=self._maintenance_allowed,
             sql_catalog=self._database_catalog,
             credential_store=self._credential_store,
             sql_database_creator=self._sql_database_creator,
@@ -89,9 +97,16 @@ class FileOperationHandler:
                 Feature.CREATE_DATABASE
             ),
         )
+        dialog.maintenance_requested.connect(
+            lambda entry: self._compact_database(dialog, entry)
+        )
         file_entries = None
         reconfigured_database_ids: set[str] = set()
         try:
+            if self._database_maintenance is not None:
+                self._ui_access_manager.subscribe_access_state_changed(
+                    dialog.refresh_maintenance_access
+                )
             result = dialog.exec()
             if not isValid(self.window) or not isValid(dialog):
                 return
@@ -130,9 +145,15 @@ class FileOperationHandler:
                         file_entries = selected_entries
         finally:
             try:
-                dialog.cleanup()
+                if self._database_maintenance is not None:
+                    self._ui_access_manager.unsubscribe_access_state_changed(
+                        dialog.refresh_maintenance_access
+                    )
             finally:
-                delete_later_if_valid(dialog)
+                try:
+                    dialog.cleanup()
+                finally:
+                    delete_later_if_valid(dialog)
         if file_entries is None:
             return
         self._prepare_open_files_changes(
@@ -141,6 +162,132 @@ class FileOperationHandler:
             original_entries,
             reconfigured_database_ids,
         )
+
+    @property
+    def maintenance_pending(self) -> bool:
+        return self._maintenance_active
+
+    def _maintenance_allowed(self, entry: FileEntry) -> bool:
+        return bool(
+            self._database_maintenance is not None
+            and not self._file_operation_pending
+            and self._ui_access_manager.can_maintain_database(entry.runtime_locator)
+        )
+
+    def _compact_database(self, dialog: OpenFilesDialog, entry: FileEntry) -> None:
+        if (
+            not isValid(self.window)
+            or not isValid(dialog)
+            or dialog.maintenance_target() is not entry
+            or not self._maintenance_allowed(entry)
+        ):
+            return
+        token = self._begin_pending_file_operation()
+        self._maintenance_active = True
+        prepared = None
+        error_reported = False
+        dialog.set_maintenance_busy(True)
+        try:
+            reason = self._database_maintenance.unavailable_reason(
+                entry.runtime_locator
+            )
+            if reason:
+                show_warning(dialog, "Compact/Repair", reason)
+                return
+            if any(
+                child is not dialog and child.isVisible()
+                for child in self.window.findChildren(QtWidgets.QDialog)
+            ):
+                show_warning(
+                    dialog,
+                    "Compact/Repair",
+                    "Close other editors before database maintenance. Unsaved drafts will not be discarded.",
+                )
+                return
+            if not self._deferred_persistence.flush_for_file(entry.runtime_locator):
+                return
+            target = self._database_maintenance.capture_target(entry.runtime_locator)
+            if not confirm(
+                dialog,
+                "Compact/Repair",
+                "Compact and repair the selected database? Close this database in other applications first. It will be unavailable during maintenance and refreshed afterward.",
+            ):
+                return
+            if (
+                not isValid(self.window)
+                or not isValid(dialog)
+                or dialog.maintenance_target() is not entry
+                or not self._ui_access_manager.can_maintain_database(
+                    entry.runtime_locator
+                )
+            ):
+                return
+            if not self._database_maintenance.is_target_current(target):
+                return
+            progress = ProgressDialog(
+                entry.descriptor.display_name,
+                lambda: self._database_maintenance.prepare(target),
+                parent=dialog,
+                action_text="Compacting/repairing",
+            )
+            try:
+                progress.exec()
+                error = progress.error
+                prepared = progress.result if error is None else None
+            finally:
+                progress.cleanup()
+                delete_later_if_valid(progress)
+            if (
+                not isValid(self.window)
+                or not isValid(dialog)
+                or dialog.maintenance_target() is not entry
+                or not self._ui_access_manager.can_maintain_database(
+                    entry.runtime_locator
+                )
+            ):
+                return
+            if error is not None:
+                raise error
+            if prepared is None:
+                raise RuntimeError("Database maintenance did not complete.")
+            current_prepared, prepared = prepared, None
+            result = self._database_maintenance.finish(
+                target, current_prepared, self._unload_file_fn
+            )
+            if result.success:
+                dialog.refresh_database_metadata(entry.database_id)
+            if result.success:
+                show_info(dialog, "Compact/Repair", result.message)
+            else:
+                show_warning(dialog, "Compact/Repair", result.message)
+        except Exception as exc:
+            error_reported = True
+            if isValid(dialog):
+                show_warning(
+                    dialog, "Compact/Repair", str(exc) or "Database maintenance failed."
+                )
+        finally:
+            try:
+                if prepared is not None:
+                    self._database_maintenance.discard(prepared)
+            except Exception as exc:
+                if (
+                    not error_reported
+                    and isValid(dialog)
+                    and dialog.maintenance_target() is entry
+                ):
+                    show_warning(
+                        dialog,
+                        "Compact/Repair",
+                        f"Temporary-file cleanup failed: {exc}",
+                    )
+                else:
+                    logger.warning("Maintenance temporary-file cleanup failed: %s", exc)
+            finally:
+                self._maintenance_active = False
+                self._finish_pending_file_operation(token)
+                if isValid(dialog):
+                    dialog.set_maintenance_busy(False)
 
     def _prepare_open_files_changes(
         self,
@@ -761,6 +908,6 @@ class FileOperationHandler:
         show_warning(
             self.window,
             "Database Operation Pending",
-            "Wait for the current SQL database unload to finish before changing "
+            "Wait for the current database operation to finish before changing "
             "Open Files again.",
         )

@@ -239,5 +239,11 @@ class ProgressDialog(QtWidgets.QDialog):
         self._progress = None
         self._cleanup_complete = True
 
+    def reject(self) -> None:
+        if self._worker_finished and (
+            self._thread is None or not self._thread.isRunning()
+        ):
+            super().reject()
+
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         event.ignore()

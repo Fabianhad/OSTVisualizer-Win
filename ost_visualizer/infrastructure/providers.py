@@ -1,3 +1,7 @@
+from .database.maintenance_router import DatabaseMaintenanceRouter
+from .mdb.database_maintenance import MdbDatabaseMaintenance
+from .sql.database_maintenance import SqlDatabaseMaintenance
+from ..application.interfaces.i_database_maintenance import IDatabaseMaintenance
 import logging
 from pathlib import Path
 from typing import Callable, Optional
@@ -303,6 +307,15 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
             takeoff_renderer=TakeoffRenderer(coord_system, color_service),
             annotation_renderer=AnnotationItemRenderer(coord_system),
             linear_geometry=LinearGeometry(),
+        )
+
+    def get_database_maintenance(
+        self, conn_manager: IMdbConnectionManager
+    ) -> IDatabaseMaintenance:
+        return DatabaseMaintenanceRouter(
+            self._descriptor_registry,
+            MdbDatabaseMaintenance(conn_manager),
+            SqlDatabaseMaintenance(),
         )
 
     def get_mdb_reader(

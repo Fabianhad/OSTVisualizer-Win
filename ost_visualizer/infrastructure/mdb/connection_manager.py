@@ -18,6 +18,35 @@ class MdbConnectionManager:
         self._path_locks = {}
         self._active_leases: Dict[str, tuple[bool, int]] = {}
         self._write_blocked = False
+        self._maintenance_paths: set[str] = set()
+
+    @contextmanager
+    def maintenance(self, db_path: str):
+        key = os.path.normcase(os.path.abspath(db_path))
+        with self._lock:
+            if self._write_blocked:
+                raise WriteBlockedError(
+                    "Close On-Screen Takeoff before database maintenance."
+                )
+            if key in self._maintenance_paths or any(
+                os.path.normcase(path) == key for path in self._active_leases
+            ):
+                raise RuntimeError(
+                    "The database has active operations; try again when they finish."
+                )
+            self._maintenance_paths.add(key)
+            paths = {db_path} | {
+                path
+                for path in set(self._read_conns) | set(self._write_conns)
+                if os.path.normcase(path) == key
+            }
+        try:
+            for path in paths:
+                self.close_database(path)
+            yield
+        finally:
+            with self._lock:
+                self._maintenance_paths.remove(key)
 
     def set_write_blocked(self, blocked: bool) -> None:
         with self._lock:
@@ -37,6 +66,10 @@ class MdbConnectionManager:
         path_lock = self._get_path_lock(abs_path)
         with path_lock:
             with self._lock:
+                if os.path.normcase(abs_path) in self._maintenance_paths:
+                    raise RuntimeError(
+                        "The database is temporarily closed for maintenance."
+                    )
                 if not autocommit and self._write_blocked:
                     raise WriteBlockedError(
                         "Database writes are blocked while OST is active"

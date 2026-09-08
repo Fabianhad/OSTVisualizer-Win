@@ -1,3 +1,4 @@
+from ..services.database_maintenance_service import DatabaseMaintenanceService
 import logging
 from ..events.app_events import AppEvents
 from ..interfaces.i_color_service import IColorService
@@ -78,6 +79,16 @@ class ServiceBuilder:
         self.container.register_singleton(
             "config_service",
             lambda: ConfigService(config_model, event_bus),
+        )
+        self.container.register_singleton(
+            "database_maintenance_service",
+            lambda: DatabaseMaintenanceService(
+                self.infrastructure_provider.get_database_maintenance(
+                    connection_manager
+                ),
+                self.container.get("file_loading_service"),
+                event_bus,
+            ),
         )
         transaction_monitor = self.infrastructure_provider.get_transaction_monitor()
         conn_manager = connection_manager

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Open Databases now includes Database Actions: Compact/Repair for Access MDB
+  files, using DAO compaction, validated replacement, and normal database refresh.
+  SQL Server explicitly reports that Compact/Repair is unavailable.
+- Maintenance stages output before revalidating the selected database and access,
+  preserves Windows file security, and restores newer external contents if the
+  source changes at replacement. Progress and shutdown cannot release ownership
+  before maintenance finishes; reload failure uses canonical database unload.
+
 ### Fixed
 
 - Bid Area dialogs and pickers now query current usage at deletion time instead

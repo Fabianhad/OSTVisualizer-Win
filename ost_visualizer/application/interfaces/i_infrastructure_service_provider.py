@@ -1,3 +1,4 @@
+from .i_database_maintenance import IDatabaseMaintenance
 from pathlib import Path
 from typing import List, Optional, Protocol, Tuple
 from ..dtos.plan_view_renderers_dto import PlanViewRenderers
@@ -63,6 +64,9 @@ class IInfrastructureServiceProvider(Protocol):
     def get_mdb_writer(
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IMdbWriter: ...
+    def get_database_maintenance(
+        self, conn_manager: IMdbConnectionManager
+    ) -> IDatabaseMaintenance: ...
     def create_connection_manager(self) -> IMdbConnectionManager: ...
     def create_plan_view_renderers(
         self,

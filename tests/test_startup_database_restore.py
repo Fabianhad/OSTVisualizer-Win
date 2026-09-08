@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 from shiboken6 import delete
 from ost_visualizer.application.app_controller import AppController
 from ost_visualizer.application.use_cases.project.load_file_use_case import (
@@ -31,6 +31,8 @@ OpenFilesDialog = with_workspace_state(OpenFilesDialog)
 
 
 class _OpenFilesDialogStub:
+    maintenance_requested = SimpleNamespace(connect=lambda _callback: None)
+
     def __init__(
         self,
         icon_provider,
@@ -42,6 +44,7 @@ class _OpenFilesDialogStub:
         credential_store=None,
         sql_database_creator=None,
         schema_change_allowed_fn=None,
+        maintenance_allowed_fn=None,
     ):
         del (
             icon_provider,
@@ -53,6 +56,7 @@ class _OpenFilesDialogStub:
             credential_store,
             sql_database_creator,
             schema_change_allowed_fn,
+            maintenance_allowed_fn,
         )
 
     def exec(self):
@@ -109,6 +113,8 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         state = _State()
 
         class _Dialog(QtWidgets.QDialog):
+            maintenance_requested = QtCore.Signal(object)
+
             def __init__(self, _icon, parent, *_args, **_kwargs):
                 super().__init__(parent)
 

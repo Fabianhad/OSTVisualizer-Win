@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
@@ -18,6 +19,7 @@ from ...domain.entities.database_descriptor import (
 )
 from ...domain.entities.file_state import FileEntry, normalize_path
 from ..config import (
+    COMPACT_MARGINS,
     COMPACT_SPACING,
     NO_MARGINS,
     OPEN_FILE_HEIGHT,
@@ -43,6 +45,8 @@ _DIALOG_WINDOW_STATE_KEY = "open_files"
 
 
 class OpenFilesDialog(QtWidgets.QDialog):
+    maintenance_requested = QtCore.Signal(object)
+
     def __init__(
         self,
         icon_provider: IWindowIconProvider,
@@ -54,8 +58,12 @@ class OpenFilesDialog(QtWidgets.QDialog):
         credential_store: Optional[ICredentialStore] = None,
         sql_database_creator: Optional[ISqlDatabaseCreator] = None,
         schema_change_allowed_fn=None,
+        maintenance_allowed_fn=None,
     ):
         super().__init__(parent)
+        self._maintenance_allowed_fn = maintenance_allowed_fn
+        self._maintenance_busy = False
+        self._maintenance_cleaned_up = False
         self.icon_provider = icon_provider
         self._working_directory_service = working_directory_service
         self._sql_catalog = sql_catalog
@@ -152,6 +160,60 @@ class OpenFilesDialog(QtWidgets.QDialog):
         right_buttons.addStretch()
         content_layout.addLayout(right_buttons)
         main_layout.addLayout(content_layout)
+        actions = QtWidgets.QGroupBox("Database Actions", self)
+        actions_layout = QtWidgets.QHBoxLayout(actions)
+        actions_layout.setContentsMargins(*COMPACT_MARGINS)
+        actions_layout.setSpacing(COMPACT_SPACING)
+        self.compact_button = QtWidgets.QPushButton("Compact/Repair", actions)
+        self.compact_button.clicked.connect(self._on_compact)
+        actions_layout.addWidget(self.compact_button)
+        actions_layout.addStretch()
+        main_layout.addWidget(actions)
+
+    def refresh_maintenance_access(self) -> None:
+        if isValid(self) and not self._maintenance_cleaned_up:
+            self._update_remove_button_state()
+
+    def maintenance_target(self) -> Optional[FileEntry]:
+        if self.table is None or not self.table.selectedItems():
+            return None
+        index = self._selected_entry_index()
+        return self.file_entries[index] if index >= 0 else None
+
+    def _on_compact(self) -> None:
+        entry = self.maintenance_target()
+        if (
+            self._maintenance_busy
+            or entry is None
+            or self._maintenance_allowed_fn is None
+            or not self._maintenance_allowed_fn(entry)
+        ):
+            return
+        self.maintenance_requested.emit(entry)
+
+    def set_maintenance_busy(self, busy: bool) -> None:
+        if self._maintenance_cleaned_up:
+            return
+        self._maintenance_busy = busy
+        self.table.setEnabled(not busy)
+        self.close_button.setEnabled(not busy)
+        self.find_button.setEnabled(not busy)
+        self._update_remove_button_state()
+
+    def refresh_database_metadata(self, database_id: str) -> None:
+        for index in range(self.table.topLevelItemCount()):
+            item = self.table.topLevelItem(index)
+            if item.data(0, QtCore.Qt.ItemDataRole.UserRole) == database_id:
+                entry = next(
+                    e for e in self.file_entries if e.database_id == database_id
+                )
+                item.setText(4, self._get_file_date(entry.file_path))
+                item.setText(5, self._get_file_size(entry.file_path))
+                break
+
+    def done(self, result: int) -> None:
+        if not self._maintenance_busy:
+            super().done(result)
 
     def _populate_table(self) -> None:
         self.table.blockSignals(True)
@@ -438,6 +500,9 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.accept()
 
     def cleanup(self) -> None:
+        self._maintenance_cleaned_up = True
+        self._maintenance_busy = False
+        self._maintenance_allowed_fn = None
         self._rollback_credential_changes()
         table = self.table
         if table is not None:
@@ -449,7 +514,12 @@ class OpenFilesDialog(QtWidgets.QDialog):
                 table.clear()
             except RuntimeError:
                 pass
-        for button in (self.close_button, self.find_button, self.remove_button):
+        for button in (
+            self.close_button,
+            self.find_button,
+            self.remove_button,
+            self.compact_button,
+        ):
             if button is None:
                 continue
             try:
@@ -461,6 +531,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.close_button = None
         self.find_button = None
         self.remove_button = None
+        self.compact_button = None
         self.table = None
         self._header_controller = None
         self._working_directory_service = None
@@ -475,6 +546,9 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self._window_state.apply_show_state()
 
     def closeEvent(self, event) -> None:
+        if self._maintenance_busy:
+            event.ignore()
+            return
         event.accept()
         self.accept()
 
@@ -504,7 +578,16 @@ class OpenFilesDialog(QtWidgets.QDialog):
                 )
             else:
                 has_selection = False
-        self.remove_button.setEnabled(has_selection)
+        self.remove_button.setEnabled(has_selection and not self._maintenance_busy)
+        entry = self.maintenance_target()
+        self.compact_button.setEnabled(
+            bool(
+                entry is not None
+                and not self._maintenance_busy
+                and self._maintenance_allowed_fn is not None
+                and self._maintenance_allowed_fn(entry)
+            )
+        )
 
     def _selected_entry_index(self) -> int:
         current_item = self.table.currentItem()
