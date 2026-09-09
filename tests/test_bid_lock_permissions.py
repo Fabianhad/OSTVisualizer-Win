@@ -3454,7 +3454,10 @@ class BidLockPermissionTests(unittest.TestCase):
         project_data = _ProjectData()
         service, *_ = _write_service(project_data, reload_success=False)
         service._save_condition_types = _SequenceUseCase(
-            [{"new_condition_type": "type-new"}, {"new_condition_type": "type-existing"}]
+            [
+                {"new_condition_type": "type-new"},
+                {"new_condition_type": "type-existing"},
+            ]
         )
         changes = {
             "new": [{"uid": "new_condition_type", "name": "Concrete"}],

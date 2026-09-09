@@ -36,6 +36,9 @@ from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
+    AccessBulkWriteMixin,
+)
 from ost_visualizer.infrastructure.mdb.components.annotation_reader import (
     AnnotationReaderMixin,
 )
@@ -181,7 +184,7 @@ class _SqliteConnectionWrapper:
         return _SqliteCursorWrapper(self._conn)
 
 
-class _DimensionWriteOps(AnnotationOperationsMixin):
+class _DimensionWriteOps(AccessBulkWriteMixin, AnnotationOperationsMixin):
     logger = _Logger()
 
     def __init__(self, conn):

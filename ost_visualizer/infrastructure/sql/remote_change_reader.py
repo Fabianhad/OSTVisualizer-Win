@@ -376,7 +376,7 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
                 )
                 page_area_selections = (
                     self._reader._parse_page_area_selections_for_bid(
-                        connection, pages, schema
+                        connection, bid_key, pages, schema
                     )
                     if CollaborationResourceFamily.PAGES.value in families
                     else {}

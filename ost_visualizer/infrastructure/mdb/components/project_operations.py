@@ -4,7 +4,6 @@ from ...database.bid_owned_identity import (
     require_unique_bid_owned_uid_matches,
 )
 from .identity_allocation import AccessIdentityAllocationMixin
-from .sql_helpers import placeholders
 
 
 class ProjectOperationsMixin(AccessIdentityAllocationMixin):
@@ -18,7 +17,7 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
         if not bid_uids:
             return True
         try:
-            uids = [int(u) for u in bid_uids]
+            uids = self._normalize_int_uids(bid_uids, "Bids")
         except (TypeError, ValueError) as exc:
             if self._record_caught_mutation_error(exc):
                 raise
@@ -26,7 +25,6 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
                 "Invalid bid uids passed to move_bids_to_project: %s", bid_uids
             )
             return False
-        placeholders_sql = placeholders(uids)
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -43,23 +41,27 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
                 if orig_project_uid is not None and schema.column_exists(
                     "Bids", "OrigBidProjectUID"
                 ):
-                    cursor.execute(
-                        "UPDATE [Bids] SET BidProjectUID = ?, OrigBidProjectUID = ? "
-                        f"WHERE UID IN ({placeholders_sql})",
-                        project_uid,
-                        orig_project_uid,
-                        *uids,
+                    self._execute_uid_in_update_chunks(
+                        cursor,
+                        "Bids",
+                        "UID",
+                        {
+                            "BidProjectUID": project_uid,
+                            "OrigBidProjectUID": orig_project_uid,
+                        },
+                        uids,
                     )
                 else:
                     if orig_project_uid is not None:
                         schema.log_optional_write_skip(
                             "Bids", "OrigBidProjectUID", "move_bids_to_project"
                         )
-                    cursor.execute(
-                        "UPDATE [Bids] SET BidProjectUID = ? "
-                        f"WHERE UID IN ({placeholders_sql})",
-                        project_uid,
-                        *uids,
+                    self._execute_uid_in_update_chunks(
+                        cursor,
+                        "Bids",
+                        "UID",
+                        {"BidProjectUID": project_uid},
+                        uids,
                     )
                 return True
         except Exception as exc:
@@ -77,22 +79,24 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
         if not bid_uids:
             return True
         try:
-            uids = [int(u) for u in bid_uids]
+            uids = self._normalize_int_uids(bid_uids, "Bids")
         except (TypeError, ValueError) as exc:
             if self._record_caught_mutation_error(exc):
                 raise
             self.logger.warning("Invalid bid uids passed to orphan_bids: %s", bid_uids)
             return False
-        placeholders_sql = placeholders(uids)
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "Bids", ("UID", "BidProjectUID"))
                 cursor = conn.cursor()
                 require_unique_bid_owned_uid_matches(cursor, "Bids", uids)
-                cursor.execute(
-                    f"UPDATE [Bids] SET BidProjectUID = NULL WHERE UID IN ({placeholders_sql})",
-                    *uids,
+                self._execute_uid_in_update_chunks(
+                    cursor,
+                    "Bids",
+                    "UID",
+                    {"BidProjectUID": None},
+                    uids,
                 )
                 return True
         except Exception as exc:
@@ -149,7 +153,7 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
         if not project_uids:
             return True
         try:
-            uids = [int(u) for u in project_uids]
+            uids = self._normalize_int_uids(project_uids, "BidProjects")
         except (TypeError, ValueError) as exc:
             if self._record_caught_mutation_error(exc):
                 raise
@@ -157,7 +161,6 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
                 "Invalid project uids passed to delete_projects: %s", project_uids
             )
             return False
-        placeholders_sql = placeholders(uids)
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -167,23 +170,24 @@ class ProjectOperationsMixin(AccessIdentityAllocationMixin):
                 if not schema.optional_table_missing("Bids") and schema.column_exists(
                     "Bids", "BidProjectUID"
                 ):
-                    cursor.execute(
-                        "UPDATE [Bids] SET [BidProjectUID]=NULL "
-                        f"WHERE [BidProjectUID] IN ({placeholders_sql})",
-                        *uids,
+                    self._execute_uid_in_update_chunks(
+                        cursor,
+                        "Bids",
+                        "BidProjectUID",
+                        {"BidProjectUID": None},
+                        uids,
                     )
                 if not schema.optional_table_missing("Bids") and schema.column_exists(
                     "Bids", "OrigBidProjectUID"
                 ):
-                    cursor.execute(
-                        "UPDATE [Bids] SET [OrigBidProjectUID]=NULL "
-                        f"WHERE [OrigBidProjectUID] IN ({placeholders_sql})",
-                        *uids,
+                    self._execute_uid_in_update_chunks(
+                        cursor,
+                        "Bids",
+                        "OrigBidProjectUID",
+                        {"OrigBidProjectUID": None},
+                        uids,
                     )
-                cursor.execute(
-                    f"DELETE FROM [BidProjects] WHERE UID IN ({placeholders_sql})",
-                    *uids,
-                )
+                self._execute_uid_in_delete_chunks(cursor, "BidProjects", "UID", uids)
                 return True
         except Exception as exc:
             if self._record_caught_mutation_error(exc):

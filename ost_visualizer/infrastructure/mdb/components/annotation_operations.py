@@ -342,6 +342,17 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                 require_existing_bid_scoped_uid_matches(
                     cursor, "BidNamedViews", hotlink_target_uids, bid_uid
                 )
+                allocation_counts: Dict[str, int] = {}
+                for table in annotation_tables:
+                    allocation_counts[table] = allocation_counts.get(table, 0) + 1
+                allocated_uids = {
+                    table: iter(
+                        self._next_uids_preserving_references(
+                            cursor, schema, table, count
+                        )
+                    )
+                    for table, count in allocation_counts.items()
+                }
                 for spec, table in zip(specs, annotation_tables):
                     page_uid = spec.page_uid
                     annotation_type = spec.annotation_type
@@ -358,9 +369,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                     color_int = hex_to_color_int(color)
                     width_int = int(width) if width else 0
                     layer_int = int(layer_uid) if layer_uid else None
-                    new_uid = self._next_uid_preserving_references(
-                        cursor, schema, table
-                    )
+                    new_uid = next(allocated_uids[table])
                     self._execute_annotation_insert(
                         cursor,
                         schema,
@@ -616,6 +625,8 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                 if not table:
                     raise ValueError(f"Unsupported annotation type: {annotation_type}")
                 by_table.setdefault(table, []).append(int(uid))
+            for table, uids in tuple(by_table.items()):
+                by_table[table] = self._normalize_int_uids(uids, table)
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
@@ -625,13 +636,16 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                     self._require_write_columns(
                         schema, "BidHotLinks", ("UID", "BidPageViewUID")
                     )
-                    placeholders = ",".join("?" for _uid in named_view_uids)
-                    cursor.execute(
-                        "SELECT [UID] FROM [BidHotLinks] "
-                        f"WHERE [BidPageViewUID] IN ({placeholders})",
-                        *named_view_uids,
-                    )
-                    dependent_uids = [int(row[0]) for row in cursor.fetchall()]
+                    dependent_uids = []
+                    for uid_chunk in self._iter_access_chunks(named_view_uids):
+                        where_sql, where_params = self._uid_where_clause(
+                            "BidPageViewUID", uid_chunk
+                        )
+                        cursor.execute(
+                            "SELECT [UID] FROM [BidHotLinks] " f"WHERE {where_sql}",
+                            *where_params,
+                        )
+                        dependent_uids.extend(int(row[0]) for row in cursor.fetchall())
                     requested_hotlink_uids = set(by_table.get("BidHotLinks", ()))
                     if any(uid not in requested_hotlink_uids for uid in dependent_uids):
                         raise ValueError(
@@ -645,8 +659,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                     if schema.optional_table_missing(table):
                         continue
                     self._require_write_columns(schema, table, ("UID",))
-                    for uid in uids:
-                        cursor.execute(f"DELETE FROM [{table}] WHERE [UID]=?", uid)
+                    self._execute_uid_in_delete_chunks(cursor, table, "UID", uids)
                 return True
         except Exception as exc:
             if self._record_caught_mutation_error(exc):

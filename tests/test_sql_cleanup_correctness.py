@@ -1000,6 +1000,36 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "has not been generated"):
             str(uid)
 
+    def test_writer_router_dispatches_plan_item_preflight_by_backend(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with (
+            patch.object(MdbWriter, "verify_plan_items_exist") as access_verify,
+            patch.object(SqlProjectWriter, "verify_plan_items_exist") as sql_verify,
+        ):
+            writer.verify_plan_items_exist("example.mdb", "1", ("2",), ())
+            writer.verify_plan_items_exist(
+                descriptor.database_id, "3", ("4",), (("5", "rect"),)
+            )
+        access_verify.assert_called_once_with(writer, "example.mdb", "1", ("2",), ())
+        sql_verify.assert_called_once_with(
+            writer,
+            descriptor.database_id,
+            "3",
+            ("4",),
+            (("5", "rect"),),
+        )
+
     def test_sql_writer_batch_keeps_each_identity_deferred(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(

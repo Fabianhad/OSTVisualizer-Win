@@ -31,10 +31,14 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
         return "{" + str(uuid.uuid4()).upper() + "}"
 
     def _allocate_condition_identity(self, cursor, bid_uid: str):
+        return self._allocate_condition_identities(cursor, bid_uid, 1)[0]
+
+    def _allocate_condition_identities(self, cursor, bid_uid: str, count: int):
         schema = self._schema(cursor.connection)
         self._require_write_columns(schema, "BidConditions", ("UID", "BidUID"))
-        new_uid = self._next_uid_preserving_references(cursor, schema, "BidConditions")
-        new_guid = self._new_ost_guid()
+        new_uids = self._next_uids_preserving_references(
+            cursor, schema, "BidConditions", count
+        )
         max_ref = None
         if schema.column_exists("BidConditions", "RefNo"):
             cursor.execute(
@@ -43,7 +47,34 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
             )
             max_ref = cursor.fetchone()[0]
         next_ref_no = (int(max_ref) + 1) if max_ref is not None else 1
-        return new_uid, new_guid, next_ref_no
+        return [
+            (new_uid, self._new_ost_guid(), next_ref_no + index)
+            for index, new_uid in enumerate(new_uids)
+        ]
+
+    def _load_condition_rows(self, cursor, schema, bid_uid: str, condition_uids):
+        table_cols = sorted(schema.get_columns("BidConditions"))
+        select_cols = ", ".join(f"[{column}]" for column in table_cols)
+        rows_by_uid = {}
+        binary_cols = set()
+        normalized_uids = list(dict.fromkeys(int(uid) for uid in condition_uids))
+        for uid_chunk in self._iter_access_chunks(normalized_uids):
+            where_sql, where_params = self._uid_where_clause("UID", uid_chunk)
+            cursor.execute(
+                f"SELECT {select_cols} FROM [BidConditions] "
+                f"WHERE [BidUID] = ? AND {where_sql}",
+                int(bid_uid),
+                *where_params,
+            )
+            binary_cols.update(
+                description[0]
+                for description in cursor.description
+                if description[1] is bytearray
+            )
+            for row in cursor.fetchall():
+                row_data = dict(zip(table_cols, row))
+                rows_by_uid[int(row_data["UID"])] = row_data
+        return table_cols, binary_cols, rows_by_uid
 
     def duplicate_conditions(
         self, db_path: str, bid_uid: str, condition_uids: List[str]
@@ -59,26 +90,20 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                 require_existing_bid_scoped_uid_matches(
                     cursor, "BidConditions", condition_uids, bid_uid
                 )
+                cols, binary_cols, source_rows = self._load_condition_rows(
+                    cursor, schema, bid_uid, condition_uids
+                )
+                allocated_identities = iter(
+                    self._allocate_condition_identities(
+                        cursor, bid_uid, len(condition_uids)
+                    )
+                )
                 for condition_uid in condition_uids:
-                    table_cols = sorted(schema.get_columns("BidConditions"))
-                    select_cols = ", ".join(f"[{c}]" for c in table_cols)
-                    cursor.execute(
-                        f"SELECT {select_cols} FROM [BidConditions] "
-                        "WHERE [UID] = ? AND [BidUID] = ?",
-                        condition_uid,
-                        bid_uid,
-                    )
-                    cols = [d[0] for d in cursor.description]
-                    binary_cols = {
-                        d[0] for d in cursor.description if d[1] is bytearray
-                    }
-                    source_row = cursor.fetchone()
-                    if not source_row:
+                    source_row = source_rows.get(int(condition_uid))
+                    if source_row is None:
                         continue
-                    row_data = dict(zip(cols, source_row))
-                    new_uid, new_guid, next_ref_no = self._allocate_condition_identity(
-                        cursor, bid_uid
-                    )
+                    row_data = dict(source_row)
+                    new_uid, new_guid, next_ref_no = next(allocated_identities)
                     row_data["UID"] = new_uid
                     if "GUID" in row_data:
                         row_data["GUID"] = new_guid
@@ -130,30 +155,24 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                 require_existing_bid_scoped_uid_matches(
                     cursor, "BidConditions", ordered_uids, source_bid_uid
                 )
-                table_cols = sorted(schema.get_columns("BidConditions"))
-                select_cols = ", ".join(f"[{c}]" for c in table_cols)
-                for condition_uid in ordered_uids:
-                    cursor.execute(
-                        f"SELECT {select_cols} FROM [BidConditions] "
-                        "WHERE [UID] = ? AND [BidUID] = ?",
-                        int(condition_uid),
-                        int(source_bid_uid),
+                cols, binary_cols, source_rows = self._load_condition_rows(
+                    cursor, schema, source_bid_uid, ordered_uids
+                )
+                allocated_identities = iter(
+                    self._allocate_condition_identities(
+                        cursor, destination_bid_uid, len(ordered_uids)
                     )
-                    cols = [d[0] for d in cursor.description]
-                    binary_cols = {
-                        d[0] for d in cursor.description if d[1] is bytearray
-                    }
-                    source_row = cursor.fetchone()
-                    if not source_row:
+                )
+                for condition_uid in ordered_uids:
+                    source_row = source_rows.get(int(condition_uid))
+                    if source_row is None:
                         raise ValueError(
                             f"Condition {condition_uid} was not found in bid "
                             f"{source_bid_uid}"
                         )
-                    row_data = dict(zip(cols, source_row))
+                    row_data = dict(source_row)
                     old_uid = str(int(row_data["UID"]))
-                    new_uid, new_guid, next_ref_no = self._allocate_condition_identity(
-                        cursor, destination_bid_uid
-                    )
+                    new_uid, new_guid, next_ref_no = next(allocated_identities)
                     row_data["UID"] = new_uid
                     row_data["BidUID"] = int(destination_bid_uid)
                     if "GUID" in row_data:
@@ -292,7 +311,7 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
         if not condition_uids:
             return True
         try:
-            cond_ints = [int(u) for u in condition_uids]
+            cond_ints = self._normalize_int_uids(condition_uids, "BidConditions")
             bid_int = int(bid_uid)
         except (TypeError, ValueError) as exc:
             if self._record_caught_mutation_error(exc):
@@ -303,12 +322,6 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                 condition_uids,
             )
             return False
-        placeholders = ",".join("?" * len(cond_ints))
-        takeoff_subquery = (
-            "(SELECT [UID] FROM [BidTakeoffs] "
-            f"WHERE [BidConditionUID] IN ({placeholders}) AND [BidUID] = ?)"
-        )
-        sub_params = (*cond_ints, bid_int)
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -318,17 +331,26 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     cursor, "BidConditions", cond_ints, bid_int
                 )
                 deleted_takeoff_uids: list[int] = []
-                if not schema.optional_table_missing("BidTakeoffs") and all(
+                has_scoped_takeoffs = not schema.optional_table_missing(
+                    "BidTakeoffs"
+                ) and all(
                     schema.column_exists("BidTakeoffs", column)
                     for column in ("UID", "BidUID", "BidConditionUID")
-                ):
-                    cursor.execute(
-                        "SELECT [UID] FROM [BidTakeoffs] "
-                        f"WHERE [BidConditionUID] IN ({placeholders}) "
-                        "AND [BidUID]=?",
-                        *sub_params,
-                    )
-                    deleted_takeoff_uids = [int(row[0]) for row in cursor.fetchall()]
+                )
+                if has_scoped_takeoffs:
+                    for cond_chunk in self._iter_access_chunks(cond_ints):
+                        where_sql, where_params = self._uid_where_clause(
+                            "BidConditionUID", cond_chunk
+                        )
+                        cursor.execute(
+                            "SELECT [UID] FROM [BidTakeoffs] "
+                            f"WHERE {where_sql} AND [BidUID]=?",
+                            *where_params,
+                            bid_int,
+                        )
+                        deleted_takeoff_uids.extend(
+                            int(row[0]) for row in cursor.fetchall()
+                        )
                     require_unique_bid_owned_uid_matches(
                         cursor, "BidTakeoffs", deleted_takeoff_uids
                     )
@@ -346,134 +368,10 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                                 bid_int,
                                 *where_params,
                             )
-                for child in ("BidDimensions", "BidALines", "BidArrows"):
-                    if schema.optional_table_missing(child):
-                        continue
-                    for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
-                        if not schema.column_exists(child, reference_column):
-                            continue
-                        cursor.execute(
-                            f"DELETE FROM [{child}] WHERE [{reference_column}] IN "
-                            f"{takeoff_subquery}",
-                            *sub_params,
-                        )
-                if not schema.optional_table_missing(
-                    "BidPercents"
-                ) and schema.column_exists("BidPercents", "BidTakeoffUID"):
-                    cursor.execute(
-                        f"DELETE FROM [BidPercents] WHERE [BidTakeoffUID] IN "
-                        f"{takeoff_subquery}",
-                        *sub_params,
+                for cond_chunk in self._iter_access_chunks(cond_ints):
+                    self._delete_condition_cascade_chunk(
+                        cursor, schema, bid_int, cond_chunk
                     )
-                if (
-                    not schema.optional_table_missing("BidPercents")
-                    and not schema.optional_table_missing("BidLaborActivity")
-                    and schema.column_exists("BidPercents", "BidLaborActivityUID")
-                    and schema.column_exists("BidLaborActivity", "UID")
-                    and schema.column_exists("BidLaborActivity", "BidConditionUID")
-                    and schema.column_exists("BidLaborActivity", "BidUID")
-                ):
-                    cursor.execute(
-                        "DELETE FROM [BidPercents] WHERE [BidLaborActivityUID] IN "
-                        "(SELECT [UID] FROM [BidLaborActivity] "
-                        f"WHERE [BidConditionUID] IN ({placeholders}) "
-                        "AND [BidUID]=?)",
-                        *sub_params,
-                    )
-                if (
-                    not schema.optional_table_missing("AffectDPCTypGroupViews")
-                    and not schema.optional_table_missing("BidTypGroupViews")
-                    and schema.column_exists(
-                        "AffectDPCTypGroupViews", "BidTypGroupViewUID"
-                    )
-                    and schema.column_exists("BidTypGroupViews", "UID")
-                    and schema.column_exists("BidTypGroupViews", "BidConditionUID")
-                    and schema.column_exists("BidTypGroupViews", "BidUID")
-                ):
-                    cursor.execute(
-                        "DELETE FROM [AffectDPCTypGroupViews] "
-                        "WHERE [BidTypGroupViewUID] IN "
-                        "(SELECT [UID] FROM [BidTypGroupViews] "
-                        f"WHERE [BidConditionUID] IN ({placeholders}) "
-                        "AND [BidUID]=?)",
-                        *sub_params,
-                    )
-                if (
-                    not schema.optional_table_missing("BidTypGroupViews")
-                    and schema.column_exists("BidTypGroupViews", "BidConditionUID")
-                    and schema.column_exists("BidTypGroupViews", "BidUID")
-                ):
-                    cursor.execute(
-                        "DELETE FROM [BidTypGroupViews] "
-                        f"WHERE [BidConditionUID] IN ({placeholders}) "
-                        "AND [BidUID]=?",
-                        *sub_params,
-                    )
-                for table in ("BidTakeoffTotals", "BidTypicalGroupTotals"):
-                    if (
-                        schema.optional_table_missing(table)
-                        or not schema.column_exists(table, "BidConditionUID")
-                        or not schema.column_exists(table, "BidUID")
-                    ):
-                        continue
-                    cursor.execute(
-                        f"DELETE FROM [{table}] "
-                        f"WHERE [BidConditionUID] IN ({placeholders}) "
-                        "AND [BidUID]=?",
-                        *sub_params,
-                    )
-                if not schema.optional_table_missing(
-                    "BidConditionUser"
-                ) and schema.column_exists("BidConditionUser", "ConditionUID"):
-                    cursor.execute(
-                        "DELETE FROM [BidConditionUser] "
-                        f"WHERE [ConditionUID] IN ({placeholders})",
-                        *cond_ints,
-                    )
-                if not schema.optional_table_missing("BidTakeoffs"):
-                    self._require_write_columns(
-                        schema, "BidTakeoffs", ("BidConditionUID", "BidUID")
-                    )
-                    cursor.execute(
-                        f"DELETE FROM [BidTakeoffs] WHERE [BidConditionUID] IN "
-                        f"({placeholders}) AND [BidUID] = ?",
-                        *cond_ints,
-                        bid_int,
-                    )
-                if not schema.optional_table_missing(
-                    "BidLaborActivity"
-                ) and schema.column_exists("BidLaborActivity", "BidConditionUID"):
-                    cursor.execute(
-                        f"DELETE FROM [BidLaborActivity] WHERE [BidConditionUID] IN "
-                        f"({placeholders}) AND [BidUID] = ?",
-                        *cond_ints,
-                        bid_int,
-                    )
-                try:
-                    if not schema.optional_table_missing(
-                        "ConditionSetStyles"
-                    ) and schema.column_exists(
-                        "ConditionSetStyles", "ConditionStyleUID"
-                    ):
-                        cursor.execute(
-                            f"DELETE FROM [ConditionSetStyles] WHERE [ConditionStyleUID] IN "
-                            f"({placeholders})",
-                            *cond_ints,
-                        )
-                except Exception as exc:
-                    if self._record_caught_mutation_error(exc):
-                        raise
-                    self.logger.warning(
-                        "Failed to clear ConditionSetStyles for conditions %s: %s",
-                        cond_ints,
-                        exc,
-                    )
-                cursor.execute(
-                    f"DELETE FROM [BidConditions] WHERE [UID] IN ({placeholders}) "
-                    "AND [BidUID] = ?",
-                    *cond_ints,
-                    bid_int,
-                )
                 return True
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
@@ -482,6 +380,144 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                 "Failed to delete conditions %s in %s", condition_uids, db_path
             )
             return False
+
+    def _delete_condition_cascade_chunk(
+        self,
+        cursor,
+        schema,
+        bid_uid: int,
+        condition_uids: list[int],
+    ) -> None:
+        placeholders = ",".join("?" * len(condition_uids))
+        takeoff_subquery = (
+            "(SELECT [UID] FROM [BidTakeoffs] "
+            f"WHERE [BidConditionUID] IN ({placeholders}) AND [BidUID] = ?)"
+        )
+        sub_params = (*condition_uids, bid_uid)
+        for child in ("BidDimensions", "BidALines", "BidArrows"):
+            if schema.optional_table_missing(child):
+                continue
+            for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
+                if not schema.column_exists(child, reference_column):
+                    continue
+                cursor.execute(
+                    f"DELETE FROM [{child}] WHERE [{reference_column}] IN "
+                    f"{takeoff_subquery}",
+                    *sub_params,
+                )
+        if not schema.optional_table_missing("BidPercents") and schema.column_exists(
+            "BidPercents", "BidTakeoffUID"
+        ):
+            cursor.execute(
+                f"DELETE FROM [BidPercents] WHERE [BidTakeoffUID] IN "
+                f"{takeoff_subquery}",
+                *sub_params,
+            )
+        if (
+            not schema.optional_table_missing("BidPercents")
+            and not schema.optional_table_missing("BidLaborActivity")
+            and schema.column_exists("BidPercents", "BidLaborActivityUID")
+            and schema.column_exists("BidLaborActivity", "UID")
+            and schema.column_exists("BidLaborActivity", "BidConditionUID")
+            and schema.column_exists("BidLaborActivity", "BidUID")
+        ):
+            cursor.execute(
+                "DELETE FROM [BidPercents] WHERE [BidLaborActivityUID] IN "
+                "(SELECT [UID] FROM [BidLaborActivity] "
+                f"WHERE [BidConditionUID] IN ({placeholders}) "
+                "AND [BidUID]=?)",
+                *sub_params,
+            )
+        if (
+            not schema.optional_table_missing("AffectDPCTypGroupViews")
+            and not schema.optional_table_missing("BidTypGroupViews")
+            and schema.column_exists("AffectDPCTypGroupViews", "BidTypGroupViewUID")
+            and schema.column_exists("BidTypGroupViews", "UID")
+            and schema.column_exists("BidTypGroupViews", "BidConditionUID")
+            and schema.column_exists("BidTypGroupViews", "BidUID")
+        ):
+            cursor.execute(
+                "DELETE FROM [AffectDPCTypGroupViews] "
+                "WHERE [BidTypGroupViewUID] IN "
+                "(SELECT [UID] FROM [BidTypGroupViews] "
+                f"WHERE [BidConditionUID] IN ({placeholders}) "
+                "AND [BidUID]=?)",
+                *sub_params,
+            )
+        if (
+            not schema.optional_table_missing("BidTypGroupViews")
+            and schema.column_exists("BidTypGroupViews", "BidConditionUID")
+            and schema.column_exists("BidTypGroupViews", "BidUID")
+        ):
+            cursor.execute(
+                "DELETE FROM [BidTypGroupViews] "
+                f"WHERE [BidConditionUID] IN ({placeholders}) "
+                "AND [BidUID]=?",
+                *sub_params,
+            )
+        for table in ("BidTakeoffTotals", "BidTypicalGroupTotals"):
+            if (
+                schema.optional_table_missing(table)
+                or not schema.column_exists(table, "BidConditionUID")
+                or not schema.column_exists(table, "BidUID")
+            ):
+                continue
+            cursor.execute(
+                f"DELETE FROM [{table}] "
+                f"WHERE [BidConditionUID] IN ({placeholders}) "
+                "AND [BidUID]=?",
+                *sub_params,
+            )
+        if not schema.optional_table_missing(
+            "BidConditionUser"
+        ) and schema.column_exists("BidConditionUser", "ConditionUID"):
+            cursor.execute(
+                "DELETE FROM [BidConditionUser] "
+                f"WHERE [ConditionUID] IN ({placeholders})",
+                *condition_uids,
+            )
+        if not schema.optional_table_missing("BidTakeoffs"):
+            self._require_write_columns(
+                schema, "BidTakeoffs", ("BidConditionUID", "BidUID")
+            )
+            cursor.execute(
+                f"DELETE FROM [BidTakeoffs] WHERE [BidConditionUID] IN "
+                f"({placeholders}) AND [BidUID] = ?",
+                *condition_uids,
+                bid_uid,
+            )
+        if not schema.optional_table_missing(
+            "BidLaborActivity"
+        ) and schema.column_exists("BidLaborActivity", "BidConditionUID"):
+            cursor.execute(
+                f"DELETE FROM [BidLaborActivity] WHERE [BidConditionUID] IN "
+                f"({placeholders}) AND [BidUID] = ?",
+                *condition_uids,
+                bid_uid,
+            )
+        try:
+            if not schema.optional_table_missing(
+                "ConditionSetStyles"
+            ) and schema.column_exists("ConditionSetStyles", "ConditionStyleUID"):
+                cursor.execute(
+                    f"DELETE FROM [ConditionSetStyles] WHERE [ConditionStyleUID] IN "
+                    f"({placeholders})",
+                    *condition_uids,
+                )
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
+            self.logger.warning(
+                "Failed to clear ConditionSetStyles for conditions %s: %s",
+                condition_uids,
+                exc,
+            )
+        cursor.execute(
+            f"DELETE FROM [BidConditions] WHERE [UID] IN ({placeholders}) "
+            "AND [BidUID] = ?",
+            *condition_uids,
+            bid_uid,
+        )
 
     _FIELD_TO_COLUMN: Dict[str, str] = MappingProxyType(
         {

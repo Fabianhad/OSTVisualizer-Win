@@ -1,7 +1,7 @@
 import logging
 import contextvars
 from contextlib import contextmanager
-from typing import Generator, Optional
+from typing import Generator, Optional, Sequence
 import pyodbc
 from .components.annotation_operations import AnnotationOperationsMixin
 from .components.bid_operations import BidOperationsMixin
@@ -9,6 +9,12 @@ from .components.bulk_write_helpers import AccessBulkWriteMixin
 from .components.condition_folder_operations import ConditionFolderOperationsMixin
 from .components.condition_operations import ConditionOperationsMixin
 from ..database.connection_wrapper import ConnectionWrapper
+from ..database.annotation_storage import ANNOTATION_TABLE_BY_TYPE
+from ..database.bid_owned_identity import (
+    MissingBidOwnedUidError,
+    require_existing_bid_scoped_uid_matches,
+    require_existing_unique_bid_owned_uid_matches,
+)
 from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from .components.import_operations import ImportOperationsMixin
 from .components.layer_operations import LayerOperationsMixin
@@ -89,6 +95,55 @@ class MdbWriter(
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)
+
+    def verify_plan_items_exist(
+        self,
+        database_id: str,
+        bid_uid: str,
+        takeoff_uids: Sequence[str],
+        annotations: Sequence[tuple[str, str]],
+    ) -> None:
+        with self._connection(database_id) as connection:
+            schema = self._schema(connection)
+            cursor = connection.cursor()
+            require_existing_unique_bid_owned_uid_matches(cursor, "Bids", (bid_uid,))
+            normalized_takeoffs = tuple(dict.fromkeys(int(uid) for uid in takeoff_uids))
+            if normalized_takeoffs:
+                self._require_write_columns(schema, "BidTakeoffs", ("UID", "BidUID"))
+                require_existing_bid_scoped_uid_matches(
+                    cursor, "BidTakeoffs", normalized_takeoffs, bid_uid
+                )
+                if schema.column_exists("BidTakeoffs", "ParentUID"):
+                    selected_uids = set(normalized_takeoffs)
+                    for uid_chunk in self._iter_access_chunks(normalized_takeoffs):
+                        placeholders = ",".join("?" for _uid in uid_chunk)
+                        cursor.execute(
+                            "SELECT [UID] FROM [BidTakeoffs] "
+                            "WHERE [BidUID]=? AND [ParentUID] IN "
+                            f"({placeholders})",
+                            int(bid_uid),
+                            *uid_chunk,
+                        )
+                        if any(
+                            int(row[0]) not in selected_uids
+                            for row in cursor.fetchall()
+                        ):
+                            raise MissingBidOwnedUidError(
+                                "The takeoff relationship graph changed before "
+                                "the Plan mutation started."
+                            )
+            annotation_uids_by_table: dict[str, list[int]] = {}
+            for uid, annotation_type in annotations:
+                table = ANNOTATION_TABLE_BY_TYPE.get(annotation_type)
+                if table is None or schema.optional_table_missing(table):
+                    raise MissingBidOwnedUidError(
+                        "An annotation changed or was deleted before the Plan "
+                        "mutation started."
+                    )
+                annotation_uids_by_table.setdefault(table, []).append(int(uid))
+            for table, uids in annotation_uids_by_table.items():
+                self._require_write_columns(schema, table, ("UID", "BidUID"))
+                require_existing_bid_scoped_uid_matches(cursor, table, uids, bid_uid)
 
     def _record_caught_mutation_error(self, exc: BaseException) -> bool:
         return (

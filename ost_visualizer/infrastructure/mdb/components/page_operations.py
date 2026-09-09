@@ -454,17 +454,19 @@ class PageOperationsMixin:
                     "Bitonal": self._access_bool(bitonal),
                 }
                 require_single_bid_scope_for_uids(cursor, "BidPages", page_uids)
-                for page_uid in page_uids:
-                    self._execute_update_values(
-                        cursor,
-                        schema,
-                        "BidPages",
-                        values,
-                        ("UID", "Rotation", "FlipX", "FlipY", "Invert", "Bitonal"),
-                        "[UID]=?",
-                        [int(page_uid)],
-                        "save_page_image_adjustments",
-                    )
+                self._require_write_columns(
+                    schema,
+                    "BidPages",
+                    ("UID", "Rotation", "FlipX", "FlipY", "Invert", "Bitonal"),
+                )
+                uid_ints = self._normalize_int_uids(page_uids, "BidPages")
+                self._execute_uid_in_update_chunks(
+                    cursor,
+                    "BidPages",
+                    "UID",
+                    values,
+                    uid_ints,
+                )
                 return True
         except Exception as exc:
             if self._record_caught_mutation_error(exc):

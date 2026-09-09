@@ -1031,11 +1031,21 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 _new_uid,
                 extra_overrides=None,
                 excluded_source_uids=None,
+                schema=None,
             ):
-                del extra_overrides, excluded_source_uids
+                del extra_overrides, excluded_source_uids, schema
 
             @staticmethod
-            def _copy_with_uid_map(_cursor, table, _uid_column, _old_uid, _new_uid):
+            def _copy_with_uid_map(
+                _cursor,
+                table,
+                _uid_column,
+                _old_uid,
+                _new_uid,
+                schema=None,
+                relationship_uid_maps=None,
+            ):
+                del schema, relationship_uid_maps
                 return {"10": "20"} if table == "BidLayers" else {}
 
             @staticmethod
@@ -1317,6 +1327,7 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 super().__init__()
                 self.reference_updates = []
                 self.copy_calls = []
+                self.area_count_copy_calls = []
 
             @contextmanager
             def _connection(self, _db_path):
@@ -1353,8 +1364,9 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 new_uid,
                 extra_overrides=None,
                 excluded_source_uids=None,
+                schema=None,
             ):
-                del extra_overrides, excluded_source_uids
+                del extra_overrides, excluded_source_uids, schema
                 self.copy_calls.append((table, uid_column, old_uid, new_uid))
                 return {
                     "BidTakeoffs": {"30": "130", "31": "131"},
@@ -1393,10 +1405,30 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                     extra_overrides={"BidUID": _new_bid_uid},
                 )
 
-            def _copy_with_uid_map(
-                self, _cursor, table, _uid_column, _old_uid, _new_uid
+            def _copy_area_count_rows(
+                self,
+                _cursor,
+                _schema,
+                source_bid_uid,
+                area_uid_map,
+                typical_area_uid_map,
             ):
-                del self
+                self.area_count_copy_calls.append(
+                    (source_bid_uid, dict(area_uid_map), dict(typical_area_uid_map))
+                )
+                return {"91": "191"}
+
+            def _copy_with_uid_map(
+                self,
+                _cursor,
+                table,
+                _uid_column,
+                _old_uid,
+                _new_uid,
+                schema=None,
+                relationship_uid_maps=None,
+            ):
+                del self, schema, relationship_uid_maps
                 return {
                     "BidConditions": {"30": "130"},
                     "BidAreas": {"60": "160"},
@@ -1518,9 +1550,9 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
             ),
             writer.reference_updates,
         )
-        self.assertIn(
-            ("BidTypAreaCounts", "BidAreaUID", "60", "160"),
-            writer.copy_calls,
+        self.assertEqual(
+            writer.area_count_copy_calls,
+            [("1", {"60": "160"}, {"70": "170"})],
         )
         self.assertEqual(
             sum(call[0] == "BidEmployees" for call in writer.copy_calls),

@@ -45,8 +45,6 @@ from ost_visualizer.domain.entities.workspace_state import (
 )
 from ost_visualizer.infrastructure.mdb.components.constants import (
     PAGE_DELETE_CHILD_TABLES,
-    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
-    TAKEOFF_REFERENCE_TABLES,
 )
 from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
     AccessBulkWriteMixin,
@@ -3580,7 +3578,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             parent.close()
             parent.deleteLater()
 
-    def test_cover_sheet_bulk_delete_uses_one_transaction_and_linear_cascade(self):
+    def test_cover_sheet_bulk_delete_uses_one_transaction_and_bounded_cascade(self):
         ops = _BulkDeleteCoverSheetOps()
         page_count = 225
         success = ops.save_cover_sheet(
@@ -3592,25 +3590,14 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 "pages": [],
             },
         )
-        per_page_statement_count = (
-            4  # owner lookup plus MasterPage, comment, and takeoff reference scans
-            + 1  # BidPercents
-            + len(TAKEOFF_REFERENCE_TABLES) * len(TAKEOFF_ANNOTATION_REFERENCE_COLUMNS)
-            + len(PAGE_DELETE_CHILD_TABLES)
-            + 1  # BidTakeoffs
-            + 2  # BidHotLinks
-            + 1  # BidNamedViews
-            + 1  # indirect typical-group-view dependents
-            + 1  # selected-page reference
-            + 1  # page-typed Cover Sheet selection
-            + 1  # BidPages
-        )
+        chunk_count = (page_count + 49) // 50
+        per_chunk_statement_count = len(PAGE_DELETE_CHILD_TABLES) + 11
         self.assertTrue(success)
         self.assertEqual(ops.conn.enter_count, 1)
         self.assertEqual(ops.conn.exit_count, 1)
         self.assertEqual(
             len(ops.conn.cursor_obj.calls),
-            4 + page_count * per_page_statement_count,
+            3 + chunk_count * (per_chunk_statement_count + 1),
         )
 
     def test_cover_sheet_close_publishes_one_refresh_for_bulk_delete(self):

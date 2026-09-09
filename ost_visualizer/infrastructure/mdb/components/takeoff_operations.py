@@ -469,7 +469,10 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 table_cols = sorted(schema.get_columns("BidTakeoffs"))
                 table_col_set = set(table_cols)
                 new_uids = []
-                for spec in takeoff_specs:
+                allocated_uids = self._next_uids_preserving_references(
+                    cursor, schema, "BidTakeoffs", len(takeoff_specs)
+                )
+                for spec, new_uid in zip(takeoff_specs, allocated_uids):
                     position_bytes = encode_position(spec.position)
                     area_val = (
                         None
@@ -480,9 +483,6 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                         int(spec.parent_uid)
                         if spec.parent_uid and spec.parent_uid not in ("0", "")
                         else 0
-                    )
-                    new_uid = self._next_uid_preserving_references(
-                        cursor, schema, "BidTakeoffs"
                     )
                     typed_values = {
                         "UID": new_uid,

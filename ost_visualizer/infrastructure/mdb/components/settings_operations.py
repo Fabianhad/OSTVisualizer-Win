@@ -43,6 +43,22 @@ def _require_unique_master_data_row(cursor, table: str, uid: int) -> None:
 
 
 class SettingsOperationsMixin(AccessIdentityAllocationMixin):
+    def _require_unique_master_data_targets(
+        self, cursor, table: str, uid_ints: list[int]
+    ) -> None:
+        matching_rows = []
+        for uid_chunk in self._iter_access_chunks(uid_ints):
+            where_sql, where_params = self._uid_where_clause("UID", uid_chunk)
+            cursor.execute(
+                f"SELECT [UID] FROM [{table}] WHERE {where_sql}",
+                *where_params,
+            )
+            matching_rows.extend(cursor.fetchall())
+        require_unique_master_data_uids(
+            (row[0] for row in matching_rows),
+            table,
+        )
+
     @staticmethod
     def _windows_path_separators(path) -> str:
         if not path:
@@ -176,36 +192,93 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     self._normalize_conditions_for_system(
                         cursor, bid_uid_int, metric=(new_mb == 1)
                     )
-                for page_uid in updates.get("deleted_page_uids", []):
-                    page_int = int(page_uid)
-                    self._delete_page_cascade(cursor, schema, page_int)
-                for folder_uid in updates.get("deleted_folder_uids", []):
-                    if schema.column_exists("BidPages", "BidPageFolderUID"):
-                        cursor.execute(
-                            "UPDATE [BidPages] SET [BidPageFolderUID]=NULL WHERE [BidPageFolderUID]=?",
-                            int(folder_uid),
+                deleted_page_ints = self._normalize_int_uids(
+                    updates.get("deleted_page_uids", []), "BidPages"
+                )
+                if deleted_page_ints:
+                    self._delete_pages_cascade(
+                        cursor, schema, bid_uid_int, deleted_page_ints
+                    )
+                deleted_folder_ints = self._normalize_int_uids(
+                    updates.get("deleted_folder_uids", []), "BidPageFolders"
+                )
+                if deleted_folder_ints and schema.column_exists(
+                    "BidPages", "BidPageFolderUID"
+                ):
+                    self._execute_uid_in_update_chunks(
+                        cursor,
+                        "BidPages",
+                        "BidPageFolderUID",
+                        {"BidPageFolderUID": None},
+                        deleted_folder_ints,
+                    )
+                if deleted_folder_ints and not schema.optional_table_missing(
+                    "BidPageFolders"
+                ):
+                    if schema.column_exists("BidPageFolders", "ParentUID"):
+                        self._execute_uid_in_update_chunks(
+                            cursor,
+                            "BidPageFolders",
+                            "ParentUID",
+                            {"ParentUID": None},
+                            deleted_folder_ints,
                         )
-                    if not schema.optional_table_missing("BidPageFolders"):
-                        if schema.column_exists("BidPageFolders", "ParentUID"):
-                            cursor.execute(
-                                "UPDATE [BidPageFolders] SET [ParentUID]=NULL WHERE [ParentUID]=?",
-                                int(folder_uid),
-                            )
-                        self._require_write_columns(schema, "BidPageFolders", ("UID",))
-                        cursor.execute(
-                            "DELETE FROM [BidPageFolders] WHERE [UID]=?",
-                            int(folder_uid),
-                        )
+                    self._require_write_columns(schema, "BidPageFolders", ("UID",))
+                    self._execute_uid_in_delete_chunks(
+                        cursor, "BidPageFolders", "UID", deleted_folder_ints
+                    )
                 local_uid_map: dict = {}
-                for new_folder in updates.get("new_folders", []):
+                new_folders = list(updates.get("new_folders", []))
+                pending_new_folders = [
+                    (
+                        str(folder.get("local_uid") or f"__new_folder_{index}"),
+                        folder,
+                    )
+                    for index, folder in enumerate(new_folders)
+                ]
+                new_folder_uids = tuple(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "BidPageFolders", len(new_folders)
+                    )
+                )
+                local_uid_map.update(
+                    {
+                        local_uid: assigned_uid
+                        for (local_uid, _folder), assigned_uid in zip(
+                            pending_new_folders, new_folder_uids
+                        )
+                    }
+                )
+                folders_by_local_uid = dict(pending_new_folders)
+                ordered_new_folders = []
+                appended_folder_uids = set()
+                for local_uid, new_folder in pending_new_folders:
+                    chain = []
+                    chain_uids = set()
+                    current_uid = local_uid
+                    current_folder = new_folder
+                    while current_uid not in appended_folder_uids:
+                        if current_uid in chain_uids:
+                            raise ValueError(
+                                "New Page Folder parent graph contains a cycle."
+                            )
+                        chain.append((current_uid, current_folder))
+                        chain_uids.add(current_uid)
+                        parent_uid = str(current_folder.get("parent_uid") or "")
+                        current_folder = folders_by_local_uid.get(parent_uid)
+                        if current_folder is None:
+                            break
+                        current_uid = parent_uid
+                    for pending_folder in reversed(chain):
+                        ordered_new_folders.append(pending_folder)
+                        appended_folder_uids.add(pending_folder[0])
+                for local_uid, new_folder in ordered_new_folders:
+                    assigned_uid = local_uid_map[local_uid]
                     name = new_folder.get("name") or "New Folder"
                     parent_uid_val = self._resolve_folder_uid(
                         new_folder.get("parent_uid"),
                         local_uid_map,
-                        invalid_as_none=True,
-                    )
-                    assigned_uid = self._next_uid_preserving_references(
-                        cursor, schema, "BidPageFolders"
+                        invalid_as_none=False,
                     )
                     self._execute_insert_values(
                         cursor,
@@ -220,9 +293,6 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                         ("UID", "BidUID", "Name"),
                         "save_cover_sheet_new_folder",
                     )
-                    local_uid = new_folder.get("local_uid")
-                    if local_uid:
-                        local_uid_map[str(local_uid)] = assigned_uid
                 for folder in updates.get("folders", []):
                     if not folder.get("uid") or not folder.get("name"):
                         continue
@@ -241,7 +311,18 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                         [int(folder["uid"])],
                         "save_cover_sheet_folder",
                     )
-                for page in updates.get("pages", []):
+                pages = list(updates.get("pages", []))
+                new_pages = [
+                    page
+                    for page in pages
+                    if page.get("width") is not None and page.get("uid") is None
+                ]
+                new_page_uids = iter(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "BidPages", len(new_pages)
+                    )
+                )
+                for page in pages:
                     if page.get("width") is None:
                         continue
                     if page.get("uid") is None:
@@ -251,9 +332,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                             invalid_as_none=True,
                         )
                         new_guid = "{" + str(uuid.uuid4()).upper() + "}"
-                        assigned_page_uid = self._next_uid_preserving_references(
-                            cursor, schema, "BidPages"
-                        )
+                        assigned_page_uid = next(new_page_uids)
                         overlay_values = replacement_overlay_storage_values(
                             self._windows_path_separators(page.get("overlay_path")),
                             page["width"],
@@ -485,9 +564,11 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
-                require_single_bid_scope_for_uids(cursor, "BidPages", page_uids)
-                for page_uid in page_uids:
-                    self._delete_page_cascade(cursor, schema, int(page_uid))
+                page_ints = self._normalize_int_uids(page_uids, "BidPages")
+                bid_uid = require_single_bid_scope_for_uids(
+                    cursor, "BidPages", page_ints
+                )
+                self._delete_pages_cascade(cursor, schema, bid_uid, page_ints)
                 return True
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
@@ -594,64 +675,67 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 "normalize_conditions_for_system",
             )
 
-    def _delete_page_cascade(self, cursor, schema, page_int: int) -> None:
-        page_bid_uid = None
-        if schema.column_exists("BidPages", "BidUID"):
-            cursor.execute("SELECT [BidUID] FROM [BidPages] WHERE [UID]=?", page_int)
-            page_row = cursor.fetchone()
-            if page_row is not None:
-                page_bid_uid = page_row[0]
-        if page_bid_uid is not None and schema.column_exists(
-            "BidPages", "MasterPageUID"
+    def _delete_pages_cascade(
+        self, cursor, schema, bid_uid: int, page_ints: list[int]
+    ) -> None:
+        if schema.column_exists("BidPages", "MasterPageUID"):
+            for page_chunk in self._iter_access_chunks(page_ints):
+                where_sql, where_params = self._uid_where_clause(
+                    "MasterPageUID", page_chunk
+                )
+                cursor.execute(
+                    "UPDATE [BidPages] SET [MasterPageUID]=NULL "
+                    f"WHERE [BidUID]=? AND {where_sql}",
+                    bid_uid,
+                    *where_params,
+                )
+        if not schema.optional_table_missing("BidComments") and all(
+            schema.column_exists("BidComments", column)
+            for column in ("UID", "BidUID", "BidPageUID", "ParentCommentUID")
         ):
-            cursor.execute(
-                "UPDATE [BidPages] SET [MasterPageUID]=NULL "
-                "WHERE [BidUID]=? AND [MasterPageUID]=?",
-                page_bid_uid,
-                page_int,
-            )
-        if (
-            page_bid_uid is not None
-            and not schema.optional_table_missing("BidComments")
-            and all(
-                schema.column_exists("BidComments", column)
-                for column in ("UID", "BidUID", "BidPageUID", "ParentCommentUID")
-            )
-        ):
-            cursor.execute(
-                "SELECT [UID] FROM [BidComments] "
-                "WHERE [BidUID]=? AND [BidPageUID]=?",
-                page_bid_uid,
-                page_int,
-            )
-            deleted_comment_rows = cursor.fetchall()
+            deleted_comment_rows = []
+            for page_chunk in self._iter_access_chunks(page_ints):
+                where_sql, where_params = self._uid_where_clause(
+                    "BidPageUID", page_chunk
+                )
+                cursor.execute(
+                    "SELECT [UID] FROM [BidComments] "
+                    f"WHERE [BidUID]=? AND {where_sql}",
+                    bid_uid,
+                    *where_params,
+                )
+                deleted_comment_rows.extend(cursor.fetchall())
             require_valid_unique_bid_owned_uids(
                 (row[0] for row in deleted_comment_rows), "BidComments"
             )
             deleted_comment_uids = [int(row[0]) for row in deleted_comment_rows]
-            if deleted_comment_uids:
-                placeholders = ",".join("?" for _uid in deleted_comment_uids)
+            for comment_chunk in self._iter_access_chunks(deleted_comment_uids):
+                where_sql, where_params = self._uid_where_clause(
+                    "ParentCommentUID", comment_chunk
+                )
                 cursor.execute(
                     "UPDATE [BidComments] SET [ParentCommentUID]=NULL "
-                    f"WHERE [BidUID]=? AND [ParentCommentUID] IN ({placeholders})",
-                    page_bid_uid,
-                    *deleted_comment_uids,
+                    f"WHERE [BidUID]=? AND {where_sql}",
+                    bid_uid,
+                    *where_params,
                 )
-        if (
-            page_bid_uid is not None
-            and not schema.optional_table_missing("BidTakeoffs")
-            and all(
-                schema.column_exists("BidTakeoffs", column)
-                for column in ("UID", "BidUID", "BidPageUID")
-            )
+        deleted_takeoff_uids: list[int] = []
+        if not schema.optional_table_missing("BidTakeoffs") and all(
+            schema.column_exists("BidTakeoffs", column)
+            for column in ("UID", "BidUID", "BidPageUID")
         ):
-            cursor.execute(
-                "SELECT [UID] FROM [BidTakeoffs] "
-                "WHERE [BidUID]=? AND [BidPageUID]=?",
-                page_bid_uid,
-                page_int,
-            )
-            deleted_takeoff_rows = cursor.fetchall()
+            deleted_takeoff_rows = []
+            for page_chunk in self._iter_access_chunks(page_ints):
+                where_sql, where_params = self._uid_where_clause(
+                    "BidPageUID", page_chunk
+                )
+                cursor.execute(
+                    "SELECT [UID] FROM [BidTakeoffs] "
+                    f"WHERE [BidUID]=? AND {where_sql}",
+                    bid_uid,
+                    *where_params,
+                )
+                deleted_takeoff_rows.extend(cursor.fetchall())
             require_valid_unique_bid_owned_uids(
                 (row[0] for row in deleted_takeoff_rows), "BidTakeoffs"
             )
@@ -666,36 +750,29 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     cursor.execute(
                         f"UPDATE [BidTakeoffs] SET [{reference_column}]=NULL "
                         f"WHERE [BidUID]=? AND {where_sql}",
-                        page_bid_uid,
+                        bid_uid,
                         *where_params,
                     )
-        if (
-            not schema.optional_table_missing("BidPercents")
-            and not schema.optional_table_missing("BidTakeoffs")
-            and schema.column_exists("BidPercents", "BidTakeoffUID")
-            and schema.column_exists("BidTakeoffs", "UID")
-            and schema.column_exists("BidTakeoffs", "BidPageUID")
+        if not schema.optional_table_missing("BidPercents") and schema.column_exists(
+            "BidPercents", "BidTakeoffUID"
         ):
-            cursor.execute(
-                "DELETE FROM [BidPercents] WHERE [BidTakeoffUID] IN "
-                "(SELECT [UID] FROM [BidTakeoffs] WHERE [BidPageUID] = ?)",
-                page_int,
+            self._execute_uid_in_delete_chunks(
+                cursor,
+                "BidPercents",
+                "BidTakeoffUID",
+                deleted_takeoff_uids,
             )
         for child in TAKEOFF_REFERENCE_TABLES:
-            if (
-                schema.optional_table_missing(child)
-                or schema.optional_table_missing("BidTakeoffs")
-                or not schema.column_exists("BidTakeoffs", "UID")
-                or not schema.column_exists("BidTakeoffs", "BidPageUID")
-            ):
+            if schema.optional_table_missing(child):
                 continue
             for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
                 if not schema.column_exists(child, reference_column):
                     continue
-                cursor.execute(
-                    f"DELETE FROM [{child}] WHERE [{reference_column}] IN "
-                    "(SELECT [UID] FROM [BidTakeoffs] WHERE [BidPageUID] = ?)",
-                    page_int,
+                self._execute_uid_in_delete_chunks(
+                    cursor,
+                    child,
+                    reference_column,
+                    deleted_takeoff_uids,
                 )
         if (
             not schema.optional_table_missing("AffectDPCTypGroupViews")
@@ -704,31 +781,40 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             and schema.column_exists("BidTypGroupViews", "UID")
             and schema.column_exists("BidTypGroupViews", "BidPageUID")
         ):
-            cursor.execute(
-                "DELETE FROM [AffectDPCTypGroupViews] "
-                "WHERE [BidTypGroupViewUID] IN "
-                "(SELECT [UID] FROM [BidTypGroupViews] WHERE [BidPageUID]=?)",
-                page_int,
-            )
+            for page_chunk in self._iter_access_chunks(page_ints):
+                where_sql, where_params = self._uid_where_clause(
+                    "BidPageUID", page_chunk
+                )
+                cursor.execute(
+                    "DELETE FROM [AffectDPCTypGroupViews] "
+                    "WHERE [BidTypGroupViewUID] IN "
+                    f"(SELECT [UID] FROM [BidTypGroupViews] WHERE {where_sql})",
+                    *where_params,
+                )
         for table in PAGE_DELETE_CHILD_TABLES:
             try:
                 if schema.optional_table_missing(table) or not schema.column_exists(
                     table, "BidPageUID"
                 ):
                     continue
-                cursor.execute(
-                    f"DELETE FROM [{table}] WHERE [BidPageUID] = ?", page_int
+                self._execute_uid_in_delete_chunks(
+                    cursor, table, "BidPageUID", page_ints
                 )
             except pyodbc.Error as exc:
                 if self._record_caught_mutation_error(exc):
                     raise
                 self.logger.warning(
-                    "Failed to delete from %s for page %s: %s", table, page_int, exc
+                    "Failed to delete from %s for pages %s: %s",
+                    table,
+                    page_ints,
+                    exc,
                 )
         if not schema.optional_table_missing("BidTakeoffs") and schema.column_exists(
             "BidTakeoffs", "BidPageUID"
         ):
-            cursor.execute("DELETE FROM [BidTakeoffs] WHERE [BidPageUID] = ?", page_int)
+            self._execute_uid_in_delete_chunks(
+                cursor, "BidTakeoffs", "BidPageUID", page_ints
+            )
         if (
             not schema.optional_table_missing("BidHotLinks")
             and not schema.optional_table_missing("BidNamedViews")
@@ -736,41 +822,53 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             and schema.column_exists("BidNamedViews", "UID")
             and schema.column_exists("BidNamedViews", "BidPageUID")
         ):
-            cursor.execute(
-                "DELETE FROM [BidHotLinks] WHERE [BidPageViewUID] IN "
-                "(SELECT [UID] FROM [BidNamedViews] WHERE [BidPageUID] = ?)",
-                page_int,
-            )
+            for page_chunk in self._iter_access_chunks(page_ints):
+                where_sql, where_params = self._uid_where_clause(
+                    "BidPageUID", page_chunk
+                )
+                cursor.execute(
+                    "DELETE FROM [BidHotLinks] WHERE [BidPageViewUID] IN "
+                    f"(SELECT [UID] FROM [BidNamedViews] WHERE {where_sql})",
+                    *where_params,
+                )
         if not schema.optional_table_missing("BidHotLinks") and schema.column_exists(
             "BidHotLinks", "BidPageUID"
         ):
-            cursor.execute("DELETE FROM [BidHotLinks] WHERE [BidPageUID] = ?", page_int)
+            self._execute_uid_in_delete_chunks(
+                cursor, "BidHotLinks", "BidPageUID", page_ints
+            )
         if not schema.optional_table_missing("BidNamedViews") and schema.column_exists(
             "BidNamedViews", "BidPageUID"
         ):
-            cursor.execute(
-                "DELETE FROM [BidNamedViews] WHERE [BidPageUID] = ?", page_int
+            self._execute_uid_in_delete_chunks(
+                cursor, "BidNamedViews", "BidPageUID", page_ints
             )
         if not schema.optional_table_missing("BidSettings") and schema.column_exists(
             "BidSettings", "BidPageSelectedUID"
         ):
-            cursor.execute(
-                "UPDATE [BidSettings] SET [BidPageSelectedUID]=NULL "
-                "WHERE [BidPageSelectedUID]=?",
-                page_int,
+            self._execute_uid_in_update_chunks(
+                cursor,
+                "BidSettings",
+                "BidPageSelectedUID",
+                {"BidPageSelectedUID": None},
+                page_ints,
             )
         if all(
             schema.column_exists("Bids", column)
             for column in ("CoverSheetSelItemType", "CoverSheetSelItemUID")
         ):
-            cursor.execute(
-                "UPDATE [Bids] SET [CoverSheetSelItemUID]=NULL "
-                "WHERE [CoverSheetSelItemType]=? AND [CoverSheetSelItemUID]=?",
-                COVER_SHEET_PAGE_SELECTION_TYPE,
-                page_int,
-            )
+            for page_chunk in self._iter_access_chunks(page_ints):
+                where_sql, where_params = self._uid_where_clause(
+                    "CoverSheetSelItemUID", page_chunk
+                )
+                cursor.execute(
+                    "UPDATE [Bids] SET [CoverSheetSelItemUID]=NULL "
+                    f"WHERE [CoverSheetSelItemType]=? AND {where_sql}",
+                    COVER_SHEET_PAGE_SELECTION_TYPE,
+                    *where_params,
+                )
         self._require_write_columns(schema, "BidPages", ("UID",))
-        cursor.execute("DELETE FROM [BidPages] WHERE [UID]=?", page_int)
+        self._execute_uid_in_delete_chunks(cursor, "BidPages", "UID", page_ints)
 
     def save_job_statuses(
         self, db_path: str, changes: Dict[str, Any]
@@ -785,23 +883,30 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     )
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "JobStatuses", ("UID",))
-                for uid in changes.get("deleted_uids", []):
-                    try:
-                        uid_int = int(uid)
-                        _require_unique_master_data_row(cursor, "JobStatuses", uid_int)
-                        if not schema.optional_table_missing(
-                            "Bids"
-                        ) and schema.column_exists("Bids", "JobStatusUID"):
-                            cursor.execute(
-                                "UPDATE [Bids] SET [JobStatusUID]=NULL WHERE [JobStatusUID]=?",
-                                uid_int,
-                            )
-                        cursor.execute(
-                            "DELETE FROM [JobStatuses] WHERE [UID]=?", uid_int
+                new_statuses = list(changes.get("new", []))
+                self._require_unique_correlation_uids(
+                    (status.get("uid") for status in new_statuses), "JobStatuses"
+                )
+                deleted_uid_ints = self._normalize_int_uids(
+                    changes.get("deleted_uids", []), "JobStatuses"
+                )
+                self._require_unique_master_data_targets(
+                    cursor, "JobStatuses", deleted_uid_ints
+                )
+                if deleted_uid_ints:
+                    if not schema.optional_table_missing(
+                        "Bids"
+                    ) and schema.column_exists("Bids", "JobStatusUID"):
+                        self._execute_uid_in_update_chunks(
+                            cursor,
+                            "Bids",
+                            "JobStatusUID",
+                            {"JobStatusUID": None},
+                            deleted_uid_ints,
                         )
-                    except (pyodbc.Error, ValueError) as exc:
-                        if self._record_caught_mutation_error(exc):
-                            raise
+                    self._execute_uid_in_delete_chunks(
+                        cursor, "JobStatuses", "UID", deleted_uid_ints
+                    )
                 for s in changes.get("updated", []):
                     uid = s.get("uid")
                     if uid is None:
@@ -827,12 +932,14 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     except (pyodbc.Error, ValueError) as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                for s in changes.get("new", []):
+                new_status_uids = tuple(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "JobStatuses", len(new_statuses)
+                    )
+                )
+                for s, assigned_uid in zip(new_statuses, new_status_uids):
                     try:
                         locked_val = -1 if s.get("locked") else 0
-                        assigned_uid = self._next_uid_preserving_references(
-                            cursor, schema, "JobStatuses"
-                        )
                         self._execute_insert_values(
                             cursor,
                             schema,
@@ -866,9 +973,13 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     raise RuntimeError("This OST database does not support employees.")
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "Employees", ("UID",))
+                new_employees = list(changes.get("new", []))
+                self._require_unique_correlation_uids(
+                    (employee.uid for employee in new_employees), "Employees"
+                )
                 employee_changes = [
                     *changes.get("updated", []),
-                    *changes.get("new", []),
+                    *new_employees,
                 ]
                 pay_class_uids = {
                     int(employee.pay_class_uid)
@@ -880,75 +991,85 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     require_existing_unique_master_data_uid(
                         cursor, "PayClasses", pay_class_uid
                     )
-                for uid in changes.get("deleted_uids", []):
-                    try:
-                        uid_int = int(uid)
-                        _require_unique_master_data_row(cursor, "Employees", uid_int)
-                        if not schema.optional_table_missing("Bids"):
-                            for role_column in (
-                                "EstimatorUID",
-                                "PrManagerUID",
-                                "JobSiteManagerUID",
-                            ):
-                                if schema.column_exists("Bids", role_column):
-                                    cursor.execute(
-                                        f"UPDATE [Bids] SET [{role_column}]=NULL "
-                                        f"WHERE [{role_column}]=?",
-                                        uid_int,
-                                    )
-                        if not schema.optional_table_missing(
-                            "BidDPCSubscribers"
-                        ) and schema.column_exists(
-                            "BidDPCSubscribers", "BidEmployeeUID"
+                deleted_uid_ints = self._normalize_int_uids(
+                    changes.get("deleted_uids", []), "Employees"
+                )
+                self._require_unique_master_data_targets(
+                    cursor, "Employees", deleted_uid_ints
+                )
+                if deleted_uid_ints:
+                    if not schema.optional_table_missing("Bids"):
+                        for role_column in (
+                            "EstimatorUID",
+                            "PrManagerUID",
+                            "JobSiteManagerUID",
                         ):
-                            cursor.execute(
-                                "DELETE FROM [BidDPCSubscribers] "
-                                "WHERE [BidEmployeeUID]=?",
-                                uid_int,
-                            )
-                        if (
-                            not schema.optional_table_missing("BidTimeCards")
-                            and not schema.optional_table_missing("BidEmployees")
-                            and schema.column_exists("BidTimeCards", "BidEmployeeUID")
-                            and schema.column_exists("BidEmployees", "UID")
-                            and schema.column_exists("BidEmployees", "EmployeeUID")
-                        ):
-                            cursor.execute(
-                                "DELETE FROM [BidTimeCards] WHERE [BidEmployeeUID] IN "
-                                "(SELECT [UID] FROM [BidEmployees] WHERE [EmployeeUID]=?)",
-                                uid_int,
-                            )
-                        if not schema.optional_table_missing(
-                            "BidEmployees"
-                        ) and schema.column_exists("BidEmployees", "EmployeeUID"):
-                            cursor.execute(
-                                "DELETE FROM [BidEmployees] WHERE [EmployeeUID]=?",
-                                uid_int,
-                            )
-                        try:
-                            if not schema.optional_table_missing(
-                                "ConditionSets"
-                            ) and schema.column_exists("ConditionSets", "EmployeeUID"):
-                                cursor.execute(
-                                    "UPDATE [ConditionSets] SET [EmployeeUID]=NULL "
-                                    "WHERE [EmployeeUID]=?",
-                                    uid_int,
+                            if schema.column_exists("Bids", role_column):
+                                self._execute_uid_in_update_chunks(
+                                    cursor,
+                                    "Bids",
+                                    role_column,
+                                    {role_column: None},
+                                    deleted_uid_ints,
                                 )
-                        except pyodbc.Error as exc:
-                            if self._record_caught_mutation_error(exc):
-                                raise
-                            self.logger.warning(
-                                "Failed to clear ConditionSets.EmployeeUID for %s: %s",
-                                uid_int,
-                                exc,
+                    if not schema.optional_table_missing(
+                        "BidDPCSubscribers"
+                    ) and schema.column_exists("BidDPCSubscribers", "BidEmployeeUID"):
+                        self._execute_uid_in_delete_chunks(
+                            cursor,
+                            "BidDPCSubscribers",
+                            "BidEmployeeUID",
+                            deleted_uid_ints,
+                        )
+                    if (
+                        not schema.optional_table_missing("BidTimeCards")
+                        and not schema.optional_table_missing("BidEmployees")
+                        and schema.column_exists("BidTimeCards", "BidEmployeeUID")
+                        and schema.column_exists("BidEmployees", "UID")
+                        and schema.column_exists("BidEmployees", "EmployeeUID")
+                    ):
+                        for uid_chunk in self._iter_access_chunks(deleted_uid_ints):
+                            where_sql, where_params = self._uid_where_clause(
+                                "EmployeeUID", uid_chunk
                             )
-                        cursor.execute("DELETE FROM [Employees] WHERE [UID]=?", uid_int)
-                    except (pyodbc.Error, ValueError) as exc:
+                            cursor.execute(
+                                "DELETE FROM [BidTimeCards] "
+                                "WHERE [BidEmployeeUID] IN "
+                                "(SELECT [UID] FROM [BidEmployees] "
+                                f"WHERE {where_sql})",
+                                *where_params,
+                            )
+                    if not schema.optional_table_missing(
+                        "BidEmployees"
+                    ) and schema.column_exists("BidEmployees", "EmployeeUID"):
+                        self._execute_uid_in_delete_chunks(
+                            cursor,
+                            "BidEmployees",
+                            "EmployeeUID",
+                            deleted_uid_ints,
+                        )
+                    try:
+                        if not schema.optional_table_missing(
+                            "ConditionSets"
+                        ) and schema.column_exists("ConditionSets", "EmployeeUID"):
+                            self._execute_uid_in_update_chunks(
+                                cursor,
+                                "ConditionSets",
+                                "EmployeeUID",
+                                {"EmployeeUID": None},
+                                deleted_uid_ints,
+                            )
+                    except pyodbc.Error as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
                         self.logger.warning(
-                            "Failed to delete employee %s: %s", uid, exc
+                            "Failed to clear ConditionSets.EmployeeUID for %s: %s",
+                            deleted_uid_ints,
+                            exc,
                         )
+                    self._execute_uid_in_delete_chunks(
+                        cursor, "Employees", "UID", deleted_uid_ints
+                    )
                 for e in changes.get("updated", []):
                     uid = e.uid
                     if uid is None:
@@ -988,16 +1109,18 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     except (pyodbc.Error, ValueError) as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                for e in changes.get("new", []):
+                new_employee_uids = tuple(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "Employees", len(new_employees)
+                    )
+                )
+                for e, assigned_uid in zip(new_employees, new_employee_uids):
                     try:
                         raw_pc_uid = e.pay_class_uid
                         pc_uid_val = (
                             int(raw_pc_uid)
                             if raw_pc_uid and not str(raw_pc_uid).startswith("new_")
                             else None
-                        )
-                        assigned_uid = self._next_uid_preserving_references(
-                            cursor, schema, "Employees"
                         )
                         self._execute_insert_values(
                             cursor,
@@ -1045,34 +1168,41 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     )
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "PayClasses", ("UID",))
-                for uid in changes.get("deleted_uids", []):
-                    try:
-                        uid_int = int(uid)
-                        _require_unique_master_data_row(cursor, "PayClasses", uid_int)
-                        if not schema.optional_table_missing(
-                            "Employees"
-                        ) and schema.column_exists("Employees", "PayClassUID"):
-                            cursor.execute(
-                                "UPDATE [Employees] SET [PayClassUID]=NULL WHERE [PayClassUID]=?",
-                                uid_int,
-                            )
-                        if not schema.optional_table_missing(
-                            "BidEmployees"
-                        ) and schema.column_exists("BidEmployees", "PayClassUID"):
-                            cursor.execute(
-                                "UPDATE [BidEmployees] SET [PayClassUID]=NULL "
-                                "WHERE [PayClassUID]=?",
-                                uid_int,
-                            )
-                        cursor.execute(
-                            "DELETE FROM [PayClasses] WHERE [UID]=?", uid_int
+                new_pay_classes = list(changes.get("new", []))
+                self._require_unique_correlation_uids(
+                    (pay_class.get("uid") for pay_class in new_pay_classes),
+                    "PayClasses",
+                )
+                deleted_uid_ints = self._normalize_int_uids(
+                    changes.get("deleted_uids", []), "PayClasses"
+                )
+                self._require_unique_master_data_targets(
+                    cursor, "PayClasses", deleted_uid_ints
+                )
+                if deleted_uid_ints:
+                    if not schema.optional_table_missing(
+                        "Employees"
+                    ) and schema.column_exists("Employees", "PayClassUID"):
+                        self._execute_uid_in_update_chunks(
+                            cursor,
+                            "Employees",
+                            "PayClassUID",
+                            {"PayClassUID": None},
+                            deleted_uid_ints,
                         )
-                    except (pyodbc.Error, ValueError) as exc:
-                        if self._record_caught_mutation_error(exc):
-                            raise
-                        self.logger.warning(
-                            "Failed to delete pay class %s: %s", uid, exc
+                    if not schema.optional_table_missing(
+                        "BidEmployees"
+                    ) and schema.column_exists("BidEmployees", "PayClassUID"):
+                        self._execute_uid_in_update_chunks(
+                            cursor,
+                            "BidEmployees",
+                            "PayClassUID",
+                            {"PayClassUID": None},
+                            deleted_uid_ints,
                         )
+                    self._execute_uid_in_delete_chunks(
+                        cursor, "PayClasses", "UID", deleted_uid_ints
+                    )
                 for pc in changes.get("updated", []):
                     uid = pc.get("uid")
                     if uid is None:
@@ -1093,11 +1223,13 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     except (pyodbc.Error, ValueError) as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                for pc in changes.get("new", []):
+                new_pay_class_uids = tuple(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "PayClasses", len(new_pay_classes)
+                    )
+                )
+                for pc, assigned_uid in zip(new_pay_classes, new_pay_class_uids):
                     try:
-                        assigned_uid = self._next_uid_preserving_references(
-                            cursor, schema, "PayClasses"
-                        )
                         self._execute_insert_values(
                             cursor,
                             schema,
@@ -1131,53 +1263,48 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     )
                 cursor = conn.cursor()
                 self._require_write_columns(schema, "CdnTypes", ("UID",))
-                deletion_uids = []
-                for uid in changes.get("deleted_uids", []):
-                    try:
-                        deletion_uids.append((uid, int(uid)))
-                    except ValueError as exc:
-                        if self._record_caught_mutation_error(exc):
-                            raise
-                        self.logger.warning(
-                            "Failed to delete condition type %s: %s", uid, exc
-                        )
-                for _uid, uid_int in deletion_uids:
-                    _require_unique_master_data_row(cursor, "CdnTypes", uid_int)
+                new_condition_types = list(changes.get("new", []))
+                self._require_unique_correlation_uids(
+                    (item.get("uid") for item in new_condition_types), "CdnTypes"
+                )
+                deletion_uid_ints = self._normalize_int_uids(
+                    changes.get("deleted_uids", []), "CdnTypes"
+                )
+                self._require_unique_master_data_targets(
+                    cursor, "CdnTypes", deletion_uid_ints
+                )
                 if not schema.optional_table_missing(
                     "BidConditions"
                 ) and schema.column_exists("BidConditions", "CdnTypeUID"):
-                    for _uid, uid_int in deletion_uids:
+                    for uid_chunk in self._iter_access_chunks(deletion_uid_ints):
                         try:
+                            where_sql, where_params = self._uid_where_clause(
+                                "CdnTypeUID", uid_chunk
+                            )
                             cursor.execute(
-                                "SELECT COUNT(*) FROM [BidConditions] "
-                                "WHERE [CdnTypeUID]=?",
-                                uid_int,
+                                "SELECT [CdnTypeUID] FROM [BidConditions] "
+                                f"WHERE {where_sql}",
+                                *where_params,
                             )
                             row = cursor.fetchone()
-                            if row and int(row[0] or 0) > 0:
+                            if row:
                                 self.logger.warning(
-                                    "Refusing to delete condition type in use: %s",
-                                    uid_int,
+                                    "Refusing to delete condition types in use: %s",
+                                    deletion_uid_ints,
                                 )
                                 return None
                         except pyodbc.Error as exc:
                             if self._record_caught_mutation_error(exc):
                                 raise
                             self.logger.warning(
-                                "Failed to validate condition type %s usage: %s",
-                                uid_int,
+                                "Failed to validate condition type usage for %s: %s",
+                                deletion_uid_ints,
                                 exc,
                             )
                             return None
-                for uid, uid_int in deletion_uids:
-                    try:
-                        cursor.execute("DELETE FROM [CdnTypes] WHERE [UID]=?", uid_int)
-                    except pyodbc.Error as exc:
-                        if self._record_caught_mutation_error(exc):
-                            raise
-                        self.logger.warning(
-                            "Failed to delete condition type %s: %s", uid, exc
-                        )
+                self._execute_uid_in_delete_chunks(
+                    cursor, "CdnTypes", "UID", deletion_uid_ints
+                )
                 for item in changes.get("updated", []):
                     uid = item.get("uid")
                     if uid is None:
@@ -1198,12 +1325,16 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     except (pyodbc.Error, ValueError) as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                for item in changes.get("new", []):
+                new_condition_type_uids = tuple(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "CdnTypes", len(new_condition_types)
+                    )
+                )
+                for item, assigned_uid in zip(
+                    new_condition_types, new_condition_type_uids
+                ):
                     temp_uid = str(item.get("uid", ""))
                     try:
-                        assigned_uid = self._next_uid_preserving_references(
-                            cursor, schema, "CdnTypes"
-                        )
                         self._execute_insert_values(
                             cursor,
                             schema,
@@ -1324,6 +1455,30 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             )
         require_acyclic_bid_owned_parent_graph(final_parent_by_uid, "BidAreas")
 
+    @staticmethod
+    def _order_new_bid_areas_for_insert(new_areas: list) -> list:
+        areas_by_uid = {}
+        for area in new_areas:
+            uid = str(area.uid)
+            areas_by_uid[uid] = area
+        ordered = []
+        appended = set()
+        for area in new_areas:
+            chain = []
+            chain_uids = set()
+            current = area
+            while current is not None and str(current.uid) not in appended:
+                uid = str(current.uid)
+                if uid in chain_uids:
+                    raise ValueError("New Bid Area parent graph contains a cycle.")
+                chain.append(current)
+                chain_uids.add(uid)
+                current = areas_by_uid.get(str(current.parent_uid))
+            for ancestor in reversed(chain):
+                ordered.append(ancestor)
+                appended.add(str(ancestor.uid))
+        return ordered
+
     def save_bid_areas(
         self, db_path: str, bid_uid: str, changes: BidAreaChangeset
     ) -> dict:
@@ -1336,6 +1491,10 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                 cursor = conn.cursor()
                 require_existing_unique_bid_owned_uid_matches(
                     cursor, "Bids", (bid_uid,)
+                )
+                new_areas = list(changes.new)
+                self._require_unique_correlation_uids(
+                    (area.uid for area in new_areas), "BidAreas"
                 )
                 self._require_valid_bid_area_changes(
                     cursor,
@@ -1424,18 +1583,24 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                     except (pyodbc.Error, ValueError) as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
-                for area in changes.new:
+                ordered_new_areas = self._order_new_bid_areas_for_insert(new_areas)
+                new_area_uids = tuple(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "BidAreas", len(new_areas)
+                    )
+                )
+                uid_map.update(
+                    {
+                        area.uid: str(assigned_uid)
+                        for area, assigned_uid in zip(new_areas, new_area_uids)
+                    }
+                )
+                for area in ordered_new_areas:
                     try:
-                        if area.parent_uid and area.parent_uid in uid_map:
-                            parent_val = int(uid_map[area.parent_uid])
-                        elif area.parent_uid and not area.parent_uid.startswith("new_"):
-                            parent_val = int(area.parent_uid)
-                        else:
-                            parent_val = None
+                        assigned_uid = int(uid_map[area.uid])
+                        raw_parent_uid = uid_map.get(area.parent_uid, area.parent_uid)
+                        parent_val = int(raw_parent_uid) if raw_parent_uid else None
                         new_guid = "{" + str(uuid.uuid4()).upper() + "}"
-                        assigned_uid = self._next_uid_preserving_references(
-                            cursor, schema, "BidAreas"
-                        )
                         self._execute_insert_values(
                             cursor,
                             schema,
@@ -1452,7 +1617,6 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
                             ("UID", "BidUID", "Name"),
                             "save_bid_area_new",
                         )
-                        uid_map[area.uid] = str(assigned_uid)
                     except pyodbc.Error as exc:
                         if self._record_caught_mutation_error(exc):
                             raise
@@ -1483,6 +1647,7 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             self.logger.exception(
                 "Failed to save bid areas for bid %s in %s", bid_uid, db_path
             )
+            return {}
         return uid_map
 
     def save_bid_selected_page(self, db_path: str, bid_uid: str, page_uid: str) -> bool:

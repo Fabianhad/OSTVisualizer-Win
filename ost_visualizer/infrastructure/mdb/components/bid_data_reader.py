@@ -85,7 +85,7 @@ class BidDataReaderMixin:
             )
             bid_areas = self._parse_bid_areas_for_bid(connection, bid_uid, schema)
             page_area_selections = self._parse_page_area_selections_for_bid(
-                connection, bid_pages, schema
+                connection, bid_uid, bid_pages, schema
             )
             bid_conditions = self._parse_bid_conditions_for_bid(
                 connection, bid_uid, bid_layers, cdn_types, schema
@@ -352,31 +352,25 @@ class BidDataReaderMixin:
         if schema.optional_table_missing(table):
             return []
         select_clause = self._select_all_columns(schema, table)
-        try:
-            with connection.cursor() as cursor:
-                if not schema.column_exists(table, "BidUID"):
-                    raise pyodbc.Error("BidUID column missing")
-                cursor.execute(
-                    f"SELECT {select_clause} FROM [{table}] WHERE [BidUID] = ?",
-                    bid_uid,
-                )
-                desc = cursor.description
-                return [serialize_row(row, desc) for row in cursor.fetchall()]
-        except pyodbc.Error as exc:
-            if self._record_caught_read_error(exc):
-                raise
-        if not page_uids:
+        has_bid_uid = schema.column_exists(table, "BidUID")
+        if not has_bid_uid and (
+            not page_uids or not schema.column_exists(table, "BidPageUID")
+        ):
             return []
         try:
-            placeholders = ",".join(["?"] * len(page_uids))
             with connection.cursor() as cursor:
-                if not schema.column_exists(table, "BidPageUID"):
-                    return []
-                cursor.execute(
-                    f"SELECT {select_clause} FROM [{table}] "
-                    f"WHERE [BidPageUID] IN ({placeholders})",
-                    *page_uids,
-                )
+                if has_bid_uid:
+                    cursor.execute(
+                        f"SELECT {select_clause} FROM [{table}] " "WHERE [BidUID] = ?",
+                        bid_uid,
+                    )
+                else:
+                    cursor.execute(
+                        f"SELECT {select_clause} FROM [{table}] "
+                        "WHERE [BidPageUID] IN ("
+                        "SELECT [UID] FROM [BidPages] WHERE [BidUID] = ?)",
+                        bid_uid,
+                    )
                 desc = cursor.description
                 return [serialize_row(row, desc) for row in cursor.fetchall()]
         except pyodbc.Error as exc:
@@ -698,47 +692,42 @@ class BidDataReaderMixin:
                 )
             return bid_pages
 
-    def _parse_selected_area_for_page(
-        self,
-        connection: "pyodbc.Connection",
-        page_uid: str,
-        schema: IDatabaseSchemaInspector,
-    ) -> Optional[str]:
-        if schema.optional_table_missing("BidPageSettings"):
-            return None
-        schema.require_column("BidPageSettings", "BidPageUID")
-        schema.require_column("BidPageSettings", "BidAreaUID")
-        schema.require_column("BidPageSettings", "BidAreaSelected")
-        order_by = "BidAreaSelected DESC"
-        if schema.column_exists("BidPageSettings", "UID"):
-            order_by += ", UID DESC"
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT BidAreaUID, BidAreaSelected
-                FROM BidPageSettings
-                WHERE BidPageUID = ? AND BidAreaSelected > 0
-                ORDER BY {order_by}
-                """,
-                page_uid,
-            )
-            row = cursor.fetchone()
-            if row:
-                return str(row.BidAreaUID) if row.BidAreaUID is not None else "0"
-            return None
-
     def _parse_page_area_selections_for_bid(
         self,
         connection: "pyodbc.Connection",
+        bid_uid: str,
         bid_pages: BidPages,
         schema: IDatabaseSchemaInspector,
     ) -> BidPageAreaSelections:
-        page_area_selections: BidPageAreaSelections = {}
-        for page_uid in bid_pages.keys():
-            selected_area = self._parse_selected_area_for_page(
-                connection, page_uid, schema
+        page_area_selections: BidPageAreaSelections = {
+            page_uid: None for page_uid in bid_pages
+        }
+        if not bid_pages or schema.optional_table_missing("BidPageSettings"):
+            return page_area_selections
+        schema.require_column("BidPageSettings", "BidPageUID")
+        schema.require_column("BidPageSettings", "BidAreaUID")
+        schema.require_column("BidPageSettings", "BidAreaSelected")
+        order_by = "[BidPageUID], [BidAreaSelected] DESC"
+        if schema.column_exists("BidPageSettings", "UID"):
+            order_by += ", [UID] DESC"
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT [BidPageUID], [BidAreaUID], [BidAreaSelected] "
+                "FROM [BidPageSettings] "
+                "WHERE [BidAreaSelected] > 0 AND [BidPageUID] IN ("
+                "SELECT [UID] FROM [BidPages] WHERE [BidUID] = ?) "
+                f"ORDER BY {order_by}",
+                bid_uid,
             )
-            page_area_selections[page_uid] = selected_area
+            selected_pages = set()
+            for row in cursor.fetchall():
+                page_uid = str(row.BidPageUID)
+                if page_uid not in page_area_selections or page_uid in selected_pages:
+                    continue
+                page_area_selections[page_uid] = (
+                    str(row.BidAreaUID) if row.BidAreaUID is not None else "0"
+                )
+                selected_pages.add(page_uid)
         return page_area_selections
 
     def _parse_bid_conditions_for_bid(

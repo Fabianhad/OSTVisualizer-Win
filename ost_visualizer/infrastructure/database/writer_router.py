@@ -2,7 +2,7 @@ from __future__ import annotations
 import contextvars
 import logging
 from contextlib import contextmanager
-from typing import Callable, Optional, TypeVar
+from typing import Callable, Optional, Sequence, TypeVar
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
@@ -282,6 +282,29 @@ class DatabaseProjectWriter(SqlProjectWriter):
                 self, database_id, uids, chunk_size
             )
         return MdbWriter._run_delete_takeoffs(self, database_id, uids, chunk_size)
+
+    def verify_plan_items_exist(
+        self,
+        database_id: str,
+        bid_uid: str,
+        takeoff_uids: Sequence[str],
+        annotations: Sequence[tuple[str, str]],
+    ) -> None:
+        if self._is_sql(database_id):
+            return SqlProjectWriter.verify_plan_items_exist(
+                self,
+                database_id,
+                bid_uid,
+                takeoff_uids,
+                annotations,
+            )
+        return MdbWriter.verify_plan_items_exist(
+            self,
+            database_id,
+            bid_uid,
+            takeoff_uids,
+            annotations,
+        )
 
     def create_project(self, db_path: str, name: str) -> Optional[str]:
         with self._backend_scope(db_path) as backend:

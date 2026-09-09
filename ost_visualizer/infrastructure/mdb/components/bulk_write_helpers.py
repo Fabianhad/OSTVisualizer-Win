@@ -1,11 +1,24 @@
 from collections.abc import Iterable, Iterator, Sequence
 import pyodbc
+from ...database.bid_owned_identity import BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE
 from .sql_helpers import placeholders
 
-ACCESS_BULK_CHUNK_SIZE = 50
+ACCESS_BULK_CHUNK_SIZE = BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE
 
 
 class AccessBulkWriteMixin:
+    @staticmethod
+    def _require_unique_correlation_uids(uid_values: Iterable, label: str) -> None:
+        seen: set[str] = set()
+        for raw_uid in uid_values:
+            uid = "" if raw_uid is None else str(raw_uid)
+            if not uid or uid in seen:
+                raise ValueError(
+                    f"New {label} correlation UID {uid or '<missing>'} "
+                    "must be present and unique within one save."
+                )
+            seen.add(uid)
+
     def _normalize_int_uids(self, uids: Iterable, label: str) -> list[int]:
         if uids is None or isinstance(uids, (str, bytes)):
             raise ValueError(f"Invalid {label} UID collection: {uids!r}")

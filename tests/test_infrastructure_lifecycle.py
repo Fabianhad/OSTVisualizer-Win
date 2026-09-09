@@ -10,6 +10,9 @@ from types import MappingProxyType, SimpleNamespace
 from unittest.mock import Mock, patch
 import pyodbc
 from ost_visualizer.infrastructure import providers
+from ost_visualizer.infrastructure.database.bid_owned_identity import (
+    require_single_bid_scope_for_uids,
+)
 from ost_visualizer.infrastructure.mdb import database_creator
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
@@ -48,6 +51,7 @@ from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
     TakeoffOperationsMixin,
 )
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
 from ost_visualizer.infrastructure.services.license_validation_scheduler import (
     LicenseValidationScheduler,
@@ -106,6 +110,21 @@ class _SqliteCursorWrapper:
     @property
     def connection(self):
         return self._connection
+
+
+class _ParameterLimitedSqliteCursorWrapper(_SqliteCursorWrapper):
+    def __init__(self, connection, max_parameters):
+        super().__init__(connection)
+        self._max_parameters = max_parameters
+        self.parameter_counts = []
+
+    def execute(self, query, *params):
+        self.parameter_counts.append(len(params))
+        if len(params) > self._max_parameters:
+            raise AssertionError(
+                f"Query used {len(params)} parameters; limit is {self._max_parameters}."
+            )
+        return super().execute(query, *params)
 
 
 class _SqliteRow:
@@ -243,7 +262,9 @@ class _SqliteDuplicateOps(_SqliteMdbOps):
         where_sql,
         where_params,
         _operation,
+        allow_empty=False,
     ):
+        del allow_empty
         persisted = {
             column: value
             for column, value in values.items()
@@ -259,6 +280,28 @@ class _SqliteDuplicateOps(_SqliteMdbOps):
             *where_params,
         )
         return True
+
+
+class _ParameterLimitedSqliteConnectionWrapper(_SqliteConnectionWrapper):
+    def __init__(self, connection, max_parameters):
+        super().__init__(connection)
+        self._max_parameters = max_parameters
+
+    def cursor(self):
+        return _ParameterLimitedSqliteCursorWrapper(
+            self._connection, self._max_parameters
+        )
+
+
+class _ParameterLimitedSqliteOps(_SqliteDuplicateOps):
+    def __init__(self, connection, max_parameters=255):
+        super().__init__(connection)
+        self._max_parameters = max_parameters
+
+    def _connection(self, _db_path):
+        return _ParameterLimitedSqliteConnectionWrapper(
+            self._connection_ref, self._max_parameters
+        )
 
 
 class _SqliteAnnotationOps(AnnotationOperationsMixin, _SqliteDuplicateOps):
@@ -3772,7 +3815,9 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidLaborCostCodeTotals VALUES (8670, 149805, 143661)")
         conn.execute("INSERT INTO BidTypicalGroupTotals VALUES (9671, 149805, 143662)")
         conn.execute("INSERT INTO BidTypicalGroupTotals VALUES (8671, 149805, 143661)")
-        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("malformed.mdb", "149805")
+        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid(
+            "malformed.mdb", "149805"
+        )
         self.assertIsNotNone(duplicate_uid)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 2)
         duplicate_page_uid = conn.execute(
@@ -3797,6 +3842,113 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                     ).fetchone()[0],
                     2,
                 )
+
+    def test_duplicate_bid_remaps_large_condition_layer_graph_without_row_updates(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
+        conn.execute("INSERT INTO Settings VALUES (2)")
+        conn.execute("CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, JobName TEXT)")
+        conn.execute("INSERT INTO Bids VALUES (1, 1, 'Source')")
+        conn.execute("CREATE TABLE BidLayers (UID INTEGER, BidUID INTEGER)")
+        conn.execute(
+            "CREATE TABLE BidConditions ("
+            "UID INTEGER, BidUID INTEGER, BidLayerUID INTEGER)"
+        )
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, 1)",
+            ((uid,) for uid in range(1, 101)),
+        )
+        conn.executemany(
+            "INSERT INTO BidConditions VALUES (?, 1, ?)",
+            ((1000 + uid, uid) for uid in range(1, 101)),
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("large.mdb", "1")
+        condition_remap_updates = [
+            sql
+            for sql in statements
+            if sql.lstrip().upper().startswith("UPDATE [BIDCONDITIONS]")
+        ]
+        self.assertEqual(duplicate_uid, "2")
+        self.assertEqual(condition_remap_updates, [])
+        copied_links = conn.execute(
+            "SELECT COUNT(*) FROM BidConditions AS condition "
+            "JOIN BidLayers AS layer ON layer.UID=condition.BidLayerUID "
+            "WHERE condition.BidUID=2 AND layer.BidUID=2"
+        ).fetchone()[0]
+        self.assertEqual(copied_links, 100)
+
+    def test_duplicate_bid_reuses_one_schema_inspector(self):
+        class CountingSchemaOps(_SqliteDuplicateOps):
+            def __init__(self, connection):
+                super().__init__(connection)
+                self.schema_calls = 0
+
+            def _schema(self, connection):
+                self.schema_calls += 1
+                return super()._schema(connection)
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
+        conn.execute("INSERT INTO Settings VALUES (2)")
+        conn.execute("CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, JobName TEXT)")
+        conn.execute("INSERT INTO Bids VALUES (1, 1, 'Source')")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        ops = CountingSchemaOps(conn)
+        self.assertEqual(ops.duplicate_bid("large.mdb", "1"), "2")
+        self.assertEqual(ops.schema_calls, 1)
+
+    def test_duplicate_bid_copies_indirect_area_counts_without_quadratic_remap(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
+        conn.execute("INSERT INTO Settings VALUES (2)")
+        conn.execute("CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, JobName TEXT)")
+        conn.execute("INSERT INTO Bids VALUES (1, 1, 'Source')")
+        conn.execute("CREATE TABLE BidAreas (UID INTEGER, BidUID INTEGER)")
+        conn.execute("CREATE TABLE BidTypAreas (UID INTEGER, BidUID INTEGER)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute(
+            "CREATE TABLE BidTypAreaCounts ("
+            "UID INTEGER, BidAreaUID INTEGER, BidTypAreaUID INTEGER, Amount REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO BidAreas VALUES (?, 1)",
+            ((uid,) for uid in range(1, 31)),
+        )
+        conn.executemany(
+            "INSERT INTO BidTypAreas VALUES (?, 1)",
+            ((100 + uid,) for uid in range(1, 31)),
+        )
+        conn.executemany(
+            "INSERT INTO BidTypAreaCounts VALUES (?, ?, ?, ?)",
+            ((200 + uid, uid, 100 + uid, float(uid)) for uid in range(1, 31)),
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("large.mdb", "1")
+        count_selects = [
+            sql
+            for sql in statements
+            if "FROM [BIDTYPAREACOUNTS]" in sql.upper()
+            and sql.lstrip().upper().startswith("SELECT")
+        ]
+        count_updates = [
+            sql
+            for sql in statements
+            if sql.lstrip().upper().startswith("UPDATE [BIDTYPAREACOUNTS]")
+        ]
+        self.assertEqual(duplicate_uid, "2")
+        self.assertLessEqual(len(count_selects), 7)
+        self.assertEqual(count_updates, [])
+        copied_links = conn.execute(
+            "SELECT COUNT(*) FROM BidTypAreaCounts AS count_row "
+            "JOIN BidAreas AS area ON area.UID=count_row.BidAreaUID "
+            "JOIN BidTypAreas AS typical ON typical.UID=count_row.BidTypAreaUID "
+            "WHERE area.BidUID=2 AND typical.BidUID=2"
+        ).fetchone()[0]
+        self.assertEqual(copied_links, 30)
 
     def test_duplicate_bid_still_rejects_takeoff_with_missing_required_page(self):
         conn = sqlite3.connect(":memory:")
@@ -4615,6 +4767,1218 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             0,
         )
 
+    def test_bulk_takeoff_insert_scans_uid_space_once(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute("CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidConditions VALUES (2, 1)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidPages VALUES (3, 1)")
+        conn.execute(
+            "CREATE TABLE BidTakeoffs ("
+            "UID INTEGER, BidUID INTEGER, BidConditionUID INTEGER, "
+            "BidPageUID INTEGER, Position BLOB, ParentUID INTEGER)"
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        result = _SqliteDuplicateOps(conn).insert_takeoffs(
+            "large.mdb",
+            "1",
+            [
+                InsertTakeoffSpec("2", "3", None, [0.0, 0.0, 1.0, 1.0])
+                for _index in range(100)
+            ],
+        )
+        max_uid_queries = [
+            sql for sql in statements if sql.lstrip().upper().startswith("SELECT MAX")
+        ]
+        self.assertEqual(len(result), 100)
+        self.assertEqual(len(max_uid_queries), 2)
+
+    def test_bulk_page_delete_batches_cascade_statements(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidPages ("
+            "UID INTEGER, BidUID INTEGER, MasterPageUID INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, 1, NULL)",
+            ((uid,) for uid in range(1, 102)),
+        )
+        conn.execute("UPDATE BidPages SET MasterPageUID=100 WHERE UID=101")
+        statements = []
+        conn.set_trace_callback(statements.append)
+        self.assertTrue(
+            _SqliteDuplicateOps(conn).delete_pages(
+                "large.mdb", [str(uid) for uid in range(1, 101)]
+            )
+        )
+        selects = [
+            sql for sql in statements if sql.lstrip().upper().startswith("SELECT")
+        ]
+        updates = [
+            sql for sql in statements if sql.lstrip().upper().startswith("UPDATE")
+        ]
+        deletes = [
+            sql for sql in statements if sql.lstrip().upper().startswith("DELETE")
+        ]
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, MasterPageUID FROM BidPages ORDER BY UID"
+            ).fetchall(),
+            [(101, None)],
+        )
+        self.assertLessEqual(len(selects), 50)
+        self.assertLessEqual(len(updates), 2)
+        self.assertLessEqual(len(deletes), 2)
+
+    def test_cover_sheet_batches_page_and_folder_deletes(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidPageFolders ("
+            "UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE BidPages ("
+            "UID INTEGER, BidUID INTEGER, BidPageFolderUID INTEGER, "
+            "MasterPageUID INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidPageFolders VALUES (?, 1, NULL, ?)",
+            ((uid, f"Folder {uid}") for uid in range(1, 101)),
+        )
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, 1, ?, NULL)",
+            ((100 + uid, uid) for uid in range(1, 101)),
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        self.assertTrue(
+            _SqliteDuplicateOps(conn).save_cover_sheet(
+                "large.mdb",
+                "1",
+                {
+                    "deleted_page_uids": [str(uid) for uid in range(101, 201)],
+                    "deleted_folder_uids": [str(uid) for uid in range(1, 101)],
+                },
+            )
+        )
+        updates = [
+            sql for sql in statements if sql.lstrip().upper().startswith("UPDATE")
+        ]
+        deletes = [
+            sql for sql in statements if sql.lstrip().upper().startswith("DELETE")
+        ]
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages").fetchone()[0], 0)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidPageFolders").fetchone()[0], 0
+        )
+        self.assertLessEqual(len(updates), 7)
+        self.assertLessEqual(len(deletes), 4)
+
+    def test_cover_sheet_preserves_forward_new_folder_parent(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidPageFolders ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER NOT NULL, Name TEXT, "
+            "ParentUID INTEGER REFERENCES BidPageFolders(UID))"
+        )
+        conn.commit()
+        self.assertTrue(
+            _SqliteDuplicateOps(conn).save_cover_sheet(
+                "large.mdb",
+                "1",
+                {
+                    "measure_base": 0,
+                    "new_folders": [
+                        {
+                            "local_uid": "new_child",
+                            "name": "Child",
+                            "parent_uid": "new_parent",
+                        },
+                        {
+                            "local_uid": "new_parent",
+                            "name": "Parent",
+                            "parent_uid": None,
+                        },
+                    ],
+                },
+            )
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, ParentUID, Name FROM BidPageFolders ORDER BY UID"
+            ).fetchall(),
+            [(1, 2, "Child"), (2, None, "Parent")],
+        )
+
+    def test_cover_sheet_forward_folder_order_is_stable_at_batch_boundaries(self):
+        for row_count in (49, 50, 51, 99, 100, 101, 249, 250, 251, 999, 1000):
+            with self.subTest(row_count=row_count):
+                conn = sqlite3.connect(":memory:")
+                conn.execute("PRAGMA foreign_keys=ON")
+                conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+                conn.execute("INSERT INTO Bids VALUES (1)")
+                conn.execute(
+                    "CREATE TABLE BidPageFolders ("
+                    "UID INTEGER PRIMARY KEY, BidUID INTEGER NOT NULL, Name TEXT, "
+                    "ParentUID INTEGER REFERENCES BidPageFolders(UID))"
+                )
+                conn.commit()
+                folders = [
+                    {
+                        "local_uid": f"new_{index}",
+                        "name": f"Folder {index}",
+                        "parent_uid": (
+                            f"new_{index + 1}" if index + 1 < row_count else None
+                        ),
+                    }
+                    for index in range(row_count)
+                ]
+                self.assertTrue(
+                    _SqliteDuplicateOps(conn).save_cover_sheet(
+                        "large.mdb",
+                        "1",
+                        {"measure_base": 0, "new_folders": folders},
+                    )
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT UID, ParentUID, Name "
+                        "FROM BidPageFolders ORDER BY UID"
+                    ).fetchall(),
+                    [
+                        (
+                            uid,
+                            uid + 1 if uid < row_count else None,
+                            f"Folder {uid - 1}",
+                        )
+                        for uid in range(1, row_count + 1)
+                    ],
+                )
+
+    def test_later_chunk_delete_failure_rolls_back_page_condition_and_folder_batches(
+        self,
+    ):
+        class TransactionalOps(_SqliteDuplicateOps):
+            @contextmanager
+            def _connection(self, _db_path):
+                wrapper = _SqliteConnectionWrapper(self._connection_ref)
+                try:
+                    yield wrapper
+                except Exception:
+                    self._connection_ref.rollback()
+                    raise
+                else:
+                    self._connection_ref.commit()
+
+        def connection_for(table, extra_columns=""):
+            conn = sqlite3.connect(":memory:")
+            conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO Bids VALUES (1)")
+            conn.execute(
+                f"CREATE TABLE [{table}] ("
+                "UID INTEGER PRIMARY KEY, BidUID INTEGER"
+                f"{extra_columns})"
+            )
+            conn.executemany(
+                f"INSERT INTO [{table}] (UID, BidUID) VALUES (?, 1)",
+                ((uid,) for uid in range(1, 52)),
+            )
+            conn.execute(
+                f"CREATE TRIGGER fail_second_{table} BEFORE DELETE ON [{table}] "
+                "WHEN OLD.UID=51 BEGIN SELECT RAISE(ABORT, 'later chunk'); END"
+            )
+            conn.commit()
+            return conn
+
+        page_conn = connection_for("BidPages", ", MasterPageUID INTEGER")
+        page_conn.execute(
+            "INSERT INTO BidPages (UID, BidUID, MasterPageUID) VALUES (100, 1, 1)"
+        )
+        page_conn.commit()
+        with self.assertLogs("test", level="ERROR"):
+            self.assertFalse(
+                TransactionalOps(page_conn).delete_pages(
+                    "large.mdb", [str(uid) for uid in range(1, 52)]
+                )
+            )
+        self.assertEqual(
+            page_conn.execute("SELECT COUNT(*) FROM BidPages").fetchone()[0], 52
+        )
+        self.assertEqual(
+            page_conn.execute(
+                "SELECT MasterPageUID FROM BidPages WHERE UID=100"
+            ).fetchone()[0],
+            1,
+        )
+        condition_conn = connection_for("BidConditions")
+        with self.assertLogs("test", level="ERROR"):
+            self.assertFalse(
+                TransactionalOps(condition_conn).delete_conditions(
+                    "large.mdb", "1", [str(uid) for uid in range(1, 52)]
+                )
+            )
+        self.assertEqual(
+            condition_conn.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0],
+            51,
+        )
+        folder_conn = connection_for("BidConditionFolders", ", ParentUID INTEGER")
+        folder_conn.execute(
+            "INSERT INTO BidConditionFolders (UID, BidUID, ParentUID) "
+            "VALUES (100, 1, 1)"
+        )
+        folder_conn.commit()
+        with self.assertLogs("test", level="ERROR"):
+            self.assertFalse(
+                TransactionalOps(folder_conn).delete_condition_folders(
+                    "large.mdb", [str(uid) for uid in range(1, 52)]
+                )
+            )
+        self.assertEqual(
+            folder_conn.execute("SELECT COUNT(*) FROM BidConditionFolders").fetchone()[
+                0
+            ],
+            52,
+        )
+        self.assertEqual(
+            folder_conn.execute(
+                "SELECT ParentUID FROM BidConditionFolders WHERE UID=100"
+            ).fetchone()[0],
+            1,
+        )
+
+    def test_master_data_batch_creation_scans_each_uid_space_once(self):
+        def employee(index):
+            return SimpleNamespace(
+                uid=f"new_employee_{index}",
+                employee_no=f"E{index}",
+                first_name="Employee",
+                last_name=str(index),
+                address1="",
+                address2="",
+                city="",
+                state="",
+                zip="",
+                home_phone="",
+                mobile_phone="",
+                email="",
+                pay_class_uid="",
+            )
+
+        fixtures = (
+            (
+                "JobStatuses",
+                "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+                lambda ops: ops.save_job_statuses(
+                    "large.mdb",
+                    {
+                        "new": [
+                            {"uid": f"new_status_{index}", "name": f"Status {index}"}
+                            for index in range(100)
+                        ]
+                    },
+                ),
+            ),
+            (
+                "Employees",
+                "CREATE TABLE Employees ("
+                "UID INTEGER, EmployeeNo TEXT, FirstName TEXT, LastName TEXT)",
+                lambda ops: ops.save_employees(
+                    "large.mdb", {"new": [employee(index) for index in range(100)]}
+                ),
+            ),
+            (
+                "PayClasses",
+                "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+                lambda ops: ops.save_pay_classes(
+                    "large.mdb",
+                    {
+                        "new": [
+                            {"uid": f"new_class_{index}", "name": f"Class {index}"}
+                            for index in range(100)
+                        ]
+                    },
+                ),
+            ),
+            (
+                "CdnTypes",
+                "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)",
+                lambda ops: ops.save_condition_types(
+                    "large.mdb",
+                    {
+                        "new": [
+                            {"uid": f"new_type_{index}", "name": f"Type {index}"}
+                            for index in range(100)
+                        ]
+                    },
+                ),
+            ),
+        )
+        for table, create_sql, save in fixtures:
+            with self.subTest(table=table):
+                conn = sqlite3.connect(":memory:")
+                conn.execute(create_sql)
+                statements = []
+                conn.set_trace_callback(statements.append)
+                uid_map = save(_SqliteDuplicateOps(conn))
+                max_uid_queries = [
+                    sql
+                    for sql in statements
+                    if sql.lstrip().upper().startswith("SELECT MAX")
+                ]
+                self.assertEqual(len(uid_map), 100)
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0],
+                    100,
+                )
+                self.assertEqual(len(max_uid_queries), 1)
+
+    def test_master_data_batch_rejects_duplicate_correlation_uids_atomically(self):
+        duplicate_employee = SimpleNamespace(
+            uid="new_same",
+            employee_no="E1",
+            first_name="Employee",
+            last_name="One",
+            address1="",
+            address2="",
+            city="",
+            state="",
+            zip="",
+            home_phone="",
+            mobile_phone="",
+            email="",
+            pay_class_uid="",
+        )
+        second_employee = SimpleNamespace(
+            **{**vars(duplicate_employee), "employee_no": "E2", "last_name": "Two"}
+        )
+        fixtures = (
+            (
+                "JobStatuses",
+                "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+                lambda ops: ops.save_job_statuses(
+                    "malformed.mdb",
+                    {
+                        "new": [
+                            {"uid": "new_same", "name": "First"},
+                            {"uid": "new_same", "name": "Second"},
+                        ]
+                    },
+                ),
+            ),
+            (
+                "Employees",
+                "CREATE TABLE Employees ("
+                "UID INTEGER, EmployeeNo TEXT, FirstName TEXT, LastName TEXT)",
+                lambda ops: ops.save_employees(
+                    "malformed.mdb",
+                    {"new": [duplicate_employee, second_employee]},
+                ),
+            ),
+            (
+                "PayClasses",
+                "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+                lambda ops: ops.save_pay_classes(
+                    "malformed.mdb",
+                    {
+                        "new": [
+                            {"uid": "new_same", "name": "First"},
+                            {"uid": "new_same", "name": "Second"},
+                        ]
+                    },
+                ),
+            ),
+            (
+                "CdnTypes",
+                "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)",
+                lambda ops: ops.save_condition_types(
+                    "malformed.mdb",
+                    {
+                        "new": [
+                            {"uid": "new_same", "name": "First"},
+                            {"uid": "new_same", "name": "Second"},
+                        ]
+                    },
+                ),
+            ),
+        )
+        for table, create_sql, save in fixtures:
+            with self.subTest(table=table):
+                conn = sqlite3.connect(":memory:")
+                conn.execute(create_sql)
+                with self.assertLogs("test", level="ERROR"):
+                    self.assertIsNone(save(_SqliteDuplicateOps(conn)))
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0],
+                    0,
+                )
+
+    def test_bid_area_batch_rejects_duplicate_correlation_uids_atomically(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidAreas ("
+            "UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT, "
+            "Sequence INTEGER, GUID TEXT)"
+        )
+        with self.assertLogs("test", level="ERROR"):
+            result = _SqliteDuplicateOps(conn).save_bid_areas(
+                "malformed.mdb",
+                "1",
+                BidAreaChangeset(
+                    new=[
+                        BidArea("new_same", "1", "", "First", 0),
+                        BidArea("new_same", "1", "", "Second", 1),
+                    ],
+                    updated=[],
+                    deleted_uids=[],
+                ),
+            )
+        self.assertEqual(result, {})
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidAreas").fetchone()[0], 0)
+
+    def test_bid_area_batch_rejects_correlation_uid_colliding_with_existing_area(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidAreas ("
+            "UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT, "
+            "Sequence INTEGER, GUID TEXT)"
+        )
+        conn.execute("INSERT INTO BidAreas VALUES (7, 1, NULL, 'Existing', 0, '')")
+        with self.assertLogs("test", level="ERROR"):
+            result = _SqliteDuplicateOps(conn).save_bid_areas(
+                "malformed.mdb",
+                "1",
+                BidAreaChangeset(
+                    new=[BidArea("7", "1", "", "New", 1)],
+                    updated=[],
+                    deleted_uids=[],
+                ),
+            )
+        self.assertEqual(result, {})
+        self.assertEqual(
+            conn.execute("SELECT UID, Name FROM BidAreas ORDER BY UID").fetchall(),
+            [(7, "Existing")],
+        )
+
+    def test_master_data_batch_deletion_uses_bounded_statement_sets(self):
+        row_count = 251
+        deleted_uids = [str(uid) for uid in range(1, row_count + 1)]
+        cases = (
+            (
+                "JobStatuses",
+                (
+                    "CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)",
+                    "CREATE TABLE Bids (UID INTEGER, JobStatusUID INTEGER)",
+                ),
+                (
+                    (
+                        "INSERT INTO JobStatuses VALUES (?, ?)",
+                        [(uid, f"Status {uid}") for uid in range(1, row_count + 1)],
+                    ),
+                    (
+                        "INSERT INTO Bids VALUES (?, ?)",
+                        [(1000 + uid, uid) for uid in range(1, row_count + 1)],
+                    ),
+                ),
+                lambda ops: ops.save_job_statuses(
+                    "large.mdb", {"deleted_uids": deleted_uids}
+                ),
+                {"SELECT": 8, "UPDATE": 6, "DELETE": 6},
+            ),
+            (
+                "Employees",
+                (
+                    "CREATE TABLE Employees (UID INTEGER)",
+                    "CREATE TABLE Bids ("
+                    "UID INTEGER, EstimatorUID INTEGER, PrManagerUID INTEGER, "
+                    "JobSiteManagerUID INTEGER)",
+                    "CREATE TABLE BidEmployees (UID INTEGER, EmployeeUID INTEGER)",
+                    "CREATE TABLE BidDPCSubscribers ("
+                    "UID INTEGER, BidEmployeeUID INTEGER)",
+                    "CREATE TABLE BidTimeCards (UID INTEGER, BidEmployeeUID INTEGER)",
+                    "CREATE TABLE ConditionSets (UID INTEGER, EmployeeUID INTEGER)",
+                ),
+                (
+                    (
+                        "INSERT INTO Employees VALUES (?)",
+                        [(uid,) for uid in range(1, row_count + 1)],
+                    ),
+                    (
+                        "INSERT INTO Bids VALUES (?, ?, ?, ?)",
+                        [
+                            (1000 + uid, uid, uid, uid)
+                            for uid in range(1, row_count + 1)
+                        ],
+                    ),
+                    (
+                        "INSERT INTO BidEmployees VALUES (?, ?)",
+                        [(2000 + uid, uid) for uid in range(1, row_count + 1)],
+                    ),
+                    (
+                        "INSERT INTO BidDPCSubscribers VALUES (?, ?)",
+                        [(3000 + uid, uid) for uid in range(1, row_count + 1)],
+                    ),
+                    (
+                        "INSERT INTO BidTimeCards VALUES (?, ?)",
+                        [(4000 + uid, 2000 + uid) for uid in range(1, row_count + 1)],
+                    ),
+                    (
+                        "INSERT INTO ConditionSets VALUES (?, ?)",
+                        [(5000 + uid, uid) for uid in range(1, row_count + 1)],
+                    ),
+                ),
+                lambda ops: ops.save_employees(
+                    "large.mdb", {"deleted_uids": deleted_uids}
+                ),
+                {"SELECT": 13, "UPDATE": 24, "DELETE": 24},
+            ),
+            (
+                "PayClasses",
+                (
+                    "CREATE TABLE PayClasses (UID INTEGER, Name TEXT)",
+                    "CREATE TABLE Employees (UID INTEGER, PayClassUID INTEGER)",
+                    "CREATE TABLE BidEmployees (UID INTEGER, PayClassUID INTEGER)",
+                ),
+                (
+                    (
+                        "INSERT INTO PayClasses VALUES (?, ?)",
+                        [(uid, f"Class {uid}") for uid in range(1, row_count + 1)],
+                    ),
+                    (
+                        "INSERT INTO Employees VALUES (?, ?)",
+                        [(1000 + uid, uid) for uid in range(1, row_count + 1)],
+                    ),
+                    (
+                        "INSERT INTO BidEmployees VALUES (?, ?)",
+                        [(2000 + uid, uid) for uid in range(1, row_count + 1)],
+                    ),
+                ),
+                lambda ops: ops.save_pay_classes(
+                    "large.mdb", {"deleted_uids": deleted_uids}
+                ),
+                {"SELECT": 9, "UPDATE": 12, "DELETE": 6},
+            ),
+            (
+                "CdnTypes",
+                (
+                    "CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)",
+                    "CREATE TABLE BidConditions (UID INTEGER, CdnTypeUID INTEGER)",
+                ),
+                (
+                    (
+                        "INSERT INTO CdnTypes VALUES (?, ?)",
+                        [(uid, f"Type {uid}") for uid in range(1, row_count + 1)],
+                    ),
+                ),
+                lambda ops: ops.save_condition_types(
+                    "large.mdb", {"deleted_uids": deleted_uids}
+                ),
+                {"SELECT": 14, "UPDATE": 0, "DELETE": 6},
+            ),
+        )
+        for table, ddl, inserts, save, expected_counts in cases:
+            with self.subTest(table=table):
+                conn = sqlite3.connect(":memory:")
+                for statement in ddl:
+                    conn.execute(statement)
+                for statement, rows in inserts:
+                    conn.executemany(statement, rows)
+                statements = []
+                conn.set_trace_callback(statements.append)
+                self.assertEqual(save(_SqliteDuplicateOps(conn)), {})
+                counts = {
+                    operation: sum(
+                        sql.lstrip().upper().startswith(operation) for sql in statements
+                    )
+                    for operation in ("SELECT", "UPDATE", "DELETE")
+                }
+                self.assertEqual(counts, expected_counts)
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0],
+                    0,
+                )
+
+    def test_condition_type_batch_checks_all_usage_chunks_before_delete(self):
+        row_count = 51
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)")
+        conn.execute("CREATE TABLE BidConditions (UID INTEGER, CdnTypeUID INTEGER)")
+        conn.executemany(
+            "INSERT INTO CdnTypes VALUES (?, ?)",
+            ((uid, f"Type {uid}") for uid in range(1, row_count + 1)),
+        )
+        conn.execute("INSERT INTO BidConditions VALUES (1000, 51)")
+        statements = []
+        conn.set_trace_callback(statements.append)
+        with self.assertLogs("test", level="WARNING"):
+            result = _SqliteDuplicateOps(conn).save_condition_types(
+                "large.mdb",
+                {"deleted_uids": [str(uid) for uid in range(1, row_count + 1)]},
+            )
+        self.assertIsNone(result)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM CdnTypes").fetchone()[0], row_count
+        )
+        self.assertFalse(
+            any(
+                sql.lstrip().upper().startswith("DELETE FROM [CDNTYPES]")
+                for sql in statements
+            )
+        )
+
+    def test_bid_owned_preflight_chunks_around_access_parameter_limit(self):
+        for row_count in (50, 51, 254, 255, 256):
+            with self.subTest(row_count=row_count):
+                conn = sqlite3.connect(":memory:")
+                conn.execute("CREATE TABLE Bids (UID INTEGER)")
+                conn.execute("INSERT INTO Bids VALUES (1)")
+                conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+                conn.executemany(
+                    "INSERT INTO BidPages VALUES (?, 1)",
+                    ((uid,) for uid in range(1, row_count + 1)),
+                )
+                cursor = _ParameterLimitedSqliteCursorWrapper(conn, 255)
+                self.assertEqual(
+                    require_single_bid_scope_for_uids(
+                        cursor, "BidPages", range(1, row_count + 1)
+                    ),
+                    1,
+                )
+                self.assertLessEqual(max(cursor.parameter_counts), 50)
+
+    def test_large_condition_and_folder_deletes_stay_below_access_parameter_limit(
+        self,
+    ):
+        row_count = 256
+        uid_strings = [str(uid) for uid in range(1, row_count + 1)]
+        condition_conn = sqlite3.connect(":memory:")
+        condition_conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        condition_conn.execute("INSERT INTO Bids VALUES (1)")
+        condition_conn.execute(
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)"
+        )
+        condition_conn.executemany(
+            "INSERT INTO BidConditions VALUES (?, 1)",
+            ((uid,) for uid in range(1, row_count + 1)),
+        )
+        condition_statements = []
+        condition_conn.set_trace_callback(condition_statements.append)
+        self.assertTrue(
+            _ParameterLimitedSqliteOps(condition_conn).delete_conditions(
+                "large.mdb", "1", uid_strings
+            )
+        )
+        self.assertEqual(
+            sum(
+                sql.lstrip().upper().startswith("DELETE FROM [BIDCONDITIONS]")
+                for sql in condition_statements
+            ),
+            6,
+        )
+        folder_conn = sqlite3.connect(":memory:")
+        folder_conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        folder_conn.execute("INSERT INTO Bids VALUES (1)")
+        folder_conn.execute(
+            "CREATE TABLE BidConditionFolders ("
+            "UID INTEGER, BidUID INTEGER, ParentUID INTEGER)"
+        )
+        folder_conn.executemany(
+            "INSERT INTO BidConditionFolders VALUES (?, 1, NULL)",
+            ((uid,) for uid in range(1, row_count + 1)),
+        )
+        folder_statements = []
+        folder_conn.set_trace_callback(folder_statements.append)
+        self.assertTrue(
+            _ParameterLimitedSqliteOps(folder_conn).delete_condition_folders(
+                "large.mdb", uid_strings
+            )
+        )
+        folder_counts = {
+            operation: sum(
+                sql.lstrip().upper().startswith(operation) for sql in folder_statements
+            )
+            for operation in ("UPDATE", "DELETE")
+        }
+        self.assertEqual(folder_counts, {"UPDATE": 6, "DELETE": 6})
+
+    def test_large_annotation_delete_uses_bounded_statements(self):
+        class LimitedAnnotationOps(
+            AnnotationOperationsMixin, _ParameterLimitedSqliteOps
+        ):
+            pass
+
+        row_count = 256
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute("CREATE TABLE BidAnnotationRects (UID INTEGER, BidUID INTEGER)")
+        conn.executemany(
+            "INSERT INTO BidAnnotationRects VALUES (?, 1)",
+            ((uid,) for uid in range(1, row_count + 1)),
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        self.assertTrue(
+            LimitedAnnotationOps(conn).delete_annotations(
+                "large.mdb",
+                [(str(uid), "rect") for uid in range(1, row_count + 1)],
+            )
+        )
+        self.assertEqual(
+            sum(
+                sql.lstrip().upper().startswith("DELETE FROM [BIDANNOTATIONRECTS]")
+                for sql in statements
+            ),
+            6,
+        )
+
+    def test_large_project_and_bid_batches_stay_below_access_parameter_limit(self):
+        row_count = 256
+        uid_strings = [str(uid) for uid in range(1, row_count + 1)]
+        move_conn = sqlite3.connect(":memory:")
+        move_conn.execute("CREATE TABLE BidProjects (UID INTEGER)")
+        move_conn.executemany("INSERT INTO BidProjects VALUES (?)", ((900,), (901,)))
+        move_conn.execute(
+            "CREATE TABLE Bids ("
+            "UID INTEGER, BidProjectUID INTEGER, OrigBidProjectUID INTEGER)"
+        )
+        move_conn.executemany(
+            "INSERT INTO Bids VALUES (?, 900, NULL)",
+            ((uid,) for uid in range(1, row_count + 1)),
+        )
+        move_statements = []
+        move_conn.set_trace_callback(move_statements.append)
+        move_ops = _ParameterLimitedSqliteOps(move_conn)
+        self.assertTrue(
+            move_ops.move_bids_to_project(
+                "large.mdb", uid_strings, "901", orig_project_uid="900"
+            )
+        )
+        self.assertTrue(move_ops.orphan_bids("large.mdb", uid_strings))
+        self.assertEqual(
+            sum(
+                sql.lstrip().upper().startswith("UPDATE [BIDS]")
+                for sql in move_statements
+            ),
+            12,
+        )
+        project_conn = sqlite3.connect(":memory:")
+        project_conn.execute("CREATE TABLE BidProjects (UID INTEGER)")
+        project_conn.executemany(
+            "INSERT INTO BidProjects VALUES (?)",
+            ((uid,) for uid in range(1, row_count + 1)),
+        )
+        project_conn.execute(
+            "CREATE TABLE Bids ("
+            "UID INTEGER, BidProjectUID INTEGER, OrigBidProjectUID INTEGER)"
+        )
+        project_conn.executemany(
+            "INSERT INTO Bids VALUES (?, ?, ?)",
+            ((1000 + uid, uid, uid) for uid in range(1, row_count + 1)),
+        )
+        project_statements = []
+        project_conn.set_trace_callback(project_statements.append)
+        self.assertTrue(
+            _ParameterLimitedSqliteOps(project_conn).delete_projects(
+                "large.mdb", uid_strings
+            )
+        )
+        project_counts = {
+            operation: sum(
+                sql.lstrip().upper().startswith(operation) for sql in project_statements
+            )
+            for operation in ("UPDATE", "DELETE")
+        }
+        self.assertEqual(project_counts, {"UPDATE": 12, "DELETE": 6})
+        bid_conn = sqlite3.connect(":memory:")
+        bid_conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        bid_conn.executemany(
+            "INSERT INTO Bids VALUES (?)",
+            ((uid,) for uid in range(1, row_count + 1)),
+        )
+        bid_statements = []
+        bid_conn.set_trace_callback(bid_statements.append)
+        self.assertTrue(
+            _ParameterLimitedSqliteOps(bid_conn).delete_bids("large.mdb", uid_strings)
+        )
+        self.assertEqual(
+            sum(
+                sql.lstrip().upper().startswith("DELETE FROM [BIDS]")
+                for sql in bid_statements
+            ),
+            6,
+        )
+
+    def test_large_page_image_adjustment_uses_bounded_updates(self):
+        row_count = 256
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidPages ("
+            "UID INTEGER, BidUID INTEGER, Rotation INTEGER, FlipX INTEGER, "
+            "FlipY INTEGER, Invert INTEGER, Bitonal INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, 1, 0, 0, 0, 0, 0)",
+            ((uid,) for uid in range(1, row_count + 1)),
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        self.assertTrue(
+            _ParameterLimitedSqliteOps(conn).save_page_image_adjustments(
+                "large.mdb",
+                [str(uid) for uid in range(1, row_count + 1)],
+                90,
+                True,
+                False,
+                True,
+                False,
+            )
+        )
+        self.assertEqual(
+            sum(
+                sql.lstrip().upper().startswith("UPDATE [BIDPAGES]")
+                for sql in statements
+            ),
+            6,
+        )
+
+    def test_access_plan_item_preflight_uses_access_dml_and_validates_bid_scope(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", ((1,), (2,)))
+        conn.execute(
+            "CREATE TABLE BidTakeoffs ("
+            "UID INTEGER, BidUID INTEGER, ParentUID INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidTakeoffs VALUES (?, ?, ?)",
+            ((10, 1, None), (11, 1, 10), (20, 2, None)),
+        )
+        conn.execute("CREATE TABLE BidAnnotationRects (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidAnnotationRects VALUES (30, 1)")
+        statements = []
+        conn.set_trace_callback(statements.append)
+        ops = _SqliteDuplicateOps(conn)
+        MdbWriter.verify_plan_items_exist(
+            ops,
+            "large.mdb",
+            "1",
+            ("10", "11"),
+            (("30", "rect"),),
+        )
+        emitted_sql = "\n".join(statements).upper()
+        self.assertNotIn("OPENJSON", emitted_sql)
+        self.assertNotIn("SET NOCOUNT", emitted_sql)
+        with self.assertRaisesRegex(Exception, "does not belong to Bids.UID=1"):
+            MdbWriter.verify_plan_items_exist(
+                ops,
+                "large.mdb",
+                "1",
+                ("20",),
+                (),
+            )
+
+    def test_bulk_annotation_insert_scans_each_table_uid_space_once(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidPages VALUES (3, 1)")
+        conn.execute(
+            "CREATE TABLE BidAnnotationRects ("
+            "UID INTEGER, BidUID INTEGER, BidPageUID INTEGER, Position BLOB, "
+            "Color INTEGER, Width INTEGER)"
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        result = _SqliteAnnotationOps(conn).insert_annotations(
+            "large.mdb",
+            "1",
+            [
+                InsertAnnotationSpec(
+                    page_uid="3",
+                    annotation_type="rect",
+                    position=[0.0, 0.0, 1.0, 1.0],
+                    color="#000000",
+                    width=1.0,
+                )
+                for _index in range(100)
+            ],
+        )
+        max_uid_queries = [
+            sql for sql in statements if sql.lstrip().upper().startswith("SELECT MAX")
+        ]
+        self.assertEqual(len(result), 100)
+        self.assertEqual(len(max_uid_queries), 1)
+
+    def test_duplicate_conditions_batches_source_reads_and_identity_scans(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidConditions ("
+            "UID INTEGER, BidUID INTEGER, GUID TEXT, RefNo INTEGER, Name TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO BidConditions VALUES (?, 1, ?, ?, ?)",
+            ((uid, f"source-{uid}", uid, f"Condition {uid}") for uid in range(1, 101)),
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        result = _SqliteDuplicateOps(conn).duplicate_conditions(
+            "large.mdb", "1", [str(uid) for uid in range(1, 101)]
+        )
+        max_queries = [
+            sql for sql in statements if sql.lstrip().upper().startswith("SELECT MAX")
+        ]
+        source_queries = [
+            sql
+            for sql in statements
+            if "FROM [BIDCONDITIONS]" in sql.upper()
+            and "[GUID]" in sql.upper()
+            and "[NAME]" in sql.upper()
+        ]
+        self.assertEqual(len(result), 100)
+        self.assertEqual(len(max_queries), 2)
+        self.assertLessEqual(len(source_queries), 2)
+
+    def test_new_bid_batches_page_and_legend_identity_scans(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
+        conn.execute("INSERT INTO Settings VALUES (1)")
+        conn.execute("CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, JobName TEXT)")
+        conn.execute(
+            "CREATE TABLE BidPages ("
+            "UID INTEGER, BidUID INTEGER, Width REAL, Height REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE BidLegends ("
+            "UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)"
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        result = _SqliteDuplicateOps(conn).create_bid(
+            "large.mdb",
+            None,
+            {
+                "job_name": "Large Bid",
+                "pages": [
+                    {"name": f"Page {index}", "width": 42.0, "height": 30.0}
+                    for index in range(100)
+                ],
+            },
+        )
+        max_uid_queries = [
+            sql for sql in statements if sql.lstrip().upper().startswith("SELECT MAX")
+        ]
+        self.assertEqual(result, "1")
+        self.assertEqual(len(max_uid_queries), 6)
+
+    def test_cover_sheet_batches_new_page_identity_scans(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidPages ("
+            "UID INTEGER, BidUID INTEGER, Width REAL, Height REAL)"
+        )
+        statements = []
+        conn.set_trace_callback(statements.append)
+        result = _SqliteDuplicateOps(conn).save_cover_sheet(
+            "large.mdb",
+            "1",
+            {
+                "pages": [
+                    {
+                        "uid": None,
+                        "name": f"Page {index}",
+                        "width": 42.0,
+                        "height": 30.0,
+                        "scale_factor1": 0.125,
+                        "scale_factor2": 12.0,
+                        "show_mode": 0,
+                    }
+                    for index in range(100)
+                ]
+            },
+        )
+        max_uid_queries = [
+            sql for sql in statements if sql.lstrip().upper().startswith("SELECT MAX")
+        ]
+        self.assertTrue(result)
+        self.assertEqual(len(max_uid_queries), 1)
+
+    def test_bid_area_batch_allocates_once_and_preserves_forward_parent(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidAreas ("
+            "UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT, "
+            "Sequence INTEGER, GUID TEXT)"
+        )
+        new_areas = [
+            BidArea("new_0", "1", "new_99", "Forward child", 0),
+            *(
+                BidArea(f"new_{index}", "1", "", f"Area {index}", index)
+                for index in range(1, 99)
+            ),
+            BidArea("new_99", "1", "", "Forward parent", 99),
+        ]
+        statements = []
+        conn.set_trace_callback(statements.append)
+        uid_map = _SqliteDuplicateOps(conn).save_bid_areas(
+            "large.mdb",
+            "1",
+            BidAreaChangeset(new=new_areas, updated=[], deleted_uids=[]),
+        )
+        max_uid_queries = [
+            sql for sql in statements if sql.lstrip().upper().startswith("SELECT MAX")
+        ]
+        self.assertEqual(len(uid_map), 100)
+        self.assertEqual(len(max_uid_queries), 2)
+        self.assertEqual(
+            conn.execute(
+                "SELECT ParentUID FROM BidAreas WHERE UID=?", uid_map["new_0"]
+            ).fetchone()[0],
+            int(uid_map["new_99"]),
+        )
+
+    def test_bid_area_batch_inserts_forward_parent_before_child_for_fk_backends(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidAreas ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER NOT NULL, "
+            "ParentUID INTEGER REFERENCES BidAreas(UID), Name TEXT, "
+            "Sequence INTEGER, GUID TEXT)"
+        )
+        conn.commit()
+        uid_map = _SqliteDuplicateOps(conn).save_bid_areas(
+            "large.mdb",
+            "1",
+            BidAreaChangeset(
+                new=[
+                    BidArea("new_child", "1", "new_parent", "Child", 1),
+                    BidArea("new_parent", "1", "", "Parent", 0),
+                ],
+                updated=[],
+                deleted_uids=[],
+            ),
+        )
+        self.assertEqual(
+            uid_map,
+            {"new_child": "1", "new_parent": "2"},
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, ParentUID, Name FROM BidAreas ORDER BY UID"
+            ).fetchall(),
+            [(1, 2, "Child"), (2, None, "Parent")],
+        )
+
+    def test_bid_area_forward_parent_order_is_stable_at_batch_boundaries(self):
+        for row_count in (49, 50, 51, 99, 100, 101, 249, 250, 251, 999, 1000):
+            with self.subTest(row_count=row_count):
+                conn = sqlite3.connect(":memory:")
+                conn.execute("PRAGMA foreign_keys=ON")
+                conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+                conn.execute("INSERT INTO Bids VALUES (1)")
+                conn.execute(
+                    "CREATE TABLE BidAreas ("
+                    "UID INTEGER PRIMARY KEY, BidUID INTEGER NOT NULL, "
+                    "ParentUID INTEGER REFERENCES BidAreas(UID), Name TEXT, "
+                    "Sequence INTEGER, GUID TEXT)"
+                )
+                conn.commit()
+                areas = [
+                    BidArea(
+                        f"new_{index}",
+                        "1",
+                        f"new_{index + 1}" if index + 1 < row_count else "",
+                        f"Area {index}",
+                        index,
+                    )
+                    for index in range(row_count)
+                ]
+                uid_map = _SqliteDuplicateOps(conn).save_bid_areas(
+                    "large.mdb",
+                    "1",
+                    BidAreaChangeset(new=areas, updated=[], deleted_uids=[]),
+                )
+                self.assertEqual(len(uid_map), row_count)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT UID, ParentUID, Name, Sequence "
+                        "FROM BidAreas ORDER BY UID"
+                    ).fetchall(),
+                    [
+                        (
+                            uid,
+                            uid + 1 if uid < row_count else None,
+                            f"Area {uid - 1}",
+                            uid - 1,
+                        )
+                        for uid in range(1, row_count + 1)
+                    ],
+                )
+
+    def test_bid_area_batch_failure_returns_no_allocated_identity_map(self):
+        class FailingAreaOps(_SqliteDuplicateOps):
+            def __init__(self, connection):
+                super().__init__(connection)
+                self.area_insert_count = 0
+
+            def _execute_insert_values(
+                self, cursor, schema, table, values, required, operation
+            ):
+                if table == "BidAreas":
+                    self.area_insert_count += 1
+                    if self.area_insert_count == 2:
+                        raise RuntimeError("forced second area insert failure")
+                return super()._execute_insert_values(
+                    cursor, schema, table, values, required, operation
+                )
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidAreas ("
+            "UID INTEGER, BidUID INTEGER, ParentUID INTEGER, Name TEXT, "
+            "Sequence INTEGER, GUID TEXT)"
+        )
+        result = FailingAreaOps(conn).save_bid_areas(
+            "large.mdb",
+            "1",
+            BidAreaChangeset(
+                new=[
+                    BidArea("new_0", "1", "", "First", 0),
+                    BidArea("new_1", "1", "", "Second", 1),
+                ],
+                updated=[],
+                deleted_uids=[],
+            ),
+        )
+        self.assertEqual(result, {})
+
     def test_takeoff_insert_rejects_cross_bid_batch_before_any_insert(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER)")
@@ -4823,7 +6187,9 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             ("Orphan layer", 0),
         )
         with self.assertLogs("test", level="ERROR") as rename_logs:
-            self.assertFalse(ops.rename_condition_folder("malformed.mdb", "8", "Changed"))
+            self.assertFalse(
+                ops.rename_condition_folder("malformed.mdb", "8", "Changed")
+            )
         self.assertIn("Bids has no row for UID 99", rename_logs.output[0])
         with self.assertLogs("test", level="ERROR") as delete_logs:
             self.assertFalse(ops.delete_condition_folders("malformed.mdb", ["8"]))

@@ -83,163 +83,165 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         if not bid_uids:
             return True
         try:
-            uids = [int(u) for u in bid_uids]
+            uids = self._normalize_int_uids(bid_uids, "Bids")
         except (TypeError, ValueError) as exc:
             if self._record_caught_mutation_error(exc):
                 raise
             self.logger.warning("Invalid bid uids passed to delete_bids: %s", bid_uids)
             return False
-        placeholders_sql = placeholders(uids)
-        page_subquery = (
-            f"(SELECT UID FROM [BidPages] WHERE BidUID IN ({placeholders_sql}))"
-        )
-        bid_filter = f"BidUID IN ({placeholders_sql})"
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "Bids", ("UID",))
                 cursor = conn.cursor()
                 require_unique_bid_owned_uid_matches(cursor, "Bids", uids)
-
-                def _del_bid(table: str) -> None:
-                    if schema.optional_table_missing(table) or not schema.column_exists(
-                        table, "BidUID"
-                    ):
-                        return
-                    cursor.execute(f"DELETE FROM [{table}] WHERE {bid_filter}", *uids)
-
-                def _del_page(table: str) -> None:
-                    if (
-                        schema.optional_table_missing(table)
-                        or schema.optional_table_missing("BidPages")
-                        or not schema.column_exists(table, "BidPageUID")
-                        or not schema.column_exists("BidPages", "UID")
-                        or not schema.column_exists("BidPages", "BidUID")
-                    ):
-                        return
-                    cursor.execute(
-                        f"DELETE FROM [{table}] WHERE BidPageUID IN {page_subquery}",
-                        *uids,
-                    )
-
-                def _del_takeoff_link(table: str) -> None:
-                    if (
-                        schema.optional_table_missing(table)
-                        or schema.optional_table_missing("BidTakeoffs")
-                        or not schema.column_exists("BidTakeoffs", "UID")
-                        or not schema.column_exists("BidTakeoffs", "BidUID")
-                    ):
-                        return
-                    for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
-                        if not schema.column_exists(table, reference_column):
-                            continue
-                        cursor.execute(
-                            f"DELETE FROM [{table}] WHERE [{reference_column}] IN "
-                            f"(SELECT [UID] FROM [BidTakeoffs] "
-                            f"WHERE BidUID IN ({placeholders_sql}))",
-                            *uids,
-                        )
-
-                def _del_child_by_bid_parent(
-                    child_table: str, child_fk: str, parent_table: str
-                ) -> None:
-                    if (
-                        schema.optional_table_missing(child_table)
-                        or schema.optional_table_missing(parent_table)
-                        or not schema.column_exists(child_table, child_fk)
-                        or not schema.column_exists(parent_table, "UID")
-                        or not schema.column_exists(parent_table, "BidUID")
-                    ):
-                        return
-                    cursor.execute(
-                        f"DELETE FROM [{child_table}] WHERE [{child_fk}] IN "
-                        f"(SELECT [UID] FROM [{parent_table}] "
-                        f"WHERE BidUID IN ({placeholders_sql}))",
-                        *uids,
-                    )
-
-                if (
-                    not schema.optional_table_missing("BidPercents")
-                    and not schema.optional_table_missing("BidTakeoffs")
-                    and schema.column_exists("BidPercents", "BidTakeoffUID")
-                    and schema.column_exists("BidTakeoffs", "UID")
-                    and schema.column_exists("BidTakeoffs", "BidUID")
-                ):
-                    cursor.execute(
-                        "DELETE FROM [BidPercents] WHERE [BidTakeoffUID] IN "
-                        f"(SELECT [UID] FROM [BidTakeoffs] WHERE BidUID IN ({placeholders_sql}))",
-                        *uids,
-                    )
-                if (
-                    not schema.optional_table_missing("BidSettings")
-                    and not schema.optional_table_missing("BidPages")
-                    and schema.column_exists("BidSettings", "BidPageSelectedUID")
-                    and schema.column_exists("BidPages", "UID")
-                    and schema.column_exists("BidPages", "BidUID")
-                ):
-                    cursor.execute(
-                        "UPDATE [BidSettings] SET [BidPageSelectedUID]=NULL "
-                        f"WHERE [BidPageSelectedUID] IN {page_subquery}",
-                        *uids,
-                    )
-                for table in TAKEOFF_REFERENCE_TABLES:
-                    _del_takeoff_link(table)
-                for table in _PAGE_SCOPED:
-                    _del_page(table)
-                    _del_bid(table)
-                for table in _BID_SCOPED_PRE:
-                    _del_bid(table)
-                for parent_table, child_fk in (
-                    ("BidLaborCostCodes", "BidLaborCostCodeUID"),
-                    ("BidTimeCardStates", "BidTimeCardStateUID"),
-                ):
-                    _del_child_by_bid_parent("BidPercents", child_fk, parent_table)
-                for parent_table, child_fk in (
-                    ("BidEmployees", "BidEmployeeUID"),
-                    ("BidAreas", "BidAreaUID"),
-                    ("BidTypAreas", "BidTypicalAreaUID"),
-                    ("BidLaborCostCodes", "BidLaborCostCodeUID"),
-                    ("BidTimeCardStates", "BidTimeCardStateUID"),
-                ):
-                    _del_child_by_bid_parent("BidTimeCards", child_fk, parent_table)
-                for parent_table, child_fk in (
-                    ("BidAreas", "BidAreaUID"),
-                    ("BidTypAreas", "BidTypAreaUID"),
-                ):
-                    _del_child_by_bid_parent("BidTypAreaCounts", child_fk, parent_table)
-                    _del_child_by_bid_parent("BidPageSettings", child_fk, parent_table)
-                if (
-                    not schema.optional_table_missing("ConditionSetStyles")
-                    and not schema.optional_table_missing("BidConditions")
-                    and schema.column_exists("ConditionSetStyles", "ConditionStyleUID")
-                    and schema.column_exists("BidConditions", "UID")
-                    and schema.column_exists("BidConditions", "BidUID")
-                ):
-                    cursor.execute(
-                        "DELETE FROM [ConditionSetStyles] WHERE [ConditionStyleUID] IN "
-                        f"(SELECT [UID] FROM [BidConditions] WHERE BidUID IN ({placeholders_sql}))",
-                        *uids,
-                    )
-                if not schema.optional_table_missing("BidTakeoffs"):
-                    if schema.column_exists("BidTakeoffs", "BidUID"):
-                        cursor.execute(
-                            "DELETE FROM [BidTakeoffs] "
-                            f"WHERE BidUID IN ({placeholders_sql})",
-                            *uids,
-                        )
-                    else:
-                        _del_page("BidTakeoffs")
-                for table in _BID_SCOPED_POST:
-                    _del_bid(table)
-                cursor.execute(
-                    f"DELETE FROM [Bids] WHERE UID IN ({placeholders_sql})", *uids
-                )
+                for uid_chunk in self._iter_access_chunks(uids):
+                    self._delete_bids_cascade_chunk(cursor, schema, uid_chunk)
                 return True
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
             self.logger.exception("Failed to delete bids %s from %s", bid_uids, db_path)
             return False
+
+    def _delete_bids_cascade_chunk(self, cursor, schema, uids: list[int]) -> None:
+        placeholders_sql = placeholders(uids)
+        page_subquery = (
+            f"(SELECT UID FROM [BidPages] WHERE BidUID IN ({placeholders_sql}))"
+        )
+        bid_filter = f"BidUID IN ({placeholders_sql})"
+
+        def _del_bid(table: str) -> None:
+            if schema.optional_table_missing(table) or not schema.column_exists(
+                table, "BidUID"
+            ):
+                return
+            cursor.execute(f"DELETE FROM [{table}] WHERE {bid_filter}", *uids)
+
+        def _del_page(table: str) -> None:
+            if (
+                schema.optional_table_missing(table)
+                or schema.optional_table_missing("BidPages")
+                or not schema.column_exists(table, "BidPageUID")
+                or not schema.column_exists("BidPages", "UID")
+                or not schema.column_exists("BidPages", "BidUID")
+            ):
+                return
+            cursor.execute(
+                f"DELETE FROM [{table}] WHERE BidPageUID IN {page_subquery}",
+                *uids,
+            )
+
+        def _del_takeoff_link(table: str) -> None:
+            if (
+                schema.optional_table_missing(table)
+                or schema.optional_table_missing("BidTakeoffs")
+                or not schema.column_exists("BidTakeoffs", "UID")
+                or not schema.column_exists("BidTakeoffs", "BidUID")
+            ):
+                return
+            for reference_column in TAKEOFF_ANNOTATION_REFERENCE_COLUMNS:
+                if not schema.column_exists(table, reference_column):
+                    continue
+                cursor.execute(
+                    f"DELETE FROM [{table}] WHERE [{reference_column}] IN "
+                    f"(SELECT [UID] FROM [BidTakeoffs] "
+                    f"WHERE BidUID IN ({placeholders_sql}))",
+                    *uids,
+                )
+
+        def _del_child_by_bid_parent(
+            child_table: str, child_fk: str, parent_table: str
+        ) -> None:
+            if (
+                schema.optional_table_missing(child_table)
+                or schema.optional_table_missing(parent_table)
+                or not schema.column_exists(child_table, child_fk)
+                or not schema.column_exists(parent_table, "UID")
+                or not schema.column_exists(parent_table, "BidUID")
+            ):
+                return
+            cursor.execute(
+                f"DELETE FROM [{child_table}] WHERE [{child_fk}] IN "
+                f"(SELECT [UID] FROM [{parent_table}] "
+                f"WHERE BidUID IN ({placeholders_sql}))",
+                *uids,
+            )
+
+        if (
+            not schema.optional_table_missing("BidPercents")
+            and not schema.optional_table_missing("BidTakeoffs")
+            and schema.column_exists("BidPercents", "BidTakeoffUID")
+            and schema.column_exists("BidTakeoffs", "UID")
+            and schema.column_exists("BidTakeoffs", "BidUID")
+        ):
+            cursor.execute(
+                "DELETE FROM [BidPercents] WHERE [BidTakeoffUID] IN "
+                f"(SELECT [UID] FROM [BidTakeoffs] WHERE BidUID IN ({placeholders_sql}))",
+                *uids,
+            )
+        if (
+            not schema.optional_table_missing("BidSettings")
+            and not schema.optional_table_missing("BidPages")
+            and schema.column_exists("BidSettings", "BidPageSelectedUID")
+            and schema.column_exists("BidPages", "UID")
+            and schema.column_exists("BidPages", "BidUID")
+        ):
+            cursor.execute(
+                "UPDATE [BidSettings] SET [BidPageSelectedUID]=NULL "
+                f"WHERE [BidPageSelectedUID] IN {page_subquery}",
+                *uids,
+            )
+        for table in TAKEOFF_REFERENCE_TABLES:
+            _del_takeoff_link(table)
+        for table in _PAGE_SCOPED:
+            _del_page(table)
+            _del_bid(table)
+        for table in _BID_SCOPED_PRE:
+            _del_bid(table)
+        for parent_table, child_fk in (
+            ("BidLaborCostCodes", "BidLaborCostCodeUID"),
+            ("BidTimeCardStates", "BidTimeCardStateUID"),
+        ):
+            _del_child_by_bid_parent("BidPercents", child_fk, parent_table)
+        for parent_table, child_fk in (
+            ("BidEmployees", "BidEmployeeUID"),
+            ("BidAreas", "BidAreaUID"),
+            ("BidTypAreas", "BidTypicalAreaUID"),
+            ("BidLaborCostCodes", "BidLaborCostCodeUID"),
+            ("BidTimeCardStates", "BidTimeCardStateUID"),
+        ):
+            _del_child_by_bid_parent("BidTimeCards", child_fk, parent_table)
+        for parent_table, child_fk in (
+            ("BidAreas", "BidAreaUID"),
+            ("BidTypAreas", "BidTypAreaUID"),
+        ):
+            _del_child_by_bid_parent("BidTypAreaCounts", child_fk, parent_table)
+            _del_child_by_bid_parent("BidPageSettings", child_fk, parent_table)
+        if (
+            not schema.optional_table_missing("ConditionSetStyles")
+            and not schema.optional_table_missing("BidConditions")
+            and schema.column_exists("ConditionSetStyles", "ConditionStyleUID")
+            and schema.column_exists("BidConditions", "UID")
+            and schema.column_exists("BidConditions", "BidUID")
+        ):
+            cursor.execute(
+                "DELETE FROM [ConditionSetStyles] WHERE [ConditionStyleUID] IN "
+                f"(SELECT [UID] FROM [BidConditions] WHERE BidUID IN ({placeholders_sql}))",
+                *uids,
+            )
+        if not schema.optional_table_missing("BidTakeoffs"):
+            if schema.column_exists("BidTakeoffs", "BidUID"):
+                cursor.execute(
+                    "DELETE FROM [BidTakeoffs] "
+                    f"WHERE BidUID IN ({placeholders_sql})",
+                    *uids,
+                )
+            else:
+                _del_page("BidTakeoffs")
+        for table in _BID_SCOPED_POST:
+            _del_bid(table)
+        cursor.execute(f"DELETE FROM [Bids] WHERE UID IN ({placeholders_sql})", *uids)
 
     def duplicate_bid(self, db_path: str, bid_uid: str) -> Optional[str]:
         try:
@@ -336,42 +338,70 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                             bid_uid,
                             new_bid_uid,
                             excluded_source_uids=skipped_derived_uids.get(table),
+                            schema=schema,
                         )
                         or {}
                     )
                 cond_folder_uid_map = self._copy_with_uid_map(
-                    cursor, "BidConditionFolders", "BidUID", bid_uid, new_bid_uid
+                    cursor,
+                    "BidConditionFolders",
+                    "BidUID",
+                    bid_uid,
+                    new_bid_uid,
+                    schema=schema,
                 )
                 duplicated_uid_maps["BidConditionFolders"] = cond_folder_uid_map
-                cond_uid_map = self._copy_with_uid_map(
-                    cursor, "BidConditions", "BidUID", bid_uid, new_bid_uid
-                )
-                duplicated_uid_maps["BidConditions"] = cond_uid_map
                 layer_uid_map = self._copy_with_uid_map(
-                    cursor, "BidLayers", "BidUID", bid_uid, new_bid_uid
+                    cursor,
+                    "BidLayers",
+                    "BidUID",
+                    bid_uid,
+                    new_bid_uid,
+                    schema=schema,
                 )
                 duplicated_uid_maps["BidLayers"] = layer_uid_map
+                cond_uid_map = self._copy_with_uid_map(
+                    cursor,
+                    "BidConditions",
+                    "BidUID",
+                    bid_uid,
+                    new_bid_uid,
+                    schema=schema,
+                    relationship_uid_maps=duplicated_uid_maps,
+                )
+                duplicated_uid_maps["BidConditions"] = cond_uid_map
                 area_uid_map = self._copy_with_uid_map(
-                    cursor, "BidAreas", "BidUID", bid_uid, new_bid_uid
+                    cursor,
+                    "BidAreas",
+                    "BidUID",
+                    bid_uid,
+                    new_bid_uid,
+                    schema=schema,
                 )
                 duplicated_uid_maps["BidAreas"] = area_uid_map
-                for old_area_uid, new_area_uid in area_uid_map.items():
-                    duplicated_uid_maps.setdefault("BidTypAreaCounts", {}).update(
-                        self._copy_bid_table_rows(
-                            cursor,
-                            "BidTypAreaCounts",
-                            "BidAreaUID",
-                            old_area_uid,
-                            new_area_uid,
-                        )
-                        or {}
-                    )
+                duplicated_uid_maps["BidTypAreaCounts"] = self._copy_area_count_rows(
+                    cursor,
+                    schema,
+                    bid_uid,
+                    area_uid_map,
+                    duplicated_uid_maps.get("BidTypAreas", {}),
+                )
                 page_folder_uid_map = self._copy_with_uid_map(
-                    cursor, "BidPageFolders", "BidUID", bid_uid, new_bid_uid
+                    cursor,
+                    "BidPageFolders",
+                    "BidUID",
+                    bid_uid,
+                    new_bid_uid,
+                    schema=schema,
                 )
                 duplicated_uid_maps["BidPageFolders"] = page_folder_uid_map
                 named_view_uid_map = self._copy_with_uid_map(
-                    cursor, "BidNamedViews", "BidUID", bid_uid, new_bid_uid
+                    cursor,
+                    "BidNamedViews",
+                    "BidUID",
+                    bid_uid,
+                    new_bid_uid,
+                    schema=schema,
                 )
                 duplicated_uid_maps["BidNamedViews"] = named_view_uid_map
                 page_cols = sorted(schema.get_columns("BidPages"))
@@ -579,7 +609,14 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         f"SELECT {layer_select} FROM [BidLayers] WHERE [IsTemplate] <> 0"
                     )
                     template_rows = cursor.fetchall()
-                for i, tpl in enumerate(template_rows):
+                template_uids = iter(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "BidLayers", len(template_rows)
+                    )
+                )
+                for i, (tpl, assigned_uid) in enumerate(
+                    zip(template_rows, template_uids)
+                ):
                     show_val = -1 if tpl.Show in (True, -1, 1) else 0
                     locked_val = -1 if tpl.IsLocked in (True, -1, 1) else 0
                     self._execute_insert_values(
@@ -587,9 +624,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         schema,
                         "BidLayers",
                         {
-                            "UID": self._next_uid_preserving_references(
-                                cursor, schema, "BidLayers"
-                            ),
+                            "UID": assigned_uid,
                             "BidUID": new_bid_uid,
                             "Name": tpl.Name,
                             "Show": show_val,
@@ -604,10 +639,12 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 first_page_uid = None
                 local_folder_uid_map: Dict[str, int] = {}
                 if new_folders:
-                    for nf in new_folders:
-                        assigned_uid = self._next_uid_preserving_references(
-                            cursor, schema, "BidPageFolders"
+                    folder_uids = iter(
+                        self._next_uids_preserving_references(
+                            cursor, schema, "BidPageFolders", len(new_folders)
                         )
+                    )
+                    for nf, assigned_uid in zip(new_folders, folder_uids):
                         raw_parent = nf.get("parent_uid")
                         if raw_parent and str(raw_parent) in local_folder_uid_map:
                             parent_val = local_folder_uid_map[str(raw_parent)]
@@ -634,13 +671,26 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         local_uid = nf.get("local_uid")
                         if local_uid:
                             local_folder_uid_map[str(local_uid)] = assigned_uid
-                page_counter = 0
-                for page in pages:
-                    if page.get("width") is None:
-                        continue
-                    page_uid = self._next_uid_preserving_references(
-                        cursor, schema, "BidPages"
+                writable_pages = [
+                    page for page in pages if page.get("width") is not None
+                ]
+                page_uids = iter(
+                    self._next_uids_preserving_references(
+                        cursor, schema, "BidPages", len(writable_pages)
                     )
+                )
+                has_legends = not schema.optional_table_missing("BidLegends")
+                legend_uids = iter(
+                    self._next_uids_preserving_references(
+                        cursor,
+                        schema,
+                        "BidLegends",
+                        len(writable_pages) if has_legends else 0,
+                    )
+                )
+                for page_counter, (page, page_uid) in enumerate(
+                    zip(writable_pages, page_uids)
+                ):
                     if first_page_uid is None:
                         first_page_uid = page_uid
                     page_guid = "{" + str(uuid.uuid4()).upper() + "}"
@@ -681,15 +731,13 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         ("UID", "BidUID"),
                         "create_bid_page",
                     )
-                    if not schema.optional_table_missing("BidLegends"):
+                    if has_legends:
                         self._execute_insert_values(
                             cursor,
                             schema,
                             "BidLegends",
                             {
-                                "UID": self._next_uid_preserving_references(
-                                    cursor, schema, "BidLegends"
-                                ),
+                                "UID": next(legend_uids),
                                 "BidUID": new_bid_uid,
                                 "BidPageUID": page_uid,
                                 "FontName": "Arial",
@@ -699,7 +747,6 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                             ("UID", "BidUID", "BidPageUID"),
                             "create_bid_legend",
                         )
-                    page_counter += 1
                 if not schema.optional_table_missing("BidSettings"):
                     self._execute_insert_values(
                         cursor,
@@ -801,9 +848,11 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         new_uid: str,
         extra_overrides: dict = None,
         excluded_source_uids: Optional[set[str]] = None,
+        schema=None,
     ) -> Dict[str, str]:
         uid_map: Dict[str, str] = {}
-        schema = self._schema(cursor.connection)
+        if schema is None:
+            schema = self._schema(cursor.connection)
         try:
             if schema.optional_table_missing(table) or not schema.column_exists(
                 table, uid_col
@@ -921,10 +970,26 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             else:
                 if not child_uid_map:
                     continue
-                where_columns = ("UID", relationship.child_column)
-                scopes = tuple(
-                    (new_child_uid,) for new_child_uid in child_uid_map.values()
+                child_references = self._duplicated_child_references(
+                    cursor,
+                    relationship.child_table,
+                    relationship.child_column,
+                    child_uid_map.values(),
                 )
+                for new_child_uid, old_parent_uid in child_references.items():
+                    new_parent_uid = parent_uid_map.get(old_parent_uid)
+                    if new_parent_uid is None:
+                        continue
+                    self._update_if_columns(
+                        cursor,
+                        schema,
+                        relationship.child_table,
+                        relationship.child_column,
+                        new_parent_uid,
+                        ("UID", relationship.child_column),
+                        (new_child_uid, old_parent_uid),
+                    )
+                continue
             for old_parent_uid, new_parent_uid in parent_uid_map.items():
                 for scope in scopes:
                     self._update_if_columns(
@@ -936,6 +1001,27 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         where_columns,
                         (*scope, old_parent_uid),
                     )
+
+    def _duplicated_child_references(
+        self,
+        cursor,
+        table: str,
+        column: str,
+        child_uids,
+    ) -> Dict[str, str]:
+        normalized_uids = list(dict.fromkeys(int(uid) for uid in child_uids))
+        references: Dict[str, str] = {}
+        for uid_chunk in self._iter_access_chunks(normalized_uids):
+            uid_sql = placeholders(uid_chunk)
+            cursor.execute(
+                f"SELECT [UID], [{column}] FROM [{table}] "
+                f"WHERE [UID] IN ({uid_sql}) AND [{column}] IS NOT NULL "
+                f"AND [{column}]<>0",
+                *uid_chunk,
+            )
+            for row in cursor.fetchall():
+                references[str(int(row[0]))] = str(int(row[1]))
+        return references
 
     @staticmethod
     def _duplicated_reference_uids(
@@ -1024,6 +1110,81 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         except pyodbc.Error as exc:
             if self._record_caught_mutation_error(exc):
                 raise
+        return uid_map
+
+    def _copy_area_count_rows(
+        self,
+        cursor,
+        schema,
+        source_bid_uid: str,
+        area_uid_map: Dict[str, str],
+        typical_area_uid_map: Dict[str, str],
+    ) -> Dict[str, str]:
+        table = "BidTypAreaCounts"
+        uid_map: Dict[str, str] = {}
+        if (
+            not area_uid_map
+            or schema.optional_table_missing(table)
+            or schema.optional_table_missing("BidAreas")
+            or not schema.column_exists(table, "BidAreaUID")
+        ):
+            return uid_map
+        cols = sorted(schema.get_columns(table))
+        selected_columns = ", ".join(f"[count_row].[{column}]" for column in cols)
+        cursor.execute(
+            f"SELECT {selected_columns} FROM [{table}] AS [count_row] "
+            "INNER JOIN [BidAreas] AS [owner_area] ON "
+            "[count_row].[BidAreaUID]=[owner_area].[UID] "
+            "WHERE [owner_area].[BidUID]=?",
+            source_bid_uid,
+        )
+        binary_cols = {
+            description[0]
+            for description in cursor.description
+            if description[1] is bytearray
+        }
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        if not rows:
+            return uid_map
+        has_uid = "UID" in cols
+        if has_uid:
+            require_valid_unique_bid_owned_uids((row["UID"] for row in rows), table)
+            new_row_uids = iter(
+                self._next_uids_preserving_references(cursor, schema, table, len(rows))
+            )
+        for row_data in rows:
+            source_area_uid = str(int(row_data["BidAreaUID"]))
+            row_data["BidAreaUID"] = area_uid_map[source_area_uid]
+            if "BidTypAreaUID" in row_data and row_data["BidTypAreaUID"] not in (
+                None,
+                "",
+                0,
+                "0",
+            ):
+                source_typical_uid = str(int(row_data["BidTypAreaUID"]))
+                remapped_typical_uid = typical_area_uid_map.get(source_typical_uid)
+                if remapped_typical_uid is not None:
+                    row_data["BidTypAreaUID"] = remapped_typical_uid
+            if has_uid:
+                source_row_uid = str(int(row_data["UID"]))
+                new_row_uid = next(new_row_uids)
+                row_data["UID"] = new_row_uid
+            values = {}
+            for column in cols:
+                value = row_data[column]
+                if column in binary_cols and value is not None:
+                    value = coerce_binary_column_value(value)
+                values[column] = value
+            self._execute_insert_values(
+                cursor,
+                schema,
+                table,
+                values,
+                ("BidAreaUID",),
+                f"copy_{table}",
+            )
+            if has_uid:
+                uid_map[source_row_uid] = str(new_row_uid)
         return uid_map
 
     def _require_duplicable_bid_relationships(
@@ -1284,9 +1445,12 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         uid_col: str,
         old_uid: str,
         new_uid: str,
+        schema=None,
+        relationship_uid_maps: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> dict:
         uid_map = {}
-        schema = self._schema(cursor.connection)
+        if schema is None:
+            schema = self._schema(cursor.connection)
         try:
             if schema.optional_table_missing(table) or not schema.column_exists(
                 table, uid_col
@@ -1316,6 +1480,10 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 new_row_uid_int = next(new_row_uids)
                 row_data["UID"] = new_row_uid_int
                 row_data[uid_col] = new_uid
+                if relationship_uid_maps:
+                    self._remap_row_relationships(
+                        table, row_data, relationship_uid_maps
+                    )
                 if "GUID" in row_data:
                     row_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                 values = []
@@ -1337,6 +1505,29 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             if self._record_caught_mutation_error(exc):
                 raise
         return uid_map
+
+    @staticmethod
+    def _remap_row_relationships(
+        table: str,
+        row_data: Dict[str, object],
+        relationship_uid_maps: Dict[str, Dict[str, str]],
+    ) -> None:
+        for relationship in BID_RELATIONSHIPS:
+            if relationship.child_table != table:
+                continue
+            parent_uid_map = relationship_uid_maps.get(relationship.parent_table, {})
+            if not parent_uid_map:
+                continue
+            value = row_data.get(relationship.child_column)
+            if value in (None, "", 0, "0"):
+                continue
+            try:
+                source_uid = str(int(value))
+            except (TypeError, ValueError):
+                continue
+            remapped_uid = parent_uid_map.get(source_uid)
+            if remapped_uid is not None:
+                row_data[relationship.child_column] = remapped_uid
 
     def _update_page_owned_relationship(
         self,

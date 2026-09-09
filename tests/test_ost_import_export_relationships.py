@@ -560,6 +560,10 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         connection = sqlite3.connect(":memory:")
         _create_import_schema(connection)
         connection.execute(
+            "INSERT INTO BidPages (UID, BidUID, Name, Sequence) "
+            "VALUES (20, 1, 'Page', 1)"
+        )
+        connection.execute(
             "INSERT INTO BidPageSettings "
             "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (30, 20, 10, 2)"
         )
@@ -567,12 +571,13 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             "INSERT INTO BidPageSettings "
             "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (31, 20, 11, 2)"
         )
-        selected = MdbReader()._parse_selected_area_for_page(
+        selected = MdbReader()._parse_page_area_selections_for_bid(
             _SqliteConnection(connection),
-            "20",
+            "1",
+            {"20": object()},
             _SqliteSchema(connection),
         )
-        self.assertEqual(selected, "11")
+        self.assertEqual(selected["20"], "11")
 
     def test_page_area_save_retains_highest_uid_when_duplicates_tie(self):
         class _Cursor:

@@ -1,5 +1,7 @@
 import logging
+import sqlite3
 import unittest
+from collections import namedtuple
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -26,6 +28,94 @@ class _Schema:
     @staticmethod
     def column_exists(_table, _column):
         return True
+
+
+class _SelectiveSchema:
+    def __init__(self, columns_by_table):
+        self._columns_by_table = {
+            table: frozenset(columns) for table, columns in columns_by_table.items()
+        }
+        self.optional_table_calls = []
+        self.column_exists_calls = []
+        self.require_column_calls = []
+
+    def optional_table_missing(self, table):
+        self.optional_table_calls.append(table)
+        return table not in self._columns_by_table
+
+    def column_exists(self, table, column):
+        self.column_exists_calls.append((table, column))
+        return column in self._columns_by_table.get(table, ())
+
+    def require_column(self, table, column):
+        self.require_column_calls.append((table, column))
+        if column not in self._columns_by_table.get(table, ()):
+            raise AssertionError(f"Missing required column {table}.{column}")
+
+    def get_columns(self, table):
+        return self._columns_by_table.get(table, ())
+
+
+class _LimitedReadCursor:
+    def __init__(self, owner):
+        self._owner = owner
+        self._cursor = owner.connection.cursor()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback):
+        self._cursor.close()
+        return False
+
+    @property
+    def description(self):
+        return self._cursor.description
+
+    def execute(self, query, *params):
+        if len(params) > self._owner.parameter_limit:
+            raise AssertionError(
+                f"Query used {len(params)} parameters; "
+                f"limit is {self._owner.parameter_limit}"
+            )
+        self._owner.queries.append((query, len(params)))
+        self._cursor.execute(query, params)
+        return self
+
+    def fetchall(self):
+        rows = self._cursor.fetchall()
+        if self._cursor.description is None:
+            return rows
+        columns = [column[0] for column in self._cursor.description]
+        row_type = namedtuple("LimitedReadRow", columns, rename=True)
+        return [row_type(*row) for row in rows]
+
+
+class _LimitedReadConnection:
+    def __init__(self, connection, schema, parameter_limit=255):
+        self.connection = connection
+        self.schema = schema
+        self.parameter_limit = parameter_limit
+        self.queries = []
+
+    def cursor(self):
+        return _LimitedReadCursor(self)
+
+
+class _StrictReadPolicyReader(BidDataReaderMixin):
+    @staticmethod
+    def _schema(connection):
+        return connection.schema
+
+    @staticmethod
+    def _record_caught_read_error(_exc, _file_path=None):
+        return True
+
+
+class _TolerantReadPolicyReader(_StrictReadPolicyReader):
+    @staticmethod
+    def _record_caught_read_error(_exc, _file_path=None):
+        return False
 
 
 class _FailingContentConnection:
@@ -101,7 +191,7 @@ def _owner_validation_reader(takeoffs):
             return {}
 
         @staticmethod
-        def _parse_page_area_selections_for_bid(_connection, _pages, _schema):
+        def _parse_page_area_selections_for_bid(_connection, _bid_uid, _pages, _schema):
             return {}
 
         @staticmethod
@@ -134,6 +224,153 @@ def _owner_validation_reader(takeoffs):
 
 
 class BidDataReaderTests(unittest.TestCase):
+    def test_page_owned_fallback_is_set_based_at_access_parameter_boundaries(self):
+        for page_count in (50, 51, 254, 255, 256, 1000):
+            with self.subTest(page_count=page_count):
+                database = sqlite3.connect(":memory:")
+                database.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+                database.execute(
+                    "CREATE TABLE BidPageSettings ("
+                    "UID INTEGER, BidPageUID INTEGER, BidAreaSelected INTEGER)"
+                )
+                database.executemany(
+                    "INSERT INTO BidPages VALUES (?, 7)",
+                    ((uid,) for uid in range(1, page_count + 1)),
+                )
+                database.executemany(
+                    "INSERT INTO BidPageSettings VALUES (?, ?, 1)",
+                    ((uid, uid) for uid in range(1, page_count + 1)),
+                )
+                database.execute("INSERT INTO BidPages VALUES (2000, 8)")
+                database.execute("INSERT INTO BidPageSettings VALUES (2000, 2000, 1)")
+                database.execute("INSERT INTO BidPageSettings VALUES (3000, 3000, 1)")
+                schema = _SelectiveSchema(
+                    {
+                        "BidPages": ("UID", "BidUID"),
+                        "BidPageSettings": (
+                            "UID",
+                            "BidPageUID",
+                            "BidAreaSelected",
+                        ),
+                    }
+                )
+                connection = _LimitedReadConnection(database, schema)
+                rows = _TolerantReadPolicyReader()._select_all_by_bid_or_page(
+                    connection,
+                    "BidPageSettings",
+                    "7",
+                    [str(uid) for uid in range(1, page_count + 1)],
+                )
+                self.assertEqual(
+                    [row["UID"] for row in rows],
+                    [str(uid) for uid in range(1, page_count + 1)],
+                )
+                self.assertEqual(len(connection.queries), 1)
+                query, parameter_count = connection.queries[0]
+                self.assertEqual(parameter_count, 1)
+                self.assertIn("SELECT [UID] FROM [BidPages]", query)
+                database.close()
+
+    def test_page_owned_fallback_is_not_reported_as_a_sql_read_error(self):
+        database = sqlite3.connect(":memory:")
+        database.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        database.execute(
+            "CREATE TABLE BidPageSettings (UID INTEGER, BidPageUID INTEGER)"
+        )
+        database.execute("INSERT INTO BidPages VALUES (10, 7)")
+        database.execute("INSERT INTO BidPageSettings VALUES (20, 10)")
+        schema = _SelectiveSchema(
+            {
+                "BidPages": ("UID", "BidUID"),
+                "BidPageSettings": ("UID", "BidPageUID"),
+            }
+        )
+        connection = _LimitedReadConnection(database, schema)
+        rows = _StrictReadPolicyReader()._select_all_by_bid_or_page(
+            connection, "BidPageSettings", "7", ["10"]
+        )
+        self.assertEqual([row["UID"] for row in rows], ["20"])
+        database.close()
+
+    def test_page_table_with_bid_uid_keeps_direct_reader_path(self):
+        database = sqlite3.connect(":memory:")
+        database.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        database.execute(
+            "CREATE TABLE BidComments ("
+            "UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)"
+        )
+        database.executemany(
+            "INSERT INTO BidComments VALUES (?, ?, ?)",
+            ((1, 7, 10), (2, 8, 20)),
+        )
+        schema = _SelectiveSchema(
+            {
+                "BidPages": ("UID", "BidUID"),
+                "BidComments": ("UID", "BidUID", "BidPageUID"),
+            }
+        )
+        connection = _LimitedReadConnection(database, schema)
+        rows = _StrictReadPolicyReader()._select_all_by_bid_or_page(
+            connection, "BidComments", "7", ["10"]
+        )
+        self.assertEqual([row["UID"] for row in rows], ["1"])
+        self.assertEqual(len(connection.queries), 1)
+        query, parameter_count = connection.queries[0]
+        self.assertEqual(parameter_count, 1)
+        self.assertIn("WHERE [BidUID] = ?", query)
+        self.assertNotIn("SELECT [UID] FROM [BidPages]", query)
+        database.close()
+
+    def test_page_area_selection_reader_uses_one_bid_scoped_query(self):
+        page_count = 1000
+        database = sqlite3.connect(":memory:")
+        database.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        database.execute(
+            "CREATE TABLE BidPageSettings ("
+            "UID INTEGER, BidPageUID INTEGER, BidAreaUID INTEGER, "
+            "BidAreaSelected INTEGER)"
+        )
+        database.executemany(
+            "INSERT INTO BidPages VALUES (?, 7)",
+            ((uid,) for uid in range(1, page_count + 1)),
+        )
+        database.executemany(
+            "INSERT INTO BidPageSettings VALUES (?, ?, ?, 1)",
+            ((uid, uid, 1000 + uid) for uid in range(1, page_count + 1)),
+        )
+        database.execute("INSERT INTO BidPageSettings VALUES (2001, 1, 9001, 2)")
+        database.execute("INSERT INTO BidPageSettings VALUES (2002, 1, 9002, 2)")
+        database.execute("INSERT INTO BidPages VALUES (3000, 8)")
+        database.execute("INSERT INTO BidPageSettings VALUES (3000, 3000, 9999, 3)")
+        schema = _SelectiveSchema(
+            {
+                "BidPages": ("UID", "BidUID"),
+                "BidPageSettings": (
+                    "UID",
+                    "BidPageUID",
+                    "BidAreaUID",
+                    "BidAreaSelected",
+                ),
+            }
+        )
+        connection = _LimitedReadConnection(database, schema)
+        selected = _StrictReadPolicyReader()._parse_page_area_selections_for_bid(
+            connection,
+            "7",
+            {str(uid): object() for uid in range(1, page_count + 1)},
+            schema,
+        )
+        self.assertEqual(len(selected), page_count)
+        self.assertEqual(selected["1"], "9002")
+        self.assertEqual(selected["1000"], "2000")
+        self.assertNotIn("3000", selected)
+        self.assertEqual(connection.queries[0][1], 1)
+        self.assertEqual(len(connection.queries), 1)
+        self.assertEqual(schema.optional_table_calls, ["BidPageSettings"])
+        self.assertEqual(len(schema.require_column_calls), 3)
+        self.assertEqual(schema.column_exists_calls, [("BidPageSettings", "UID")])
+        database.close()
+
     def test_bid_load_rejects_takeoff_with_missing_required_owner(self):
         class OwnerValidationReader(BidDataReaderMixin):
             @contextmanager
@@ -161,7 +398,9 @@ class BidDataReaderTests(unittest.TestCase):
                 return {}
 
             @staticmethod
-            def _parse_page_area_selections_for_bid(_connection, _pages, _schema):
+            def _parse_page_area_selections_for_bid(
+                _connection, _bid_uid, _pages, _schema
+            ):
                 return {}
 
             @staticmethod

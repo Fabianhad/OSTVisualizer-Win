@@ -7270,6 +7270,57 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(emitted[-1], [])
         view.cleanup()
 
+    def test_clear_selection_signal_observes_fully_cleared_scene(self):
+        view = self._make_plan_view()
+        image = QImage(20, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor("white"))
+        background = ImageBackgroundItem(image, 100.0, 100.0)
+        view._scene.addItem(background)
+        view._background_item = background
+        view._current_page = Page(uid="page-1", name="Page 1")
+        view._current_bid_page_uid = "page-1"
+        view._selected_uids = {"takeoff-1"}
+        observations = []
+
+        def refresh_editing_projection(_uids):
+            view.set_editing_enabled(False)
+            observations.append(
+                (
+                    "selection",
+                    view._current_page,
+                    view._background_item,
+                    tuple(view._scene.items()),
+                )
+            )
+
+        view.takeoff_selection_changed.connect(refresh_editing_projection)
+        view.cursor_mode_change_requested.connect(
+            lambda _mode: observations.append(
+                (
+                    "cursor",
+                    view._current_page,
+                    view._background_item,
+                    tuple(view._scene.items()),
+                )
+            )
+        )
+        view.page_cleared.connect(
+            lambda: observations.append(
+                (
+                    "page",
+                    view._current_page,
+                    view._background_item,
+                    tuple(view._scene.items()),
+                )
+            )
+        )
+        view.clear()
+        self.assertEqual([entry[0] for entry in observations].count("selection"), 1)
+        self.assertEqual([entry[0] for entry in observations].count("page"), 1)
+        self.assertGreaterEqual([entry[0] for entry in observations].count("cursor"), 1)
+        self.assertTrue(all(entry[1:] == (None, None, ()) for entry in observations))
+        view.cleanup()
+
     def test_cancel_inline_text_annotation_edit_restores_original_text(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(

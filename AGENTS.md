@@ -117,6 +117,11 @@ Threading and events:
   resource identities; active-bid-only exports and condition renumbering are not
   offered for a different right-clicked bid. Selection-wide project commands
   carry the owning database alongside project UIDs.
+  Plan scene clearing invalidates every scene-owned graphics-item reference and
+  completes its internal empty-state transition before emitting selection,
+  cursor, or Page-clear signals. `QGraphicsScene.clear()` destroys the C++
+  graphics items synchronously, so signal-driven toolbar projection must never
+  observe the prior Python wrappers during that teardown.
 - Progress-worker exceptions carry `None` plus the explicit exception object;
   they must not substitute a Boolean for a task's structured result. Duplicate
   Bid uses `WriteReloadResult` from service through presentation completion, so
@@ -461,6 +466,32 @@ Database backends:
 
 - Backend selection occurs at the descriptor/adapter registry boundary. Shared
   application and domain workflows use stable database IDs and neutral ports.
+- Routed writers must explicitly dispatch every backend-specific inherited
+  contract. Access Plan-item preflight uses bid-scoped Access queries, while SQL
+  keeps its locked JSON preflight; backend-specific SQL must never be selected
+  by Python method resolution alone. Access bulk creation allocates one
+  inbound-reference-safe UID range per table and batch. Bulk Page deletion owns
+  one bid-scoped preflight and applies each Page, Takeoff, annotation, settings,
+  Named View, and folder cleanup relation in bounded UID sets; Cover Sheet must
+  reuse that batch owner rather than restarting the cascade for each Page.
+  Bid-owned identity preflight and every active bulk delete/update must keep UID
+  predicates in the same bounded sets, including master-data cleanup, Condition
+  and folder cascades, annotation deletion, Project/Bid operations, and shared
+  Page image adjustments. Complete usage and ownership validation still finishes
+  before the first write. New master-data and Bid Area batches require distinct,
+  nonempty correlation UIDs before allocation; a returned UID map must identify
+  every submitted row unambiguously. Forward references among new Bid Areas and
+  Cover Sheet Page folders retain input-order UID allocation but insert parents
+  before children so Access and FK-enforcing backends reconstruct the same graph.
+  Raw bid reads for Page-owned tables without `BidUID`
+  resolve ownership through one bid-scoped `BidPages` subquery; do not expand the
+  complete Page list into parameters or signal a missing optional column as a
+  database error. Bid-wide Page-area selection hydration uses that same set-based
+  ownership boundary and applies the canonical selected-row precedence in one
+  query rather than once per Page.
+  Duplicate Bid remaps relationships from the actual copied rows rather than
+  scanning a parent-map Cartesian product, and its table-copy helpers reuse the
+  transaction's schema inspector.
 - Microsoft Access implementation remains under `infrastructure/mdb`; Microsoft
   SQL Server implementation remains under `infrastructure/sql`. Shared schema
   semantics and explicit adapter routing live under `infrastructure/database`.

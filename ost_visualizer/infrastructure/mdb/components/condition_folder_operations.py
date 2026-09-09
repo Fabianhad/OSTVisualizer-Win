@@ -88,7 +88,7 @@ class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
         if not folder_uids:
             return True
         try:
-            uids = [int(u) for u in folder_uids]
+            uids = self._normalize_int_uids(folder_uids, "BidConditionFolders")
         except (TypeError, ValueError) as exc:
             if self._record_caught_mutation_error(exc):
                 raise
@@ -97,7 +97,6 @@ class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
                 folder_uids,
             )
             return False
-        placeholders = ",".join("?" * len(uids))
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -107,26 +106,31 @@ class ConditionFolderOperationsMixin(AccessIdentityAllocationMixin):
                 if not schema.optional_table_missing(
                     "BidConditions"
                 ) and schema.column_exists("BidConditions", "BidConditionFolderUID"):
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM [BidConditions] "
-                        f"WHERE [BidConditionFolderUID] IN ({placeholders})",
-                        *uids,
-                    )
-                    row = cursor.fetchone()
-                    if row and int(row[0] or 0) > 0:
-                        self.logger.warning(
-                            "Refusing to delete condition folders in use: %s", uids
+                    for uid_chunk in self._iter_access_chunks(uids):
+                        where_sql, where_params = self._uid_where_clause(
+                            "BidConditionFolderUID", uid_chunk
                         )
-                        return False
+                        cursor.execute(
+                            "SELECT [BidConditionFolderUID] FROM [BidConditions] "
+                            f"WHERE {where_sql}",
+                            *where_params,
+                        )
+                        if cursor.fetchone():
+                            self.logger.warning(
+                                "Refusing to delete condition folders in use: %s",
+                                uids,
+                            )
+                            return False
                 if schema.column_exists("BidConditionFolders", "ParentUID"):
-                    cursor.execute(
-                        "UPDATE [BidConditionFolders] SET [ParentUID]=NULL "
-                        f"WHERE [ParentUID] IN ({placeholders})",
-                        *uids,
+                    self._execute_uid_in_update_chunks(
+                        cursor,
+                        "BidConditionFolders",
+                        "ParentUID",
+                        {"ParentUID": None},
+                        uids,
                     )
-                cursor.execute(
-                    f"DELETE FROM [BidConditionFolders] WHERE [UID] IN ({placeholders})",
-                    *uids,
+                self._execute_uid_in_delete_chunks(
+                    cursor, "BidConditionFolders", "UID", uids
                 )
                 return True
         except Exception as exc:

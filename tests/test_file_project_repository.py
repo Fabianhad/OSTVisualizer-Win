@@ -184,7 +184,9 @@ class MdbFileParserTests(unittest.TestCase):
                 return {}
 
             @staticmethod
-            def _parse_page_area_selections_for_bid(_connection, _bid_pages, _schema):
+            def _parse_page_area_selections_for_bid(
+                _connection, _bid_uid, _bid_pages, _schema
+            ):
                 return {}
 
             @staticmethod

@@ -14,6 +14,37 @@
 
 ### Fixed
 
+- Clearing a Plan view now releases scene-owned graphics-item references and
+  completes its internal empty-state transition before publishing selection,
+  cursor, or Page-clear signals. Synchronous toolbar refresh can no longer access
+  an `ImageBackgroundItem` after `QGraphicsScene` has destroyed its C++ owner.
+- Large Access writes now allocate one collision-safe UID range per table and
+  batch instead of rescanning the table and every inbound reference for each
+  inserted row. Bulk Page and Cover Sheet deletion now run each cleanup relation
+  in bounded UID sets instead of repeating the complete cascade and schema probe
+  for every Page or folder. Master-data deletion, bid-owned ownership preflight,
+  Condition/folder/annotation cleanup, Project/Bid batches, and shared Page image
+  adjustments now use the same bounded predicates rather than per-row work or
+  Access queries beyond its parameter limit. Duplicate Bid also remaps known
+  relationships while copying and resolves indirect Area-count links from the
+  rows actually copied, avoiding Cartesian update attempts, and reuses one schema
+  inspector for the complete operation. Bid Area batches retain valid forward
+  parents and return no generated identities when the transaction fails.
+- Batched master-data saves now reject duplicate or missing temporary correlation
+  UIDs before mutation instead of inserting multiple rows that collapse into one
+  returned UID-map entry. Bid Area and Cover Sheet Page-folder saves now insert
+  forward-referenced parents before their children while retaining input-order
+  identity allocation, preserving the validated hierarchy on SQL FK backends as
+  well as Access.
+- Page-owned raw reads for tables without `BidUID` now use one bid-scoped Page
+  subquery instead of expanding every Page UID into an Access parameter list.
+  Page-area selection hydration likewise resolves the complete Bid in one query,
+  preserving selected-row precedence without one SELECT per Page. The shared SQL
+  reader no longer mistakes the expected missing `BidUID` capability for an ODBC
+  failure.
+- Routed Access Plan-item preflight now uses the shared bid-scoped MDB identity
+  checks instead of inheriting SQL Server `OPENJSON` and lock-hint syntax. SQL
+  Server keeps its transactional locked preflight.
 - Routine Access writes now reuse the shared per-database reader/writer
   connections across their authoritative post-write reload instead of performing
   a physical ODBC reconnect after every save. Explicit refresh, replacement,

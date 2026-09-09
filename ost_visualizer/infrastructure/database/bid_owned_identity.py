@@ -1,5 +1,27 @@
 from __future__ import annotations
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Sequence
+
+BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE = 50
+
+
+def _iter_uid_query_chunks(
+    uid_ints: Sequence[int],
+    chunk_size: int = BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE,
+) -> Iterator[list[int]]:
+    for start in range(0, len(uid_ints), chunk_size):
+        yield list(uid_ints[start : start + chunk_size])
+
+
+def _fetch_uid_rows(cursor, table: str, columns: str, uid_ints: Sequence[int]):
+    rows = []
+    for uid_chunk in _iter_uid_query_chunks(uid_ints):
+        placeholders = ",".join("?" for _uid in uid_chunk)
+        cursor.execute(
+            f"SELECT {columns} FROM [{table}] WHERE [UID] IN ({placeholders})",
+            *uid_chunk,
+        )
+        rows.extend(cursor.fetchall())
+    return rows
 
 
 class MalformedBidOwnedUidError(RuntimeError):
@@ -60,12 +82,7 @@ def require_unique_bid_owned_uid_matches(cursor, table: str, uids) -> set[int]:
         uid_ints.append(uid_int)
     if not uid_ints:
         return set()
-    placeholders = ",".join("?" for _uid in uid_ints)
-    cursor.execute(
-        f"SELECT [UID] FROM [{table}] WHERE [UID] IN ({placeholders})",
-        *uid_ints,
-    )
-    rows = cursor.fetchall()
+    rows = _fetch_uid_rows(cursor, table, "[UID]", uid_ints)
     require_valid_unique_bid_owned_uids((row[0] for row in rows), table)
     return {int(row[0]) for row in rows}
 
@@ -107,12 +124,7 @@ def require_existing_bid_scoped_uid_matches(
         uid_ints.append(uid_int)
     if not uid_ints:
         return
-    placeholders = ",".join("?" for _uid in uid_ints)
-    cursor.execute(
-        f"SELECT [UID], [BidUID] FROM [{table}] " f"WHERE [UID] IN ({placeholders})",
-        *uid_ints,
-    )
-    rows = cursor.fetchall()
+    rows = _fetch_uid_rows(cursor, table, "[UID], [BidUID]", uid_ints)
     require_valid_unique_bid_owned_uids((row[0] for row in rows), table)
     matches = {int(row[0]): row[1] for row in rows}
     missing = sorted(set(uid_ints) - set(matches))
@@ -150,12 +162,7 @@ def require_single_bid_scope_for_uids(cursor, table: str, uids) -> int:
         raise MissingBidOwnedUidError(
             f"{table} mutation requires at least one authoritative target."
         )
-    placeholders = ",".join("?" for _uid in uid_ints)
-    cursor.execute(
-        f"SELECT [UID], [BidUID] FROM [{table}] " f"WHERE [UID] IN ({placeholders})",
-        *uid_ints,
-    )
-    rows = cursor.fetchall()
+    rows = _fetch_uid_rows(cursor, table, "[UID], [BidUID]", uid_ints)
     require_valid_unique_bid_owned_uids((row[0] for row in rows), table)
     matches = {int(row[0]): row[1] for row in rows}
     missing = sorted(set(uid_ints) - set(matches))

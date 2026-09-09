@@ -5882,6 +5882,9 @@ class TakeoffPlanView(
         self._takeoff_items.clear()
         self._hotlink_items.clear()
         self._uid_to_items = {}
+        self._background_item = None
+        self._overlay_items = []
+        self._white_canvas_item = None
         self._scene.clear()
         self._current_takeoffs = {}
         self._invalidate_snap_index()
@@ -5891,7 +5894,6 @@ class TakeoffPlanView(
         self._current_annotations = {}
         self._ann_db_uid_map = {}
         self._hidden_layer_uids.clear()
-        self.takeoff_selection_changed.emit([])
         self._select_band_origin = None
         self._select_band_active = False
         self._select_band_dragged = False
@@ -5930,7 +5932,6 @@ class TakeoffPlanView(
         self._rotation_before_edit.clear()
         if not preserve_place_session:
             self._apply_cursor_mode(CURSOR_MODE_SELECT)
-            self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         if self._paste_backout_active:
             self._paste_backout_active = False
             self._paste_backout_sources = []
@@ -5946,9 +5947,6 @@ class TakeoffPlanView(
         self._current_rotation = 0
         self._current_flip_x = False
         self._current_flip_y = False
-        self._background_item = None
-        self._overlay_items = []
-        self._white_canvas_item = None
         self._overlay_move_preview_base_item = None
         self._overlay_move_preview_overlay_item = None
         self._overlay_move_preview_base_request_id = None
@@ -5972,6 +5970,9 @@ class TakeoffPlanView(
         self._saved_scroll_state = None
         self._pending_page_data = None
         self._deferred_page_visual_result = None
+        self.takeoff_selection_changed.emit([])
+        if not preserve_place_session:
+            self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         if notify_page_cleared and had_page:
             self.page_cleared.emit()
 
