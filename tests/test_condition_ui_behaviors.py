@@ -21,15 +21,20 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     QueuedMutationResult,
     ResourceRef,
 )
-from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.application.dtos.update_condition_dto import (
+    UpdateConditionDto,
+    UpdateConditionResultDto,
+)
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
+from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
+from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
@@ -39,6 +44,7 @@ from ost_visualizer.presentation.components import (
     conditions_sidebar as conditions_sidebar_module,
 )
 from ost_visualizer.presentation.components.area_combo import AreaComboBox
+from ost_visualizer.presentation.components.page_combo import PageComboBox
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
     PlacementModeMixin,
@@ -216,6 +222,31 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         coordinator.load_bid_layers_sidebar()
         coordinator.load_bid_layers_sidebar_from_memory()
         self.assertEqual(calls, [("load", [], set()), ("load", [], set())])
+
+    def test_memory_page_refresh_rebuilds_picker_from_authoritative_pages(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        stale_page = Page(uid="old-page", name="Old page", sequence=1)
+        current_page = Page(uid="new-page", name="New page", sequence=2)
+        cached_bid = Bid(
+            uid=bid_ref.bid_uid,
+            name="Bid",
+            page_count=1,
+            pages_without_folder=[stale_page],
+        )
+        page_combo = PageComboBox()
+        self.addCleanup(page_combo.close)
+        coordinator = SidebarCoordinator(
+            SimpleNamespace(),
+            SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            SimpleNamespace(get_all_pages=lambda: [current_page]),
+        )
+        coordinator.takeoff_sidebar = page_combo
+        coordinator.load_takeoff_sidebar_from_memory(
+            bid_ref,
+            {bid_ref: cached_bid},
+        )
+        self.assertEqual(set(page_combo._page_items), {current_page.uid})
+        self.assertEqual(cached_bid.pages_without_folder, [current_page])
 
     def _show_compact_sidebar(self, sidebar: ConditionsSidebar) -> None:
         sidebar.resize(260, 180)
@@ -589,6 +620,42 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar._emit_selected_conditions()
         self.assertEqual(emitted, ["linear"])
 
+    def test_passive_multi_highlight_preserves_active_condition_after_rebuild(self):
+        class ForwardUidSet(set):
+            def __iter__(self):
+                return iter(("linear", "area"))
+
+        class ReverseUidSet(set):
+            def __iter__(self):
+                return iter(("area", "linear"))
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = {
+            "linear": Condition(
+                uid="linear",
+                name="Linear",
+                ref_no=1,
+                condition_type=Condition.TYPE_LINEAR,
+            ),
+            "area": Condition(
+                uid="area",
+                name="Area",
+                ref_no=2,
+                condition_type=Condition.TYPE_AREA,
+            ),
+        }
+        selected = ForwardUidSet(("linear", "area"))
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.highlight_conditions(selected)
+        self.assertEqual(sidebar.get_active_condition_uid(), "linear")
+        # The authoritative rebuild preserves the current row. Passive state
+        # projection must not replace it based on a set's iteration order.
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.highlight_conditions(ReverseUidSet(("linear", "area")), reveal=False)
+        self.assertEqual(set(sidebar.get_selected_condition_uids()), {"linear", "area"})
+        self.assertEqual(sidebar.get_active_condition_uid(), "linear")
+
     def test_condition_sidebar_passive_restore_does_not_expand_condition_path(self):
         sidebar = ConditionsSidebar(None)
         self.addCleanup(sidebar.close)
@@ -931,6 +998,167 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         finally:
             condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+
+    def _run_condition_delete_tool_projection(
+        self,
+        conditions,
+        deleted_uid,
+        *,
+        revoke_place_access_after_write=False,
+    ):
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.highlight_conditions({deleted_uid})
+
+        class Access:
+            def __init__(self):
+                self.allowed = {
+                    Feature.DELETE_CONDITION,
+                    Feature.PLACE_PLAN_ITEMS,
+                }
+
+            def is_allowed(self, feature):
+                return feature in self.allowed
+
+        access = Access()
+
+        class Toolbar:
+            def __init__(self):
+                self.place_enabled = False
+                self.refreshes = 0
+
+            def refresh(self):
+                self.refreshes += 1
+                selected = sidebar.get_selected_condition_uids()
+                self.place_enabled = bool(
+                    access.is_allowed(Feature.PLACE_PLAN_ITEMS)
+                    and selected
+                    and sidebar.is_condition_placeable(selected[0])
+                )
+
+        class Placement:
+            def __init__(self):
+                self.is_active = True
+                self.force_exit_calls = 0
+                self.enter_calls = []
+
+            def force_exit(self):
+                self.force_exit_calls += 1
+                self.is_active = False
+
+            def enter(self, condition_uid, condition_uids):
+                self.enter_calls.append((condition_uid, list(condition_uids)))
+                self.is_active = True
+                return True
+
+        toolbar = Toolbar()
+        placement = Placement()
+        ui_state = SimpleNamespace(
+            highlighted_condition_uids={deleted_uid},
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1"),
+            set_highlighted_conditions=lambda uids: setattr(
+                ui_state, "highlighted_condition_uids", set(uids)
+            ),
+        )
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = access
+        coordinator.conditions_sidebar = sidebar
+        coordinator.ui_state_manager = ui_state
+        coordinator._selection_projected_condition_uids = set()
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator._toolbar = toolbar
+        coordinator._mesh_window = None
+        coordinator._is_cleaning_up = False
+        coordinator._placement = placement
+        coordinator.flush_deferred_for_file = lambda _file_path: True
+        coordinator.ensure_select_mode = lambda: None
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return False
+
+            @staticmethod
+            def delete_conditions(_file_path, _bid_uid, condition_uids):
+                for uid in condition_uids:
+                    conditions.pop(uid, None)
+                if revoke_place_access_after_write:
+                    access.allowed.discard(Feature.PLACE_PLAN_ITEMS)
+                sidebar.load_conditions(conditions, {}, "Project")
+                # Authoritative projection occurs before the handler installs its
+                # captured fallback selection.
+                toolbar.refresh()
+                return True
+
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=ui_state,
+            workspace_state_model=make_workspace_state_model(),
+        )
+        with patch.object(
+            condition_action_handler,
+            "confirm_delete_conditions",
+            lambda _parent, names: [uid for uid, _name in names],
+        ):
+            handler.on_delete_requested([deleted_uid])
+        return sidebar, toolbar, placement
+
+    def test_condition_delete_fallback_reenables_takeoff_without_restarting_it(self):
+        conditions = self._make_conditions(3)
+        sidebar, toolbar, placement = self._run_condition_delete_tool_projection(
+            conditions, "c3"
+        )
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+        self.assertTrue(toolbar.place_enabled)
+        self.assertFalse(placement.is_active)
+        self.assertEqual(placement.force_exit_calls, 1)
+        self.assertEqual(placement.enter_calls, [])
+
+    def test_condition_delete_last_condition_disables_takeoff(self):
+        sidebar, toolbar, placement = self._run_condition_delete_tool_projection(
+            self._make_conditions(1), "c1"
+        )
+        self.assertEqual(sidebar.get_selected_condition_uids(), [])
+        self.assertFalse(toolbar.place_enabled)
+        self.assertFalse(placement.is_active)
+
+    def test_condition_delete_hidden_fallback_keeps_takeoff_disabled(self):
+        conditions = self._make_conditions(2)
+        conditions["c1"].layer_visible = False
+        sidebar, toolbar, placement = self._run_condition_delete_tool_projection(
+            conditions, "c2"
+        )
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertFalse(toolbar.place_enabled)
+        self.assertFalse(placement.is_active)
+
+    def test_condition_delete_different_type_fallback_enables_new_takeoff(self):
+        conditions = self._make_conditions(2)
+        conditions["c1"].condition_type = Condition.TYPE_LINEAR
+        conditions["c2"].condition_type = Condition.TYPE_AREA
+        sidebar, toolbar, placement = self._run_condition_delete_tool_projection(
+            conditions, "c2"
+        )
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertTrue(toolbar.place_enabled)
+        self.assertFalse(placement.is_active)
+        self.assertEqual(placement.enter_calls, [])
+
+    def test_condition_delete_fallback_respects_lost_place_access(self):
+        sidebar, toolbar, placement = self._run_condition_delete_tool_projection(
+            self._make_conditions(2),
+            "c2",
+            revoke_place_access_after_write=True,
+        )
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertFalse(toolbar.place_enabled)
+        self.assertFalse(placement.is_active)
 
     def test_condition_delete_revalidates_access_after_confirmation(self):
         from ost_visualizer.presentation.handlers import condition_action_handler
@@ -2448,6 +2676,27 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             button._pick_color()
         self.assertEqual(changes, [])
 
+    def test_repeated_condition_color_picker_cancellation_releases_dialogs(self):
+        button = _ColorButton(0)
+        real_color_dialog = QtWidgets.QColorDialog
+        try:
+            with patch(
+                "ost_visualizer.presentation.dialogs.edit_condition_dialog."
+                "QtWidgets.QColorDialog",
+                side_effect=lambda color, parent: real_color_dialog(color, parent),
+            ), patch.object(
+                real_color_dialog,
+                "exec",
+                return_value=QtWidgets.QDialog.DialogCode.Rejected,
+            ):
+                for _ in range(100):
+                    button._pick_color()
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.app.processEvents()
+            self.assertEqual(button.findChildren(real_color_dialog), [])
+        finally:
+            button.deleteLater()
+
     def test_nested_layer_delete_uses_action_time_usage_without_rebuild(self):
         from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
         from ost_visualizer.domain.entities.layer import BidLayer
@@ -3034,6 +3283,131 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         ):
             handler.on_edit_requested(["c1"])
         self.assertEqual(refreshes, [])
+        self.assertEqual(highlights, [])
+
+    def test_condition_properties_rejected_save_preserves_active_takeoff_tool(self):
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        save_calls = []
+        highlights = []
+
+        class Access:
+            @staticmethod
+            def is_allowed(feature):
+                return feature == Feature.EDIT_CONDITION
+
+            @staticmethod
+            def has_license():
+                return True
+
+        class Sidebar(QtCore.QObject):
+            @staticmethod
+            def window():
+                return None
+
+            @staticmethod
+            def collect_ordered_condition_uids():
+                return ["c1"]
+
+        class ProjectData:
+            @staticmethod
+            def is_current_bid_locked():
+                return False
+
+            @staticmethod
+            def get_bid_conditions():
+                return {"c1": condition}
+
+            @staticmethod
+            def get_all_takeoffs():
+                return []
+
+            @staticmethod
+            def get_current_bid():
+                return SimpleNamespace(measure_base=0)
+
+        class ReadService:
+            @staticmethod
+            def get_cdn_types(_file_path):
+                return {}
+
+            @staticmethod
+            def get_merged_bid_layers(_file_path, _bid_uid):
+                return []
+
+        class Dialog:
+            condition_navigated = SimpleNamespace(connect=lambda _callback: None)
+
+            def __init__(self, *args, save_fn, **kwargs):
+                _ = args, kwargs
+                self.save_fn = save_fn
+
+            @staticmethod
+            def deleteLater():
+                pass
+
+        placement = SimpleNamespace(is_active=True)
+        sidebar = Sidebar()
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=sidebar,
+            main_window=SimpleNamespace(icon_provider=None),
+            event_bus=EventBus(),
+            highlight_sidebar=lambda uids, reveal=True: highlights.append(set(uids)),
+            placement=placement,
+            _is_takeoff_2d_view_active=lambda: True,
+            flush_deferred_for_file=lambda _file_path: True,
+            request_collaboration_edit=lambda _database_id, _resources, callback, **_kw: (
+                callback(
+                    EditLeaseResult(
+                        True,
+                        handle=EditLeaseHandle(
+                            database_id="db.mdb",
+                            draft_id="condition-edit-test",
+                            runtime_generation=0,
+                            operation_id="edit-condition-dialog",
+                            owning_surface="condition-sidebar",
+                            resources=(ResourceRef("condition", "c1", 1),),
+                        ),
+                    )
+                )
+            ),
+            end_collaboration_edit=lambda _handle: None,
+        )
+        write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
+            update_condition=lambda *_args: (
+                save_calls.append(True)
+                or UpdateConditionResultDto(success=False, error="Rejected")
+            ),
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=write_service,
+            project_read_service=ReadService(),
+            project_data=ProjectData(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+            ),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def execute(dialog, _event_bus):
+            result = dialog.save_fn(
+                "c1", UpdateConditionDto({"name": "Condition 1 edited"})
+            )
+            self.assertFalse(result.success)
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler.EditConditionDialog",
+            Dialog,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler.exec_with_ost_blocking",
+            execute,
+        ):
+            handler.on_edit_requested(["c1"])
+        self.assertEqual(save_calls, [True])
+        self.assertTrue(placement.is_active)
         self.assertEqual(highlights, [])
 
     def test_sql_condition_editor_save_transfers_and_reacquires_its_lease(self):

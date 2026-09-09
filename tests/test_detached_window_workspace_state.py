@@ -65,6 +65,9 @@ from ost_visualizer.presentation.coordinators.workspace_state_coordinator import
     WorkspaceStateCoordinator,
 )
 from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
+    SelectNamedViewDialog,
+)
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
@@ -5922,6 +5925,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         dialog = SimpleNamespace(
             exec=lambda: QtWidgets.QDialog.DialogCode.Accepted,
             result_data=lambda: SimpleNamespace(create_new=False, named_view_uid="nv1"),
+            deleteLater=lambda: None,
         )
         with patch(
             "ost_visualizer.presentation.windows.components.window."
@@ -5962,6 +5966,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         dialog = SimpleNamespace(
             exec=lambda: QtWidgets.QDialog.DialogCode.Accepted,
             result_data=lambda: SimpleNamespace(create_new=True, named_view_uid=""),
+            deleteLater=lambda: None,
         )
         with patch(
             "ost_visualizer.presentation.windows.components.window."
@@ -5972,6 +5977,43 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(write_service.insert_calls, [])
         self.assertEqual(plan_view.cancel_place_mode_calls, 1)
         self.assertEqual(plan_view.activate_calls, ["namedview"])
+
+    def test_repeated_detached_hotlink_cancellation_releases_picker_widgets(self):
+        write_service = FakeAnnotationWriteService()
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._access_state = _full_plan_surface_access()
+        window.page_data = FakeDetachedPageData()
+        window._is_closing = False
+        window._file_path = None
+        window._project_write_svc = None
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._named_views = [("nv1", "p1", "Page 1", "Lobby")]
+        owner = QtWidgets.QWidget()
+
+        def make_rejected_dialog(named_views, parent=None):
+            del parent
+            dialog = SelectNamedViewDialog(named_views, parent=owner)
+            dialog.exec = lambda: QtWidgets.QDialog.DialogCode.Rejected
+            return dialog
+
+        try:
+            with patch(
+                "ost_visualizer.presentation.windows.components.window."
+                "SelectNamedViewDialog",
+                side_effect=make_rejected_dialog,
+            ):
+                for _ in range(100):
+                    window._on_hotlink_placement_requested([5.0, 6.0], "p1")
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.app.processEvents()
+            self.assertEqual(owner.findChildren(SelectNamedViewDialog), [])
+        finally:
+            owner.deleteLater()
 
     def test_detached_hotlink_dialog_return_does_not_write_after_page_retarget(self):
         write_service = FakeAnnotationWriteService()
@@ -5999,6 +6041,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
             def result_data(self):
                 raise AssertionError("stale hotlink dialog result must not be read")
+
+            def deleteLater(self):
+                pass
 
         with patch(
             "ost_visualizer.presentation.windows.components.window."
@@ -6037,6 +6082,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
             def result_data(self):
                 return SimpleNamespace(create_new=True, named_view_uid="")
+
+            def deleteLater(self):
+                pass
 
         with patch(
             "ost_visualizer.presentation.windows.components.window."

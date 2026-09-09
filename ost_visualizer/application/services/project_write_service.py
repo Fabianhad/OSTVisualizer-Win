@@ -40,6 +40,7 @@ from ..dtos.collaboration_dtos import (
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
 from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
+from ..dtos.write_reload_result import WriteReloadResult
 from ...domain.entities.area import is_unassigned_area_uid
 from ..events.app_events import AppEvents
 from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
@@ -160,31 +161,6 @@ class BatchWriteResult:
         return (
             bool(self.requested_uids) and not self.failed_uids and self.reload_success
         )
-
-    def __bool__(self) -> bool:
-        return self.success
-
-
-@dataclass
-class WriteReloadResult:
-    value: object = None
-    write_success: bool = False
-    reload_success: bool = False
-    failure_reason: Optional[str] = None
-    blocked_uids: List[str] = field(default_factory=list)
-
-    @property
-    def success(self) -> bool:
-        return (
-            self.write_success
-            and self.reload_success
-            and not self.failure_reason
-            and not self.blocked_uids
-        )
-
-    @property
-    def refresh_failed(self) -> bool:
-        return self.write_success and not self.reload_success
 
     def __bool__(self) -> bool:
         return self.success
@@ -1038,6 +1014,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 }
             ),
             invalidates_undo=invalidates_undo,
+            local_completion=True,
         )
 
     @staticmethod
@@ -1390,26 +1367,54 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         consistency_resources: tuple[ResourceRef, ...] = (),
     ) -> List[str]:
+        result = self.insert_takeoffs_result(
+            db_path,
+            bid_uid,
+            takeoff_specs,
+            publish_database_refreshed_after_write,
+            consistency_resources=consistency_resources,
+        )
+        return list(result.value or ()) if result.success else []
+
+    def insert_takeoffs_result(
+        self,
+        db_path: str,
+        bid_uid: str,
+        takeoff_specs: List[InsertTakeoffSpec],
+        publish_database_refreshed_after_write: bool = True,
+        *,
+        consistency_resources: tuple[ResourceRef, ...] = (),
+    ) -> WriteReloadResult:
         if not takeoff_specs:
-            return []
+            return WriteReloadResult(
+                [],
+                write_success=True,
+                reload_success=True,
+            )
         mutation = self._insert_takeoffs_mutation(
             db_path,
             bid_uid,
             takeoff_specs,
             consistency_resources=consistency_resources,
         )
-        new_uids = (
-            mutation.value
-            if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
-            else []
+        if mutation.outcome_status != MutationOutcomeStatus.COMMITTED:
+            return WriteReloadResult(
+                [],
+                write_success=False,
+                reload_success=False,
+                failure_reason=mutation.failure_reason,
+            )
+        new_uids = list(mutation.value or ())
+        reload_success = (
+            self.reload_and_notify(db_path)
+            if new_uids and publish_database_refreshed_after_write
+            else True
         )
-        if (
-            new_uids
-            and publish_database_refreshed_after_write
-            and not self.reload_and_notify(db_path)
-        ):
-            return []
-        return new_uids
+        return WriteReloadResult(
+            new_uids,
+            write_success=True,
+            reload_success=reload_success,
+        )
 
     def _insert_takeoffs_mutation(
         self,

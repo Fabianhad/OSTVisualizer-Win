@@ -849,6 +849,7 @@ class DatabaseMutationResult(Generic[T]):
         default_factory=dict
     )
     conflict: Optional[SynchronizationConflict] = None
+    failure_reason: Optional[str] = None
     commit_attempted: bool = False
     consumed_lock_tokens: tuple[str, ...] = ()
 
@@ -862,6 +863,13 @@ class DatabaseMutationResult(Generic[T]):
             and self.outcome_status != MutationOutcomeStatus.CONFLICT
         ):
             raise ValueError("Only a conflict outcome may carry a conflict")
+        if (
+            self.failure_reason is not None
+            and self.outcome_status != MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+        ):
+            raise ValueError(
+                "Only a failed-before-commit outcome may carry a failure reason"
+            )
         if (
             self.outcome_status == MutationOutcomeStatus.COMMITTED
             and not self.commit_attempted

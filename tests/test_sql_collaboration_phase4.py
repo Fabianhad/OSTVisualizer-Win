@@ -2990,6 +2990,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(condition_event["changed_fields"], ["name", "z_value"])
         self.assertEqual(condition_event["change_operations"], ["update"])
         self.assertTrue(condition_event["invalidates_undo"])
+        self.assertFalse(condition_event["local_completion"])
 
     def test_remote_transaction_publishes_one_deferred_plan_projection(self):
         database_id = "database"
@@ -3185,6 +3186,41 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             if event is AppEvents.REMOTE_AREAS_CHANGED
         )
         self.assertTrue(area_event["local_completion"])
+
+    def test_local_condition_completion_is_identified_on_granular_event(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("condition", "42", 8),
+                        2,
+                        changed_fields=("name",),
+                    ),
+                ),
+            ),
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Local")}},
+            condition_folders_by_bid={8: {}},
+        )
+        self.assertTrue(service.apply(hydrated, local_completion=True).applied)
+        condition_event = next(
+            payload
+            for event, payload in events.published
+            if event is AppEvents.CONDITIONS_CHANGED
+        )
+        self.assertTrue(condition_event["local_completion"])
+        self.assertFalse(condition_event["invalidates_undo"])
 
     def test_condition_folder_only_change_is_not_projected_as_condition_geometry(self):
         database_id = "database"

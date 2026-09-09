@@ -6,12 +6,13 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ost_visualizer.application.dtos.write_reload_result import WriteReloadResult
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     EditLeaseHandle,
@@ -652,6 +653,7 @@ class FakeWriteService:
         self.local_annotation_delete_calls = []
         self.next_annotation_uids = ["ann-1"]
         self.annotation_write_service = None
+        self.insert_takeoffs_failure_reason = None
         self.edit_lease_requests = []
         self.ended_edit_leases = []
 
@@ -1000,6 +1002,28 @@ class FakeWriteService:
             result.append(str(100 + self._next_uid_index + len(result)))
         self._next_uid_index += len(specs)
         return result
+
+    def insert_takeoffs_result(
+        self, db_path, bid_uid, specs, publish_database_refreshed_after_write=True
+    ):
+        if self.insert_takeoffs_failure_reason:
+            return WriteReloadResult(
+                [],
+                write_success=False,
+                reload_success=False,
+                failure_reason=self.insert_takeoffs_failure_reason,
+            )
+        values = self.insert_takeoffs(
+            db_path,
+            bid_uid,
+            specs,
+            publish_database_refreshed_after_write,
+        )
+        return WriteReloadResult(
+            values,
+            write_success=True,
+            reload_success=True,
+        )
 
     def save_takeoff_positions(
         self, db_path, positions, publish_database_refreshed_after_write=True
@@ -2433,6 +2457,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             def result_data(self):
                 return SimpleNamespace(create_new=False, named_view_uid="nv1")
 
+            def deleteLater(self):
+                pass
+
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
         self.assertEqual(
@@ -2515,6 +2542,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             def result_data(self):
                 return SimpleNamespace(create_new=False, named_view_uid="nv1")
 
+            def deleteLater(self):
+                pass
+
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
         self.assertEqual(len(ann_write.insert_calls), 1)
@@ -2546,6 +2576,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
             def result_data(self):
                 return SimpleNamespace(create_new=True, named_view_uid="")
+
+            def deleteLater(self):
+                pass
 
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
@@ -2585,12 +2618,51 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 plan_view.placement_flow.append("dialog_exec")
                 return handler_module.QtWidgets.QDialog.DialogCode.Rejected
 
+            def deleteLater(self):
+                pass
+
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
         self.assertEqual(ann_write.insert_calls, [])
         self.assertEqual(plan_view.activated_annotations, [])
         self.assertEqual(plan_view.cancel_place_mode_calls, 1)
         self.assertEqual(plan_view.placement_flow, ["cancel_place_mode", "dialog_exec"])
+
+    def test_repeated_hotlink_dialog_cancellation_releases_picker_widgets(self):
+        ann_write = FakeAnnotationWriteService()
+        plan_view = FakePlanView()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
+        )
+        owner = QtWidgets.QWidget()
+        dialog_type = handler_module.SelectNamedViewDialog
+
+        def make_rejected_dialog(named_views, parent=None):
+            del parent
+            dialog = dialog_type(named_views, parent=owner)
+            dialog.exec = lambda: QtWidgets.QDialog.DialogCode.Rejected
+            return dialog
+
+        try:
+            with patch.object(
+                handler_module, "SelectNamedViewDialog", make_rejected_dialog
+            ):
+                for _ in range(100):
+                    handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.app.processEvents()
+            self.assertEqual(owner.findChildren(dialog_type), [])
+        finally:
+            owner.deleteLater()
 
     def test_hotlink_dialog_return_does_not_write_after_page_retarget(self):
         ann_write = FakeAnnotationWriteService()
@@ -2620,6 +2692,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
             def result_data(self):
                 raise AssertionError("stale hotlink dialog result must not be read")
+
+            def deleteLater(self):
+                pass
 
         with patch.object(handler_module, "SelectNamedViewDialog", RetargetingDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
@@ -2982,6 +3057,45 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual((extras["NameFontSize"], extras["NameFontBold"]), (18, False))
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
+        self.assertEqual(plan_view.cancel_place_mode_calls, 0)
+
+    def test_access_connection_exhaustion_is_presented_once_without_projection(self):
+        plan_view = FakePlanView()
+        plan_view.selected = {"existing"}
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.insert_takeoffs_failure_reason = (
+            "Microsoft Access cannot open another database connection."
+        )
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        with patch.object(handler_module, "show_warning") as warning:
+            handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        warning.assert_called_once_with(
+            plan_view,
+            "Database Write",
+            write.insert_takeoffs_failure_reason,
+        )
+        self.assertEqual(plan_view.selected, {"existing"})
+        self.assertEqual(data.added_takeoffs, [])
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(plan_view.cancel_place_mode_calls, 0)
+        write.insert_takeoffs_failure_reason = None
+        handler.on_takeoff_created("42", [3.0, 4.0], "9")
+        self.assertEqual(plan_view.selected, {"100"})
+        self.assertEqual(len(data.added_takeoffs), 1)
+        self.assertEqual(undo.count, 1)
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
 
     def test_sql_takeoff_placement_projects_pending_then_committed_identity(self):

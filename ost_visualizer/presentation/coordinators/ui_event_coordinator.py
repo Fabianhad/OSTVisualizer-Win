@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -14,6 +14,7 @@ from ...application.dtos.remote_projection_dtos import (
     RemoteProjectionToken,
 )
 from ...application.dtos.collaboration_dtos import (
+    ChangeOperation,
     CollaborationStatus,
     EditLeaseHandle,
     EditLeaseLoss,
@@ -109,9 +110,10 @@ class _SuspendedLayerTool:
     mode: str
     bid_ref: BidRef
     bid_owner: Bid
+    tool_revision: int
     annotation_type: Optional[str] = None
     condition_uid: Optional[str] = None
-    condition_owner: Optional[Condition] = None
+    condition_identities: Tuple[Tuple[str, Condition], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -932,6 +934,31 @@ class UIEventCoordinator:
             return [first_page], first_page
         return [], None
 
+    def _resolve_authoritative_page_selection(
+        self,
+        page_uids: List[str],
+        active_page_uid: Optional[str],
+    ) -> tuple[List[str], Optional[str]]:
+        valid_pages = [
+            uid for uid in page_uids if uid and self.project_data.get_page(uid)
+        ]
+        active_page = (
+            active_page_uid
+            if active_page_uid and self.project_data.get_page(active_page_uid)
+            else None
+        )
+        if active_page:
+            return valid_pages, active_page
+        if valid_pages:
+            return valid_pages, valid_pages[0]
+        ordered_pages = sorted(
+            self.project_data.get_all_pages(),
+            key=lambda page: page.sequence,
+        )
+        if not ordered_pages:
+            return [], None
+        return [ordered_pages[0].uid], ordered_pages[0].uid
+
     def _activate_takeoff_workspace(self) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref or not self.takeoff_sidebar:
@@ -1137,11 +1164,13 @@ class UIEventCoordinator:
 
     def highlight_sidebar(self, uids: set, reveal: bool = True) -> None:
         self._selection_projected_condition_uids = set()
-        self._apply_sidebar_highlight(uids, reveal=reveal)
+        if self._apply_sidebar_highlight(uids, reveal=reveal):
+            self._toolbar.refresh()
 
     def _restore_sidebar_highlight(self, uids: set, reveal: bool = False) -> None:
         takeoff_owned = self._selection_projected_condition_uids == set(uids)
-        self._apply_sidebar_highlight(uids, reveal=reveal)
+        if self._apply_sidebar_highlight(uids, reveal=reveal):
+            self._toolbar.refresh()
         if not takeoff_owned:
             self._selection_projected_condition_uids = set()
 
@@ -1178,6 +1207,7 @@ class UIEventCoordinator:
                             CURSOR_MODE_ANNOTATION_PLACE,
                             bid_ref,
                             bid_owner,
+                            self.plan_view.tool_revision,
                             annotation_type=annotation_type,
                         )
         condition_uid = (
@@ -1186,26 +1216,49 @@ class UIEventCoordinator:
             else None
         )
         if condition_uid:
-            condition = self.project_data.get_bid_conditions().get(condition_uid)
-            if condition and condition.layer_uid:
-                condition_layer_key = str(condition.layer_uid)
-                if layer_key is None or layer_key == condition_layer_key:
-                    return _SuspendedLayerTool(
-                        condition_layer_key,
-                        CURSOR_MODE_PLACE,
-                        bid_ref,
-                        bid_owner,
-                        condition_uid=condition_uid,
-                        condition_owner=condition,
-                    )
+            conditions = self.project_data.get_bid_conditions()
+            condition_uids = tuple(
+                dict.fromkeys(
+                    str(uid)
+                    for uid in self.ui_state_manager.place_condition_uids
+                    if uid
+                )
+            )
+            if condition_uid not in condition_uids:
+                return None
+            condition_identities = tuple(
+                (uid, conditions[uid]) for uid in condition_uids if uid in conditions
+            )
+            if len(condition_identities) != len(condition_uids):
+                return None
+            matching_layers = {
+                str(condition.layer_uid)
+                for _uid, condition in condition_identities
+                if condition.layer_uid
+            }
+            if matching_layers and (layer_key is None or layer_key in matching_layers):
+                condition = conditions[condition_uid]
+                condition_layer_key = str(condition.layer_uid or layer_key or "")
+                return _SuspendedLayerTool(
+                    layer_key or condition_layer_key,
+                    CURSOR_MODE_PLACE,
+                    bid_ref,
+                    bid_owner,
+                    self.plan_view.tool_revision,
+                    condition_uid=condition_uid,
+                    condition_identities=condition_identities,
+                )
         return None
 
     def _suspend_active_layer_tool(self, layer_uid: Optional[str] = None) -> None:
         suspended = self._active_layer_tool_snapshot(layer_uid)
         if suspended is None:
             return
-        self._suspended_layer_tool = suspended
         self._set_plan_select_mode()
+        self._suspended_layer_tool = replace(
+            suspended,
+            tool_revision=self.plan_view.tool_revision,
+        )
 
     def _restore_suspended_layer_tool(self, layer_uid: Optional[str] = None) -> None:
         suspended = self._suspended_layer_tool
@@ -1215,6 +1268,9 @@ class UIEventCoordinator:
         if layer_key is not None and suspended.layer_uid != layer_key:
             return
         if self.plan_view.cursor_mode != CURSOR_MODE_SELECT:
+            self._suspended_layer_tool = None
+            return
+        if self.plan_view.tool_revision != suspended.tool_revision:
             self._suspended_layer_tool = None
             return
         if (
@@ -1227,17 +1283,25 @@ class UIEventCoordinator:
             if self.ui_access_manager.is_allowed(Feature.PLACE_ANNOTATIONS):
                 self.plan_view.activate_annotation_placement(suspended.annotation_type)
         elif suspended.mode == CURSOR_MODE_PLACE and suspended.condition_uid:
-            condition = self.project_data.get_bid_conditions().get(
-                suspended.condition_uid
-            )
+            conditions = self.project_data.get_bid_conditions()
+            condition = conditions.get(suspended.condition_uid)
+            captured_identities = suspended.condition_identities
+            captured_type = condition.condition_type if condition is not None else None
             if (
-                condition is suspended.condition_owner
+                captured_identities
+                and all(
+                    conditions.get(uid) is owner
+                    and owner.layer_visible
+                    and owner.condition_type == captured_type
+                    for uid, owner in captured_identities
+                )
                 and condition.layer_visible
                 and self._is_takeoff_2d_view_active()
                 and self.ui_access_manager.is_allowed(Feature.PLACE_PLAN_ITEMS)
             ):
                 self._placement.enter(
-                    suspended.condition_uid, [suspended.condition_uid]
+                    suspended.condition_uid,
+                    [uid for uid, _owner in captured_identities],
                 )
         self._suspended_layer_tool = None
 
@@ -2616,8 +2680,17 @@ class UIEventCoordinator:
         self._set_plan_select_mode()
         self._toolbar.refresh()
 
-    def _reconcile_active_placement(self) -> bool:
-        if self._placement.reconcile_authoritative_conditions():
+    def _reconcile_active_placement(
+        self, *, accept_reconstructed_conditions: bool = False
+    ) -> bool:
+        reconciled = (
+            self._placement.reconcile_authoritative_conditions(
+                accept_reconstructed_conditions=True
+            )
+            if accept_reconstructed_conditions
+            else self._placement.reconcile_authoritative_conditions()
+        )
+        if reconciled:
             return True
         self._set_plan_select_mode()
         self._toolbar.refresh()
@@ -2940,6 +3013,7 @@ class UIEventCoordinator:
         update_mesh: bool = True,
         refresh_aggregates: bool = True,
         refresh_area_usage: bool = True,
+        refresh_page_usage: bool = True,
     ) -> None:
         affected_page_uids = list(
             dict.fromkeys(str(uid) for uid in (page_uids or ()) if uid)
@@ -2949,7 +3023,9 @@ class UIEventCoordinator:
         active_page_uid = self.ui_state_manager.active_page_uid
         if affected_page_uids:
             self._refresh_takeoff_dependent_page_controls(
-                page_uids=affected_page_uids, refresh_area_usage=refresh_area_usage
+                page_uids=affected_page_uids,
+                refresh_area_usage=refresh_area_usage,
+                refresh_page_usage=refresh_page_usage,
             )
         active_page_affected = not affected_page_uids or (
             active_page_uid in affected_page_uids
@@ -3027,6 +3103,9 @@ class UIEventCoordinator:
         )
         layers_changed = CollaborationResourceFamily.LAYERS.value in changed_families
         pages_changed = CollaborationResourceFamily.PAGES.value in changed_families
+        takeoffs_changed = (
+            CollaborationResourceFamily.TAKEOFFS.value in changed_families
+        )
         layer_conditions_refresh = bool(
             layers_changed and self._sidebar.bid_layers_sidebar
         )
@@ -3070,7 +3149,7 @@ class UIEventCoordinator:
                 bid_uid,
                 list(changed_page_uids) if changed_page_uids else None,
             )
-        if CollaborationResourceFamily.TAKEOFFS.value in changed_families:
+        if takeoffs_changed:
             if self._selected_takeoff_uids:
                 self._sync_selection(
                     self._SOURCE_MODEL, list(self._selected_takeoff_uids)
@@ -3084,10 +3163,11 @@ class UIEventCoordinator:
                     changed_uids.get(CollaborationResourceFamily.TAKEOFFS.value) or None
                 ),
                 update_shell=False,
-                refresh_aggregates=not aggregates_projected,
+                refresh_aggregates=not aggregates_projected and not pages_changed,
                 refresh_area_usage=not area_family_projected,
-                update_plan=not defer_plan_projection,
-                update_mesh=not defer_plan_projection,
+                refresh_page_usage=not pages_changed,
+                update_plan=not defer_plan_projection and not pages_changed,
+                update_mesh=not defer_plan_projection and not pages_changed,
             )
         if annotations_changed and resource_families_affect_page(
             (CollaborationResourceFamily.ANNOTATIONS.value,),
@@ -3121,25 +3201,32 @@ class UIEventCoordinator:
                 ),
             )
         if pages_changed:
+            previous_active_page = self.ui_state_manager.active_page_uid
+            previous_selected_pages = list(self.ui_state_manager.selected_page_uids)
             if self._pending_takeoff_page_uids is not None:
                 valid_pages, active_page = self._resolve_takeoff_selection()
                 self._clear_staged_takeoff_restore()
             else:
-                valid_pages = [
-                    uid
-                    for uid in self.ui_state_manager.selected_page_uids
-                    if self.project_data.get_page(uid)
-                ]
-                active_page = self.ui_state_manager.active_page_uid
-                if active_page and not self.project_data.get_page(active_page):
-                    ordered_pages = sorted(
-                        self.project_data.get_all_pages(),
-                        key=lambda page: page.sequence,
-                    )
-                    active_page = ordered_pages[0].uid if ordered_pages else None
+                valid_pages, active_page = self._resolve_authoritative_page_selection(
+                    self.ui_state_manager.selected_page_uids,
+                    self.ui_state_manager.active_page_uid,
+                )
             self.ui_state_manager.set_page_selection(valid_pages)
             self.ui_state_manager.active_page_uid = active_page
             self.project_data.select_pages(valid_pages)
+            page_selection_changed = (
+                active_page != previous_active_page
+                or valid_pages != previous_selected_pages
+            )
+            refresh_page_aggregates = page_selection_changed or (
+                takeoffs_changed and not aggregates_projected
+            )
+            self.main_window.project_view.update_bid_content_counts(
+                selected,
+                page_count=len(self.project_data.get_all_pages()),
+            )
+            if active_page != previous_active_page:
+                self._sync_navigation_for_active_page(selected, active_page)
             self._sidebar.load_takeoff_sidebar_from_memory(
                 selected, self._bid_data_cache
             )
@@ -3149,15 +3236,27 @@ class UIEventCoordinator:
                 self._sync_overlay_display_mode(active_page)
                 if not defer_plan_projection:
                     self._update_plan_view(active_page)
+                elif refresh_page_aggregates:
+                    self._sidebar.update_conditions_quantities()
             else:
                 if self._page_settings_bar:
                     self._page_settings_bar.clear_page()
                 self._viewer.clear_plan_view()
+                if refresh_page_aggregates:
+                    self._sidebar.update_conditions_quantities()
             if not defer_plan_projection:
                 if page_texture_only:
                     self._update_native_page_textures()
                 elif not mesh_scene_unchanged:
                     self._request_or_defer_mesh_refresh(valid_pages)
+            if (
+                self._is_summary_tab_active()
+                and not condition_family_projected
+                and not area_family_projected
+                and not layer_conditions_refresh
+            ):
+                self._load_condition_summary()
+            self._sync_page_info_status()
         if layers_changed and self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.load_layers(
                 self.project_data.get_bid_layer_snapshot(),
@@ -3223,6 +3322,7 @@ class UIEventCoordinator:
         change_operations: Optional[List[str]] = None,
         defer_plan_projection: bool = False,
         invalidates_undo: bool = False,
+        local_completion: bool = False,
     ) -> None:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
@@ -3238,7 +3338,17 @@ class UIEventCoordinator:
             and self.plan_view.has_active_remote_projection_blocker()
         ):
             self._prepare_plan_for_authoritative_refresh()
-        self._reconcile_active_placement()
+        changed_field_set = set(changed_fields or ())
+        accepts_reconstructed_conditions = operations == {
+            ChangeOperation.UPDATE.value
+        } or (
+            not operations
+            and changed_field_set == {CollaborationResourceType.CONDITION_FOLDER.value}
+        )
+        if accepts_reconstructed_conditions:
+            self._reconcile_active_placement(accept_reconstructed_conditions=True)
+        else:
+            self._reconcile_active_placement()
         if self._undo_service and invalidates_undo:
             self._undo_service.clear()
         valid_highlights = self._validate_condition_uids(
@@ -3246,6 +3356,10 @@ class UIEventCoordinator:
         )
         self.ui_state_manager.set_highlighted_conditions(valid_highlights)
         self._sidebar.refresh_conditions_from_memory()
+        self.main_window.project_view.update_bid_content_counts(
+            selected,
+            condition_count=len(self.project_data.get_bid_conditions()),
+        )
         self._restore_sidebar_highlight(valid_highlights, reveal=False)
         if not defer_plan_projection and plan_refresh_required:
             self._update_plan_view_for_active(
@@ -3427,7 +3541,7 @@ class UIEventCoordinator:
         if self.project_data.get_current_file_path() and normalize_path(
             self.project_data.get_current_file_path()
         ) == normalize_path(database_id):
-            self.refresh_conditions_ui()
+            self._sidebar.refresh_conditions_from_memory()
         if active_bid is None:
             if selected_database_id and normalize_path(
                 selected_database_id
@@ -3472,6 +3586,7 @@ class UIEventCoordinator:
             self.ui_access_manager.refresh()
             self._update_menu_state()
             self.main_window.project_view.restore_bid_selection(active_bid)
+            self.main_window.refresh_window_title()
             return
         self._on_file_selected(database_id, is_database_root=True)
         self.main_window.project_view.restore_file_selection(database_id)
@@ -3580,6 +3695,7 @@ class UIEventCoordinator:
     ) -> None:
         if success and not self._is_cleaning_up:
             self._apply_pending_hotlink_named_view_focus(require_stable=True)
+            self._update_export_menu_state()
         token.complete(success)
 
     def _on_synchronization_conflict(
@@ -3705,6 +3821,7 @@ class UIEventCoordinator:
                 self.ui_state_manager.set_bid_selection(None)
                 self._sync_undo_bid()
                 self.project_data.deselect_pages()
+                self._viewer.clear_plan_view()
                 self._clear_mesh_views_for_scene_update()
                 self._discard_mesh_camera_states(bid_ref=snap.bid_ref)
                 self.main_window.project_view.restore_file_selection(
@@ -3715,7 +3832,7 @@ class UIEventCoordinator:
                     NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
                 )
                 self.ui_access_manager.refresh()
-                self._update_menu_state()
+                self._update_export_menu_state()
                 self.main_window.set_database_window_title(
                     snap.selected_file_path or snap.bid_ref.file_path
                 )
@@ -3733,6 +3850,15 @@ class UIEventCoordinator:
                 snap.highlighted_condition_uids
             )
             self.ui_state_manager.set_highlighted_conditions(valid_highlighted)
+            valid_pages, active_page = self._resolve_authoritative_page_selection(
+                snap.page_uids,
+                snap.active_page_uid,
+            )
+            if active_page != snap.active_page_uid:
+                self._viewer.clear_plan_view()
+            self.ui_state_manager.set_page_selection(valid_pages)
+            self.ui_state_manager.active_page_uid = active_page
+            self.project_data.select_pages(valid_pages)
             placement_is_current = True
             if snap.place_condition_uid:
                 placement_is_current = bool(
@@ -3752,8 +3878,8 @@ class UIEventCoordinator:
             ):
                 self._reset_to_select_mode()
             self._stage_takeoff_restore(
-                page_uids=snap.page_uids,
-                active_page_uid=snap.active_page_uid,
+                page_uids=valid_pages,
+                active_page_uid=active_page,
                 selected_area_uid=snap.selected_area_uid,
                 place_condition_uid=(
                     snap.place_condition_uid if can_restore_placement else None
@@ -3765,7 +3891,7 @@ class UIEventCoordinator:
             base_target = self._nav.compute_state_for(
                 has_file=has_file,
                 bid_ref=snap.bid_ref,
-                active_page_uid=snap.active_page_uid,
+                active_page_uid=active_page,
             )
             self._nav.finish_refresh(base_target)
             if (
@@ -3777,6 +3903,10 @@ class UIEventCoordinator:
                 self._tab_widget
                 and self._tab_widget.currentIndex() == TAB_INDEX_SUMMARY
             ):
+                if active_page:
+                    self._update_page_settings_bar(active_page)
+                elif self._page_settings_bar:
+                    self._page_settings_bar.clear_page()
                 self._load_condition_summary()
         elif snap.project_uid:
             self._reset_takeoff_workspace_state()
@@ -3823,7 +3953,8 @@ class UIEventCoordinator:
                 NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
             )
         self.ui_access_manager.refresh()
-        self._update_menu_state()
+        self._update_export_menu_state()
+        self._sync_page_info_status()
         self.main_window.refresh_window_title()
 
     def _validate_condition_uids(self, uids: set) -> set:

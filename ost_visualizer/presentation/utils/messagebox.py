@@ -1,5 +1,6 @@
 from typing import List, Optional, Set, Tuple
 from PySide6 import QtWidgets
+from .qt_lifecycle import delete_later_if_valid
 
 _Yes = QtWidgets.QMessageBox.StandardButton.Yes
 _No = QtWidgets.QMessageBox.StandardButton.No
@@ -118,8 +119,11 @@ def confirm_delete_conditions(
             yes_all_btn = box.addButton(
                 "Yes to all", QtWidgets.QMessageBox.ButtonRole.YesRole
             )
-        box.exec()
-        clicked = box.clickedButton()
+        try:
+            box.exec()
+            clicked = box.clickedButton()
+        finally:
+            delete_later_if_valid(box)
         if clicked == yes_btn:
             confirmed.append(uid)
         elif yes_all_btn and clicked == yes_all_btn:

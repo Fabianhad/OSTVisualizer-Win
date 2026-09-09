@@ -18,6 +18,7 @@ from ..utils.condition_tree_style import (
     apply_condition_tree_style,
     set_condition_tree_item_row_height,
 )
+from ..utils.dialog import exec_transient_menu
 from ..utils.messagebox import show_warning
 from ...application.utils.quantity_display import format_quantity_with_uom
 
@@ -794,11 +795,17 @@ class ConditionsSidebar(QtWidgets.QWidget):
     def highlight_conditions(
         self, condition_uids: Set[str], reveal: bool = True
     ) -> None:
+        ordered_uids = list(condition_uids)
+        if not reveal:
+            active_uid = self.get_active_condition_uid()
+            if active_uid in condition_uids:
+                ordered_uids.remove(active_uid)
+                ordered_uids.insert(0, active_uid)
         self._block_selection_signal = True
         try:
             self.tree.clearSelection()
             first = True
-            for uid in condition_uids:
+            for uid in ordered_uids:
                 item = self._condition_items.get(uid)
                 if item:
                     item.setSelected(True)
@@ -923,7 +930,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._add_rename_action(menu, item, kind, condition_uids)
         menu.addSeparator()
         self._add_group_expand_actions(menu)
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        exec_transient_menu(menu, self.tree.viewport().mapToGlobal(pos))
 
     def _select_context_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
         if item.isSelected():

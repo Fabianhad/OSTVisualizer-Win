@@ -55,6 +55,7 @@ from ....modes.cursor import (
     CURSOR_MODE_ZOOM,
 )
 from ....utils.overlay_context_menu import resolve_overlay_menu_action
+from ....utils.dialog import exec_transient_menu
 from ....utils.view_context_menu import (
     SelectedTakeoffContextState,
     add_common_context_submenus,
@@ -2860,7 +2861,7 @@ class InputHandlerMixin:
         menu.addSeparator()
         self._add_context_page_actions(menu)
         self.reset_ctrl_held()
-        action = menu.exec(event.globalPos())
+        action = exec_transient_menu(menu, event.globalPos())
         if action is None:
             event.accept()
             return
@@ -2892,7 +2893,7 @@ class InputHandlerMixin:
         menu.addSeparator()
         self._add_context_page_actions(menu, separate_delete=True)
         self.reset_ctrl_held()
-        action = menu.exec(event.globalPos())
+        action = exec_transient_menu(menu, event.globalPos())
         if action is None:
             return
         if not self._context_menu_owner_is_current(owner):
@@ -3029,7 +3030,7 @@ class InputHandlerMixin:
         menu.addSeparator()
         self._add_context_page_actions(menu)
         self.reset_ctrl_held()
-        action = menu.exec(event.globalPos())
+        action = exec_transient_menu(menu, event.globalPos())
         if action is None:
             event.accept()
             return

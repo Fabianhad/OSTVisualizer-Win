@@ -64,11 +64,19 @@ class FileManager:
         self.project_repository.apply_bid_load(file_path)
         self.current_file_path = file_path
 
-    def reload_database(self, file_path: Optional[str] = None) -> FileLoadResult:
+    def reload_database(
+        self,
+        file_path: Optional[str] = None,
+        *,
+        close_connections: bool = True,
+    ) -> FileLoadResult:
         if not file_path:
             return FileLoadResult(
                 success=False,
                 error_message="file_path is required for reload_database",
             )
-        result = self.project_repository.reload_database(file_path)
+        result = self.project_repository.reload_database(
+            file_path,
+            close_connections=close_connections,
+        )
         return result

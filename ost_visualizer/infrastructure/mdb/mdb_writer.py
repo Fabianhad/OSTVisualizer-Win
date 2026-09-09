@@ -54,6 +54,7 @@ class MdbWriter(
         depth = self._access_transaction_depth.get()
         depth_token = self._access_transaction_depth.set(depth + 1)
         error_token = None
+        committed = False
         if depth == 0:
             error_token = self._access_transaction_error.set(None)
         try:
@@ -65,19 +66,26 @@ class MdbWriter(
                         if transaction_error is not None:
                             raise transaction_error
                         conn.commit()
+                        committed = True
                 except Exception as exc:
                     if depth > 0 and self._access_transaction_error.get() is None:
                         self._access_transaction_error.set(exc)
                     if depth == 0:
                         try:
                             conn.rollback()
-                        except pyodbc.Error:
-                            pass
+                        except pyodbc.Error as rollback_error:
+                            rollback_error.add_note(
+                                "The MDB transaction could not be rolled back after "
+                                f"{type(exc).__name__}: {exc}"
+                            )
+                            raise rollback_error from exc
                     raise
         finally:
             self._access_transaction_depth.reset(depth_token)
             if error_token is not None:
                 self._access_transaction_error.reset(error_token)
+        if committed:
+            self._conn_manager.use_committed_writer_for_reads(db_path)
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)

@@ -10,6 +10,7 @@ from ...utils.font_catalog import (
     qfont_from_resolved_definition,
     resolve_font_definition,
 )
+from ...utils.qt_lifecycle import delete_later_if_valid
 from ...utils.windows import remove_minimize_maximize
 from .font_dialog import FontDialog
 
@@ -193,17 +194,20 @@ class FontsColorsTab(QtWidgets.QWidget):
         if category_id is None:
             return
         dialog = FontDialog(self._fonts[category_id], self.change_font_button)
-        result = dialog.exec()
-        if not isValid(self) or not isValid(dialog):
-            return
-        if result != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        selected = dialog.selected_font()
-        if selected is None or selected == self._fonts[category_id]:
-            return
-        self._fonts[category_id] = selected
-        self._refresh_font_preview()
-        self.changed.emit()
+        try:
+            result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
+            if result != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            selected = dialog.selected_font()
+            if selected is None or selected == self._fonts[category_id]:
+                return
+            self._fonts[category_id] = selected
+            self._refresh_font_preview()
+            self.changed.emit()
+        finally:
+            delete_later_if_valid(dialog)
 
     def _change_color(self) -> None:
         category_id = self._selected_category(self.color_list)
@@ -211,19 +215,22 @@ class FontsColorsTab(QtWidgets.QWidget):
             return
         current = self._colors[category_id]
         dialog = QtWidgets.QColorDialog(QtGui.QColor(current), self.change_color_button)
-        dialog.setWindowTitle("Color")
-        remove_minimize_maximize(dialog)
-        result = dialog.exec()
-        if not isValid(self) or not isValid(dialog):
-            return
-        if result != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        selected = dialog.currentColor()
-        if not selected.isValid():
-            return
-        color = selected.name().lower()
-        if color == current:
-            return
-        self._colors[category_id] = color
-        self._refresh_color_preview()
-        self.changed.emit()
+        try:
+            dialog.setWindowTitle("Color")
+            remove_minimize_maximize(dialog)
+            result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
+            if result != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            selected = dialog.currentColor()
+            if not selected.isValid():
+                return
+            color = selected.name().lower()
+            if color == current:
+                return
+            self._colors[category_id] = color
+            self._refresh_color_preview()
+            self.changed.emit()
+        finally:
+            delete_later_if_valid(dialog)

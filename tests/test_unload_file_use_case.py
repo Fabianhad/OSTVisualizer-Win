@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from ost_visualizer.application.use_cases.project.unload_file_use_case import (
     UnloadFileUseCase,
 )
@@ -103,9 +104,11 @@ class ReloadDatabaseUseCaseTests(unittest.TestCase):
             def __init__(self):
                 self.current_file_path = "active.mdb"
                 self.project_repository = ReloadRepo()
+                self.reloads = []
 
-            def reload_database(self, file_path):
+            def reload_database(self, file_path, *, close_connections=True):
                 self.reloaded = file_path
+                self.reloads.append((file_path, close_connections))
                 return FileLoadResult(
                     success=True,
                     hierarchy=HierarchyData(
@@ -133,7 +136,44 @@ class ReloadDatabaseUseCaseTests(unittest.TestCase):
         self.assertEqual(model.clear_bid_count, 0)
         self.assertEqual(load_bid.calls, [])
         self.assertEqual(file_manager.reloaded, "inactive.mdb")
+        self.assertEqual(file_manager.reloads, [("inactive.mdb", True)])
         self.assertEqual(file_manager.project_repository.cdn_type_path, "active.mdb")
+
+    def test_post_write_reload_preserves_current_connection_incarnation(self):
+        class ReloadModel(FakeModel):
+            def get_selected_pages(self):
+                return []
+
+            def bid_exists(self, _bid_ref):
+                return False
+
+        class ReloadRepo(FakeRepo):
+            def get_cdn_types(self, file_path=None):
+                return {}
+
+        class ReloadFileManager:
+            def __init__(self):
+                self.current_file_path = "active.mdb"
+                self.project_repository = ReloadRepo()
+                self.reloads = []
+
+            def reload_database(self, file_path, *, close_connections=True):
+                self.reloads.append((file_path, close_connections))
+                return FileLoadResult(
+                    success=True,
+                    hierarchy=HierarchyData(
+                        loaded_files=[HierarchyFileEntry(file_path="active.mdb")]
+                    ),
+                )
+
+        file_manager = ReloadFileManager()
+        use_case = ReloadDatabaseUseCase(
+            ReloadModel(),
+            file_manager,
+            SimpleNamespace(execute=lambda _bid_ref: True),
+        )
+        self.assertTrue(use_case.execute_after_write("active.mdb"))
+        self.assertEqual(file_manager.reloads, [("active.mdb", False)])
 
 
 if __name__ == "__main__":

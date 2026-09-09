@@ -209,12 +209,16 @@ class _AccessTransactionConnections:
     def __init__(self):
         self.connection_value = _AccessTransactionConnection()
         self.lease_count = 0
+        self.committed_writer_reads = []
 
     @contextlib.contextmanager
     def connection(self, _database_id, *, autocommit=False):
         self.lease_count += 1
         self.asserted_autocommit = autocommit
         yield ConnectionWrapper(self.connection_value)
+
+    def use_committed_writer_for_reads(self, database_id):
+        self.committed_writer_reads.append(database_id)
 
 
 class _InspectionCursor:
@@ -944,6 +948,39 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(uid, 42)
         self.assertEqual(cursor.sql, "SELECT MAX([UID]) FROM [BidTakeoffs]")
 
+    def test_access_writer_reserves_one_contiguous_uid_batch(self):
+        class _Cursor:
+            def __init__(self):
+                self.sql = []
+
+            def execute(self, sql):
+                self.sql.append(sql)
+
+            @staticmethod
+            def fetchone():
+                return (41,)
+
+        class _Schema:
+            @staticmethod
+            def optional_table_missing(_table):
+                return True
+
+        writer = DatabaseProjectWriter(
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        cursor = _Cursor()
+        with writer._backend_scope("example.mdb"):
+            uids = tuple(
+                writer._next_uids_preserving_references(
+                    cursor, _Schema(), "BidTakeoffs", 3
+                )
+            )
+        self.assertEqual(uids, (42, 43, 44))
+        self.assertEqual(cursor.sql, ["SELECT MAX([UID]) FROM [BidTakeoffs]"])
+
     def test_sql_writer_router_uses_the_common_uid_allocator_contract(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -962,6 +999,29 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertIsInstance(uid, int)
         with self.assertRaisesRegex(RuntimeError, "has not been generated"):
             str(uid)
+
+    def test_sql_writer_batch_keeps_each_identity_deferred(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with writer._backend_scope(descriptor.database_id):
+            uids = writer._next_uids_preserving_references(
+                object(), object(), "BidTakeoffs", 3
+            )
+        self.assertEqual(len(uids), 3)
+        self.assertEqual(len(set(uids)), 3)
+        for uid in uids:
+            with self.assertRaisesRegex(RuntimeError, "has not been generated"):
+                str(uid)
 
     def test_sql_writer_does_not_replace_deferred_identity_with_access_reference_max(
         self,
@@ -2219,7 +2279,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(connections.connection_value.commits, 0)
         self.assertEqual(connections.connection_value.rollbacks, 1)
 
-    def test_access_caught_database_failure_preserves_original_and_rolls_back(self):
+    def test_access_caught_data_failure_preserves_original_and_healthy_handle(self):
         original = pyodbc.DataError("22018", "type mismatch")
 
         class _Cursor:
@@ -2298,6 +2358,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertIs(captured.exception, original)
         self.assertEqual(raw.commits, 0)
         self.assertEqual(raw.rollbacks, 1)
+        self.assertEqual(raw.closes, 0)
+        connections.close()
         self.assertEqual(raw.closes, 1)
 
     def test_access_routed_annotation_database_failure_is_not_swallowed(self):

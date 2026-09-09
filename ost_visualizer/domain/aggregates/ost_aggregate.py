@@ -68,6 +68,8 @@ class OstAggregate:
 
     def set_pages(self, pages: Dict[str, Page]) -> None:
         self._page_selection.set_pages(pages)
+        if self.current_bid is not None:
+            self.current_bid.replace_pages(pages.values())
 
     def set_annotations(self, annotations: List[BidAnnotation]) -> None:
         self._page_selection.set_annotations(annotations)

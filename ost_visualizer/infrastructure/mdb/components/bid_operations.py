@@ -23,6 +23,7 @@ from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ..schema_contract import BID_SECTIONS, BID_TAIL_SECTIONS, PAGE_SECTIONS
 from .constants import (
     COVER_SHEET_PAGE_SELECTION_TYPE,
+    DERIVED_BID_TOTAL_TABLES,
     HANDLED_SEPARATELY,
     LEGACY_BID_TABLES_COPIED_BY_DUPLICATION,
     PAGE_DELETE_CHILD_TABLES,
@@ -271,7 +272,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 if not schema.optional_table_missing("BidSettings"):
                     schema.require_column("BidSettings", "BidUID")
                     fetch_optional_bid_settings_row(cursor, bid_uid, ("BidUID",))
-                self._require_duplicable_bid_relationships(cursor, schema, int(bid_uid))
+                skipped_derived_uids = self._require_duplicable_bid_relationships(
+                    cursor, schema, int(bid_uid)
+                )
                 require_writable_bid_number_allocator(schema)
                 settings_row = fetch_optional_global_settings_row(
                     cursor,
@@ -327,7 +330,12 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 for table in bid_tables:
                     duplicated_uid_maps.setdefault(table, {}).update(
                         self._copy_bid_table_rows(
-                            cursor, table, "BidUID", bid_uid, new_bid_uid
+                            cursor,
+                            table,
+                            "BidUID",
+                            bid_uid,
+                            new_bid_uid,
+                            excluded_source_uids=skipped_derived_uids.get(table),
                         )
                         or {}
                     )
@@ -379,12 +387,12 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 )
                 page_uid_map = {}
                 insert_page_cols = list(page_cols)
-                for page_row in page_rows:
+                new_page_uids = self._next_uids_preserving_references(
+                    cursor, schema, "BidPages", len(page_rows)
+                )
+                for page_row, new_page_uid_int in zip(page_rows, new_page_uids):
                     page_data = dict(zip(page_cols, page_row))
                     old_page_uid = str(int(page_data["UID"]))
-                    new_page_uid_int = self._next_uid_preserving_references(
-                        cursor, schema, "BidPages"
-                    )
                     if "GUID" in page_data:
                         page_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                     page_values = [
@@ -407,18 +415,17 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     page_uid_map[old_page_uid] = new_page_uid
                 duplicated_uid_maps["BidPages"] = page_uid_map
                 for table in PAGE_SECTIONS:
-                    for old_page_uid, new_page_uid in page_uid_map.items():
-                        duplicated_uid_maps.setdefault(table, {}).update(
-                            self._copy_bid_table_rows(
-                                cursor,
-                                table,
-                                "BidPageUID",
-                                old_page_uid,
-                                new_page_uid,
-                                extra_overrides={"BidUID": new_bid_uid},
-                            )
-                            or {}
+                    duplicated_uid_maps.setdefault(table, {}).update(
+                        self._copy_page_table_rows(
+                            cursor,
+                            schema,
+                            table,
+                            bid_uid,
+                            new_bid_uid,
+                            page_uid_map,
                         )
+                        or {}
+                    )
                 self._remap_duplicated_relationships(
                     cursor, schema, duplicated_uid_maps, new_bid_uid
                 )
@@ -793,6 +800,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         old_uid: str,
         new_uid: str,
         extra_overrides: dict = None,
+        excluded_source_uids: Optional[set[str]] = None,
     ) -> Dict[str, str]:
         uid_map: Dict[str, str] = {}
         schema = self._schema(cursor.connection)
@@ -811,11 +819,24 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
             if not rows:
                 return uid_map
+            if excluded_source_uids and "UID" in cols:
+                rows = [
+                    row
+                    for row in rows
+                    if str(int(row["UID"])) not in excluded_source_uids
+                ]
+                if not rows:
+                    return uid_map
             if table == "BidPageSettings":
                 rows = canonicalize_page_area_settings(rows)
             has_uid = "UID" in cols
             if has_uid:
                 require_valid_unique_bid_owned_uids((row["UID"] for row in rows), table)
+                new_row_uids = iter(
+                    self._next_uids_preserving_references(
+                        cursor, schema, table, len(rows)
+                    )
+                )
             insert_cols = cols
             for row_data in rows:
                 row_data[uid_col] = new_uid
@@ -825,9 +846,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     row_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
                 if has_uid:
                     old_row_uid = str(int(row_data["UID"]))
-                    new_row_uid = self._next_uid_preserving_references(
-                        cursor, schema, table
-                    )
+                    new_row_uid = next(new_row_uids)
                     row_data["UID"] = new_row_uid
                 values = []
                 for c in insert_cols:
@@ -858,19 +877,47 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
         new_bid_uid: str,
     ) -> None:
         for relationship in BID_RELATIONSHIPS:
+            if (
+                relationship.child_table in PAGE_SECTIONS
+                and relationship.child_column == "BidPageUID"
+            ):
+                continue
             parent_uid_map = duplicated_uid_maps.get(relationship.parent_table, {})
             child_uid_map = duplicated_uid_maps.get(relationship.child_table, {})
             if not parent_uid_map:
                 continue
+            if not schema.column_exists(
+                relationship.child_table, relationship.child_column
+            ):
+                continue
             if schema.column_exists(relationship.child_table, "BidUID"):
+                referenced_parent_uids = self._duplicated_reference_uids(
+                    cursor,
+                    relationship.child_table,
+                    relationship.child_column,
+                    new_bid_uid,
+                )
+                parent_uid_map = {
+                    old_uid: new_uid
+                    for old_uid, new_uid in parent_uid_map.items()
+                    if old_uid in referenced_parent_uids
+                }
+                if not parent_uid_map:
+                    continue
                 where_columns = ("BidUID", relationship.child_column)
                 scopes = ((new_bid_uid,),)
             elif schema.column_exists(relationship.child_table, "BidPageUID"):
-                where_columns = ("BidPageUID", relationship.child_column)
-                scopes = tuple(
-                    (new_page_uid,)
-                    for new_page_uid in duplicated_uid_maps.get("BidPages", {}).values()
-                )
+                for old_parent_uid, new_parent_uid in parent_uid_map.items():
+                    self._update_page_owned_relationship(
+                        cursor,
+                        schema,
+                        relationship.child_table,
+                        relationship.child_column,
+                        new_parent_uid,
+                        old_parent_uid,
+                        new_bid_uid,
+                    )
+                continue
             else:
                 if not child_uid_map:
                     continue
@@ -890,12 +937,102 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         (*scope, old_parent_uid),
                     )
 
+    @staticmethod
+    def _duplicated_reference_uids(
+        cursor, table: str, column: str, bid_uid: str
+    ) -> set[str]:
+        cursor.execute(
+            f"SELECT DISTINCT [{column}] FROM [{table}] "
+            f"WHERE [BidUID]=? AND [{column}] IS NOT NULL AND [{column}]<>0",
+            bid_uid,
+        )
+        return {str(int(row[0])) for row in cursor.fetchall()}
+
+    def _copy_page_table_rows(
+        self,
+        cursor,
+        schema,
+        table: str,
+        source_bid_uid: str,
+        new_bid_uid: str,
+        page_uid_map: Dict[str, str],
+    ) -> Dict[str, str]:
+        uid_map: Dict[str, str] = {}
+        try:
+            if schema.optional_table_missing(table) or not schema.column_exists(
+                table, "BidPageUID"
+            ):
+                return uid_map
+            cols = sorted(schema.get_columns(table))
+            selected_columns = ", ".join(f"[page_child].[{column}]" for column in cols)
+            cursor.execute(
+                f"SELECT {selected_columns} FROM [{table}] AS [page_child] "
+                "INNER JOIN [BidPages] AS [owner_page] ON "
+                "[page_child].[BidPageUID] = [owner_page].[UID] "
+                "WHERE [owner_page].[BidUID] = ?",
+                source_bid_uid,
+            )
+            binary_cols = {
+                description[0]
+                for description in cursor.description
+                if description[1] is bytearray
+            }
+            rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+            if table == "BidPageSettings":
+                rows = canonicalize_page_area_settings(rows)
+            has_uid = "UID" in cols
+            if has_uid:
+                require_valid_unique_bid_owned_uids((row["UID"] for row in rows), table)
+                new_row_uids = iter(
+                    self._next_uids_preserving_references(
+                        cursor, schema, table, len(rows)
+                    )
+                )
+            for row_data in rows:
+                old_page_uid = str(int(row_data["BidPageUID"]))
+                new_page_uid = page_uid_map.get(old_page_uid)
+                if new_page_uid is None:
+                    raise DanglingBidOwnedReferenceError(
+                        f"{table} references unavailable source BidPages.UID="
+                        f"{old_page_uid}."
+                    )
+                row_data["BidPageUID"] = new_page_uid
+                if "BidUID" in row_data:
+                    row_data["BidUID"] = new_bid_uid
+                if "GUID" in row_data:
+                    row_data["GUID"] = "{" + str(uuid.uuid4()).upper() + "}"
+                if has_uid:
+                    old_row_uid = str(int(row_data["UID"]))
+                    new_row_uid = next(new_row_uids)
+                    row_data["UID"] = new_row_uid
+                values = {}
+                for column in cols:
+                    value = row_data[column]
+                    if column in binary_cols and value is not None:
+                        value = coerce_binary_column_value(value)
+                    values[column] = value
+                self._execute_insert_values(
+                    cursor,
+                    schema,
+                    table,
+                    values,
+                    ("BidPageUID",),
+                    f"copy_{table}",
+                )
+                if has_uid:
+                    uid_map[old_row_uid] = str(new_row_uid)
+        except pyodbc.Error as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
+        return uid_map
+
     def _require_duplicable_bid_relationships(
         self,
         cursor,
         schema,
         bid_uid: int,
-    ) -> None:
+    ) -> Dict[str, set[str]]:
+        skipped_derived_uids: Dict[str, set[str]] = {}
         checked: set[tuple[str, str, str, str]] = set()
         for relationship in BID_RELATIONSHIPS:
             key = (
@@ -941,11 +1078,14 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 bid_uid,
             )
             parent_uids = {int(row[0]) for row in cursor.fetchall()}
-            missing_row = next(
-                (row for row in child_rows if int(row[1]) not in parent_uids),
-                None,
-            )
-            if missing_row is not None:
+            missing_rows = [row for row in child_rows if int(row[1]) not in parent_uids]
+            if missing_rows:
+                if relationship.child_table in DERIVED_BID_TOTAL_TABLES:
+                    skipped_derived_uids.setdefault(
+                        relationship.child_table, set()
+                    ).update(str(int(row[0])) for row in missing_rows)
+                    continue
+                missing_row = missing_rows[0]
                 raise DanglingBidOwnedReferenceError(
                     f"{relationship.child_table}.UID={int(missing_row[0])} "
                     f"references missing {relationship.parent_table}.UID="
@@ -973,6 +1113,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 {row[0]: row[1] for row in cursor.fetchall()},
                 table,
             )
+        return skipped_derived_uids
 
     @staticmethod
     def _require_duplicable_indirect_area_counts(cursor, schema, bid_uid: int) -> None:
@@ -1067,17 +1208,21 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 }.issubset(parent_columns)
             ):
                 continue
-            child_uid_sql = "[UID]" if "UID" in child_columns else "NULL AS [UID]"
-            child_rows = []
-            for page_uid in page_uids:
-                cursor.execute(
-                    f"SELECT {child_uid_sql}, [{relationship.child_column}] "
-                    f"FROM [{relationship.child_table}] WHERE [BidPageUID]=? "
-                    f"AND [{relationship.child_column}] IS NOT NULL "
-                    f"AND [{relationship.child_column}] <> 0",
-                    page_uid,
-                )
-                child_rows.extend(cursor.fetchall())
+            child_uid_sql = (
+                "[child].[UID]" if "UID" in child_columns else "NULL AS [UID]"
+            )
+            cursor.execute(
+                f"SELECT {child_uid_sql}, "
+                f"[child].[{relationship.child_column}] "
+                f"FROM [{relationship.child_table}] AS [child] "
+                "INNER JOIN [BidPages] AS [owner_page] ON "
+                "[child].[BidPageUID]=[owner_page].[UID] "
+                "WHERE [owner_page].[BidUID]=? "
+                f"AND [child].[{relationship.child_column}] IS NOT NULL "
+                f"AND [child].[{relationship.child_column}] <> 0",
+                bid_uid,
+            )
+            child_rows = cursor.fetchall()
             if not child_rows:
                 continue
             cursor.execute(
@@ -1161,13 +1306,14 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 (row[cols.index("UID")] for row in rows),
                 table,
             )
+            new_row_uids = iter(
+                self._next_uids_preserving_references(cursor, schema, table, len(rows))
+            )
             insert_cols = cols
             for row in rows:
                 row_data = dict(zip(cols, row))
                 old_row_uid = str(int(row_data["UID"]))
-                new_row_uid_int = self._next_uid_preserving_references(
-                    cursor, schema, table
-                )
+                new_row_uid_int = next(new_row_uids)
                 row_data["UID"] = new_row_uid_int
                 row_data[uid_col] = new_uid
                 if "GUID" in row_data:
@@ -1191,6 +1337,44 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             if self._record_caught_mutation_error(exc):
                 raise
         return uid_map
+
+    def _update_page_owned_relationship(
+        self,
+        cursor,
+        schema,
+        table: str,
+        set_column: str,
+        set_value,
+        old_value,
+        bid_uid: str,
+    ) -> None:
+        if schema.optional_table_missing(table):
+            return
+        required = (set_column, "BidPageUID")
+        missing = [
+            column for column in required if not schema.column_exists(table, column)
+        ]
+        if (
+            missing
+            or schema.optional_table_missing("BidPages")
+            or not {
+                "UID",
+                "BidUID",
+            }.issubset(schema.get_columns("BidPages"))
+        ):
+            for column in missing:
+                schema.log_optional_write_skip(
+                    table, column, f"update_{table}_{set_column}"
+                )
+            return
+        cursor.execute(
+            f"UPDATE [{table}] SET [{set_column}]=? "
+            f"WHERE [{set_column}]=? AND [BidPageUID] IN "
+            "(SELECT [UID] FROM [BidPages] WHERE [BidUID]=?)",
+            set_value,
+            old_value,
+            bid_uid,
+        )
 
     def _update_if_columns(
         self,

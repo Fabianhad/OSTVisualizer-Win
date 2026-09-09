@@ -544,7 +544,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer.cleanup()
 
     def test_mesh_context_action_rejects_edit_access_loss(self):
-        self._app()
+        app = self._app()
         viewer = OpenGLViewer(None, SimpleNamespace())
         viewer._pick_enabled = True
         viewer._selected_takeoff_uids = ["takeoff-1"]
@@ -581,6 +581,8 @@ class TestMeshViewLifecycle(unittest.TestCase):
             RevokingMenu,
         ):
             viewer.contextMenuEvent(event)
+        app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        app.processEvents()
         self.assertEqual(emitted, [])
         viewer.cleanup()
 

@@ -82,13 +82,14 @@ class ConnectionWrapper:
         if cursor in self._open_cursors:
             self._open_cursors.remove(cursor)
 
-    def close_cursors(self) -> None:
+    def close_cursors(self) -> list[pyodbc.Error]:
+        errors = []
         for cursor in list(self._open_cursors):
             try:
                 cursor.close()
-            except pyodbc.Error:
-                pass
-        self._open_cursors.clear()
+            except pyodbc.Error as exc:
+                errors.append(exc)
+        return errors
 
     def commit(self) -> None:
         self._conn.commit()

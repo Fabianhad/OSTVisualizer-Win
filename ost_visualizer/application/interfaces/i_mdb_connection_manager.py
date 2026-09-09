@@ -1,6 +1,10 @@
 from typing import Protocol, ContextManager
 
 
+class DatabaseConnectionUnavailableError(RuntimeError):
+    """Raised when the database driver cannot create a required connection."""
+
+
 class IMdbConnectionManager(Protocol):
     def maintenance(self, db_path: str) -> ContextManager[None]: ...
     def set_write_blocked(self, blocked: bool) -> None: ...

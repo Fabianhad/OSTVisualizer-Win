@@ -3102,6 +3102,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             def exec(self, _pos):
                 return None
 
+            def deleteLater(self):
+                pass
+
         def add_no_common_submenus(_menu):
             return 0, None, None
 

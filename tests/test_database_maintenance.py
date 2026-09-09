@@ -70,7 +70,7 @@ class DatabaseMaintenanceTests(unittest.TestCase):
 
     def test_connection_manager_excludes_leases_and_closes_both_pools(self):
         manager = MdbConnectionManager()
-        path = os.path.abspath("sample.mdb")
+        path = os.path.normcase(os.path.abspath("sample.mdb"))
         read, write = Mock(), Mock()
         manager._read_conns[path] = read
         manager._write_conns[path] = write
@@ -90,7 +90,7 @@ class DatabaseMaintenanceTests(unittest.TestCase):
 
     def test_active_lease_and_failed_close_prevent_maintenance(self):
         manager = MdbConnectionManager()
-        path = os.path.abspath("sample.mdb")
+        path = os.path.normcase(os.path.abspath("sample.mdb"))
         with patch(
             "ost_visualizer.infrastructure.mdb.connection_manager.pyodbc.connect",
             return_value=Mock(),

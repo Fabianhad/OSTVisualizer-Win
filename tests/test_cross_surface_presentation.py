@@ -20,6 +20,9 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
 )
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    CollaborationResourceFamily,
+)
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import BidAnnotation
@@ -255,8 +258,13 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.coordinator.ui_access_manager = self.access
         self.coordinator._page_settings_bar = self.bar
         self.coordinator._viewer = self.viewer
+        self.coordinator._tab_widget = None
+        self.coordinator._status_panel = None
         self.coordinator.main_window = SimpleNamespace(
             refresh_detached_plan_views=self.manager.refresh_active_view,
+            project_view=SimpleNamespace(
+                update_bid_content_counts=lambda _bid_ref, **_counts: None
+            ),
         )
         self.coordinator._request_or_defer_mesh_refresh = lambda _pages: None
         self.coordinator._apply_pending_hotlink_named_view_focus = (
@@ -5155,6 +5163,75 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.assertEqual(self.main_plan._selected_uids, selections[0])
         self.assertFalse(self.detached.plan_view._selected_uids)
         self.assertFalse(self.detached.plan_view._selection_items)
+
+    def test_deferred_other_page_rename_updates_detached_navigation_without_render(
+        self,
+    ):
+        first = self.data.page
+        second = deepcopy(first)
+        second.uid = "page-2"
+        second.name = "Second drawing"
+        pages = {first.uid: first, second.uid: second}
+        self.data.bid.pages_without_folder = [first, second]
+        self.data.get_page = pages.get
+        self.data.get_all_pages = lambda: list(pages.values())
+        self.manager.refresh_active_view()
+        self.assertEqual(
+            self.detached._page_combo._page_items[second.uid].text(),
+            "Second drawing",
+        )
+        second.name = "Renamed background drawing"
+        with patch.object(
+            self.manager, "_apply_window_page", wraps=self.manager._apply_window_page
+        ) as apply_page:
+            self.manager._on_remote_bid_content_changed(
+                database_id=self.bid_ref.file_path,
+                bid_uid=self.bid_ref.bid_uid,
+                families=[CollaborationResourceFamily.PAGES.value],
+                affected_page_uids_by_family={
+                    CollaborationResourceFamily.PAGES.value: [second.uid]
+                },
+                defer_plan_projection=True,
+                local_completion=True,
+                image_sources_unchanged=True,
+            )
+        self.assertEqual(
+            self.detached._page_combo._page_items[second.uid].text(),
+            "Renamed background drawing",
+        )
+        self.assertEqual(apply_page.call_count, 0)
+        self.assertEqual(self.detached.plan_view.current_page_uid, first.uid)
+
+    def test_remote_other_page_takeoff_updates_detached_badge_without_render(self):
+        first = self.data.page
+        second = deepcopy(first)
+        second.uid = "page-2"
+        second.name = "Second drawing"
+        pages = {first.uid: first, second.uid: second}
+        takeoffs = []
+        self.data.bid.pages_without_folder = [first, second]
+        self.data.get_page = pages.get
+        self.data.get_all_pages = lambda: list(pages.values())
+        self.data.get_all_takeoffs = lambda: list(takeoffs)
+        self.manager.refresh_active_view()
+        self.assertNotIn(second.uid, self.detached._pages_with_takeoffs)
+        takeoffs.append(SimpleNamespace(page_uid=second.uid))
+        with patch.object(
+            self.manager, "_apply_window_page", wraps=self.manager._apply_window_page
+        ) as apply_page:
+            self.manager._on_remote_bid_content_changed(
+                database_id=self.bid_ref.file_path,
+                bid_uid=self.bid_ref.bid_uid,
+                families=[CollaborationResourceFamily.TAKEOFFS.value],
+                affected_page_uids_by_family={
+                    CollaborationResourceFamily.TAKEOFFS.value: [second.uid]
+                },
+                defer_plan_projection=True,
+                local_completion=True,
+            )
+        self.assertIn(second.uid, self.detached._pages_with_takeoffs)
+        self.assertEqual(apply_page.call_count, 0)
+        self.assertEqual(self.detached.plan_view.current_page_uid, first.uid)
 
 
 class MeshRendererBoundary(FakeMeshRenderer):

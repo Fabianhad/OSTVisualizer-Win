@@ -160,23 +160,21 @@ class PlacementCoordinator:
             seen.add(uid)
         return ordered
 
-    def reconcile_authoritative_conditions(self) -> bool:
+    def reconcile_authoritative_conditions(
+        self, *, accept_reconstructed_conditions: bool = False
+    ) -> bool:
         if self._state == PlacementState.IDLE:
             return True
         conditions = self._project_data.get_bid_conditions()
         active_uid = self._ui_state.place_condition_uid
         active = conditions.get(active_uid) if active_uid else None
         current_uids = tuple(self._ui_state.place_condition_uids)
+        expected_uids = tuple(uid for uid, _condition in self._condition_identities)
         if (
             active is None
             or not active.layer_visible
             or active.condition_type != self._condition_type
-            or current_uids
-            != tuple(uid for uid, _condition in self._condition_identities)
-            or any(
-                conditions.get(uid) is not condition
-                for uid, condition in self._condition_identities
-            )
+            or current_uids != expected_uids
         ):
             self.force_exit()
             return False
@@ -189,6 +187,17 @@ class PlacementCoordinator:
             ):
                 self.force_exit()
                 return False
+        identities_changed = any(
+            conditions.get(uid) is not condition
+            for uid, condition in self._condition_identities
+        )
+        if identities_changed:
+            if not accept_reconstructed_conditions:
+                self.force_exit()
+                return False
+            self._condition_identities = tuple(
+                (uid, conditions[uid]) for uid in current_uids
+            )
         return True
 
     def _ensure_color_map_includes(self, condition_uids: list) -> None:

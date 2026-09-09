@@ -32,7 +32,8 @@ from ost_visualizer.presentation.coordinators import (
 )
 from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
 from ost_visualizer.presentation.main_window import MainWindow
-from ost_visualizer.presentation.utils.dialog import BaseListDialog
+from ost_visualizer.presentation.utils.dialog import BaseListDialog, exec_transient_menu
+from ost_visualizer.presentation.utils.messagebox import confirm_delete_conditions
 from ost_visualizer.presentation.utils.qt_message_notifier import QtMessageNotifier
 from ost_visualizer.presentation.utils.ost_blocking import exec_with_ost_blocking
 from ost_visualizer.presentation.utils.windows import set_fixed_width_auto_height
@@ -136,6 +137,45 @@ class FakeProgressDialog:
 
 
 class DialogLifecycleTests(unittest.TestCase):
+    def test_repeated_transient_context_menus_return_to_owner_baseline(self):
+        app = _app()
+        owner = QtWidgets.QWidget()
+
+        class ImmediateMenu(QtWidgets.QMenu):
+            def exec(self, _global_pos):
+                return None
+
+        try:
+            for _ in range(500):
+                menu = ImmediateMenu(owner)
+                menu.addAction("Action")
+                exec_transient_menu(menu, QtCore.QPoint())
+            app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            app.processEvents()
+            self.assertEqual(owner.findChildren(ImmediateMenu), [])
+        finally:
+            owner.deleteLater()
+
+    def test_repeated_condition_delete_prompts_release_message_boxes(self):
+        app = _app()
+        owner = QtWidgets.QWidget()
+        try:
+            with patch.object(
+                QtWidgets.QMessageBox, "exec", return_value=0
+            ), patch.object(QtWidgets.QMessageBox, "clickedButton", return_value=None):
+                for index in range(100):
+                    self.assertEqual(
+                        confirm_delete_conditions(
+                            owner, [(str(index), f"Condition {index}")]
+                        ),
+                        [],
+                    )
+            app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            app.processEvents()
+            self.assertEqual(owner.findChildren(QtWidgets.QMessageBox), [])
+        finally:
+            owner.deleteLater()
+
     def test_collaboration_modal_return_marks_destroyed_dialog_unexecuted(self):
         _app()
         parent = QtWidgets.QWidget()
@@ -888,6 +928,24 @@ class DialogLifecycleTests(unittest.TestCase):
             dialog.cleanup()
             self.assertIsNotNone(worker_thread)
             self.assertFalse(worker_thread.isRunning())
+            dialog.deleteLater()
+
+    def test_progress_dialog_worker_exception_has_no_boolean_result(self):
+        _app()
+        expected_error = RuntimeError("duplicate failed")
+
+        def task():
+            raise expected_error
+
+        dialog = ProgressDialog("bid", task, action_text="Duplicating")
+        QtCore.QTimer.singleShot(5000, dialog.reject)
+        try:
+            rc = dialog.exec()
+            self.assertEqual(rc, QtWidgets.QDialog.DialogCode.Rejected)
+            self.assertIsNone(dialog.result)
+            self.assertIs(dialog.error, expected_error)
+        finally:
+            dialog.cleanup()
             dialog.deleteLater()
 
     def test_progress_dialog_delivers_worker_progress_to_label(self):

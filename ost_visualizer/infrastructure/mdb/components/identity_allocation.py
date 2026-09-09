@@ -37,3 +37,11 @@ class AccessIdentityAllocationMixin:
             if referenced_uid >= next_uid:
                 next_uid = referenced_uid + 1
         return next_uid
+
+    def _next_uids_preserving_references(
+        self, cursor, schema, table: str, count: int
+    ) -> range:
+        if count <= 0:
+            return range(0)
+        first_uid = self._next_uid_preserving_references(cursor, schema, table)
+        return range(first_uid, first_uid + count)

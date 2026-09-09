@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from .folder import Folder
 from .page import Page
 
@@ -24,3 +24,23 @@ class Bid:
     copy_timestamp: Optional[Any] = None
     folders: Dict[str, Folder] = field(default_factory=dict)
     pages_without_folder: List[Page] = field(default_factory=list)
+
+    def replace_pages(self, pages: Iterable[Page]) -> None:
+        folders_by_uid: Dict[str, Folder] = {}
+
+        def index_folders(folders: Iterable[Folder]) -> None:
+            for folder in folders:
+                folders_by_uid[str(folder.uid)] = folder
+                folder.pages.clear()
+                index_folders(folder.subfolders.values())
+
+        index_folders(self.folders.values())
+        self.pages_without_folder.clear()
+        ordered_pages = sorted(pages, key=lambda page: page.sequence)
+        for page in ordered_pages:
+            folder = folders_by_uid.get(str(page.folder_uid or ""))
+            if folder is None:
+                self.pages_without_folder.append(page)
+            else:
+                folder.pages.append(page)
+        self.page_count = len(ordered_pages)

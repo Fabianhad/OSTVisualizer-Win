@@ -101,6 +101,7 @@ class CoverSheetSidebarRegressionTests(unittest.TestCase):
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._placement = SimpleNamespace()
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
         coordinator._nav = SimpleNamespace(is_refreshing=False)
         coordinator.conditions_sidebar = None
         coordinator._selection_projected_condition_uids = set()
@@ -187,6 +188,7 @@ class CoverSheetSidebarRegressionTests(unittest.TestCase):
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._placement = SimpleNamespace()
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
         coordinator._nav = SimpleNamespace(is_refreshing=False)
         coordinator.conditions_sidebar = None
         coordinator._selection_projected_condition_uids = set()

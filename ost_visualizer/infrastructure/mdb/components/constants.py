@@ -58,6 +58,13 @@ LEGACY_BID_TABLES_COPIED_BY_DUPLICATION = (
     "BidNotes",
     "BidTimeCardStates",
 )
+DERIVED_BID_TOTAL_TABLES = frozenset(
+    {
+        "BidTakeoffTotals",
+        "BidLaborCostCodeTotals",
+        "BidTypicalGroupTotals",
+    }
+)
 TAKEOFF_REFERENCE_TABLES = (
     "BidDimensions",
     "BidALines",

@@ -19,6 +19,7 @@ from ..config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ..managers.context_menu_manager import ContextMenuManager
 from ..modes.cursor import CURSOR_MODE_DEFAULT, CURSOR_MODE_PAN, CURSOR_MODE_ZOOM
 from ..utils.overlay_context_menu import resolve_overlay_menu_action
+from ..utils.dialog import exec_transient_menu
 from ..utils.theme import set_palette_background
 from ..utils.view_context_menu import (
     SelectedTakeoffContextState,
@@ -734,7 +735,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._add_context_command(menu, "Paste", "paste")
             menu.addSeparator()
             self._add_context_page_actions(menu, separate_delete=True)
-        action = menu.exec(event.globalPos())
+        action = exec_transient_menu(menu, event.globalPos())
         if action is None:
             event.accept()
             return

@@ -14,6 +14,50 @@
 
 ### Fixed
 
+- Routine Access writes now reuse the shared per-database reader/writer
+  connections across their authoritative post-write reload instead of performing
+  a physical ODBC reconnect after every save. Explicit refresh, replacement,
+  maintenance, unload, and shutdown still close the complete database
+  incarnation. ACE `08004`/`-1036` client-task exhaustion now returns a
+  pre-commit failure, shows one actionable Takeoff error, preserves Plan state,
+  records no undo entry, and remains retryable without an unhandled exception.
+  Healthy connections now also survive rolled-back statement and schema errors;
+  connection-class failures, failed rollbacks, and failed cursor cleanup evict
+  the exact unhealthy handle before reuse. Windows path-case aliases share the
+  same serialized cache identity.
+- Remote metadata refreshes now update the Main title, Page status, active
+  Summary, Project Tree Page/Condition counts, and unaffected detached-Plan Page
+  labels even when raster or mesh projection is intentionally skipped. Bid-only
+  hierarchy refresh no longer redraws the Main Plan, and active-family owners
+  prevent duplicate Summary/navigation refreshes.
+- Remote Page hydration now replaces the loaded Bid's Page hierarchy and the
+  Main/detached Page pickers from the same authoritative objects, so inserted,
+  removed, moved, and counted Pages do not remain stale until a hierarchy reload.
+  Detached Page takeoff badges also update for changes on another Page without
+  redrawing the detached canvas. Mixed Page/Takeoff batches project Plan, mesh,
+  quantities, and Summary once after final Page fallback; deleting the last Page
+  clears derived Condition quantities immediately.
+- Database refresh now clears the stale Main Plan and invalidates its pending
+  Page work when the selected Bid disappears. The deterministic fallback remains
+  the database root, and menu/toolbar state now updates in the same transition.
+  If the Bid survives but its active Page does not, refresh now selects the first
+  valid authoritative fallback immediately even from Summary, updates Page
+  Settings/navigation/status, and prevents hidden Main Plan work from retaining
+  the deleted Page.
+- Remote Page projection now recovers the first Page immediately when an empty
+  Bid gains content, clears navigation when the last Page disappears, and keeps
+  toolbar actions disabled while the authoritative active Page and displayed
+  Main Plan Page differ during deferred projection. Controls recover directly
+  from the successful current projection completion as soon as the matching
+  Page is displayed, without waiting for another focus or navigation event.
+- Fixed Duplicate Bid rejecting an otherwise valid Bid because stale derived
+  total rows referenced deleted Pages or other bid-owned records. Valid legacy
+  totals remain compatible, while malformed `BidTakeoffTotals`,
+  `BidLaborCostCodeTotals`, and `BidTypicalGroupTotals` rows are omitted from the
+  duplicate without weakening required Takeoff ownership. Duplicate Bid worker
+  exceptions now preserve the structured `WriteReloadResult` contract instead
+  of returning `False` and crashing on `new_bid_uid`; failures produce one UI
+  error, leave selection intact, and permit retry for both MDB and SQL paths.
 - Bid Area dialogs and pickers now query current usage at deletion time instead
   of retaining opening snapshots; failed usage queries leave the dialog unchanged.
 - Nested Condition Layer editors now validate current usage at deletion time,
@@ -360,6 +404,12 @@
 - Fixed structural Condition and layer changes leaving multi-Condition placement
   active after a primary or secondary Condition became hidden, unavailable, or
   incompatible with the active placement geometry.
+- Fixed authoritative Condition updates and folder-only projections discarding
+  otherwise valid Takeoff placement after reconstructing Condition objects.
+  Layer visibility now suspends and restores the complete multi-Condition tool
+  owner set, while same-UID replacement, access loss, and newer tool choices
+  still invalidate restoration. Passive Condition Tree rebuilds retain the
+  focused row, and toolbar Takeoff availability follows that exact active row.
 - Fixed PDF, 3D-format, and Summary CSV exports continuing with a different bid
   when navigation changed while the native destination dialog was open.
 - Fixed concurrent deletion of one member of a queued bulk move or reassignment

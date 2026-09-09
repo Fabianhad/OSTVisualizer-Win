@@ -22,13 +22,27 @@ class ReloadDatabaseUseCase:
         self.logger = logger or logging.getLogger(__name__)
 
     def execute(self, file_path: Optional[str] = None) -> bool:
+        return self._execute(file_path, close_connections=True)
+
+    def execute_after_write(self, file_path: str) -> bool:
+        return self._execute(file_path, close_connections=False)
+
+    def _execute(
+        self,
+        file_path: Optional[str],
+        *,
+        close_connections: bool,
+    ) -> bool:
         target_path = file_path or self.file_manager.current_file_path
         if not target_path:
             self.logger.warning("Cannot reload database - no file path provided")
             return False
         prev_bid_ref = self.model.current_bid_ref
         selected_pages = self.model.get_selected_pages()
-        result = self.file_manager.reload_database(target_path)
+        result = self.file_manager.reload_database(
+            target_path,
+            close_connections=close_connections,
+        )
         if not result.success:
             self.logger.error(
                 "Database reload failed for %s: %s",

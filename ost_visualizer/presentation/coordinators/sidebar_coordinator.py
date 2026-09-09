@@ -122,9 +122,9 @@ class SidebarCoordinator:
         if not bid:
             self.takeoff_sidebar.clear()
             return
-        pages_with_takeoffs = {
-            page.uid for page in self._project_data.get_all_pages() if page.takeoffs
-        }
+        pages = self._project_data.get_all_pages()
+        bid.replace_pages(pages)
+        pages_with_takeoffs = {page.uid for page in pages if page.takeoffs}
         self.takeoff_sidebar.load_bid(bid, pages_with_takeoffs=pages_with_takeoffs)
 
     def _sync_sidebar_highlight_from_ui_state(

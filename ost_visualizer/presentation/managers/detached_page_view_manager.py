@@ -446,9 +446,17 @@ class DetachedPageViewManager(IShutdownAware):
         annotations_changed = (
             CollaborationResourceFamily.ANNOTATIONS.value in changed_families
         )
+        pages_changed = CollaborationResourceFamily.PAGES.value in changed_families
+        takeoffs_changed = (
+            CollaborationResourceFamily.TAKEOFFS.value in changed_families
+        )
         if annotations_changed:
             self._reconcile_target_named_view(view)
-        if annotations_changed and (defer_plan_projection or not affects_target_page):
+        if (
+            (annotations_changed and (defer_plan_projection or not affects_target_page))
+            or (pages_changed and not affects_target_page)
+            or (takeoffs_changed and not affects_target_page)
+        ):
             self._update_window_navigation(view)
         if not defer_plan_projection and affects_target_page:
             if not image_sources_unchanged and (

@@ -11,6 +11,9 @@ from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.loaded_file import LoadedFile
 from ost_visualizer.domain.entities.project import Project
+from ost_visualizer.application.services.project_write_service import (
+    WriteReloadResult,
+)
 from ost_visualizer.presentation.components.project_tree_view import (
     _DELETED_PROJECT_UID,
     ProjectView,
@@ -159,6 +162,24 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             self.assertEqual(item.text(2), self.view._display_status(status))
             self.assertTrue(item.isSelected())
             self.assertFalse(self._find_item("bid-2").isSelected())
+
+    def test_bid_content_count_projection_survives_tree_rebuild(self):
+        loaded = self._loaded_file(["bid-1"])
+        bid = loaded[0].projects[0].bids[0]
+        bid.page_count = 1
+        bid.condition_count = 2
+        self.view.build_complete_structure(loaded)
+        bid_ref = BidRef(loaded[0].file_path, bid.uid)
+        self.view.update_bid_content_counts(
+            bid_ref,
+            page_count=3,
+            condition_count=4,
+        )
+        item = self._find_item(bid.uid)
+        self.assertEqual((item.text(6), item.text(7)), ("3", "4"))
+        self.view.set_group_by_job_status(True, notify=False)
+        item = self._find_item(bid.uid)
+        self.assertEqual((item.text(6), item.text(7)), ("3", "4"))
 
     def test_delete_replacement_selects_next_bid_in_same_folder(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
@@ -684,8 +705,9 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         duplicate_calls = []
         write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _path: False,
-            duplicate_bid=lambda file_path, bid_uid, reload=False: (
-                duplicate_calls.append((file_path, bid_uid, reload)) or "new-bid"
+            duplicate_bid_result=lambda file_path, bid_uid, reload=False: (
+                duplicate_calls.append((file_path, bid_uid, reload))
+                or WriteReloadResult("new-bid", True, True)
             ),
             reload_database=lambda _path: True,
             notify_database_refreshed=lambda _path: None,

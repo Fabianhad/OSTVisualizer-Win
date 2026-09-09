@@ -1,9 +1,11 @@
 from typing import Any, Callable, Dict, List, Optional, Set, TypedDict
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
+from ...application.dtos.write_reload_result import WriteReloadResult
 from ..config import COMPACT_SPACING, RELAXED_MARGINS, RELAXED_SPACING
 from .condition_tree_style import apply_tree_indentation
 from .messagebox import confirm_multi_delete, show_warning
+from .qt_lifecycle import delete_later_if_valid, exec_transient_menu
 
 
 def authoritative_save_is_current(
@@ -27,20 +29,8 @@ class ItemRecord(TypedDict):
     is_new: bool
 
 
-def delete_later_if_valid(qt_object: QtCore.QObject) -> None:
-    try:
-        qt_object.deleteLater()
-    except RuntimeError:
-        if isValid(qt_object):
-            raise
-
-
 def _is_write_reload_result(result) -> bool:
-    result_type = type(result)
-    return (
-        result_type.__name__ == "WriteReloadResult"
-        and result_type.__module__.endswith("project_write_service")
-    )
+    return isinstance(result, WriteReloadResult)
 
 
 def save_result_succeeded(result) -> bool:

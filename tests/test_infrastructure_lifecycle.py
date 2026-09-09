@@ -7,7 +7,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import pyodbc
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
@@ -647,13 +647,19 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             def _create_blank_mdb(self, db_path):
                 Path(db_path).touch()
 
-            def _create_schema(self, db_path, progress_callback=None):
+            def _create_schema(
+                self,
+                db_path,
+                progress_callback=None,
+                *,
+                seed_name=None,
+            ):
+                if seed_name != "Created":
+                    raise AssertionError("database name was not forwarded to seeding")
                 self._report_progress(progress_callback, "schema tables")
                 self._report_progress(progress_callback, "schema field metadata")
                 self._report_progress(progress_callback, "schema indexes")
                 self._report_progress(progress_callback, "schema relationships")
-
-            def _insert_seed_data(self, db_path, name, progress_callback=None):
                 self._report_progress(progress_callback, "default data")
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -679,6 +685,36 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 "finalizing",
             ],
         )
+
+    def test_database_creator_reuses_one_odbc_connection_for_schema_and_seed(self):
+        connection = Mock()
+        connection.cursor.return_value = Mock()
+        creator = database_creator.DatabaseCreator()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "created.mdb"
+
+            def create_blank(path):
+                Path(path).touch()
+
+            with (
+                patch.object(
+                    creator,
+                    "_create_blank_mdb",
+                    side_effect=create_blank,
+                ),
+                patch.object(
+                    creator,
+                    "_apply_reference_schema_metadata",
+                ),
+                patch.object(
+                    database_creator.pyodbc,
+                    "connect",
+                    return_value=connection,
+                ) as connect,
+            ):
+                self.assertTrue(creator.create_database(db_path, "Created"))
+        connect.assert_called_once()
+        connection.close.assert_called_once()
 
     def test_database_creator_seeds_default_layers_from_schema_contract(self):
         class FakeCursor:
@@ -3712,6 +3748,84 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             logs.output[0],
         )
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 1)
+
+    def test_duplicate_bid_resets_dangling_derived_totals(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
+        conn.execute("INSERT INTO Settings VALUES (2)")
+        conn.execute("CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, JobName TEXT)")
+        conn.execute("INSERT INTO Bids VALUES (149805, 1, 'Source')")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidPages VALUES (143661, 149805)")
+        for table in (
+            "BidTakeoffTotals",
+            "BidLaborCostCodeTotals",
+            "BidTypicalGroupTotals",
+        ):
+            conn.execute(
+                f"CREATE TABLE [{table}] "
+                "(UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)"
+            )
+        conn.execute("INSERT INTO BidTakeoffTotals VALUES (9669, 149805, 143662)")
+        conn.execute("INSERT INTO BidTakeoffTotals VALUES (8669, 149805, 143661)")
+        conn.execute("INSERT INTO BidLaborCostCodeTotals VALUES (9670, 149805, 143662)")
+        conn.execute("INSERT INTO BidLaborCostCodeTotals VALUES (8670, 149805, 143661)")
+        conn.execute("INSERT INTO BidTypicalGroupTotals VALUES (9671, 149805, 143662)")
+        conn.execute("INSERT INTO BidTypicalGroupTotals VALUES (8671, 149805, 143661)")
+        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("legacy.mdb", "149805")
+        self.assertIsNotNone(duplicate_uid)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 2)
+        duplicate_page_uid = conn.execute(
+            "SELECT UID FROM BidPages WHERE BidUID=?", (int(duplicate_uid),)
+        ).fetchone()[0]
+        for table in (
+            "BidTakeoffTotals",
+            "BidLaborCostCodeTotals",
+            "BidTypicalGroupTotals",
+        ):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    conn.execute(
+                        f"SELECT BidPageUID FROM [{table}] WHERE BidUID=?",
+                        (int(duplicate_uid),),
+                    ).fetchall(),
+                    [(duplicate_page_uid,)],
+                )
+                self.assertEqual(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM [{table}] WHERE BidUID=149805"
+                    ).fetchone()[0],
+                    2,
+                )
+
+    def test_duplicate_bid_still_rejects_takeoff_with_missing_required_page(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
+        conn.execute("INSERT INTO Settings VALUES (2)")
+        conn.execute("CREATE TABLE Bids (UID INTEGER, BidNo INTEGER, JobName TEXT)")
+        conn.execute("INSERT INTO Bids VALUES (1, 1, 'Source')")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute("CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidConditions VALUES (30, 1)")
+        conn.execute(
+            "CREATE TABLE BidTakeoffs "
+            "(UID INTEGER, BidUID INTEGER, BidPageUID INTEGER, "
+            "BidConditionUID INTEGER)"
+        )
+        conn.execute("INSERT INTO BidTakeoffs VALUES (40, 1, 20, 30)")
+        with self.assertLogs("test", level="ERROR") as logs:
+            duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid(
+                "malformed.mdb", "1"
+            )
+        self.assertIsNone(duplicate_uid)
+        self.assertIn(
+            "BidTakeoffs.UID=40 references missing BidPages.UID=20",
+            logs.output[0],
+        )
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 1)
+        self.assertEqual(
+            conn.execute("SELECT NextBidNo FROM Settings").fetchone()[0], 2
+        )
 
     def test_duplicate_bid_does_not_claim_orphan_bid_owned_rows(self):
         conn = sqlite3.connect(":memory:")

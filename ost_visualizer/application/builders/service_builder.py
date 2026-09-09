@@ -192,7 +192,7 @@ class ServiceBuilder:
                 ost_importer=ost_importer,
                 osp_importer=osp_importer,
                 project_write_service=self.container.get("project_write_service"),
-                reload_database=reload_database_uc.execute,
+                reload_database=reload_database_uc.execute_after_write,
                 event_bus=event_bus,
                 logger=self.logger.getChild("ImportService"),
             ),

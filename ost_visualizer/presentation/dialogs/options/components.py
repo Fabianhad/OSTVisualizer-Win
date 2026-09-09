@@ -69,6 +69,7 @@ from ...config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
+from ...utils.qt_lifecycle import delete_later_if_valid
 from ...utils.color_swatch import rounded_color_swatch
 from ...utils.mcp_setup_config import (
     build_claude_desktop_config,
@@ -116,20 +117,23 @@ class _ColorButton(QtWidgets.QPushButton):
 
     def _choose_color(self) -> None:
         dialog = QtWidgets.QColorDialog(QtGui.QColor(self._color), self)
-        dialog.setWindowTitle(self._dialog_title)
-        remove_minimize_maximize(dialog)
-        result = dialog.exec()
-        if not isValid(self) or not isValid(dialog):
-            return
-        if result != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        selected = dialog.currentColor()
-        if not selected.isValid():
-            return
-        new_color = selected.name()
-        if new_color != self._color:
-            self.set_color(new_color)
-            self.colorChanged.emit()
+        try:
+            dialog.setWindowTitle(self._dialog_title)
+            remove_minimize_maximize(dialog)
+            result = dialog.exec()
+            if not isValid(self) or not isValid(dialog):
+                return
+            if result != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            selected = dialog.currentColor()
+            if not selected.isValid():
+                return
+            new_color = selected.name()
+            if new_color != self._color:
+                self.set_color(new_color)
+                self.colorChanged.emit()
+        finally:
+            delete_later_if_valid(dialog)
 
 
 class OptionsTab(QtWidgets.QWidget):

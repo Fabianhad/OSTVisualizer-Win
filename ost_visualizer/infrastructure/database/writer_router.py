@@ -129,6 +129,15 @@ class DatabaseProjectWriter(SqlProjectWriter):
             )
         return MdbWriter._next_uid_preserving_references(self, cursor, schema, table)
 
+    def _next_uids_preserving_references(self, cursor, schema, table: str, count: int):
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._next_uids_preserving_references(
+                self, cursor, schema, table, count
+            )
+        return MdbWriter._next_uids_preserving_references(
+            self, cursor, schema, table, count
+        )
+
     def _record_caught_mutation_error(self, exc: BaseException) -> bool:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
             return SqlProjectWriter._record_caught_mutation_error(self, exc)
@@ -143,6 +152,16 @@ class DatabaseProjectWriter(SqlProjectWriter):
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
             return SqlProjectWriter._schema(self, connection)
         return MdbWriter._schema(self, connection)
+
+    def _global_settings_read_table_sql(self) -> str:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._global_settings_read_table_sql()
+        return MdbWriter._global_settings_read_table_sql()
+
+    def _global_settings_write_table_sql(self) -> str:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._global_settings_write_table_sql()
+        return MdbWriter._global_settings_write_table_sql()
 
     def _execute_insert_values(
         self,

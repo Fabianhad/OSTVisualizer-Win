@@ -35,7 +35,7 @@ class _WorkerThread(QThread):
             result = self._fn()
         except Exception as exc:
             logger.exception("Worker error")
-            result = False
+            result = None
             error = exc
         finally:
             self._fn = None

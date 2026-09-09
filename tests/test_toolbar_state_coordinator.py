@@ -1,5 +1,5 @@
 import unittest
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.config import (
@@ -13,6 +13,7 @@ from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
 from ost_visualizer.presentation.coordinators.placement_coordinator import (
     PlacementCoordinator,
 )
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
     PlanSurfaceAccessState,
@@ -452,6 +453,104 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         self.assertTrue(plan_view.selection_enabled)
         self.assertFalse(plan_view.editing_enabled)
 
+    def test_page_actions_wait_for_plan_projection_to_match_active_page(self):
+        _app()
+        ui_state = _UiState(active_page_uid="p1")
+        coordinator = ToolbarStateCoordinator(ui_state, _Access(), _ProjectData())
+        plan_view = _PlanView()
+        plan_view.has_selection = True
+        select_action = QtGui.QAction()
+        select_action.setCheckable(True)
+        place_action = QtGui.QAction()
+        place_action.setCheckable(True)
+        annotation_action = QtGui.QAction()
+        annotation_action.setCheckable(True)
+        action_group = QtGui.QActionGroup(None)
+        action_group.setExclusive(True)
+        action_group.addAction(select_action)
+        action_group.addAction(place_action)
+        action_group.addAction(annotation_action)
+        copy_action = QtGui.QAction()
+        paste_action = QtGui.QAction()
+        delete_action = QtGui.QAction()
+        duplicate_action = QtGui.QAction()
+        select_all_action = QtGui.QAction()
+        undo_action = QtGui.QAction()
+        page_interactive = []
+
+        class Handler:
+            def reconcile_geometry_edit_access(self, _allowed):
+                pass
+
+            def can_paste_to_current_bid(self):
+                return True
+
+        class PageSettings:
+            def set_interactive(self, interactive):
+                page_interactive.append(bool(interactive))
+
+        class Undo:
+            def can_undo(self):
+                return True
+
+            def can_redo(self):
+                return False
+
+        coordinator.set_select_action(select_action)
+        coordinator.set_place_action(place_action)
+        coordinator.set_annotation_tool_actions([annotation_action])
+        coordinator.set_copy_action(copy_action)
+        coordinator.set_paste_action(paste_action)
+        coordinator.set_delete_action(delete_action)
+        coordinator.set_duplicate_action(duplicate_action)
+        coordinator.set_select_all_action(select_all_action)
+        coordinator.set_undo_action(undo_action)
+        coordinator.set_undo_service(Undo())
+        coordinator.set_page_settings_bar(PageSettings())
+        coordinator.set_plan_view_handler(Handler())
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(plan_view)
+        place_action.setChecked(True)
+        coordinator.refresh()
+        self.assertTrue(place_action.isChecked())
+        self.assertTrue(place_action.isEnabled())
+        self.assertTrue(annotation_action.isEnabled())
+        self.assertTrue(copy_action.isEnabled())
+        self.assertTrue(paste_action.isEnabled())
+        self.assertTrue(delete_action.isEnabled())
+        self.assertTrue(duplicate_action.isEnabled())
+        self.assertTrue(select_all_action.isEnabled())
+        self.assertTrue(undo_action.isEnabled())
+        self.assertTrue(page_interactive[-1])
+        ui_state.active_page_uid = "p2"
+        coordinator.refresh()
+        self.assertFalse(place_action.isEnabled())
+        self.assertFalse(annotation_action.isEnabled())
+        self.assertFalse(copy_action.isEnabled())
+        self.assertFalse(paste_action.isEnabled())
+        self.assertFalse(delete_action.isEnabled())
+        self.assertFalse(duplicate_action.isEnabled())
+        self.assertFalse(select_all_action.isEnabled())
+        self.assertFalse(undo_action.isEnabled())
+        self.assertFalse(page_interactive[-1])
+        self.assertFalse(plan_view.selection_enabled)
+        self.assertFalse(plan_view.editing_enabled)
+        self.assertTrue(select_action.isChecked())
+        self.assertFalse(place_action.isChecked())
+        plan_view.current_page_uid = "p2"
+        coordinator.refresh()
+        self.assertTrue(place_action.isEnabled())
+        self.assertTrue(annotation_action.isEnabled())
+        self.assertTrue(copy_action.isEnabled())
+        self.assertTrue(paste_action.isEnabled())
+        self.assertTrue(delete_action.isEnabled())
+        self.assertTrue(duplicate_action.isEnabled())
+        self.assertTrue(select_all_action.isEnabled())
+        self.assertTrue(undo_action.isEnabled())
+        self.assertTrue(page_interactive[-1])
+        self.assertTrue(select_action.isChecked())
+
     def test_access_loss_releases_main_plan_geometry_edit_ownership(self):
         _app()
         access = _SelectiveAccess({Feature.EDIT_PLAN_ITEMS})
@@ -479,6 +578,43 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         access.allowed.clear()
         coordinator.refresh()
         self.assertEqual(reconciled, [True, False])
+
+    def test_access_loss_exits_active_takeoff_tool(self):
+        _app()
+        access = _SelectiveAccess({Feature.PLACE_PLAN_ITEMS})
+        coordinator = ToolbarStateCoordinator(
+            _UiState(active_page_uid="p1"),
+            access,
+            _ProjectData(),
+        )
+        plan_view = _PlanView()
+        select_action = QtGui.QAction()
+        select_action.setCheckable(True)
+        place_action = QtGui.QAction()
+        place_action.setCheckable(True)
+        action_group = QtGui.QActionGroup(None)
+        action_group.setExclusive(True)
+        action_group.addAction(select_action)
+        action_group.addAction(place_action)
+        place_action.setChecked(True)
+        select_action.toggled.connect(
+            lambda checked: (
+                plan_view.set_cursor_mode(CURSOR_MODE_SELECT) if checked else None
+            )
+        )
+        coordinator.set_select_action(select_action)
+        coordinator.set_place_action(place_action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(plan_view)
+        coordinator.refresh()
+        self.assertTrue(place_action.isChecked())
+        access.allowed.clear()
+        coordinator.refresh()
+        self.assertFalse(place_action.isEnabled())
+        self.assertTrue(select_action.isChecked())
+        self.assertTrue(plan_view.reset_ctrl_held_called)
+        self.assertEqual(plan_view.cursor_modes, [CURSOR_MODE_SELECT])
 
     def test_active_inline_editor_keeps_canvas_editing_capability(self):
         _app()
@@ -568,7 +704,9 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
     def test_move_overlay_action_enabled_for_editable_2d_overlay_page(self):
         _app()
         action = QtGui.QAction()
-        coordinator = ToolbarStateCoordinator(_UiState(), _Access(), _ProjectData())
+        coordinator = ToolbarStateCoordinator(
+            _UiState(active_page_uid="p1"), _Access(), _ProjectData()
+        )
         coordinator.set_move_overlay_action(action)
         coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
         coordinator.set_view_stack(_IndexWidget(1))
@@ -605,6 +743,56 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
         coordinator.set_view_stack(_IndexWidget(1))
         coordinator.set_plan_view(PlanView())
+        coordinator.refresh()
+        self.assertTrue(action.isEnabled())
+
+    def test_place_action_requires_active_selected_condition_to_be_placeable(self):
+        class PlanView(_PlanView):
+            place_condition_uid = None
+
+        class Access(_Access):
+            @staticmethod
+            def is_bid_locked():
+                return False
+
+            @staticmethod
+            def has_license():
+                return True
+
+        class OrderedUidSet(set):
+            def __iter__(self):
+                return iter(("hidden", "visible"))
+
+        _app()
+        conditions = {
+            "hidden": Condition(uid="hidden", name="Hidden", layer_visible=False),
+            "visible": Condition(uid="visible", name="Visible", layer_visible=True),
+        }
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.highlight_conditions(OrderedUidSet(("hidden", "visible")))
+        self.assertEqual(sidebar.get_active_condition_uid(), "hidden")
+        project_data = _ProjectData()
+        project_data.get_bid_conditions = lambda: conditions
+        action = QtGui.QAction()
+        coordinator = ToolbarStateCoordinator(
+            _UiState(active_page_uid="p1"),
+            Access(),
+            project_data,
+        )
+        coordinator.set_place_action(action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(PlanView())
+        coordinator.set_conditions_sidebar(sidebar)
+        coordinator.refresh()
+        self.assertFalse(action.isEnabled())
+        sidebar.tree.setCurrentItem(
+            sidebar._condition_items["visible"],
+            0,
+            QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+        )
         coordinator.refresh()
         self.assertTrue(action.isEnabled())
 
@@ -794,7 +982,7 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         self.assertFalse(access.area_active)
         self.assertTrue(select_action.isChecked())
         self.assertFalse(place_action.isChecked())
-        self.assertTrue(copy_action.isEnabled())
+        self.assertFalse(copy_action.isEnabled())
         self.assertEqual(plan_view.cursor_modes.count(CURSOR_MODE_SELECT), 1)
 
     def test_summary_tab_disables_project_only_edit_actions_despite_project_selection(
@@ -900,6 +1088,7 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
                 selected_bid_ref=ref,
                 selected_project_uid="2",
                 selected_file_path="db.mdb",
+                active_page_uid="p1",
             ),
             _Access(),
             _ProjectData(),

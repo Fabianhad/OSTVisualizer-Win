@@ -1,8 +1,12 @@
 import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
+from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.file_results import BidLoadResult
+from ost_visualizer.domain.entities.folder import Folder
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 
 
@@ -56,6 +60,42 @@ class RecordingProjectDataService(ProjectDataService):
 
 
 class DeferredPersistenceProjectStateTests(unittest.TestCase):
+    def test_remote_pages_replace_loaded_bid_navigation_structure(self):
+        bid_ref = BidRef("sql-db", "bid-1")
+        old_root = Page(uid="old-root", name="Old root", sequence=1)
+        old_nested = Page(
+            uid="old-nested", name="Old nested", sequence=2, folder_uid="folder-1"
+        )
+        replacement = Page(
+            uid="new-nested", name="New nested", sequence=3, folder_uid="folder-1"
+        )
+        aggregate = OstAggregate(None)
+        aggregate.current_bid_ref = bid_ref
+        aggregate.current_bid = Bid(
+            uid=bid_ref.bid_uid,
+            name="Bid",
+            page_count=2,
+            folders={
+                "folder-1": Folder(uid="folder-1", name="Folder", pages=[old_nested])
+            },
+            pages_without_folder=[old_root],
+        )
+        aggregate.set_pages({old_root.uid: old_root, old_nested.uid: old_nested})
+        service = ProjectDataService(aggregate)
+        self.assertTrue(
+            service.replace_remote_bid_families(
+                bid_ref,
+                BidLoadResult(pages={replacement.uid: replacement}),
+                {"pages"},
+            )
+        )
+        self.assertEqual(aggregate.current_bid.pages_without_folder, [])
+        self.assertEqual(
+            aggregate.current_bid.folders["folder-1"].pages,
+            [replacement],
+        )
+        self.assertEqual(aggregate.current_bid.page_count, 1)
+
     def test_remote_family_updates_synchronize_annotation_visibility_once(self):
         cases = (
             ("annotations only", {"annotations"}, True, False),

@@ -1,11 +1,18 @@
 import re
+import weakref
 from typing import Dict, List, Tuple, Union
 from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
 from ..configurators.window_configurator import resource_path
 
 _FILL_RE = re.compile(r'fill="[^"]*"')
 _ICON_CACHE: Dict[Tuple[str, str], QtGui.QIcon] = {}
-_REGISTRY: List[Tuple[Union[QtGui.QAction, QtWidgets.QAbstractButton], str]] = []
+ThemedIconTarget = Union[QtGui.QAction, QtWidgets.QAbstractButton]
+ThemedIconTargetRef = weakref.ReferenceType[ThemedIconTarget]
+_REGISTRY: List[Tuple[ThemedIconTargetRef, str]] = []
+
+
+def _discard_dead_targets() -> None:
+    _REGISTRY[:] = [entry for entry in _REGISTRY if entry[0]() is not None]
 
 
 def current_text_hex() -> str:
@@ -49,21 +56,23 @@ def themed_icon(svg_name: str) -> QtGui.QIcon:
     return _build_icon(svg_name, current_text_hex())
 
 
-def apply_themed_icon(
-    target: Union[QtGui.QAction, QtWidgets.QAbstractButton], svg_name: str
-) -> None:
+def apply_themed_icon(target: ThemedIconTarget, svg_name: str) -> None:
     target.setIcon(themed_icon(svg_name))
-    _REGISTRY.append((target, svg_name))
+    _discard_dead_targets()
+    _REGISTRY.append((weakref.ref(target), svg_name))
 
 
 def rebuild_all_icons() -> None:
     _ICON_CACHE.clear()
     hex_color = current_text_hex()
     alive = []
-    for target, svg_name in _REGISTRY:
+    for target_ref, svg_name in _REGISTRY:
+        target = target_ref()
+        if target is None:
+            continue
         try:
             target.setIcon(_build_icon(svg_name, hex_color))
-            alive.append((target, svg_name))
+            alive.append((target_ref, svg_name))
         except RuntimeError:
             pass
     _REGISTRY.clear()

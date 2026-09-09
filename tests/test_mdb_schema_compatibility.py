@@ -21,6 +21,10 @@ from ost_visualizer.infrastructure.mdb.bid_settings_contract import (
 from ost_visualizer.infrastructure.database.settings_cardinality import (
     GlobalSettingsCardinalityError,
 )
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
+)
+from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.mdb.components.constants import (
     LAYER_REFERENCE_TABLES,
     PAGE_DELETE_CHILD_TABLES,
@@ -33,10 +37,15 @@ from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
 from ost_visualizer.infrastructure.mdb.raw_bid_integrity import BID_RELATIONSHIPS
 from ost_visualizer.infrastructure.mdb.schema_compatibility import (
     MdbSchemaInspector,
     UnsupportedMdbSchemaError,
+)
+from ost_visualizer.infrastructure.persistence.repositories.file_project_repository import (
+    FileProjectRepository,
+    MdbFileParser,
 )
 
 try:
@@ -514,6 +523,79 @@ def _run_employee_estimator_round_trip_for_label(
 
 
 class MdbSchemaCompatibilityTests(unittest.TestCase):
+    def test_routed_writer_duplicates_app_created_access_bid(self):
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX metadata is not available")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            db_path = Path(temp_dir) / "routed_duplicate.mdb"
+            self.assertTrue(DatabaseCreator().create_database(db_path, "Duplicate"))
+            connection = _connect_mdb(db_path)
+            cursor = connection.cursor()
+            try:
+                ids = _seed_minimal_bid(cursor)
+                connection.commit()
+            finally:
+                cursor.close()
+                connection.close()
+            connection_manager = MdbConnectionManager()
+            repository = FileProjectRepository(
+                MdbFileParser(parser=MdbReader(conn_manager=connection_manager))
+            )
+            writer = DatabaseProjectWriter(
+                connection_manager,
+                DatabaseDescriptorRegistry(),
+                object(),
+                object(),
+            )
+            try:
+                self.assertTrue(repository.load_file(str(db_path)).success)
+                read_connection = next(iter(connection_manager._read_conns.values()))
+                duplicate_uid = writer.duplicate_bid(str(db_path), str(ids["bid_uid"]))
+                self.assertEqual(connection_manager._active_leases, {})
+                write_connection = next(iter(connection_manager._write_conns.values()))
+                reload_result = repository.reload_database(
+                    str(db_path), close_connections=False
+                )
+                self.assertTrue(reload_result.success)
+                self.assertIs(
+                    next(iter(connection_manager._read_conns.values())),
+                    read_connection,
+                )
+                self.assertIs(
+                    next(iter(connection_manager._write_conns.values())),
+                    write_connection,
+                )
+                duplicated_bid_uids = {
+                    bid.uid
+                    for project in reload_result.parsed_hierarchy.bid_projects.values()
+                    for bid in project.bids
+                } | {bid.uid for bid in reload_result.parsed_hierarchy.orphan_bids}
+                self.assertIn(str(duplicate_uid), duplicated_bid_uids)
+                explicit_reload = repository.reload_database(
+                    str(db_path), close_connections=True
+                )
+                self.assertTrue(explicit_reload.success)
+                self.assertIsNot(
+                    next(iter(connection_manager._read_conns.values())),
+                    read_connection,
+                )
+                self.assertEqual(connection_manager._write_conns, {})
+            finally:
+                connection_manager.close()
+            self.assertIsNotNone(duplicate_uid)
+            connection = _connect_mdb(db_path)
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM [Bids] WHERE [UID] IN (?, ?)",
+                    ids["bid_uid"],
+                    int(duplicate_uid),
+                )
+                self.assertEqual(cursor.fetchone()[0], 2)
+            finally:
+                cursor.close()
+                connection.close()
+
     def test_settings_reader_keeps_missing_legacy_table_readable(self):
         class Schema:
             @staticmethod
@@ -948,12 +1030,17 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 _old_uid,
                 _new_uid,
                 extra_overrides=None,
+                excluded_source_uids=None,
             ):
-                del extra_overrides
+                del extra_overrides, excluded_source_uids
 
             @staticmethod
             def _copy_with_uid_map(_cursor, table, _uid_column, _old_uid, _new_uid):
                 return {"10": "20"} if table == "BidLayers" else {}
+
+            @staticmethod
+            def _duplicated_reference_uids(_cursor, _table, _column, _bid_uid):
+                return {"10"}
 
             def _update_if_columns(
                 self,
@@ -996,19 +1083,21 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 super().__init__()
                 self.updates = []
 
-            def _update_if_columns(
+            @staticmethod
+            def _update_if_columns(*_args):
+                pass
+
+            def _update_page_owned_relationship(
                 self,
                 _cursor,
                 _schema,
                 table,
                 set_column,
                 set_value,
-                where_columns,
-                where_values,
+                old_value,
+                bid_uid,
             ):
-                self.updates.append(
-                    (table, set_column, set_value, where_columns, where_values)
-                )
+                self.updates.append((table, set_column, set_value, old_value, bid_uid))
 
         writer = RecordingWriter()
         writer._remap_duplicated_relationships(
@@ -1027,8 +1116,8 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 "BidPageSettings",
                 "BidAreaUID",
                 "110",
-                ("BidPageUID", "BidAreaUID"),
-                ("120", "10"),
+                "10",
+                "2",
             ),
             writer.updates,
         )
@@ -1037,10 +1126,113 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 "BidPageSettings",
                 "BidTypAreaUID",
                 "111",
-                ("BidPageUID", "BidTypAreaUID"),
-                ("120", "11"),
+                "11",
+                "2",
             ),
             writer.updates,
+        )
+
+    def test_duplicate_does_not_remap_page_ownership_after_page_scoped_copy(self):
+        class Schema:
+            @staticmethod
+            def column_exists(table, column):
+                return (table, column) in {
+                    ("BidMarkedPages", "BidPageUID"),
+                    ("BidPages", "BidUID"),
+                }
+
+        class RecordingWriter(MdbWriter):
+            def __init__(self):
+                super().__init__()
+                self.updates = []
+
+            def _update_if_columns(self, *_args):
+                self.updates.append(_args)
+
+            @staticmethod
+            def _duplicated_reference_uids(_cursor, _table, _column, _bid_uid):
+                return set()
+
+        page_uid_map = {
+            str(source_uid): str(source_uid + 1000) for source_uid in range(1, 21)
+        }
+        writer = RecordingWriter()
+        writer._remap_duplicated_relationships(
+            object(),
+            Schema(),
+            {"BidPages": page_uid_map},
+            "2",
+        )
+        self.assertEqual(
+            [update for update in writer.updates if update[2] == "BidMarkedPages"],
+            [],
+        )
+
+    def test_duplicate_copies_all_rows_for_a_page_table_in_one_query(self):
+        class Cursor:
+            description = (("BidPageUID", int), ("UID", int))
+
+            def __init__(self):
+                self.queries = []
+
+            def execute(self, sql, *_params):
+                self.queries.append(sql)
+                return self
+
+            @staticmethod
+            def fetchall():
+                return [(10, 100), (20, 200)]
+
+        class Schema:
+            @staticmethod
+            def optional_table_missing(_table):
+                return False
+
+            @staticmethod
+            def column_exists(_table, _column):
+                return True
+
+            @staticmethod
+            def get_columns(_table):
+                return {"UID", "BidPageUID"}
+
+        class RecordingWriter(MdbWriter):
+            def __init__(self):
+                super().__init__()
+                self.allocations = []
+                self.inserts = []
+
+            def _next_uids_preserving_references(self, _cursor, _schema, table, count):
+                self.allocations.append((table, count))
+                return range(300, 300 + count)
+
+            def _execute_insert_values(
+                self,
+                _cursor,
+                _schema,
+                table,
+                values,
+                _required_columns,
+                _operation,
+            ):
+                self.inserts.append((table, values))
+
+        cursor = Cursor()
+        writer = RecordingWriter()
+        uid_map = writer._copy_page_table_rows(
+            cursor,
+            Schema(),
+            "BidMarkedPages",
+            "1",
+            "2",
+            {"10": "110", "20": "120"},
+        )
+        self.assertEqual(len(cursor.queries), 1)
+        self.assertEqual(writer.allocations, [("BidMarkedPages", 2)])
+        self.assertEqual(uid_map, {"100": "300", "200": "301"})
+        self.assertEqual(
+            [values["BidPageUID"] for _table, values in writer.inserts],
+            ["110", "120"],
         )
 
     def test_duplicate_bid_reconstructs_internal_child_references(self):
@@ -1160,8 +1352,9 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 old_uid,
                 new_uid,
                 extra_overrides=None,
+                excluded_source_uids=None,
             ):
-                del extra_overrides
+                del extra_overrides, excluded_source_uids
                 self.copy_calls.append((table, uid_column, old_uid, new_uid))
                 return {
                     "BidTakeoffs": {"30": "130", "31": "131"},
@@ -1181,6 +1374,25 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                     "BidConditionUser": {"92": "192"},
                 }.get(table, {})
 
+            def _copy_page_table_rows(
+                self,
+                cursor,
+                _schema,
+                table,
+                _source_bid_uid,
+                _new_bid_uid,
+                page_uid_map,
+            ):
+                old_page_uid, new_page_uid = next(iter(page_uid_map.items()))
+                return self._copy_bid_table_rows(
+                    cursor,
+                    table,
+                    "BidPageUID",
+                    old_page_uid,
+                    new_page_uid,
+                    extra_overrides={"BidUID": _new_bid_uid},
+                )
+
             def _copy_with_uid_map(
                 self, _cursor, table, _uid_column, _old_uid, _new_uid
             ):
@@ -1189,6 +1401,10 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                     "BidConditions": {"30": "130"},
                     "BidAreas": {"60": "160"},
                 }.get(table, {})
+
+            @staticmethod
+            def _duplicated_reference_uids(_cursor, _table, _column, _bid_uid):
+                return {str(uid) for uid in range(1, 201)}
 
             def _update_if_columns(
                 self,

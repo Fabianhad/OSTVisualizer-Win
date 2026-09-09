@@ -30,6 +30,7 @@ from ..utils.condition_tree_style import (
     apply_condition_tree_style,
     set_condition_tree_item_row_height,
 )
+from ..utils.dialog import exec_transient_menu
 from ...application.utils.quantity_display import format_quantity_number
 
 _NODE_ROLE = QtCore.Qt.ItemDataRole.UserRole
@@ -447,7 +448,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         if item:
             self.tree.setCurrentItem(item)
         menu = self.build_context_menu(item)
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        exec_transient_menu(menu, self.tree.viewport().mapToGlobal(pos))
 
     def build_context_menu(
         self, item: QtWidgets.QTreeWidgetItem | None

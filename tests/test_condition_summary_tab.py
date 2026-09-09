@@ -1449,8 +1449,11 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator.condition_summary_tab = tab
         coordinator.ui_access_manager = SimpleNamespace(refresh=lambda: None)
         coordinator.ui_state_manager = SimpleNamespace(
+            selected_page_uids=["p1"],
+            active_page_uid="p1",
             get_selected_bid_ref=lambda: bid_ref,
             set_highlighted_conditions=lambda _uids: None,
+            set_page_selection=lambda _uids: None,
             set_bid_selection=lambda _bid_ref: None,
         )
         coordinator._project_write_service = SimpleNamespace(
@@ -1461,6 +1464,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             get_bid=lambda _bid_ref: object(),
             get_current_bid_ref=lambda: bid_ref,
             get_bid_conditions=lambda: conditions,
+            get_page=lambda uid: pages[0] if uid == "p1" else None,
+            get_all_pages=lambda: list(pages),
+            select_pages=lambda page_uids: list(page_uids),
             deselect_pages=lambda: None,
         )
         coordinator.main_window = SimpleNamespace(
@@ -1468,6 +1474,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             refresh_window_title=lambda: None,
         )
         coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
+        coordinator._status_panel = None
         UIEventCoordinator._finish_refresh(coordinator)
         self.assertEqual(fake_sidebar.loads, 1)
         self.assertGreater(tab.tree.topLevelItemCount(), 0)

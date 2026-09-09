@@ -209,6 +209,7 @@ class RemoteChangeReconciliationService:
                     change_operations=[],
                     defer_plan_projection=False,
                     invalidates_undo=False,
+                    local_completion=local_completion,
                 )
             elif not condition_types_only:
                 self._event_bus.publish(
@@ -271,6 +272,7 @@ class RemoteChangeReconciliationService:
                     not local_completion
                     or ChangeOperation.DELETE.value in condition_change_operations
                 ),
+                local_completion=local_completion,
             )
         if areas is not None:
             self._event_bus.publish(

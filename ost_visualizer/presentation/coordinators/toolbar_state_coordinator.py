@@ -147,10 +147,20 @@ class ToolbarStateCoordinator:
             and self._view_stack.currentIndex() == 1
         )
 
+    def is_plan_page_context_current(self) -> bool:
+        return bool(
+            self.plan_view
+            and self._ui_state.active_page_uid
+            and self.plan_view.current_page_uid
+            and self.plan_view.current_page_uid == self._ui_state.active_page_uid
+        )
+
     def is_backout_context_available(self) -> bool:
         if not self.plan_view:
             return False
         if not self.is_takeoff_2d_view_active():
+            return False
+        if not self.is_plan_page_context_current():
             return False
         if not self._access.is_allowed(Feature.PLACE_PLAN_ITEMS):
             return False
@@ -213,7 +223,10 @@ class ToolbarStateCoordinator:
         current_tab = self._tab_widget.currentIndex() if self._tab_widget else 0
         on_takeoff_tab = current_tab == TAB_INDEX_TAKEOFF
         on_summary_tab = current_tab == TAB_INDEX_SUMMARY
-        has_takeoff_selection = bool(self.plan_view and self.plan_view.has_selection)
+        page_context_current = self.is_plan_page_context_current()
+        has_takeoff_selection = bool(
+            page_context_current and self.plan_view and self.plan_view.has_selection
+        )
         selected_bid_refs = self._ui_state.get_selected_bid_refs()
         selected_bids_same_file = self._same_file_refs(selected_bid_refs)
         bid_paste_allowed = self._can_paste_bid_clipboard()
@@ -250,7 +263,8 @@ class ToolbarStateCoordinator:
             if on_takeoff_tab:
                 self._paste_action.setEnabled(
                     bool(
-                        self.plan_view_handler
+                        page_context_current
+                        and self.plan_view_handler
                         and self.plan_view_handler.can_paste_to_current_bid()
                     )
                 )
@@ -261,8 +275,7 @@ class ToolbarStateCoordinator:
         if self._delete_action:
             if on_takeoff_tab:
                 self._delete_action.setEnabled(
-                    plan_access.can_edit_plan_items
-                    and bool(self.plan_view and self.plan_view.has_selection)
+                    plan_access.can_edit_plan_items and has_takeoff_selection
                 )
             elif on_summary_tab:
                 self._delete_action.setEnabled(
@@ -294,6 +307,7 @@ class ToolbarStateCoordinator:
                 self._delete_action.setEnabled(False)
         undo_redo_allowed = (
             on_takeoff_tab
+            and page_context_current
             and plan_access.can_edit_plan_items
             and bool(self.undo_service)
         )
@@ -308,8 +322,7 @@ class ToolbarStateCoordinator:
         if self._duplicate_action:
             if on_takeoff_tab:
                 self._duplicate_action.setEnabled(
-                    plan_access.can_edit_plan_items
-                    and bool(self.plan_view and self.plan_view.has_selection)
+                    plan_access.can_edit_plan_items and has_takeoff_selection
                 )
             elif on_summary_tab:
                 self._duplicate_action.setEnabled(False)
@@ -320,7 +333,9 @@ class ToolbarStateCoordinator:
         if self._select_all_action:
             if on_takeoff_tab:
                 self._select_all_action.setEnabled(
-                    plan_access.can_select_plan_items and bool(self.plan_view)
+                    page_context_current
+                    and plan_access.can_select_plan_items
+                    and bool(self.plan_view)
                 )
             elif on_summary_tab:
                 self._select_all_action.setEnabled(False)
@@ -331,17 +346,20 @@ class ToolbarStateCoordinator:
                 self._access.is_allowed(Feature.COVER_SHEET)
             )
         if self._page_settings_bar:
-            self._page_settings_bar.set_interactive(plan_access.can_edit_page_settings)
-        selected_condition_uids = (
-            self.conditions_sidebar.get_selected_condition_uids()
+            self._page_settings_bar.set_interactive(
+                page_context_current and plan_access.can_edit_page_settings
+            )
+        active_selected_condition_uid = (
+            self.conditions_sidebar.get_active_condition_uid()
             if self.conditions_sidebar
-            else []
+            else None
         )
-        selected_placeable_condition_uids = [
-            uid
-            for uid in selected_condition_uids
-            if self.conditions_sidebar.is_condition_placeable(uid)
-        ]
+        active_selected_condition_placeable = bool(
+            active_selected_condition_uid
+            and self.conditions_sidebar.is_condition_placeable(
+                active_selected_condition_uid
+            )
+        )
         selected_takeoff_condition_uid = (
             self.plan_view.selected_takeoff_condition_uid() if self.plan_view else None
         )
@@ -356,12 +374,11 @@ class ToolbarStateCoordinator:
         ) and self._is_condition_placeable(active_place_condition_uid)
         can_place_plan_items = (
             self.is_takeoff_2d_view_active()
+            and page_context_current
             and plan_access.can_place_plan_items
             and bool(self.plan_view)
-            and bool(self._ui_state.active_page_uid)
-            and bool(self.plan_view.current_page_uid)
             and (
-                bool(selected_placeable_condition_uids)
+                active_selected_condition_placeable
                 or selected_takeoff_condition_placeable
                 or active_place_condition_placeable
             )
@@ -370,24 +387,27 @@ class ToolbarStateCoordinator:
             self._place_action.setEnabled(can_place_plan_items)
         can_place_annotation = (
             on_takeoff_tab
+            and page_context_current
             and plan_access.can_place_annotations
             and bool(self.plan_view)
-            and bool(self.plan_view.current_page_uid)
             and bool(self._view_stack and self._view_stack.currentIndex() == 1)
         )
         for action in self._annotation_tool_actions:
             action.setEnabled(can_place_annotation)
         can_move_overlay = (
             self.is_takeoff_2d_view_active()
+            and page_context_current
             and plan_access.can_edit_page_settings
             and bool(self.plan_view)
             and self.plan_view.can_move_overlay_image()
         )
         if self._move_overlay_action:
             self._move_overlay_action.setEnabled(can_move_overlay)
-        select_allowed = plan_access.can_select_plan_items
-        edit_allowed = plan_access.can_edit_plan_items
-        inline_edit_allowed = plan_access.can_edit_annotation_text
+        select_allowed = page_context_current and plan_access.can_select_plan_items
+        edit_allowed = page_context_current and plan_access.can_edit_plan_items
+        inline_edit_allowed = (
+            page_context_current and plan_access.can_edit_annotation_text
+        )
         if self.plan_view_handler:
             self.plan_view_handler.reconcile_geometry_edit_access(edit_allowed)
         if self.plan_view:
@@ -444,8 +464,7 @@ class ToolbarStateCoordinator:
             return bool(
                 self.is_takeoff_2d_view_active()
                 and self.plan_view
-                and self._ui_state.active_page_uid
-                and self.plan_view.current_page_uid
+                and self.is_plan_page_context_current()
                 and condition_uid
                 and self._is_condition_placeable(condition_uid)
                 and self._access.is_allowed_for_active_placement(
@@ -457,7 +476,7 @@ class ToolbarStateCoordinator:
                 self._tab_widget
                 and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
                 and self.plan_view
-                and self.plan_view.current_page_uid
+                and self.is_plan_page_context_current()
                 and self._view_stack
                 and self._view_stack.currentIndex() == 1
                 and plan_access.can_continue_annotation_placement

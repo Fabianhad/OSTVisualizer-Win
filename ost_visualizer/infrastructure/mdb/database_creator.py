@@ -880,11 +880,10 @@ class DatabaseCreator:
             db_path.parent.mkdir(parents=True, exist_ok=True)
             self._report_progress(progress_callback, "database file")
             self._create_blank_mdb(db_path)
-            self._create_schema(db_path, progress_callback=progress_callback)
-            self._insert_seed_data(
+            self._create_schema(
                 db_path,
-                name,
                 progress_callback=progress_callback,
+                seed_name=name,
             )
             self._report_progress(progress_callback, "finalizing")
             return True
@@ -946,10 +945,21 @@ class DatabaseCreator:
                         vbs_path,
                     )
 
+    def _create_schema_tables(
+        self,
+        cursor,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        self._report_progress(progress_callback, "schema tables")
+        for ddl in _TABLE_DDL:
+            cursor.execute(ddl)
+
     def _create_schema(
         self,
         db_path: Path,
         progress_callback: Optional[Callable[[str], None]] = None,
+        *,
+        seed_name: Optional[str] = None,
     ) -> None:
         conn_str = (
             "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};"
@@ -959,10 +969,15 @@ class DatabaseCreator:
         operation_failed = False
         try:
             cursor = conn.cursor()
-            self._report_progress(progress_callback, "schema tables")
-            for ddl in _TABLE_DDL:
-                cursor.execute(ddl)
+            self._create_schema_tables(cursor, progress_callback)
             conn.commit()
+            if seed_name is not None:
+                self._apply_reference_schema_metadata(
+                    db_path,
+                    progress_callback=progress_callback,
+                )
+                self._insert_seed_rows(cursor, seed_name, progress_callback)
+                conn.commit()
         except Exception:
             operation_failed = True
             self._rollback_connection(conn, "schema creation")
@@ -974,10 +989,11 @@ class DatabaseCreator:
                 "schema creation",
                 suppress_errors=operation_failed,
             )
-        self._apply_reference_schema_metadata(
-            db_path,
-            progress_callback=progress_callback,
-        )
+        if seed_name is None:
+            self._apply_reference_schema_metadata(
+                db_path,
+                progress_callback=progress_callback,
+            )
 
     def _apply_reference_schema_metadata(
         self,
@@ -1039,45 +1055,7 @@ class DatabaseCreator:
         operation_failed = False
         try:
             cursor = conn.cursor()
-            self._report_progress(progress_callback, "default data")
-            now = datetime.now()
-            cursor.execute(
-                "INSERT INTO [Settings] ([Name], [Created], [NextBidNo], "
-                "[LoginRequired], [MeasureBase], [PriceUsing], "
-                "[QuantitiesInLegend], [HoursPerDay], [StartWeekOn], "
-                "[GridCountMethod], [TakeoffIncrements], [ScaleStyle], "
-                "[IsCustomScale], [ScaleFactor1], [ScaleFactor2], "
-                "[PageScale], [PageWidth], [PageHeight], "
-                "[LabelHours1], [LabelHours2], [LabelHours3], [LabelHours4], "
-                "[IgnoreBidAreas], [SendImageFiles], "
-                "[BackupNo], [BackupPeriod], [CompressPeriod]) "
-                "VALUES (?, ?, 1, 0, 0, 0, -1, 8, 0, 0, 1.0, 1, 0, "
-                "0.125, 12.0, 1.0, 42.0, 30.0, "
-                "'Regular', 'Overtime', 'Time + 1/2', 'Double', "
-                "0, 0, 2, 2, 2)",
-                name,
-                now,
-            )
-            cursor.execute(
-                "INSERT INTO [BidProjects] ([Name]) VALUES (?)",
-                "Deleted Bids",
-            )
-            for layer_name, show, locked, seq in _DEFAULT_LAYERS:
-                cursor.execute(
-                    "INSERT INTO [BidLayers] "
-                    "([IsTemplate], [Name], [Show], [IsLocked], [Sequence]) "
-                    "VALUES (-1, ?, ?, ?, ?)",
-                    layer_name,
-                    -1 if show else 0,
-                    -1 if locked else 0,
-                    seq,
-                )
-            for version in _SCHEMA_VERSIONS:
-                cursor.execute(
-                    "INSERT INTO [SchemaRegistry] ([Version], [Product]) "
-                    "VALUES (?, 2)",
-                    version,
-                )
+            self._insert_seed_rows(cursor, name, progress_callback)
             conn.commit()
         except Exception:
             operation_failed = True
@@ -1089,6 +1067,51 @@ class DatabaseCreator:
                 conn,
                 "seed-data insertion",
                 suppress_errors=operation_failed,
+            )
+
+    def _insert_seed_rows(
+        self,
+        cursor,
+        name: str,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        self._report_progress(progress_callback, "default data")
+        now = datetime.now()
+        cursor.execute(
+            "INSERT INTO [Settings] ([Name], [Created], [NextBidNo], "
+            "[LoginRequired], [MeasureBase], [PriceUsing], "
+            "[QuantitiesInLegend], [HoursPerDay], [StartWeekOn], "
+            "[GridCountMethod], [TakeoffIncrements], [ScaleStyle], "
+            "[IsCustomScale], [ScaleFactor1], [ScaleFactor2], "
+            "[PageScale], [PageWidth], [PageHeight], "
+            "[LabelHours1], [LabelHours2], [LabelHours3], [LabelHours4], "
+            "[IgnoreBidAreas], [SendImageFiles], "
+            "[BackupNo], [BackupPeriod], [CompressPeriod]) "
+            "VALUES (?, ?, 1, 0, 0, 0, -1, 8, 0, 0, 1.0, 1, 0, "
+            "0.125, 12.0, 1.0, 42.0, 30.0, "
+            "'Regular', 'Overtime', 'Time + 1/2', 'Double', "
+            "0, 0, 2, 2, 2)",
+            name,
+            now,
+        )
+        cursor.execute(
+            "INSERT INTO [BidProjects] ([Name]) VALUES (?)",
+            "Deleted Bids",
+        )
+        for layer_name, show, locked, seq in _DEFAULT_LAYERS:
+            cursor.execute(
+                "INSERT INTO [BidLayers] "
+                "([IsTemplate], [Name], [Show], [IsLocked], [Sequence]) "
+                "VALUES (-1, ?, ?, ?, ?)",
+                layer_name,
+                -1 if show else 0,
+                -1 if locked else 0,
+                seq,
+            )
+        for version in _SCHEMA_VERSIONS:
+            cursor.execute(
+                "INSERT INTO [SchemaRegistry] ([Version], [Product]) " "VALUES (?, 2)",
+                version,
             )
 
     def _rollback_connection(self, connection, operation: str) -> None:

@@ -14,6 +14,7 @@ from ..interfaces.i_database_mutation_executor import (
     IDatabaseMutationExecutor,
     IMutationRecorder,
 )
+from ..interfaces.i_mdb_connection_manager import DatabaseConnectionUnavailableError
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .database_capability_service import DatabaseCapabilityService
@@ -133,24 +134,33 @@ class DatabaseMutationWriteService(BaseWriteService):
             expected_versions = self._concurrency_tokens.expected_versions(
                 database_id, resources
             )
-            result = self._mutation_executor.execute(
-                DatabaseMutationRequest(
-                    database_id=database_id,
-                    session_id=session_id,
-                    operation_id=operation_id,
-                    mutation_type=mutation_type,
-                    request_hash=request_hash,
-                    result_format_version=result_format_version,
-                    resources=resources,
-                    expected_versions=expected_versions,
-                    required_lock_tokens=self._session_registry.lock_tokens(
-                        database_id, resources
-                    ),
-                    block_bid_child_locks=block_bid_child_locks,
-                    block_bid_active_editors=block_bid_active_editors,
+            request = DatabaseMutationRequest(
+                database_id=database_id,
+                session_id=session_id,
+                operation_id=operation_id,
+                mutation_type=mutation_type,
+                request_hash=request_hash,
+                result_format_version=result_format_version,
+                resources=resources,
+                expected_versions=expected_versions,
+                required_lock_tokens=self._session_registry.lock_tokens(
+                    database_id, resources
                 ),
-                operation,
+                block_bid_child_locks=block_bid_child_locks,
+                block_bid_active_editors=block_bid_active_editors,
             )
+            try:
+                result = self._mutation_executor.execute(request, operation)
+            except DatabaseConnectionUnavailableError as exc:
+                self.logger.warning(
+                    "Database mutation could not open its connection: %s",
+                    exc,
+                )
+                result = DatabaseMutationResult(
+                    operation_id=operation_id,
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                    failure_reason=str(exc),
+                )
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 self._concurrency_tokens.apply_result(
                     database_id, result.resulting_versions

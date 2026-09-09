@@ -32,6 +32,7 @@ class ConditionsChangedEvent:
     change_operations: list = field(default_factory=list)
     defer_plan_projection: bool = False
     invalidates_undo: bool = False
+    local_completion: bool = False
 
 
 @dataclass

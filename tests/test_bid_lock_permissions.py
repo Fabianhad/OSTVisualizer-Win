@@ -10,6 +10,10 @@ from ost_visualizer.application.dtos.update_condition_dto import (
     UpdateConditionDto,
     UpdateConditionResultDto,
 )
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.interfaces.i_mdb_connection_manager import (
+    DatabaseConnectionUnavailableError,
+)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationResult,
@@ -242,6 +246,9 @@ class _FakeConditionsSidebar:
 
     def get_selected_condition_uids(self):
         return []
+
+    def get_active_condition_uid(self):
+        return None
 
     def is_condition_placeable(self, _uid):
         return False
@@ -636,6 +643,8 @@ def _write_service(
     save_takeoffs_condition=None,
     database_capability=None,
     event_bus=None,
+    insert_takeoffs=None,
+    mutation_executor=None,
 ):
     logger = logging.getLogger(__name__ + ".write_service")
     logger.propagate = False
@@ -668,7 +677,7 @@ def _write_service(
         save_takeoffs_condition=save_takeoffs_condition or forbidden,
         set_takeoffs_negative=forbidden,
         set_takeoff_curve=forbidden,
-        insert_takeoffs=forbidden,
+        insert_takeoffs=insert_takeoffs or forbidden,
         delete_takeoffs=forbidden,
         delete_pages=forbidden,
         save_cover_sheet=forbidden,
@@ -705,7 +714,7 @@ def _write_service(
         logger=logger,
         bid_write_guard=ActiveBidWriteGuard(project_data, logger),
         project_data_service=project_data,
-        mutation_executor=_MutationExecutor(),
+        mutation_executor=mutation_executor or _MutationExecutor(),
         session_registry=_SessionRegistry(),
         concurrency_tokens=_ConcurrencyTokens(),
         database_capability_service=database_capability or _DatabaseCapability(),
@@ -717,6 +726,41 @@ def _write_service(
 
 
 class BidLockPermissionTests(unittest.TestCase):
+    def test_takeoff_insert_exhaustion_returns_structured_failure(self):
+        class UnavailableExecutor:
+            def execute(self, _request, _operation):
+                raise DatabaseConnectionUnavailableError(
+                    "Restart OST Visualizer and try again."
+                )
+
+        project_data = _ProjectData()
+        service, _, _, _ = _write_service(
+            project_data,
+            insert_takeoffs=_UseCase(["99"]),
+            mutation_executor=UnavailableExecutor(),
+        )
+        result = service.insert_takeoffs_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            [
+                InsertTakeoffSpec(
+                    condition_uid="12",
+                    page_uid="34",
+                    area_uid="0",
+                    position=[1.0, 2.0],
+                )
+            ],
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertFalse(result.success)
+        self.assertFalse(result.write_success)
+        self.assertFalse(result.reload_success)
+        self.assertEqual(result.value, [])
+        self.assertEqual(
+            result.failure_reason,
+            "Restart OST Visualizer and try again.",
+        )
+
     def test_ui_access_constructor_rolls_back_subscriptions_when_refresh_fails(self):
         event_bus = _EventBus()
 
@@ -2075,6 +2119,61 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(len(criticals), 0)
         app.processEvents()
 
+    def test_duplicate_worker_failure_is_reported_once_and_can_retry(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = QtWidgets.QWidget()
+        bid_ref = BidRef("db.mdb", "bid-1")
+        notifications = []
+        write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _path: False,
+            duplicate_bid_result=lambda _file_path, _bid_uid, reload=False: (
+                WriteReloadResult("new-bid", True, True)
+            ),
+            reload_database=lambda _path: True,
+            notify_database_refreshed=notifications.append,
+        )
+        ui_state = SimpleNamespace(get_selected_bid_ref=lambda: bid_ref)
+        handler = ProjectWriteHandler(
+            window=window,
+            project_data_service=SimpleNamespace(
+                get_hierarchy=lambda: SimpleNamespace(
+                    find_bid_info=lambda _ref: SimpleNamespace(name="Bid 1")
+                )
+            ),
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        attempts = []
+
+        def run_progress(_label, task_fn, **_options):
+            attempts.append(True)
+            if len(attempts) == 1:
+                return (
+                    QtWidgets.QDialog.DialogCode.Rejected,
+                    False,
+                    RuntimeError("duplicate failed"),
+                )
+            return QtWidgets.QDialog.DialogCode.Accepted, task_fn(), None
+
+        handler._run_progress_dialog = run_progress
+        criticals = []
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.show_critical",
+            side_effect=lambda *args: criticals.append(args),
+        ):
+            handler.duplicate_selected()
+            self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
+            self.assertFalse(handler._duplicate_in_progress)
+            handler.duplicate_selected()
+        self.assertEqual(len(criticals), 1)
+        self.assertEqual(criticals[0][1], "Duplicate Error")
+        self.assertEqual(notifications, ["db.mdb"])
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
+        window.deleteLater()
+        app.processEvents()
+
     def test_paste_stops_after_progress_dialog_destroys_main_window(self):
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         window = QtWidgets.QWidget()
@@ -2239,6 +2338,7 @@ class BidLockPermissionTests(unittest.TestCase):
                         "changed_fields": ["name", "z_value"],
                         "change_operations": ["update"],
                         "invalidates_undo": False,
+                        "local_completion": True,
                     },
                 )
             ],
@@ -2834,6 +2934,60 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(refresh_calls, [True])
         self.assertFalse(duplicate_action.isEnabled())
 
+    def test_sql_duplicate_failure_is_reported_once_and_can_retry(self):
+        bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(remaining_uids=["bid-1"])
+        write_service = _QueuedHierarchyDeleteWriteService()
+        presented_errors = []
+        refreshes = []
+        toolbar_refreshes = []
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: refreshes.append(True),
+                present_queued_mutation_error=lambda *args: presented_errors.append(
+                    args
+                ),
+                refresh_toolbar=lambda: toolbar_refreshes.append(True),
+            )
+        )
+        handler.duplicate_selected()
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=bid_ref.file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000108",
+                outcome_status=MutationOutcomeStatus.REJECTED,
+                commit_attempted=False,
+            )
+        )
+        self.assertEqual(len(presented_errors), 1)
+        self.assertEqual(presented_errors[0][1], "Duplicate Bid")
+        self.assertEqual(refreshes, [True])
+        self.assertEqual(toolbar_refreshes, [True])
+        self.assertFalse(handler._duplicate_in_progress)
+        self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
+        handler.duplicate_selected()
+        write_service.callbacks[1](
+            QueuedMutationResult(
+                database_id=bid_ref.file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000109",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(len(presented_errors), 1)
+        self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
+        self.assertFalse(handler._duplicate_in_progress)
+
     def test_sql_bid_delete_completion_replaces_unchanged_deleted_selection(self):
         original = BidRef("C:/jobs/test.mdb", "bid-1")
         replacement = BidRef("C:/jobs/test.mdb", "bid-2")
@@ -3235,6 +3389,24 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(result.refresh_failed)
         self.assertEqual(result.value, "new-bid")
 
+    def test_duplicate_bid_infrastructure_exception_is_not_converted_to_bool(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        expected_error = RuntimeError("duplicate infrastructure failure")
+
+        class RaisingDuplicate:
+            def execute(self, _file_path, _bid_uid):
+                raise expected_error
+
+        service._duplicate_bid = RaisingDuplicate()
+        with self.assertRaises(RuntimeError) as captured:
+            service.duplicate_bid_result(
+                project_data.bid_ref.file_path,
+                project_data.bid_ref.bid_uid,
+                reload=False,
+            )
+        self.assertIs(captured.exception, expected_error)
+
     def test_condition_create_result_keeps_uid_when_refresh_fails(self):
         project_data = _ProjectData()
         service, *_ = _write_service(project_data, reload_success=False)
@@ -3402,6 +3574,7 @@ class BidLockPermissionTests(unittest.TestCase):
                         "changed_fields": ["condition_type_catalog"],
                         "change_operations": [],
                         "invalidates_undo": False,
+                        "local_completion": True,
                     },
                 )
             ],

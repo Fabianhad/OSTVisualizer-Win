@@ -197,16 +197,21 @@ class _ColorButton(QtWidgets.QPushButton):
 
     def _pick_color(self) -> None:
         dlg = QtWidgets.QColorDialog(self._to_qcolor(), self)
-        dlg.setWindowTitle("Select Color")
-        remove_minimize_maximize(dlg)
-        result = dlg.exec()
-        if not isValid(self) or not isValid(dlg):
-            return
-        if result == QtWidgets.QDialog.DialogCode.Accepted:
-            color = dlg.currentColor()
-            self._color_int = color.red() | (color.green() << 8) | (color.blue() << 16)
-            self._update_icon()
-            self.color_changed.emit(self._color_int)
+        try:
+            dlg.setWindowTitle("Select Color")
+            remove_minimize_maximize(dlg)
+            result = dlg.exec()
+            if not isValid(self) or not isValid(dlg):
+                return
+            if result == QtWidgets.QDialog.DialogCode.Accepted:
+                color = dlg.currentColor()
+                self._color_int = (
+                    color.red() | (color.green() << 8) | (color.blue() << 16)
+                )
+                self._update_icon()
+                self.color_changed.emit(self._color_int)
+        finally:
+            delete_later_if_valid(dlg)
 
 
 class EditConditionDialog(QtWidgets.QDialog):

@@ -955,6 +955,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             def currentColor(self):
                 return QtGui.QColor("#abcdef")
 
+            def deleteLater(self):
+                pass
+
         original_dialog = options_components.QtWidgets.QColorDialog
         options_components.QtWidgets.QColorDialog = FakeColorDialog
         try:
@@ -999,6 +1002,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             def currentColor(self):
                 return QtGui.QColor("#abcdef")
 
+            def deleteLater(self):
+                pass
+
         original_dialog = options_components.QtWidgets.QColorDialog
         options_components.QtWidgets.QColorDialog = FakeColorDialog
         try:
@@ -1029,6 +1035,31 @@ class OptionsPreferencesTests(unittest.TestCase):
         ):
             button._choose_color()
         dialog.close()
+
+    def test_repeated_options_color_picker_cancellation_releases_dialogs(self):
+        dialog = OptionsDialog(Config(crosshair_color="#123456"))
+        button = dialog._crosshair_color_button
+        real_color_dialog = QtWidgets.QColorDialog
+        try:
+            with (
+                mock.patch.object(
+                    options_components.QtWidgets,
+                    "QColorDialog",
+                    side_effect=lambda color, parent: real_color_dialog(color, parent),
+                ),
+                mock.patch.object(
+                    real_color_dialog,
+                    "exec",
+                    return_value=QtWidgets.QDialog.DialogCode.Rejected,
+                ),
+            ):
+                for _ in range(100):
+                    button._choose_color()
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.app.processEvents()
+            self.assertEqual(button.findChildren(real_color_dialog), [])
+        finally:
+            dialog.deleteLater()
 
     def test_options_dialog_removes_inactive_unsupported_options(self):
         dialog = OptionsDialog(Config())
@@ -3059,6 +3090,8 @@ class OptionsPreferencesTests(unittest.TestCase):
                 pass
 
         class FakeUiState:
+            active_page_uid = "page-1"
+
             def get_selected_bid_refs(self):
                 return []
 
@@ -3088,6 +3121,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         class BackoutPlanView:
             _valid_backout_parent_uid = TakeoffPlanView._valid_backout_parent_uid
             backout_parent_candidate_uid = TakeoffPlanView.backout_parent_candidate_uid
+            current_page_uid = "page-1"
 
             def __init__(self, selected, takeoffs, conditions):
                 self._selected_uids = set(selected)

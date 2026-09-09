@@ -1051,6 +1051,12 @@ class SqlProjectWriter(MdbWriter):
         del schema
         return self._next_uid(cursor, table)
 
+    def _next_uids_preserving_references(self, cursor, schema, table: str, count: int):
+        return tuple(
+            self._next_uid_preserving_references(cursor, schema, table)
+            for _index in range(count)
+        )
+
     def _execute_insert_values(
         self,
         cursor,

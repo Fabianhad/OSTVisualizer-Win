@@ -26,6 +26,7 @@ from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..managers.ui_access_manager import Feature
 from ..utils.condition_tree_style import apply_tree_indentation
+from ..utils.dialog import exec_transient_menu
 
 SortValue = Union[int, float, datetime, str, None]
 _DELETED_PROJECT_UID = "1"
@@ -1241,7 +1242,7 @@ class ProjectView(QtWidgets.QWidget):
             return
         menu = QtWidgets.QMenu(self)
         self._build_project_context_menu(menu, context)
-        menu.exec(self.top_tree.viewport().mapToGlobal(pos))
+        exec_transient_menu(menu, self.top_tree.viewport().mapToGlobal(pos))
 
     def _prepare_context_menu_selection(self, item: QtWidgets.QTreeWidgetItem) -> None:
         selection_changed = False
@@ -2035,6 +2036,39 @@ class ProjectView(QtWidgets.QWidget):
         if item:
             self._select_item(item)
             self._selected_node_state = self._selection_state_for_item(item)
+
+    def update_bid_content_counts(
+        self,
+        bid_ref: BidRef,
+        *,
+        page_count: Optional[int] = None,
+        condition_count: Optional[int] = None,
+    ) -> None:
+        if page_count is None and condition_count is None:
+            return
+        for loaded_file in self._loaded_files or ():
+            if not _same_file_path(loaded_file.file_path, bid_ref.file_path):
+                continue
+            bids = list(loaded_file.orphan_bids)
+            for project in loaded_file.projects:
+                bids.extend(project.bids)
+            for bid in bids:
+                if str(bid.uid) != str(bid_ref.bid_uid):
+                    continue
+                if page_count is not None:
+                    bid.page_count = int(page_count)
+                if condition_count is not None:
+                    bid.condition_count = int(condition_count)
+                break
+        item = self._find_bid_item(bid_ref)
+        if item is None:
+            return
+        if page_count is not None:
+            item.setText(6, str(page_count))
+            item.set_sort_value(6, int(page_count))
+        if condition_count is not None:
+            item.setText(7, str(condition_count))
+            item.set_sort_value(7, int(condition_count))
 
     def restore_project_selection(
         self, project_uid: str, file_path: Optional[str] = None

@@ -117,6 +117,11 @@ Threading and events:
   resource identities; active-bid-only exports and condition renumbering are not
   offered for a different right-clicked bid. Selection-wide project commands
   carry the owning database alongside project UIDs.
+- Progress-worker exceptions carry `None` plus the explicit exception object;
+  they must not substitute a Boolean for a task's structured result. Duplicate
+  Bid uses `WriteReloadResult` from service through presentation completion, so
+  write failure, refresh failure, and success remain distinct and only the
+  presentation owner emits the user-visible error.
 - Accepted native 3D scene and texture completions may update a hidden surface's
   retained scene, but only `showEvent` may resume its renderer. Hide and cleanup
   own the suspended state even while regeneration is pending; the canonical
@@ -180,6 +185,30 @@ Threading and events:
   disables them and clears zoom text; visual reloads of the same Page do not
   announce a false empty state. Late zoom notifications from a cleared Plan
   must not repopulate the shared field. Page readiness restores navigation.
+  Remote Page projection selects the first available Page when an empty active
+  Bid gains one and synchronizes navigation when the active Page changes or
+  disappears. Page-dependent toolbar actions require the Main Plan's displayed
+  Page to match the authoritative active Page; deferred projection disables
+  them until that context is coherent again. A successful current deferred
+  completion refreshes action state before completing its projection barrier;
+  stale and failed completions cannot recover controls for an older Page.
+  If database refresh removes the selected Bid, clear Main Plan through the
+  canonical viewer coordinator before entering the no-Bid state so pending Page
+  work is invalidated along with the displayed Page. The same transition clears
+  Page/3D state, restores the database-root selection, and refreshes both menu
+  and toolbar state; it must not silently activate an unrelated sibling Bid.
+  When refresh retains the Bid but removes its active Page, resolve the complete
+  Page fallback before projecting any tab: preserve valid selected Pages, then
+  choose their first Page or the first authoritative Page by sequence. Clear the
+  obsolete Main Plan immediately, update Page Settings/navigation/status, and
+  use the same fallback resolver for ordinary remote Page projection.
+  Metadata projection remains independent of raster and mesh work: remote Bid
+  hierarchy changes refresh the window title and Condition/Summary metadata
+  without redrawing Plan, while Page changes refresh status, active Summary,
+  Project Tree counts, and unaffected detached-Plan navigation even when their
+  rendering is intentionally skipped. Condition changes update the matching
+  Project Tree count without rebuilding its hierarchy. Avoid repeating Summary
+  or detached navigation projection when another active-family path already owns it.
   Detached 3D context-menu zoom and reset commands reuse that window's toolbar
   actions for both enablement and execution; camera state remains surface-local.
   Main's shared zoom field retains separate unsubmitted Plan and 3D drafts across
@@ -217,6 +246,12 @@ Threading and events:
   its rebuild owns quantities and Summary once from the final hydrated data.
   Takeoff projection still refreshes Page/Area usage using old and new Page
   ownership, including deletion; renderer completion does not recalculate totals.
+  A mixed Page/Takeoff batch assigns Plan, mesh, quantities, Summary, and Page
+  badge projection to the Page-family owner after it resolves final selection;
+  do not project Takeoff-derived state first against a Page that may disappear.
+  Remote Page hydration also replaces the loaded Bid and cached navigation Page
+  hierarchy from the authoritative Page objects. Detached Page badges update for
+  unaffected Page takeoff changes without requesting a canvas refresh.
 - Layer deletion confirmation refreshes its in-use set from current authoritative
   content on demand. Annotation/Takeoff changes on other Pages must not leave a
   stale warning or require a Layer-tree rebuild before the next confirmation.
@@ -232,6 +267,14 @@ Threading and events:
   keeps the matching accepted scene visible until its generation-guarded
   replacement succeeds. Database-wide refresh remains the fallback only when
   the affected resource is not known.
+  Classified Condition updates and folder-only hierarchy projection may transfer
+  active placement to reconstructed authoritative Condition objects only after
+  the complete ordered placement set still matches type and visibility. Insert,
+  delete, unclassified replacement, and same-UID replacement remain strict.
+  Layer visibility suspension owns the complete multi-Condition object set and
+  Plan tool revision; restoration cannot override newer tool intent or access
+  loss. Passive sidebar reconstruction preserves the surviving focused row, and
+  toolbar placement availability follows that exact active Condition.
 - Render-quality contracts live in `application/render_quality.py`. The
   interactive PDF baseline, raster native-pixel scale, and constrained-render
   safety floor are distinct concepts; Plan View, overlay previews, prefetch,
@@ -383,6 +426,11 @@ Persistence:
   Page, Condition, and area deletion catalogs must stay aligned with the same
   schema relationships and remove or clear all ancillary dependents before
   deleting the owner; SQL and Access share this application-level contract.
+  `BidTakeoffTotals`, `BidLaborCostCodeTotals`, and
+  `BidTypicalGroupTotals` are derived legacy calculation snapshots. Duplicate
+  Bid preserves valid rows for compatibility, but omits a source total row when
+  any of its bid-owned references is dangling; stale totals must not block the
+  authoritative Bid graph or become retargeted through destination UID reuse.
 
 Database backends:
 
@@ -391,6 +439,17 @@ Database backends:
   to different Access file instances. A handle that fails to close remains owned
   by the connection manager and the failure stays explicit so cleanup can retry;
   partial cleanup must not drop the only reference to that handle.
+  Authoritative post-write reload is a different lifecycle transition: it keeps
+  that known database incarnation and reuses the shared serialized reader/writer
+  handles. Do not route routine mutation completion through explicit refresh;
+  ACE can retain process-level client tasks even after closed ODBC connections.
+  Access `08004`/`-1036` connection exhaustion is a failed-before-commit result,
+  is never retried blindly, and presentation owns its single user-visible error.
+  A successful rollback permits reuse after a statement/schema error only while
+  the handle passes the connection health probe. Connection-class errors, failed
+  rollback, and failed cursor cleanup mark only that physical handle unhealthy;
+  a failed close remains owned and must be retried before the handle can be used
+  again. Cache and path-lock identity is absolute and Windows case-normalized.
 
 - A saved SQL descriptor's `DatabaseGuid` is the logical database identity.
   Exactly one `DatabaseMetadata` row for OST Visualizer must exist and identify

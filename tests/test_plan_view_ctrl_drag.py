@@ -612,6 +612,9 @@ class CapturingMenu:
                 return action
         return None
 
+    def deleteLater(self):
+        pass
+
 
 class FakeItem:
     def __init__(self, x=0.0, y=0.0, uid=None):

@@ -78,6 +78,7 @@ from ...utils.annotation_defaults import (
     get_annotation_style_for_tool,
     set_annotation_style_for_tool,
 )
+from ...utils.dialog import delete_later_if_valid
 from ...utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
     plan_named_view_hotlink_delete,
@@ -2552,20 +2553,23 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         page_identities = self._capture_page_identities((str(page_uid),))
         self.plan_view.cancel_place_mode()
         dialog = SelectNamedViewDialog(self._named_views, parent=self)
-        result_code = dialog.exec()
-        if (
-            not isValid(dialog)
-            or not isValid(self.plan_view)
-            or self._is_closing
-            or not self._annotation_context_is_current(
-                bid_ref, (str(page_uid),), page_identities
-            )
-            or not self._annotation_placement_enabled()
-        ):
-            return
-        if result_code != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        result = dialog.result_data()
+        try:
+            result_code = dialog.exec()
+            if (
+                not isValid(dialog)
+                or not isValid(self.plan_view)
+                or self._is_closing
+                or not self._annotation_context_is_current(
+                    bid_ref, (str(page_uid),), page_identities
+                )
+                or not self._annotation_placement_enabled()
+            ):
+                return
+            if result_code != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            result = dialog.result_data()
+        finally:
+            delete_later_if_valid(dialog)
         if result.create_new:
             self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
             return

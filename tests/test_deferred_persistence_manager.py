@@ -2108,6 +2108,7 @@ class RecordingPlanView:
     def __init__(self):
         self.current_page_uid = "p1"
         self.cursor_mode = "select"
+        self.tool_revision = 0
         self.annotation_place_type = None
         self.place_condition_uid = None
         self.image_visibility_pages = []
@@ -2132,6 +2133,8 @@ class RecordingPlanView:
         pass
 
     def set_cursor_mode(self, mode):
+        if self.cursor_mode != mode:
+            self.tool_revision += 1
         self.cursor_mode = mode
         self.cursor_modes.append(mode)
         if mode != "place":
@@ -2140,6 +2143,11 @@ class RecordingPlanView:
             self.annotation_place_type = None
 
     def activate_annotation_placement(self, annotation_type):
+        if (
+            self.cursor_mode != "annotation_place"
+            or self.annotation_place_type != annotation_type
+        ):
+            self.tool_revision += 1
         self.cursor_mode = "annotation_place"
         self.annotation_place_type = annotation_type
         self.annotation_placements.append(annotation_type)
@@ -2502,6 +2510,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
             active_page_uid=active_page_uid,
+            place_condition_uid=None,
+            place_condition_uids=[],
             state=SimpleNamespace(grayscale_enabled=False),
         )
         pages = {
@@ -2587,6 +2597,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         def enter_place(condition_uid, _selected):
             coordinator.plan_view.cursor_mode = "place"
             coordinator.plan_view.place_condition_uid = condition_uid
+            coordinator.ui_state_manager.place_condition_uid = condition_uid
+            coordinator.ui_state_manager.place_condition_uids = list(_selected)
             return True
 
         coordinator._placement = SimpleNamespace(enter=enter_place)
@@ -2974,6 +2986,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
         coordinator.plan_view.cursor_mode = "place"
         coordinator.plan_view.place_condition_uid = "c1"
+        coordinator.ui_state_manager.place_condition_uid = "c1"
+        coordinator.ui_state_manager.place_condition_uids = ["c1"]
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
         self.assertEqual(coordinator.plan_view.cursor_mode, "select")
         self.assertEqual(coordinator.plan_view.cursor_modes, ["select"])
@@ -2986,6 +3000,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
         coordinator.plan_view.cursor_mode = "place"
         coordinator.plan_view.place_condition_uid = "c1"
+        coordinator.ui_state_manager.place_condition_uid = "c1"
+        coordinator.ui_state_manager.place_condition_uids = ["c1"]
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
         coordinator.project_data.get_bid_conditions()["c1"] = Condition(
             uid="c1",

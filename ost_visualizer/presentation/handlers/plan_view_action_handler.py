@@ -47,6 +47,7 @@ from ..services.selection_commands import (
     InsertTakeoffsCommand,
 )
 from ..utils.annotation_defaults import build_placed_annotation_spec
+from ..utils.dialog import delete_later_if_valid
 from ..utils.font_catalog import resolve_font_definition
 from ..utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
@@ -57,7 +58,7 @@ from ..utils.annotation_paste import (
     annotation_paste_anchor,
     translate_annotation_position,
 )
-from ..utils.messagebox import confirm
+from ..utils.messagebox import confirm, show_warning
 from ..utils.named_view_validation import (
     named_view_name_exists,
     show_duplicate_named_view_name,
@@ -2520,19 +2521,22 @@ class PlanViewActionHandler:
             self._collect_named_view_choices(),
             parent=self._plan_view,
         )
-        result_code = dialog.exec()
-        if (
-            not isValid(dialog)
-            or not isValid(self._plan_view)
-            or not self._plan_context_is_current(
-                bid_ref, (str(page_uid),), page_identities
-            )
-            or not self._is_allowed(Feature.PLACE_ANNOTATIONS)
-        ):
-            return
-        if result_code != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        result = dialog.result_data()
+        try:
+            result_code = dialog.exec()
+            if (
+                not isValid(dialog)
+                or not isValid(self._plan_view)
+                or not self._plan_context_is_current(
+                    bid_ref, (str(page_uid),), page_identities
+                )
+                or not self._is_allowed(Feature.PLACE_ANNOTATIONS)
+            ):
+                return
+            if result_code != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            result = dialog.result_data()
+        finally:
+            delete_later_if_valid(dialog)
         if result.create_new:
             self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
             return
@@ -2858,12 +2862,20 @@ class PlanViewActionHandler:
         use_fast_refresh = fast_refresh and self._takeoff_specs_allow_fast_refresh(
             specs
         )
-        new_uids = self._write_svc.insert_takeoffs(
+        result = self._write_svc.insert_takeoffs_result(
             bid_ref.file_path,
             bid_ref.bid_uid,
             specs,
             publish_database_refreshed_after_write=not use_fast_refresh,
         )
+        if result.failure_reason:
+            show_warning(
+                self._plan_view,
+                "Database Write",
+                result.failure_reason,
+            )
+            return False
+        new_uids = list(result.value or ()) if result.success else []
         if not new_uids:
             return False
         if use_fast_refresh:

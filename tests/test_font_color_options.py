@@ -525,6 +525,49 @@ class FontColorOptionsTests(unittest.TestCase):
             tab._change_font()
         tab.close()
 
+    def test_repeated_font_and_color_cancellation_releases_nested_dialogs(self):
+        tab = FontsColorsTab()
+        tab.load_config(Config())
+        tab.color_list.setCurrentRow(5)
+        real_color_dialog = QtWidgets.QColorDialog
+        real_font_dialog = FontDialog
+
+        def create_color_dialog(color, parent):
+            return real_color_dialog(color, parent)
+
+        def create_font_dialog(definition, parent):
+            dialog = real_font_dialog(definition, parent)
+            QtCore.QTimer.singleShot(0, dialog.reject)
+            return dialog
+
+        try:
+            with mock.patch(
+                "ost_visualizer.presentation.dialogs.options.fonts_colors_tab."
+                "QtWidgets.QColorDialog",
+                side_effect=create_color_dialog,
+            ), mock.patch.object(
+                real_color_dialog,
+                "exec",
+                return_value=QtWidgets.QDialog.DialogCode.Rejected,
+            ):
+                for _ in range(100):
+                    tab._change_color()
+            with mock.patch(
+                "ost_visualizer.presentation.dialogs.options.fonts_colors_tab."
+                "FontDialog",
+                side_effect=create_font_dialog,
+            ):
+                for _ in range(100):
+                    tab._change_font()
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.app.processEvents()
+            self.assertEqual(
+                tab.change_color_button.findChildren(real_color_dialog), []
+            )
+            self.assertEqual(tab.change_font_button.findChildren(real_font_dialog), [])
+        finally:
+            tab.deleteLater()
+
     def test_inactive_color_substitution_preserves_opacity(self):
         service = ColorService()
         takeoff = Takeoff(

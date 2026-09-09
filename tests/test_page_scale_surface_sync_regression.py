@@ -81,6 +81,9 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
             def set_highlighted_conditions(self, _uids) -> None:
                 pass
 
+            def set_page_selection(self, page_uids) -> None:
+                self.selected_page_uids = list(page_uids)
+
         ui_state = UiState()
         project_data = SimpleNamespace(
             get_current_file_path=lambda: bid_ref.file_path,
@@ -89,8 +92,10 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
             get_bid_conditions=lambda: {},
             get_area_uids_with_takeoff=lambda: set(),
             get_page=lambda uid: pages_by_uid.get(uid),
+            get_all_pages=lambda: list(refreshed_pages),
             get_selected_page_uids=lambda: list(ui_state.selected_page_uids),
             get_last_selected_page_uid=lambda: active_page_uid,
+            select_pages=lambda page_uids: list(page_uids),
         )
         snapshot = SimpleNamespace(
             bid_ref=bid_ref,
@@ -136,6 +141,8 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         coordinator._tab_widget = SimpleNamespace(
             currentIndex=lambda: TAB_INDEX_TAKEOFF
         )
+        coordinator._viewer = SimpleNamespace(clear_plan_view=lambda: None)
+        coordinator._status_panel = None
         coordinator._nav = Nav()
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
         coordinator._is_condition_placeable = lambda _uid: False

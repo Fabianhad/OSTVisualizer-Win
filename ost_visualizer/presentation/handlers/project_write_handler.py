@@ -9,6 +9,7 @@ from ...application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
 )
+from ...application.dtos.write_reload_result import WriteReloadResult
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
@@ -17,12 +18,6 @@ from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical, show_warn
 
 _DELETED_BIDS_PROJECT_UID = "1"
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class _DuplicateBidResult:
-    new_bid_uid: Optional[str]
-    reload_success: bool
 
 
 @dataclass
@@ -157,7 +152,7 @@ class ProjectWriteHandler:
         reporter = ProgressReporter()
         self._set_duplicate_busy(True)
         try:
-            rc, result, worker_error = self._run_progress_dialog(
+            _rc, result, worker_error = self._run_progress_dialog(
                 bid_name,
                 lambda: self._duplicate_bid_with_reload(bid_ref, reporter),
                 action_text="Duplicating",
@@ -177,11 +172,13 @@ class ProjectWriteHandler:
                     worker_error.__traceback__,
                 ),
             )
-        if (
-            rc == QtWidgets.QDialog.DialogCode.Accepted
-            and result is not None
-            and result.new_bid_uid
-        ):
+            show_critical(
+                self.window,
+                "Duplicate Error",
+                f"Failed to duplicate bid. {DB_LOCKED_HINT}",
+            )
+            return
+        if result is not None and result.write_success and result.value:
             if result.reload_success:
                 self._write_service.notify_database_refreshed(bid_ref.file_path)
             else:
@@ -193,7 +190,7 @@ class ProjectWriteHandler:
                     "Reopen the database to see the duplicated bid.",
                 )
             return
-        if result is None or not result.new_bid_uid:
+        if result is None or not result.write_success or not result.value:
             show_critical(
                 self.window,
                 "Duplicate Error",
@@ -202,16 +199,20 @@ class ProjectWriteHandler:
 
     def _duplicate_bid_with_reload(
         self, bid_ref: BidRef, reporter: ProgressReporter
-    ) -> _DuplicateBidResult:
+    ) -> WriteReloadResult:
         reporter.report("bid data")
-        new_bid_uid = self._write_service.duplicate_bid(
+        result = self._write_service.duplicate_bid_result(
             bid_ref.file_path, bid_ref.bid_uid, reload=False
         )
-        if not new_bid_uid:
-            return _DuplicateBidResult(None, False)
+        if not result.write_success or not result.value:
+            return result
         reporter.report("project data")
         reload_success = self._write_service.reload_database(bid_ref.file_path)
-        return _DuplicateBidResult(new_bid_uid, reload_success)
+        return WriteReloadResult(
+            value=str(result.value),
+            write_success=True,
+            reload_success=reload_success,
+        )
 
     def _duplicate_bid_name(self, bid_ref: BidRef) -> str:
         bid_info = self.project_data.get_hierarchy().find_bid_info(bid_ref)

@@ -455,7 +455,10 @@ class ApplicationLifecycleTests(unittest.TestCase):
         container.register_instance("project_write_service", SimpleNamespace())
         container.register_instance(
             "reload_database_use_case",
-            SimpleNamespace(execute=lambda: None),
+            SimpleNamespace(
+                execute=lambda: None,
+                execute_after_write=lambda _database_id: None,
+            ),
         )
         ServiceBuilder(
             container=container,
@@ -519,7 +522,10 @@ class ApplicationLifecycleTests(unittest.TestCase):
         container.register_instance("project_write_service", SimpleNamespace())
         container.register_instance(
             "reload_database_use_case",
-            SimpleNamespace(execute=lambda: None),
+            SimpleNamespace(
+                execute=lambda: None,
+                execute_after_write=lambda _database_id: None,
+            ),
         )
         connection_manager = _FalseyConnectionManager()
         monitor = _Monitor()

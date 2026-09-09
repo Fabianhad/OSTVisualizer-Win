@@ -291,7 +291,12 @@ class FileProjectRepository(IProjectRepository):
                 )
             self._active_file_path = file_path
 
-    def reload_database(self, file_path: Optional[str] = None) -> FileLoadResult:
+    def reload_database(
+        self,
+        file_path: Optional[str] = None,
+        *,
+        close_connections: bool = True,
+    ) -> FileLoadResult:
         if not file_path:
             error_message = "file_path is required for reload_database"
             self.logger.error(error_message)
@@ -306,7 +311,8 @@ class FileProjectRepository(IProjectRepository):
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
         try:
-            self.parser.refresh_connection(file_path)
+            if close_connections:
+                self.parser.refresh_connection(file_path)
             _clear_position_caches()
             result = self.parser.parse(file_path)
         except Exception as exc:
