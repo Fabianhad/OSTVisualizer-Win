@@ -3107,9 +3107,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         changes = [("a1", "text", [1.0, 1.0], [2.0, 2.0])]
         window._access_state = PlanSurfaceAccessState()
-
         window._on_positions_flushed([], changes)
-
         self.assertEqual(plan_view.restored_positions, [([], changes)])
         self.assertEqual(queued_write.geometry_calls, [])
 
@@ -5802,6 +5800,24 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 )
                 self.assertEqual(event_bus.events[-1][0], AppEvents.ANNOTATIONS_CHANGED)
                 self.assertEqual(len(undo_service.pushes), 1)
+
+    def test_detached_annotation_history_does_not_replace_new_page_selection(self):
+        undo_service = FakeUndoService()
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            undo_service=undo_service,
+        )
+        plan_view.annotation_key_map[("ann-1", "line")] = "ann-1_line"
+        window._on_annotation_created("line", [1.0, 2.0, 3.0, 4.0], "p1")
+        self.assertEqual(plan_view.selected_uids, {"ann-1_line"})
+        page_2 = Page(uid="p2", name="Page 2")
+        window.page_data.ordered_pages.append(page_2)
+        plan_view.current_page_uid = "p2"
+        plan_view.set_selected_uids({"page-2-selection"})
+        undo, redo = undo_service.pushes[0]
+        self.assertTrue(undo())
+        self.assertEqual(plan_view.selected_uids, {"page-2-selection"})
+        self.assertTrue(redo())
+        self.assertEqual(plan_view.selected_uids, {"page-2-selection"})
 
     def test_detached_text_annotation_commit_uses_annotation_write_path(self):
         write_service = FakeAnnotationWriteService()

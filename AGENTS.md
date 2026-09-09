@@ -135,7 +135,11 @@ Threading and events:
   Undo/Redo until its terminal result, while completed entries are ordered by
   submission rather than callback delivery. Failed or rejected persistence adds
   no history, and a still-current optimistic preview is restored without
-  overwriting newer selection or tool intent.
+  overwriting newer selection or tool intent. Bid-scoped local history may replay
+  its persisted mutation after Page navigation, but it projects restored or
+  cleared selection only while the originating exact Page object still owns that
+  Plan surface; another Page or a same-UID Page replacement retains its own
+  selection.
 - Accepted native 3D scene and texture completions may update a hidden surface's
   retained scene, but only `showEvent` may resume its renderer. Hide and cleanup
   own the suspended state even while regeneration is pending; the canonical

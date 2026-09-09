@@ -2,7 +2,7 @@ import logging
 import uuid
 import weakref
 from dataclasses import dataclass, replace
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
@@ -295,6 +295,17 @@ class PlanViewActionHandler:
             self._plan_view.current_page_uid or self._ui_state.active_page_uid or ""
         )
         return not page_uids or current_page_uid in page_uids
+
+    def _history_selection_owner(
+        self, bid_ref, page_uids: tuple[str, ...]
+    ) -> Callable[[], bool]:
+        page_uids = tuple(dict.fromkeys(str(uid) for uid in page_uids))
+        page_identities = self._capture_page_identities(page_uids)
+        return lambda: self._plan_context_is_current(
+            bid_ref,
+            page_uids,
+            page_identities,
+        )
 
     def connect_signals(self) -> None:
         pv = self._plan_view
@@ -2860,12 +2871,16 @@ class PlanViewActionHandler:
             self._plan_view.set_selected_uids(keys)
         current_uids = list(new_uids)
         current_specs_scales = self._capture_annotation_spec_scales(current_specs)
+        selection_owner_is_current = self._history_selection_owner(
+            bid_ref,
+            tuple(spec.page_uid for spec in current_specs),
+        )
 
         def _undo_insert():
             success = self._delete_annotations_fast(
                 bid_ref.file_path, list(current_uids), current_specs
             )
-            if success:
+            if success and selection_owner_is_current():
                 self._plan_view.clear_selection()
             return success
 
@@ -2877,7 +2892,7 @@ class PlanViewActionHandler:
             if len(redone_uids) != len(current_specs):
                 return False
             current_uids[:] = list(redone_uids)
-            if redone_uids:
+            if redone_uids and selection_owner_is_current():
                 uid_type_set = {
                     (uid, current_specs[i].annotation_type)
                     for i, uid in enumerate(redone_uids)
@@ -3021,8 +3036,17 @@ class PlanViewActionHandler:
                 self._takeoff_spec_page_uids(specs), new_uids
             )
         self._plan_view.set_selected_uids(set(new_uids))
+        selection_owner_is_current = self._history_selection_owner(
+            bid_ref,
+            tuple(spec.page_uid for spec in specs),
+        )
         if use_fast_refresh:
-            self._push_fast_takeoff_insert_undo(bid_ref, new_uids, specs)
+            self._push_fast_takeoff_insert_undo(
+                bid_ref,
+                new_uids,
+                specs,
+                selection_owner_is_current,
+            )
             return True
         specs_scales = self._capture_takeoff_spec_scales(specs)
         cmd = InsertTakeoffsCommand(
@@ -3037,12 +3061,17 @@ class PlanViewActionHandler:
                     specs_scales,
                 )
             ),
+            selection_owner_is_current_fn=selection_owner_is_current,
         )
         self._undo_svc.push_local(cmd.undo, cmd.redo)
         return True
 
     def _push_fast_takeoff_insert_undo(
-        self, bid_ref, new_uids: List[str], specs: List[InsertTakeoffSpec]
+        self,
+        bid_ref,
+        new_uids: List[str],
+        specs: List[InsertTakeoffSpec],
+        selection_owner_is_current: Callable[[], bool],
     ) -> None:
         current_uids = list(new_uids)
         current_specs = specs[: len(new_uids)]
@@ -3050,7 +3079,7 @@ class PlanViewActionHandler:
 
         def _undo_insert():
             success = self._delete_takeoffs_fast(bid_ref.file_path, list(current_uids))
-            if success:
+            if success and selection_owner_is_current():
                 self._plan_view.clear_selection()
             return success
 
@@ -3064,7 +3093,7 @@ class PlanViewActionHandler:
             for index, uid in enumerate(redone_uids):
                 if index < len(current_uids):
                     current_uids[index] = uid
-            if redone_uids:
+            if redone_uids and selection_owner_is_current():
                 self._plan_view.set_selected_uids(set(redone_uids))
             return True
 
@@ -3222,6 +3251,10 @@ class PlanViewActionHandler:
                 self._plan_view.set_selected_uids(set(uids))
                 return
             current_uids = list(takeoff_uids)
+            selection_owner_is_current = self._history_selection_owner(
+                bid_ref,
+                tuple(spec.page_uid for spec in specs),
+            )
 
             def _undo_delete():
                 restore_specs = self._takeoff_specs_for_current_scales(
@@ -3233,13 +3266,13 @@ class PlanViewActionHandler:
                 for i, uid in enumerate(new_uids):
                     if i < len(current_uids):
                         current_uids[i] = uid
-                if new_uids:
+                if new_uids and selection_owner_is_current():
                     self._plan_view.set_selected_uids(set(new_uids))
                 return True
 
             def _redo_delete():
                 success = self._delete_takeoffs_fast(db_path, list(current_uids))
-                if success:
+                if success and selection_owner_is_current():
                     self._plan_view.clear_selection()
                 return success
 
@@ -3254,6 +3287,10 @@ class PlanViewActionHandler:
             if not self._delete_saved_annotations_fast(db_path, current_annotations):
                 self._plan_view.set_selected_uids(set(uids))
                 return
+            selection_owner_is_current = self._history_selection_owner(
+                bid_ref,
+                tuple(annotation.page_uid for annotation in current_annotations),
+            )
 
             def _undo_annotation_delete():
                 nonlocal current_annotations, current_annotation_scales
@@ -3269,19 +3306,22 @@ class PlanViewActionHandler:
                 current_annotation_scales = self._capture_saved_annotation_scales(
                     current_annotations
                 )
-                uid_type_set = {
-                    (annotation.uid, annotation.annotation_type)
-                    for annotation in current_annotations
-                }
-                keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
-                self._plan_view.set_selected_uids(keys)
+                if selection_owner_is_current():
+                    uid_type_set = {
+                        (annotation.uid, annotation.annotation_type)
+                        for annotation in current_annotations
+                    }
+                    keys = self._plan_view.find_annotation_keys_by_uid_type(
+                        uid_type_set
+                    )
+                    self._plan_view.set_selected_uids(keys)
                 return True
 
             def _redo_annotation_delete():
                 success = self._delete_saved_annotations_fast(
                     db_path, current_annotations
                 )
-                if success:
+                if success and selection_owner_is_current():
                     self._plan_view.clear_selection()
                 return success
 
@@ -3560,6 +3600,10 @@ class PlanViewActionHandler:
         annotation_scales = self._capture_annotation_spec_scales(
             list(payload.annotation_specs)
         )
+        selection_owner_is_current = self._history_selection_owner(
+            bid_ref,
+            page_uids,
+        )
 
         def undo() -> bool:
             restore_payload = self._paste_payload_for_current_scales(
@@ -3587,13 +3631,14 @@ class PlanViewActionHandler:
                 (uid, annotation_type_by_source[source_uid])
                 for source_uid, uid in annotation_map.items()
             ]
-            self._plan_view.set_selected_uids(
-                self._selection_keys_for_paste_maps(
-                    payload,
-                    takeoff_map,
-                    annotation_map,
+            if selection_owner_is_current():
+                self._plan_view.set_selected_uids(
+                    self._selection_keys_for_paste_maps(
+                        payload,
+                        takeoff_map,
+                        annotation_map,
+                    )
                 )
-            )
             return True
 
         def redo() -> bool:
@@ -3616,7 +3661,8 @@ class PlanViewActionHandler:
                     dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
                 ),
             )
-            self._plan_view.clear_selection()
+            if selection_owner_is_current():
+                self._plan_view.clear_selection()
             return True
 
         self._undo_svc.push_local(undo, redo)
@@ -3893,6 +3939,10 @@ class PlanViewActionHandler:
         annotation_scales = self._capture_annotation_spec_scales(
             list(payload.annotation_specs)
         )
+        selection_owner_is_current = self._history_selection_owner(
+            bid_ref,
+            page_uids,
+        )
 
         def undo() -> bool:
             result = self._write_svc.execute_plan_items_delete_local(
@@ -3913,7 +3963,8 @@ class PlanViewActionHandler:
                     dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
                 ),
             )
-            self._plan_view.clear_selection()
+            if selection_owner_is_current():
+                self._plan_view.clear_selection()
             return True
 
         def redo() -> bool:
@@ -3942,13 +3993,14 @@ class PlanViewActionHandler:
                 (uid, annotation_type_by_source[source_uid])
                 for source_uid, uid in next_annotations.items()
             ]
-            self._plan_view.set_selected_uids(
-                self._selection_keys_for_paste_maps(
-                    payload,
-                    next_takeoffs,
-                    next_annotations,
+            if selection_owner_is_current():
+                self._plan_view.set_selected_uids(
+                    self._selection_keys_for_paste_maps(
+                        payload,
+                        next_takeoffs,
+                        next_annotations,
+                    )
                 )
-            )
             return True
 
         self._undo_svc.push_local(undo, redo)

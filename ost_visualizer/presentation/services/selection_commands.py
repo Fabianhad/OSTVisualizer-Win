@@ -17,6 +17,7 @@ TakeoffSpecsPrepareFn = Callable[[List[InsertTakeoffSpec]], List[InsertTakeoffSp
 AnnotationSpecsPrepareFn = Callable[
     [List[InsertAnnotationSpec]], List[InsertAnnotationSpec]
 ]
+SelectionOwnerIsCurrentFn = Callable[[], bool]
 
 
 def _identity_takeoff_specs(
@@ -29,6 +30,10 @@ def _identity_annotation_specs(
     specs: List[InsertAnnotationSpec],
 ) -> List[InsertAnnotationSpec]:
     return specs
+
+
+def _selection_owner_is_current() -> bool:
+    return True
 
 
 def _require_complete_insert(
@@ -97,6 +102,7 @@ class InsertTakeoffsCommand:
         insert_takeoffs_fn: Optional[TakeoffInsertFn] = None,
         delete_takeoffs_fn: Optional[TakeoffDeleteFn] = None,
         prepare_specs_fn: Optional[TakeoffSpecsPrepareFn] = None,
+        selection_owner_is_current_fn: Optional[SelectionOwnerIsCurrentFn] = None,
     ) -> None:
         self._current_uids = list(uids)
         self._bid_ref = bid_ref
@@ -109,12 +115,15 @@ class InsertTakeoffsCommand:
             write_svc
         )
         self._prepare_specs_fn = prepare_specs_fn or _identity_takeoff_specs
+        self._selection_owner_is_current = (
+            selection_owner_is_current_fn or _selection_owner_is_current
+        )
 
     def undo(self) -> bool:
         success = self._delete_takeoffs_fn(
             self._bid_ref.file_path, list(self._current_uids)
         )
-        if success:
+        if success and self._selection_owner_is_current():
             self._plan_view.clear_selection()
         return success
 
@@ -127,7 +136,7 @@ class InsertTakeoffsCommand:
         )
         for i, uid in enumerate(new_uids):
             self._current_uids[i] = uid
-        if new_uids:
+        if new_uids and self._selection_owner_is_current():
             self._plan_view.set_selected_uids(set(new_uids))
         return True
 
@@ -143,6 +152,7 @@ class InsertAnnotationsCommand:
         insert_annotations_fn: Optional[AnnotationInsertFn] = None,
         delete_annotations_fn: Optional[AnnotationDeleteFn] = None,
         prepare_specs_fn: Optional[AnnotationSpecsPrepareFn] = None,
+        selection_owner_is_current_fn: Optional[SelectionOwnerIsCurrentFn] = None,
     ) -> None:
         self._current_uids = list(uids)
         self._bid_ref = bid_ref
@@ -155,12 +165,15 @@ class InsertAnnotationsCommand:
             delete_annotations_fn or _default_delete_annotations(write_svc)
         )
         self._prepare_specs_fn = prepare_specs_fn or _identity_annotation_specs
+        self._selection_owner_is_current = (
+            selection_owner_is_current_fn or _selection_owner_is_current
+        )
 
     def undo(self) -> bool:
         success = self._delete_annotations_fn(
             self._bid_ref.file_path, list(self._current_uids), self._specs
         )
-        if success:
+        if success and self._selection_owner_is_current():
             self._plan_view.clear_selection()
         return success
 
@@ -172,7 +185,7 @@ class InsertAnnotationsCommand:
             "Annotation",
         )
         self._current_uids = list(new_uids)
-        if self._current_uids:
+        if self._current_uids and self._selection_owner_is_current():
             uid_type_set = {
                 (uid, self._specs[i].annotation_type)
                 for i, uid in enumerate(self._current_uids)
@@ -269,6 +282,7 @@ class PasteTakeoffsCommand:
         insert_takeoffs_fn: Optional[TakeoffInsertFn] = None,
         delete_takeoffs_fn: Optional[TakeoffDeleteFn] = None,
         prepare_specs_fn: Optional[TakeoffSpecsPrepareFn] = None,
+        selection_owner_is_current_fn: Optional[SelectionOwnerIsCurrentFn] = None,
     ) -> None:
         self._pasted_takeoffs = deepcopy(pasted_takeoffs)
         self._bid_ref = bid_ref
@@ -287,6 +301,9 @@ class PasteTakeoffsCommand:
             write_svc
         )
         self._prepare_specs_fn = prepare_specs_fn or _identity_takeoff_specs
+        self._selection_owner_is_current = (
+            selection_owner_is_current_fn or _selection_owner_is_current
+        )
 
     def get_uid_remap(self) -> Dict[str, str]:
         return {
@@ -298,7 +315,7 @@ class PasteTakeoffsCommand:
         success = self._delete_takeoffs_fn(
             self._bid_ref.file_path, list(self._current_uids)
         )
-        if success:
+        if success and self._selection_owner_is_current():
             self._plan_view.clear_selection()
         return success
 
@@ -315,7 +332,7 @@ class PasteTakeoffsCommand:
         )
         self._current_uids = [uid for uid in new_uids_by_index if uid is not None]
         new_uids = list(self._current_uids)
-        if new_uids:
+        if new_uids and self._selection_owner_is_current():
             self._plan_view.set_selected_uids(set(new_uids))
         return True
 
@@ -328,12 +345,16 @@ class DeleteAnnotationsCommand:
         plan_view,
         insert_saved_annotations_fn: SavedAnnotationInsertFn,
         delete_saved_annotations_fn: SavedAnnotationDeleteFn,
+        selection_owner_is_current_fn: Optional[SelectionOwnerIsCurrentFn] = None,
     ) -> None:
         self._saved = deepcopy(saved_annotations)
         self._bid_ref = bid_ref
         self._plan_view = plan_view
         self._insert_saved_annotations_fn = insert_saved_annotations_fn
         self._delete_saved_annotations_fn = delete_saved_annotations_fn
+        self._selection_owner_is_current = (
+            selection_owner_is_current_fn or _selection_owner_is_current
+        )
 
     def undo(self) -> bool:
         restored = list(self._insert_saved_annotations_fn(self._bid_ref, self._saved))
@@ -346,18 +367,20 @@ class DeleteAnnotationsCommand:
                 "annotations"
             )
         self._saved = list(restored)
-        uid_type_set = {
-            (annotation.uid, annotation.annotation_type) for annotation in self._saved
-        }
-        keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
-        self._plan_view.set_selected_uids(keys)
+        if self._selection_owner_is_current():
+            uid_type_set = {
+                (annotation.uid, annotation.annotation_type)
+                for annotation in self._saved
+            }
+            keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+            self._plan_view.set_selected_uids(keys)
         return True
 
     def redo(self) -> bool:
         success = self._delete_saved_annotations_fn(
             self._bid_ref.file_path, self._saved
         )
-        if success:
+        if success and self._selection_owner_is_current():
             self._plan_view.clear_selection()
         return success
 
@@ -374,6 +397,7 @@ class PasteAnnotationsCommand:
         insert_annotations_fn: Optional[AnnotationInsertFn] = None,
         delete_annotations_fn: Optional[AnnotationDeleteFn] = None,
         prepare_specs_fn: Optional[AnnotationSpecsPrepareFn] = None,
+        selection_owner_is_current_fn: Optional[SelectionOwnerIsCurrentFn] = None,
     ) -> None:
         self._specs = list(specs)
         self._current_uids = list(new_uids)
@@ -387,12 +411,15 @@ class PasteAnnotationsCommand:
             delete_annotations_fn or _default_delete_annotations(write_svc)
         )
         self._prepare_specs_fn = prepare_specs_fn or _identity_annotation_specs
+        self._selection_owner_is_current = (
+            selection_owner_is_current_fn or _selection_owner_is_current
+        )
 
     def undo(self) -> bool:
         success = self._delete_annotations_fn(
             self._bid_ref.file_path, list(self._current_uids), self._specs
         )
-        if success:
+        if success and self._selection_owner_is_current():
             self._plan_view.clear_selection()
         return success
 
@@ -407,7 +434,7 @@ class PasteAnnotationsCommand:
             "Annotation",
         )
         self._current_uids = list(new_uids)
-        if self._current_uids:
+        if self._current_uids and self._selection_owner_is_current():
             uid_type_set = {
                 (uid, self._specs[i].annotation_type)
                 for i, uid in enumerate(self._current_uids)

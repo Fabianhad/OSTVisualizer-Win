@@ -1532,6 +1532,17 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
         )
 
+    def _history_selection_owner(
+        self, bid_ref, page_uids: tuple[str, ...]
+    ) -> Callable[[], bool]:
+        page_uids = tuple(dict.fromkeys(str(uid) for uid in page_uids))
+        page_identities = self._capture_page_identities(page_uids)
+        return lambda: self._annotation_context_is_current(
+            bid_ref,
+            page_uids,
+            page_identities,
+        )
+
     def _queue_sql_annotation_geometry(self, db_path: str, ann_changes: list) -> None:
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
@@ -2473,6 +2484,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             plan_view=self.plan_view,
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
+            selection_owner_is_current_fn=self._history_selection_owner(
+                bid_ref,
+                tuple(spec.page_uid for spec in specs),
+            ),
         )
         self._undo_svc.push_local(cmd.undo, cmd.redo)
 
@@ -2515,6 +2530,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             plan_view=self.plan_view,
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
+            selection_owner_is_current_fn=self._history_selection_owner(
+                bid_ref,
+                (str(spec.page_uid),),
+            ),
         )
         self._undo_svc.push_local(cmd.undo, cmd.redo)
 
@@ -2570,6 +2589,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             plan_view=self.plan_view,
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
+            selection_owner_is_current_fn=self._history_selection_owner(
+                bid_ref,
+                (str(spec.page_uid),),
+            ),
         )
         self._undo_svc.push_local(cmd.undo, cmd.redo)
 
@@ -2627,6 +2650,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             plan_view=self.plan_view,
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
+            selection_owner_is_current_fn=self._history_selection_owner(
+                bid_ref,
+                (str(spec.page_uid),),
+            ),
         )
         self._undo_svc.push_local(cmd.undo, cmd.redo)
 
@@ -2700,6 +2727,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             plan_view=self.plan_view,
             insert_annotations_fn=self._insert_annotations,
             delete_annotations_fn=self._delete_annotations,
+            selection_owner_is_current_fn=self._history_selection_owner(
+                bid_ref,
+                (str(spec.page_uid),),
+            ),
         )
         self._undo_svc.push_local(cmd.undo, cmd.redo)
 
@@ -2770,6 +2801,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             plan_view=self.plan_view,
             insert_saved_annotations_fn=self._insert_saved_annotations,
             delete_saved_annotations_fn=self._delete_saved_annotations,
+            selection_owner_is_current_fn=self._history_selection_owner(
+                bid_ref,
+                tuple(annotation.page_uid for annotation in saved_annotations),
+            ),
         )
         self._undo_svc.push_local(cmd.undo, cmd.redo)
 

@@ -614,7 +614,6 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
 
         service._delete_annotations = DeleteEndpointLine()
         service._delete_takeoffs = DeleteTakeoffAndCompanions()
-
         result = service.execute_plan_items_delete_local(
             "database.mdb",
             "7",
@@ -622,7 +621,6 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             [("line-1", "line")],
             publish_database_refreshed_after_write=False,
         )
-
         self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
         self.assertEqual(
             call_order,

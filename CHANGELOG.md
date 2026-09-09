@@ -21,7 +21,9 @@
   out-of-order completions retain submission order instead of exposing an older
   destructive command. MDB Takeoff property edits now record equivalent history,
   heterogeneous prior Area values restore correctly, and rejected edits restore
-  only their still-current optimistic preview.
+  only their still-current optimistic preview. Replaying Bid-scoped local history
+  after Page navigation no longer clears or replaces the current Page's selection,
+  including after a same-UID Page replacement.
 - Clearing a Plan view now releases scene-owned graphics-item references and
   completes its internal empty-state transition before publishing selection,
   cursor, or Page-clear signals. Synchronous toolbar refresh can no longer access

@@ -2086,6 +2086,67 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.added_annotations[0].layer_uid, "annotation-layer")
         self.assertEqual(ann_write.insert_calls[0][2][0].layer_uid, "annotation-layer")
 
+    def test_local_annotation_history_does_not_replace_new_page_selection(self):
+        data = FakeProjectData()
+        data.pages["p2"] = SimpleNamespace(
+            uid="p2",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        plan_view = FakePlanView(data)
+        plan_view.annotation_key_map[("ann-1", "line")] = "ann-1_line"
+        ann_write = FakeAnnotationWriteService()
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            ann_write=ann_write,
+            data=data,
+            undo=undo,
+        )
+        handler.on_annotation_created("line", [1.0, 2.0, 5.0, 6.0], "p1")
+        self.assertEqual(plan_view.selected, {"ann-1_line"})
+        plan_view.current_page_uid = "p2"
+        plan_view.set_selected_uids({"page-2-selection"})
+        for _cycle in range(50):
+            self.assertTrue(undo.can_undo())
+            undo.undo()
+            self.assertTrue(undo.can_redo())
+            self.assertEqual(plan_view.selected, {"page-2-selection"})
+            undo.redo()
+            self.assertTrue(undo.can_undo())
+            self.assertEqual(plan_view.selected, {"page-2-selection"})
+        self.assertEqual(len(ann_write.delete_calls), 50)
+        self.assertEqual(len(ann_write.insert_calls), 51)
+        self.assertEqual(
+            [(item.uid, item.annotation_type) for item in data.annotations],
+            [("ann-1", "line")],
+        )
+
+    def test_local_annotation_history_rejects_same_uid_page_replacement_selection(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.annotation_key_map[("ann-1", "line")] = "ann-1_line"
+        undo = FakeUndoService()
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            data=data,
+            undo=undo,
+        )
+        original_page = data.pages["p1"]
+        handler.on_annotation_created("line", [1.0, 2.0, 5.0, 6.0], "p1")
+        data.pages["p1"] = SimpleNamespace(
+            uid="p1",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        self.assertIsNot(data.pages["p1"], original_page)
+        plan_view.set_selected_uids({"replacement-page-selection"})
+        self.assertTrue(undo.undo())
+        self.assertEqual(plan_view.selected, {"replacement-page-selection"})
+
     def test_sql_annotation_creation_uses_atomic_paste_queue(self):
         data = FakeProjectData()
         plan_view = FakePlanView(data)
@@ -3209,6 +3270,38 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
 
+    def test_takeoff_history_on_another_page_preserves_current_selection(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.current_page_uid = "9"
+        write = FakeWriteService()
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        self.assertEqual(plan_view.selected, {"100"})
+        plan_view.current_page_uid = "p1"
+        plan_view.set_selected_uids({"page-1-selection"})
+        undo.undo()
+        self.assertEqual(data.takeoffs, {})
+        self.assertEqual(plan_view.selected, {"page-1-selection"})
+        undo.redo()
+        self.assertEqual(len(data.takeoffs), 1)
+        restored = next(iter(data.takeoffs.values()))
+        self.assertEqual((restored.page_uid, restored.condition_uid), ("9", "42"))
+        self.assertEqual(plan_view.selected, {"page-1-selection"})
+
     def test_access_connection_exhaustion_is_presented_once_without_projection(self):
         plan_view = FakePlanView()
         plan_view.selected = {"existing"}
@@ -4301,7 +4394,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(set(Feature)),
         )
-
         handler.on_assign_to_area(["t1", "t2"])
         self.assertEqual(
             (data.takeoffs["t1"].area_uid, data.takeoffs["t2"].area_uid),
@@ -4640,10 +4732,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             )
             for annotation in annotations
         ]
-
         handler.on_positions_flushed(takeoff_changes, annotation_changes)
         undo.undo()
-
         self.assertEqual(older_undos, [])
         self.assertEqual(len(write.queued_geometry), 1)
         callback = write.queued_geometry[0][-1]
@@ -4656,7 +4746,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             )
         )
         undo.undo()
-
         self.assertEqual(len(write.queued_geometry), 2)
         undo_payload = write.queued_geometry[1][2]
         self.assertEqual(undo_payload["takeoff_positions"], [("10", [0.0, 0.0])])
@@ -4693,9 +4782,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         takeoff_changes = [("10", [0.0, 0.0], [5.0, 6.0])]
         annotation_changes = [("10", "line", [1.0, 1.0], [6.0, 7.0])]
-
         handler.on_positions_flushed(takeoff_changes, annotation_changes)
-
         self.assertEqual(
             plan_view.restored_positions,
             [(takeoff_changes, annotation_changes)],
@@ -5533,9 +5620,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ui_access_manager=FakeAccess(set()),
         )
         changes = [("10", "line", {"Width": 1.0}, {"Width": 4.0})]
-
         handler.on_annotation_styles_flushed(changes)
-
         self.assertEqual(plan_view.restored_annotation_styles, [changes])
         self.assertEqual(annotation_write.style_calls, [])
 
@@ -8009,21 +8094,59 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo=undo,
         )
         handler._clipboard_svc = FakeClipboard([], annotations=[source])
-
         handler.on_paste_requested()
         self.assertEqual(
-            {(annotation.uid, annotation.annotation_type) for annotation in data.annotations},
+            {
+                (annotation.uid, annotation.annotation_type)
+                for annotation in data.annotations
+            },
             {("ann-1", "line")},
         )
-
         undo.undo()
-
         self.assertEqual(data.annotations, [])
         self.assertEqual(plan_view.selected, set())
         self.assertEqual(
             handler._write_svc.local_annotation_delete_calls,
             [("bid.mdb", [("ann-1", "line")], False)],
         )
+
+    def test_paste_history_on_another_page_preserves_current_selection(self):
+        source = self._copied_annotation(annotation_type="line")
+        data = FakeProjectData()
+        data.pages["p2"] = SimpleNamespace(
+            uid="p2",
+            overlay_rect=None,
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        plan_view = FakePlanView(data)
+        plan_view.intelligent_paste_enabled = False
+        plan_view.annotation_key_map = {("ann-1", "line"): "ann-1_line"}
+        annotation_write = FakeAnnotationWriteService()
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            ann_write=annotation_write,
+            data=data,
+            undo=undo,
+        )
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+        handler.on_paste_requested()
+        plan_view.current_page_uid = "p2"
+        plan_view.set_selected_uids({"page-2-selection"})
+        undo.undo()
+        self.assertEqual(data.annotations, [])
+        self.assertEqual(plan_view.selected, {"page-2-selection"})
+        undo.redo()
+        self.assertEqual(
+            [
+                (annotation.uid, annotation.annotation_type)
+                for annotation in data.annotations
+            ],
+            [("ann-1", "line")],
+        )
+        self.assertEqual(plan_view.selected, {"page-2-selection"})
 
     def test_multiple_line_paste_undo_removes_every_generated_identity(self):
         sources = [
@@ -8047,10 +8170,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo=undo,
         )
         handler._clipboard_svc = FakeClipboard([], annotations=sources)
-
         handler.on_paste_requested()
         undo.undo()
-
         self.assertEqual(data.annotations, [])
         self.assertEqual(
             set(handler._write_svc.local_annotation_delete_calls[-1][1]),
@@ -8078,16 +8199,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo=undo,
         )
         handler._clipboard_svc = FakeClipboard([takeoff], annotations=[line])
-
         handler.on_paste_requested()
         self.assertEqual(set(data.takeoffs), {"100"})
         self.assertEqual(
-            {(annotation.uid, annotation.annotation_type) for annotation in data.annotations},
+            {
+                (annotation.uid, annotation.annotation_type)
+                for annotation in data.annotations
+            },
             {("100", "line")},
         )
-
         undo.undo()
-
         self.assertEqual(data.takeoffs, {})
         self.assertEqual(data.annotations, [])
         self.assertEqual(write.local_deletes[-1][2], ["100"])

@@ -79,11 +79,9 @@ class UndoRedoServiceTests(unittest.TestCase):
         )
         bid_ref = BidRef("database", "7")
         token = self.service.begin_forward_mutation(bid_ref)
-
         self.assertFalse(self.service.can_undo())
         self.service.undo()
         self.assertEqual(calls, [])
-
         self.service.push_local(
             lambda: calls.append("newer-undo") or True,
             lambda: True,
@@ -99,9 +97,7 @@ class UndoRedoServiceTests(unittest.TestCase):
         token = self.service.begin_forward_mutation(bid_ref)
         self.service.clear()
         self.service.push_local(lambda: True, lambda: True)
-
         self.service.finish_forward_mutation(token)
-
         self.assertTrue(self.service.can_undo())
 
     def test_out_of_order_forward_completions_keep_submission_history_order(self):
@@ -109,7 +105,6 @@ class UndoRedoServiceTests(unittest.TestCase):
         first = self.service.begin_forward_mutation(bid_ref)
         second = self.service.begin_forward_mutation(bid_ref)
         calls = []
-
         self.service.push_local(
             lambda: calls.append("second") or True,
             lambda: True,
@@ -117,7 +112,6 @@ class UndoRedoServiceTests(unittest.TestCase):
         self.service.bind_latest_history_to_forward_mutation(second)
         self.service.finish_forward_mutation(second)
         self.assertFalse(self.service.can_undo())
-
         self.service.push_local(
             lambda: calls.append("first") or True,
             lambda: True,
@@ -139,10 +133,8 @@ class UndoRedoServiceTests(unittest.TestCase):
         self.service.push_local(lambda: calls.append("last") or True, lambda: True)
         self.service.bind_latest_history_to_forward_mutation(last)
         self.service.finish_forward_mutation(last)
-
         for _expected in ("last", "local", "first"):
             self.service.undo()
-
         self.assertEqual(calls, ["last", "local", "first"])
 
     def test_uncertain_async_history_stays_frozen_until_recovery(self):
@@ -245,7 +237,6 @@ class UndoRedoServiceTests(unittest.TestCase):
             lambda: calls.append("detached") or True,
             lambda: True,
         )
-
         self.service.undo()
         self.assertEqual(calls, ["main"])
         self.assertTrue(detached.can_undo())
