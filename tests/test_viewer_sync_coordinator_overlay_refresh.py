@@ -3990,7 +3990,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 self._assert_viewport_state(view, expected_viewport)
                 view.cleanup()
 
-    def test_legacy_out_of_bounds_page_view_state_fits_to_page(self):
+    def test_restored_out_of_bounds_page_view_state_fits_to_page(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -4010,7 +4010,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(calls, ["fit"])
         view.cleanup()
 
-    def test_legacy_out_of_range_page_zoom_fits_to_page(self):
+    def test_restored_out_of_range_page_zoom_fits_to_page(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",

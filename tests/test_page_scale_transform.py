@@ -13,7 +13,7 @@ class PageScaleTransformTests(unittest.TestCase):
         )
         self.assertAlmostEqual(factor, 2.0 / 3.0)
 
-    def test_zero_source_scale_uses_legacy_identity_source_ratio(self):
+    def test_zero_source_scale_uses_fallback_identity_source_ratio(self):
         factor = position_rescale_factor_between_page_scales((0.0, 12.0), (0.25, 12.0))
         self.assertEqual(factor, 48.0)
 

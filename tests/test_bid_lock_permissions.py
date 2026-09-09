@@ -3366,7 +3366,7 @@ class BidLockPermissionTests(unittest.TestCase):
     ):
         project_data = _ProjectData()
         service, *_ = _write_service(project_data)
-        create_project = _SequenceUseCase(["project-new", "project-legacy"])
+        create_project = _SequenceUseCase(["project-new", "project-existing"])
         service._create_project = create_project
         service._reload_database = lambda _file_path: False
         result = service.create_project_result(project_data.bid_ref.file_path, "New")
@@ -3375,7 +3375,7 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(result.refresh_failed)
         self.assertEqual(result.value, "project-new")
         self.assertIsNone(
-            service.create_project(project_data.bid_ref.file_path, "Legacy")
+            service.create_project(project_data.bid_ref.file_path, "Existing")
         )
 
     def test_duplicate_bid_result_keeps_created_uid_when_refresh_fails(self):
@@ -3454,7 +3454,7 @@ class BidLockPermissionTests(unittest.TestCase):
         project_data = _ProjectData()
         service, *_ = _write_service(project_data, reload_success=False)
         service._save_condition_types = _SequenceUseCase(
-            [{"new_condition_type": "type-new"}, {"new_condition_type": "type-legacy"}]
+            [{"new_condition_type": "type-new"}, {"new_condition_type": "type-existing"}]
         )
         changes = {
             "new": [{"uid": "new_condition_type", "name": "Concrete"}],

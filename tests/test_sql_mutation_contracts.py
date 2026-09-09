@@ -137,7 +137,7 @@ class SqlMutationContractTests(unittest.TestCase):
             {"layer_uid": "10", "name": "Coordination"},
         )
         with self.assertRaisesRegex(ValueError, "Unsupported queued project write"):
-            ProjectWritePayload.from_values("legacy_write", {})
+            ProjectWritePayload.from_values("unsupported_write", {})
 
     def test_sql_selected_page_is_not_a_collaboration_mutation_payload(self):
         with self.assertRaisesRegex(ValueError, "Unsupported page setting"):

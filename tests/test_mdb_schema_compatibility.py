@@ -762,7 +762,7 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         ):
             Reader()._parse_settings_defaults(Connection())
 
-    def test_settings_reader_defaults_null_legacy_fields_from_one_row(self):
+    def test_settings_reader_defaults_null_optional_fields_from_one_row(self):
         class Cursor:
             def __init__(self):
                 self._rows = iter(

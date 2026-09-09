@@ -33,6 +33,7 @@ _DELETED_PROJECT_UID = "1"
 _BID_COLUMN_COUNT = 11
 _RIGHT_ALIGNED_BID_COLS = frozenset({0, 6, 7})
 _UNASSIGNED_STATUS_LABEL = "(unassigned)"
+_NO_STATUS_UID_KEY_KIND = "legacy-label"
 _BID_STATUS_UID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 
 
@@ -549,7 +550,9 @@ class ProjectView(QtWidgets.QWidget):
         ) -> QtWidgets.QTreeWidgetItem:
             label = status_label(status)
             identity = (
-                ("uid", str(status_uid)) if status_uid else ("legacy-label", label)
+                ("uid", str(status_uid))
+                if status_uid
+                else (_NO_STATUS_UID_KEY_KIND, label)
             )
             item = status_items.get(identity)
             if item is None:

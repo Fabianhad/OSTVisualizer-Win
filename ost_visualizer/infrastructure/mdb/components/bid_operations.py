@@ -25,7 +25,7 @@ from .constants import (
     COVER_SHEET_PAGE_SELECTION_TYPE,
     DERIVED_BID_TOTAL_TABLES,
     HANDLED_SEPARATELY,
-    LEGACY_BID_TABLES_COPIED_BY_DUPLICATION,
+    ADDITIONAL_BID_TABLES_COPIED_BY_DUPLICATION,
     PAGE_DELETE_CHILD_TABLES,
     TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
     TAKEOFF_REFERENCE_TABLES,
@@ -325,7 +325,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     ]
                     + list(HANDLED_SEPARATELY - _uid_map_tables)
                     + [t for t in BID_TAIL_SECTIONS if t not in HANDLED_SEPARATELY]
-                    + list(LEGACY_BID_TABLES_COPIED_BY_DUPLICATION)
+                    + list(ADDITIONAL_BID_TABLES_COPIED_BY_DUPLICATION)
                 )
                 for table in bid_tables:
                     duplicated_uid_maps.setdefault(table, {}).update(
@@ -1239,7 +1239,7 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                 child_uid = (
                     str(int(missing_row[0]))
                     if missing_row[0] is not None
-                    else "<legacy>"
+                    else "<unidentified-row>"
                 )
                 raise DanglingBidOwnedReferenceError(
                     f"{relationship.child_table}.UID={child_uid} references missing "

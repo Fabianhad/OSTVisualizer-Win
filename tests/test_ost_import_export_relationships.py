@@ -648,7 +648,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             [(2,)],
         )
 
-    def test_bid_number_assignment_rejects_nonnumeric_legacy_value(self):
+    def test_bid_number_assignment_rejects_nonnumeric_malformed_value(self):
         connection = sqlite3.connect(":memory:")
         _create_import_schema(connection, next_bid_numbers=("not-a-number",))
         writer = _SqliteMdbWriter(connection)

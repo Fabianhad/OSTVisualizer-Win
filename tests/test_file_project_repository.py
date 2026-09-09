@@ -317,7 +317,7 @@ class MdbFileParserTests(unittest.TestCase):
         self.assertTrue(repository.unload_file("old.mdb"))
         self.assertEqual(parser.closed, ["old.mdb"])
 
-    def test_legacy_bid_load_for_unloaded_file_returns_empty_result(self):
+    def test_bid_load_for_unloaded_file_returns_empty_result(self):
         repository = FileProjectRepository(FakeLifecycleParser())
         with self.assertLogs(repository.logger, level="WARNING"):
             result = repository.load_bid("bid-1", "missing.mdb")

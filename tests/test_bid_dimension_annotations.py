@@ -651,7 +651,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(hotlinks[0].hotlink_target_view_uid, "29280")
         self.assertIn(hotlinks[0].hotlink_target_view_uid, named_view_uids)
 
-    def test_dangling_hotlink_target_and_layer_remain_inspectable_on_legacy_reload(
+    def test_dangling_hotlink_target_and_layer_remain_inspectable_on_ordinary_reload(
         self,
     ):
         hotlink = SimpleNamespace(
@@ -1571,7 +1571,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         conn.execute("INSERT INTO BidHotLinks VALUES (7, 1, 3, 1)")
         result = _DimensionWriteOps(conn).insert_annotations(
-            "legacy.mdb",
+            "malformed.mdb",
             "1",
             [
                 InsertAnnotationSpec(

@@ -364,7 +364,7 @@ Persistence:
   and makes the original image the authoritative page display mode.
 - Bid Areas form a same-bid acyclic forest. MDB/SQL reconstruction, area saves,
   Duplicate Bid, and OST/OSP import reject missing, cross-bid, or cyclic area
-  parents before mutation; legacy zero parents normalize to the root. Legacy
+  parents before mutation; zero-valued parents normalize to the root. Legacy
   schemas without `BidAreas.ParentUID` remain
   writable only for flat area changes. Page deletion clears surviving same-bid
   `MasterPageUID` and comment-parent references whose targets are deleted.
@@ -375,7 +375,7 @@ Persistence:
   Layer, and every positive Hot Link target against the exact target bid before
   allocating identities. Named View deletion is one atomic dependency batch:
   every targeting Hot Link must be included, while Page deletion owns the
-  automatic Named View/Hot Link cascade. Direct, Page, Condition, and legacy Bid
+  automatic Named View/Hot Link cascade. Direct, Page, Condition, and Bid-level
   takeoff deletion all remove line, arrow, and dimension companions linked
   through either takeoff endpoint. Condition deletion also owns
   `BidConditionUser` cleanup. Page-area selection requires its Area to belong to
@@ -395,12 +395,12 @@ Persistence:
   the established missing- or cross-bid-parent fallback at the root, but new
   folder and page assignments must resolve to the exact target bid before any
   mutation. Access UID allocation for authoritative owners must reserve IDs
-  still named by canonical inbound references; otherwise a legacy dangling row
+  still named by canonical inbound references; otherwise a dangling row
   can acquire an unrelated newly created owner after reload. This applies to
   global master-data creation and import as well as bid-owned entities. SQL
   identity allocation remains database-generated and must not run the Access
   inbound-reference `MAX(UID)` scan. A requested Condition- or Page-folder
-  parent requires the corresponding legacy `ParentUID` column, and any Page
+  parent requires the corresponding optional `ParentUID` column, and any Page
   folder creation requires the folder table; reject unsupported hierarchy
   writes before changing Bid data while retaining flat root-folder writes.
   Employee saves validate every non-null Pay Class reference for the complete
@@ -415,7 +415,7 @@ Persistence:
   re-resolve by display name.
   When the table exists, global `Settings` is a zero-or-one compatibility
   record. All readers and bid number allocators reject duplicate rows; a present
-  but empty legacy table is initialized on the first successful allocation, and
+  but empty Settings table is initialized on the first successful allocation, and
   allocation persistence failure aborts the owning mutation. A legacy database
   without `Settings.NextBidNo` remains readable, but bid creation, import, and
   duplication must reject it instead of allocating an undurable default number.
@@ -427,7 +427,7 @@ Persistence:
   schema relationships and remove or clear all ancillary dependents before
   deleting the owner; SQL and Access share this application-level contract.
   `BidTakeoffTotals`, `BidLaborCostCodeTotals`, and
-  `BidTypicalGroupTotals` are derived legacy calculation snapshots. Duplicate
+  `BidTypicalGroupTotals` are derived calculation snapshots. Duplicate
   Bid preserves valid rows for compatibility, but omits a source total row when
   any of its bid-owned references is dangling; stale totals must not block the
   authoritative Bid graph or become retargeted through destination UID reuse.
@@ -596,7 +596,7 @@ Database backends:
 - OST/OSP master-data reconciliation may use a format-provided weak business key
   only when it resolves to exactly one target record. Condition Type names use
   the same trimmed, case-insensitive comparison as their editor, while Employee
-  imports use the existing normalized employee-number or legacy name/email key.
+  imports use the existing normalized employee-number or fallback name/email key.
   Ambiguous source or target keys reject the import; UI editors retain the
   selected Job Status, Employee, Pay Class, and Condition Type UID instead of
   resolving an editable display label back to the first matching row.
@@ -606,11 +606,11 @@ Database backends:
   active-bid access state, while Condition Type catalog changes refresh cached
   Condition labels through `CdnTypeUID`. Employee use/deletion covers the
   estimator, project-manager, and job-site-manager bid roles by UID. Despite its
-  legacy column name, `BidDPCSubscribers.BidEmployeeUID` references the global
+  misleading column name, `BidDPCSubscribers.BidEmployeeUID` references the global
   `Employees.UID`; Employee deletion must use that direct schema relationship,
   while `BidTimeCards.BidEmployeeUID` references `BidEmployees.UID`.
   Master-data UIDs are authoritative primary identities. Reconstruction and
-  mutation must reject a malformed legacy table containing duplicate physical
+  mutation must reject a malformed table containing duplicate physical
   UIDs before choosing or changing any row; display ordering must never select
   between records that claim the same UID.
 - Remote application merges are targeted by entity family. Do not publish
@@ -652,7 +652,7 @@ Database backends:
   regardless of drag-produced payload order. Optional Bid Job Status, Estimator,
   Project Manager, and Site Manager references remain nullable; any value copied
   or written must resolve to its exact master-data table before the first write.
-  Legacy bid-owned rows may remain readable when their Bid is missing, but direct
+  Orphaned bid-owned rows may remain readable when their Bid is missing, but direct
   edits, moves, and deletes must resolve the authoritative owning Bid before the
   first write. When an optional Job Status or Employee master table is absent,
   unrelated Cover Sheet saves preserve the stored reference; an explicit new

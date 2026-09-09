@@ -745,7 +745,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         self.assertNotIn("ostv_client_editor", permission_sql)
 
-    def test_permission_contract_rejects_legacy_coercible_values(self):
+    def test_permission_contract_rejects_noncanonical_coercible_values(self):
         self.assertTrue(_sql_integer_values_match((1, 1), (1, 1)))
         self.assertFalse(_sql_integer_values_match(("1", 1), (1, 1)))
         self.assertFalse(_sql_integer_values_match((True, 1), (1, 1)))
@@ -3390,8 +3390,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         disable_snapshot.assert_called_once_with(location, "")
 
     def test_exception_note_helper_is_safe_without_python_311_api(self):
-        legacy_exception = SimpleNamespace()
-        _add_exception_note(legacy_exception, "cleanup failed")
+        exception_without_add_note = SimpleNamespace()
+        _add_exception_note(exception_without_add_note, "cleanup failed")
         modern_exception = RuntimeError("initialization failed")
         _add_exception_note(modern_exception, "cleanup failed")
         self.assertIn("cleanup failed", getattr(modern_exception, "__notes__", ()))

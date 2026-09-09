@@ -495,14 +495,14 @@ class DatabaseDescriptorTests(unittest.TestCase):
             tables=frozenset(
                 {
                     ("ostv", "Sessions"),
-                    ("ostv", "LegacyState"),
+                    ("ostv", "UnexpectedState"),
                 }
             ),
             columns=(
                 SqlColumnInventory(
                     "ostv",
                     "Sessions",
-                    "LegacyCheckpoint",
+                    "UnexpectedCheckpoint",
                     "bigint",
                     8,
                     0,
@@ -519,8 +519,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
             functions=(),
         )
         problems = SqlSchemaValidator._validate_ostv_tables(inventory, SQL_SCHEMA_V1)
-        self.assertIn("ostv.LegacyState.unexpected", problems)
-        self.assertIn("ostv.Sessions.LegacyCheckpoint.unexpected", problems)
+        self.assertIn("ostv.UnexpectedState.unexpected", problems)
+        self.assertIn("ostv.Sessions.UnexpectedCheckpoint.unexpected", problems)
 
     def test_sql_server_schema_normalization_matches_server_inventory(self):
         rowversion = SqlColumnInventory(

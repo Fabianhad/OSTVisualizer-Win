@@ -949,7 +949,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0)
 
-    def test_delete_bid_removes_legacy_annotation_linked_only_by_to_takeoff(self):
+    def test_delete_bid_removes_annotation_linked_only_by_to_takeoff(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
         conn.execute(
@@ -1761,7 +1761,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidAreas VALUES (7, 1, NULL, 'Existing', 1, '')")
         conn.execute("INSERT INTO BidTypAreaCounts VALUES (1, 8)")
         uid_map = _SqliteDuplicateOps(conn).save_bid_areas(
-            "legacy.mdb",
+            "malformed.mdb",
             "1",
             BidAreaChangeset(
                 new=[BidArea("new_0", "1", "", "New", 2)],
@@ -2002,7 +2002,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidConditionFolders VALUES (7, 1, 8, 'Orphan', -1)")
         self.assertEqual(
             _SqliteDuplicateOps(conn).insert_condition_folder(
-                "legacy.mdb", "1", "Unrelated", None
+                "malformed.mdb", "1", "Unrelated", None
             ),
             "9",
         )
@@ -2029,7 +2029,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         )
         conn.execute("INSERT INTO BidProjects VALUES (7, 'Existing')")
         conn.execute("INSERT INTO Bids VALUES (1, 8, 'Orphan')")
-        new_uid = _SqliteDuplicateOps(conn).create_project("legacy.mdb", "New")
+        new_uid = _SqliteDuplicateOps(conn).create_project("malformed.mdb", "New")
         self.assertEqual(new_uid, "9")
         self.assertEqual(
             conn.execute(
@@ -2264,7 +2264,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidLayers VALUES (7, 1, 'Existing', -1, 1, 0, 0)")
         conn.execute("INSERT INTO BidComments VALUES (70, 1, 8)")
         self.assertEqual(
-            _SqliteDuplicateOps(conn).insert_layer("legacy.mdb", "1", "New", 1),
+            _SqliteDuplicateOps(conn).insert_layer("malformed.mdb", "1", "New", 1),
             "9",
         )
         self.assertEqual(
@@ -2294,7 +2294,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidPageFolders VALUES (7, 1, 'Orphan', 8)")
         self.assertTrue(
             _SqliteDuplicateOps(conn).save_cover_sheet(
-                "legacy.mdb",
+                "malformed.mdb",
                 "1",
                 {
                     "job_name": "Original",
@@ -2417,7 +2417,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidPages VALUES (7, 1, 'Existing')")
         conn.execute("INSERT INTO BidMarkedPages VALUES (1, 8)")
         success = _SqliteDuplicateOps(conn).save_cover_sheet(
-            "legacy.mdb",
+            "malformed.mdb",
             "1",
             {
                 "measure_base": 0,
@@ -2926,7 +2926,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                     "INSERT INTO Bids VALUES (10, 2)",
                 ),
                 lambda ops: ops.save_job_statuses(
-                    "legacy.mdb",
+                    "malformed.mdb",
                     {"new": [{"uid": "new_status", "name": "New"}]},
                 ),
                 {"new_status": "3"},
@@ -2942,7 +2942,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                     "INSERT INTO Employees VALUES (1, 'E1', 'Ava', 'Lee')",
                     "INSERT INTO Bids VALUES (10, 2)",
                 ),
-                lambda ops: ops.save_employees("legacy.mdb", {"new": [employee]}),
+                lambda ops: ops.save_employees("malformed.mdb", {"new": [employee]}),
                 {"new_employee": "3"},
             ),
             (
@@ -2956,7 +2956,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                     "INSERT INTO Employees VALUES (10, 2)",
                 ),
                 lambda ops: ops.save_pay_classes(
-                    "legacy.mdb",
+                    "malformed.mdb",
                     {"new": [{"uid": "new_class", "name": "New"}]},
                 ),
                 {"new_class": "3"},
@@ -2972,7 +2972,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                     "INSERT INTO BidConditions VALUES (10, 2)",
                 ),
                 lambda ops: ops.save_condition_types(
-                    "legacy.mdb",
+                    "malformed.mdb",
                     {"new": [{"uid": "new_type", "name": "New"}]},
                 ),
                 {"new_type": "3"},
@@ -3772,7 +3772,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidLaborCostCodeTotals VALUES (8670, 149805, 143661)")
         conn.execute("INSERT INTO BidTypicalGroupTotals VALUES (9671, 149805, 143662)")
         conn.execute("INSERT INTO BidTypicalGroupTotals VALUES (8671, 149805, 143661)")
-        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("legacy.mdb", "149805")
+        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("malformed.mdb", "149805")
         self.assertIsNotNone(duplicate_uid)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 2)
         duplicate_page_uid = conn.execute(
@@ -3836,7 +3836,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
         conn.execute("CREATE TABLE BidNotes (UID INTEGER, BidUID INTEGER)")
         conn.execute("INSERT INTO BidNotes VALUES (10, 2)")
-        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("legacy.mdb", "1")
+        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("malformed.mdb", "1")
         self.assertEqual(duplicate_uid, "3")
         self.assertEqual(
             conn.execute(
@@ -3856,7 +3856,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidPages VALUES (20, 1)")
         conn.execute("CREATE TABLE BidMarkedPages (UID INTEGER, BidPageUID INTEGER)")
         conn.execute("INSERT INTO BidMarkedPages VALUES (1, 21)")
-        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("legacy.mdb", "1")
+        duplicate_uid = _SqliteDuplicateOps(conn).duplicate_bid("malformed.mdb", "1")
         self.assertEqual(duplicate_uid, "2")
         self.assertEqual(
             conn.execute("SELECT UID FROM BidPages WHERE BidUID=2").fetchone()[0],
@@ -4461,7 +4461,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO Employees VALUES (7)")
         conn.execute("INSERT INTO BidDPCSubscribers VALUES (700, 7)")
         result = _SqliteMdbOps(conn).save_employees(
-            "legacy.mdb", {"new": [], "updated": [], "deleted_uids": ["7"]}
+            "test.mdb", {"new": [], "updated": [], "deleted_uids": ["7"]}
         )
         self.assertEqual(result, {})
         self.assertEqual(
@@ -4484,7 +4484,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO Employees VALUES (70, 7)")
         conn.execute("INSERT INTO BidEmployees VALUES (700, 7)")
         result = _SqliteMdbOps(conn).save_pay_classes(
-            "legacy.mdb", {"new": [], "updated": [], "deleted_uids": ["7"]}
+            "test.mdb", {"new": [], "updated": [], "deleted_uids": ["7"]}
         )
         self.assertEqual(result, {})
         self.assertEqual(
@@ -4590,7 +4590,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO BidTakeoffs VALUES (7, 1, 5, 3, X'00', NULL)")
         conn.execute("INSERT INTO BidDimensions VALUES (70, 8)")
         result = _SqliteDuplicateOps(conn).insert_takeoffs(
-            "legacy.mdb",
+            "malformed.mdb",
             "1",
             [
                 InsertTakeoffSpec(
@@ -4752,17 +4752,17 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER)")
         conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT)")
-        conn.execute("INSERT INTO BidPages VALUES (7, 99, 'Legacy page')")
+        conn.execute("INSERT INTO BidPages VALUES (7, 99, 'Orphan page')")
         ops = _SqliteDuplicateOps(conn)
         with self.assertLogs("test", level="ERROR") as edit_logs:
-            self.assertFalse(ops.save_page_name("legacy.mdb", "7", "Changed"))
+            self.assertFalse(ops.save_page_name("malformed.mdb", "7", "Changed"))
         self.assertIn("Bids has no row for UID 99", edit_logs.output[0])
         self.assertEqual(
             conn.execute("SELECT Name FROM BidPages WHERE UID=7").fetchone()[0],
-            "Legacy page",
+            "Orphan page",
         )
         with self.assertLogs("test", level="ERROR") as delete_logs:
-            self.assertFalse(ops.delete_pages("legacy.mdb", ["7"]))
+            self.assertFalse(ops.delete_pages("malformed.mdb", ["7"]))
         self.assertIn("Bids has no row for UID 99", delete_logs.output[0])
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages").fetchone()[0], 1)
 
@@ -4773,26 +4773,26 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             "CREATE TABLE BidConditions ("
             "UID INTEGER, BidUID INTEGER, Name TEXT, RefNo INTEGER)"
         )
-        conn.execute("INSERT INTO BidConditions VALUES (7, 99, 'Legacy condition', 4)")
+        conn.execute("INSERT INTO BidConditions VALUES (7, 99, 'Orphan condition', 4)")
         ops = _SqliteDuplicateOps(conn)
         updates = UpdateConditionDto()
         updates.set("name", "Changed")
         with self.assertLogs("test", level="ERROR") as edit_logs:
-            self.assertFalse(ops.update_condition("legacy.mdb", "99", "7", updates))
+            self.assertFalse(ops.update_condition("malformed.mdb", "99", "7", updates))
         self.assertIn("Bids has no row for UID 99", edit_logs.output[0])
         self.assertEqual(
             conn.execute("SELECT Name FROM BidConditions WHERE UID=7").fetchone()[0],
-            "Legacy condition",
+            "Orphan condition",
         )
         with self.assertLogs("test", level="ERROR") as renumber_logs:
-            self.assertFalse(ops.renumber_conditions("legacy.mdb", "99", ["7"]))
+            self.assertFalse(ops.renumber_conditions("malformed.mdb", "99", ["7"]))
         self.assertIn("Bids has no row for UID 99", renumber_logs.output[0])
         self.assertEqual(
             conn.execute("SELECT RefNo FROM BidConditions WHERE UID=7").fetchone()[0],
             4,
         )
         with self.assertLogs("test", level="ERROR") as delete_logs:
-            self.assertFalse(ops.delete_conditions("legacy.mdb", "99", ["7"]))
+            self.assertFalse(ops.delete_conditions("malformed.mdb", "99", ["7"]))
         self.assertIn("Bids has no row for UID 99", delete_logs.output[0])
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 1
@@ -4805,34 +4805,34 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             "CREATE TABLE BidLayers ("
             "UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER)"
         )
-        conn.execute("INSERT INTO BidLayers VALUES (7, 99, 'Legacy layer', 0)")
+        conn.execute("INSERT INTO BidLayers VALUES (7, 99, 'Orphan layer', 0)")
         conn.execute(
             "CREATE TABLE BidConditionFolders ("
             "UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID INTEGER)"
         )
         conn.execute(
-            "INSERT INTO BidConditionFolders VALUES (8, 99, 'Legacy folder', NULL)"
+            "INSERT INTO BidConditionFolders VALUES (8, 99, 'Orphan folder', NULL)"
         )
         ops = _SqliteDuplicateOps(conn)
         with self.assertRaisesRegex(RuntimeError, "Bids has no row for UID 99"):
-            ops.update_layer_name("legacy.mdb", "7", "Changed")
+            ops.update_layer_name("malformed.mdb", "7", "Changed")
         with self.assertRaisesRegex(RuntimeError, "Bids has no row for UID 99"):
-            ops.update_all_layers_show("legacy.mdb", "99", True)
+            ops.update_all_layers_show("malformed.mdb", "99", True)
         self.assertEqual(
             conn.execute("SELECT Name, Show FROM BidLayers WHERE UID=7").fetchone(),
-            ("Legacy layer", 0),
+            ("Orphan layer", 0),
         )
         with self.assertLogs("test", level="ERROR") as rename_logs:
-            self.assertFalse(ops.rename_condition_folder("legacy.mdb", "8", "Changed"))
+            self.assertFalse(ops.rename_condition_folder("malformed.mdb", "8", "Changed"))
         self.assertIn("Bids has no row for UID 99", rename_logs.output[0])
         with self.assertLogs("test", level="ERROR") as delete_logs:
-            self.assertFalse(ops.delete_condition_folders("legacy.mdb", ["8"]))
+            self.assertFalse(ops.delete_condition_folders("malformed.mdb", ["8"]))
         self.assertIn("Bids has no row for UID 99", delete_logs.output[0])
         self.assertEqual(
             conn.execute("SELECT Name FROM BidConditionFolders WHERE UID=8").fetchone()[
                 0
             ],
-            "Legacy folder",
+            "Orphan folder",
         )
 
     def test_orphan_takeoff_and_annotation_mutations_reject_before_write(self):
@@ -4846,15 +4846,15 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute(
             "CREATE TABLE BidNamedViews (" "UID INTEGER, BidUID INTEGER, Name TEXT)"
         )
-        conn.execute("INSERT INTO BidNamedViews VALUES (8, 99, 'Legacy view')")
+        conn.execute("INSERT INTO BidNamedViews VALUES (8, 99, 'Orphan view')")
         takeoff_ops = _SqliteDuplicateOps(conn)
         with self.assertLogs("test", level="ERROR") as takeoff_edit_logs:
             self.assertFalse(
-                takeoff_ops.set_takeoffs_negative("legacy.mdb", ["7"], True)
+                takeoff_ops.set_takeoffs_negative("malformed.mdb", ["7"], True)
             )
         self.assertIn("Bids has no row for UID 99", takeoff_edit_logs.output[0])
         with self.assertLogs("test", level="ERROR") as takeoff_delete_logs:
-            self.assertFalse(takeoff_ops.delete_takeoffs("legacy.mdb", ["7"]))
+            self.assertFalse(takeoff_ops.delete_takeoffs("malformed.mdb", ["7"]))
         self.assertIn("Bids has no row for UID 99", takeoff_delete_logs.output[0])
         self.assertEqual(
             conn.execute(
@@ -4866,18 +4866,18 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         with self.assertLogs("test", level="ERROR") as annotation_edit_logs:
             self.assertFalse(
                 annotation_ops.save_annotation_text_properties(
-                    "legacy.mdb", [("8", "namedview", {"Text": "Changed"})]
+                    "malformed.mdb", [("8", "namedview", {"Text": "Changed"})]
                 )
             )
         self.assertIn("Bids has no row for UID 99", annotation_edit_logs.output[0])
         with self.assertLogs("test", level="ERROR") as annotation_delete_logs:
             self.assertFalse(
-                annotation_ops.delete_annotations("legacy.mdb", [("8", "namedview")])
+                annotation_ops.delete_annotations("malformed.mdb", [("8", "namedview")])
             )
         self.assertIn("Bids has no row for UID 99", annotation_delete_logs.output[0])
         self.assertEqual(
             conn.execute("SELECT Name FROM BidNamedViews WHERE UID=8").fetchone()[0],
-            "Legacy view",
+            "Orphan view",
         )
 
     def test_cover_sheet_omits_master_fields_when_legacy_tables_are_unavailable(self):

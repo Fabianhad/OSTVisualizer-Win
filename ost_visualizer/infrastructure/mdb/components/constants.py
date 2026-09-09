@@ -46,7 +46,7 @@ HANDLED_SEPARATELY: Set[str] = {
     "BidPageFolders",
     "BidNamedViews",
 }
-LEGACY_BID_TABLES_COPIED_BY_DUPLICATION = (
+ADDITIONAL_BID_TABLES_COPIED_BY_DUPLICATION = (
     "AffectDPCTypGroupViews",
     "BidLaborCostCodeTotals",
     "BidTypicalGroupTotals",

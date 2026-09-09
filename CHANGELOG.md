@@ -51,7 +51,7 @@
   from the successful current projection completion as soon as the matching
   Page is displayed, without waiting for another focus or navigation event.
 - Fixed Duplicate Bid rejecting an otherwise valid Bid because stale derived
-  total rows referenced deleted Pages or other bid-owned records. Valid legacy
+  total rows referenced deleted Pages or other bid-owned records. Valid derived
   totals remain compatible, while malformed `BidTakeoffTotals`,
   `BidLaborCostCodeTotals`, and `BidTypicalGroupTotals` rows are omitted from the
   duplicate without weakening required Takeoff ownership. Duplicate Bid worker
@@ -201,9 +201,9 @@
   identity placeholders remain database-generated instead of being replaced by
   Access `MAX(UID)` scans. Employee saves preflight every non-null Pay Class in
   the complete batch. Condition-folder, Cover Sheet, and New Bid hierarchy
-  writes now reject unavailable legacy folder tables/parent columns before
+  writes now reject folder tables/parent columns unavailable in older schemas before
   changing Bid data, while flat root-folder writes remain supported.
-- Fixed mutation paths that treated readable orphaned legacy rows as writable
+- Fixed mutation paths that treated readable orphaned rows as writable
   solely because their stored `BidUID` looked valid. Page, Condition, Layer,
   Condition-folder, Takeoff, and typed-annotation edits and deletes now resolve
   the authoritative owning Bid before the first write. Cover Sheet saves against
@@ -228,7 +228,7 @@
   queued Takeoff placement/paste includes Area and parent-Takeoff dependencies.
 - Fixed alternate deletion and assignment paths bypassing canonical companion
   relationships. Condition deletion now removes `BidConditionUser` rows, and
-  Page, Condition, and legacy Bid cascades remove line/arrow/dimension records
+  Page, Condition, and Bid-level cascades remove line/arrow/dimension records
   linked through either takeoff endpoint. Named View deletion rejects an
   incomplete batch that omits dependent Hot Links. Project deletion clears
   deleted-bid restore pointers, and bid moves reject missing original projects.
@@ -256,7 +256,7 @@
   from silently binding to unrelated destination records after an ID collision.
 - Fixed cyclic Condition-folder and Page-folder graphs disappearing from normal
   hierarchy and Cover Sheet reconstruction. Reload, Duplicate Bid, and OST/OSP
-  import now reject cycles deterministically; ordinary missing legacy parents
+  import now reject cycles deterministically; pre-existing missing parents
   remain root-level compatibility items. Folder/page mutations validate exact
   same-bid parents before writing, and deleting a Condition folder reparents its
   surviving child folders to the root. Access creation, duplication, and import
@@ -271,7 +271,7 @@
   Employee deletion also follows the schema-defined global Employee identity
   when removing DPC subscribers, preventing both orphaning and UID-collision
   over-deletion.
-- Fixed malformed legacy master-data tables with duplicate physical UIDs being
+- Fixed malformed master-data tables with duplicate physical UIDs being
   reconstructed by cursor order or updated as a group. Condition Types, Job
   Statuses, Employees, Pay Classes, and Access Levels now reject duplicate
   authoritative UIDs before reconstruction, import reconciliation, or mutation.
@@ -292,7 +292,7 @@
   also remaps area and typical-area ownership for legacy page-setting tables
   that have no row UID.
 - Fixed global `Settings` rows being selected nondeterministically and updated
-  as a group when malformed duplicates existed. Empty legacy settings tables now
+  as a group when malformed duplicates existed. Empty Settings tables now
   persist the first bid-number allocation, sequence-write failures abort import,
   and MDB/SQL normalize the zero sequence consistently. SQL now rejects missing,
   duplicated, or wrong-incarnation `DatabaseMetadata` at every identity consumer.
