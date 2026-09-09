@@ -127,6 +127,15 @@ Threading and events:
   Bid uses `WriteReloadResult` from service through presentation completion, so
   write failure, refresh failure, and success remain distinct and only the
   presentation owner emits the user-visible error.
+- Plan Undo/Redo entries use database/Bid/Page-scoped Takeoff identity and typed
+  annotation identity; a raw UID or scene key is never durable history identity.
+  Mixed geometry and property replay is one application mutation on both MDB and
+  SQL, and mixed deletion removes explicitly selected annotations before Takeoff
+  companion cascades. An accepted asynchronous forward mutation blocks older
+  Undo/Redo until its terminal result, while completed entries are ordered by
+  submission rather than callback delivery. Failed or rejected persistence adds
+  no history, and a still-current optimistic preview is restored without
+  overwriting newer selection or tool intent.
 - Accepted native 3D scene and texture completions may update a hidden surface's
   retained scene, but only `showEvent` may resume its renderer. Hide and cleanup
   own the suspended state even while regeneration is pending; the canonical

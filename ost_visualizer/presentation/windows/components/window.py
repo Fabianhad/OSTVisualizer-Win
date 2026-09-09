@@ -1536,6 +1536,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
             return
+        history_token = (
+            self._undo_svc.begin_forward_mutation(bid_ref)
+            if self._undo_svc is not None
+            else None
+        )
         new_changes = [
             (str(uid), str(annotation_type), list(new_position))
             for uid, annotation_type, _old_position, new_position in ann_changes
@@ -1570,7 +1575,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
         def complete(result: QueuedMutationResult) -> None:
             window = window_ref()
-            if window is None or window._is_closing:
+            if window is None:
+                return
+            if window._is_closing:
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             if window._sql_completion_was_applied(result):
                 return
@@ -1590,6 +1599,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     window.plan_view.restore_flushed_positions([], ann_changes)
                     if window.plan_view.selection_revision == selection_revision:
                         window.plan_view.set_selected_uids(current_keys)
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             if (
                 window._annotation_context_is_current(
@@ -1607,18 +1618,29 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     new_changes,
                     page_uids,
                 )
+                if window._undo_svc is not None:
+                    window._undo_svc.bind_latest_history_to_forward_mutation(
+                        history_token
+                    )
             window._mark_sql_completion_applied(result)
+            if window._undo_svc is not None:
+                window._undo_svc.finish_forward_mutation(history_token)
 
-        self._project_write_svc.queue_plan_geometry(
-            db_path,
-            bid_ref.bid_uid,
-            complete,
-            annotation_positions=new_changes,
-            page_uids=page_uids,
-            dependency_resources=dependencies,
-            owning_surface="detached-plan",
-            edit_lease_handle=edit_lease_handle,
-        )
+        try:
+            self._project_write_svc.queue_plan_geometry(
+                db_path,
+                bid_ref.bid_uid,
+                complete,
+                annotation_positions=new_changes,
+                page_uids=page_uids,
+                dependency_resources=dependencies,
+                owning_surface="detached-plan",
+                edit_lease_handle=edit_lease_handle,
+            )
+        except Exception:
+            if self._undo_svc is not None:
+                self._undo_svc.finish_forward_mutation(history_token)
+            raise
 
     def _push_sql_annotation_geometry_history(
         self,
@@ -1656,6 +1678,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
             return
+        history_token = (
+            self._undo_svc.begin_forward_mutation(bid_ref)
+            if self._undo_svc is not None
+            else None
+        )
         self._release_geometry_edit_lease()
         new_updates = [
             (str(uid), str(annotation_type), dict(new_value))
@@ -1678,7 +1705,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
         def complete(result: QueuedMutationResult) -> None:
             window = window_ref()
-            if window is None or window._is_closing:
+            if window is None:
+                return
+            if window._is_closing:
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             if window._sql_completion_was_applied(result):
                 return
@@ -1695,6 +1726,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     restore()
                     if window.plan_view.selection_revision == selection_revision:
                         window.plan_view.set_selected_uids(current_keys)
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             if (
                 window._annotation_context_is_current(
@@ -1713,17 +1746,28 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     new_updates,
                     page_uids,
                 )
+                if window._undo_svc is not None:
+                    window._undo_svc.bind_latest_history_to_forward_mutation(
+                        history_token
+                    )
             window._mark_sql_completion_applied(result)
+            if window._undo_svc is not None:
+                window._undo_svc.finish_forward_mutation(history_token)
 
-        self._project_write_svc.queue_plan_properties(
-            db_path,
-            bid_ref.bid_uid,
-            property_kind,
-            new_updates,
-            complete,
-            page_uids=page_uids,
-            owning_surface="detached-plan",
-        )
+        try:
+            self._project_write_svc.queue_plan_properties(
+                db_path,
+                bid_ref.bid_uid,
+                property_kind,
+                new_updates,
+                complete,
+                page_uids=page_uids,
+                owning_surface="detached-plan",
+            )
+        except Exception:
+            if self._undo_svc is not None:
+                self._undo_svc.finish_forward_mutation(history_token)
+            raise
 
     def _push_sql_annotation_property_history(
         self,
@@ -1774,6 +1818,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     ) -> None:
         if not specs:
             return
+        history_token = (
+            self._undo_svc.begin_forward_mutation(bid_ref)
+            if self._undo_svc is not None
+            else None
+        )
         self._annotation_write_coordinator.apply_default_annotation_layer(specs)
         sources = tuple(
             source_uids
@@ -1799,13 +1848,19 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
         def complete(result: QueuedMutationResult) -> None:
             window = window_ref()
-            if (
-                window is None
-                or window._is_closing
-                or result.outcome_status != MutationOutcomeStatus.COMMITTED
-            ):
+            if window is None:
+                return
+            if window._is_closing:
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             if window._sql_completion_was_applied(result):
+                return
+            if window._sql_result_remains_pending(result):
+                return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             uid_map = window._created_annotation_uid_map(result)
             annotation_type_by_source = {
@@ -1846,14 +1901,25 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     payload,
                     uid_map,
                 )
+                if window._undo_svc is not None:
+                    window._undo_svc.bind_latest_history_to_forward_mutation(
+                        history_token
+                    )
             window._mark_sql_completion_applied(result)
+            if window._undo_svc is not None:
+                window._undo_svc.finish_forward_mutation(history_token)
 
-        self._project_write_svc.queue_plan_items_paste(
-            bid_ref.file_path,
-            payload,
-            complete,
-            owning_surface="detached-plan",
-        )
+        try:
+            self._project_write_svc.queue_plan_items_paste(
+                bid_ref.file_path,
+                payload,
+                complete,
+                owning_surface="detached-plan",
+            )
+        except Exception:
+            if self._undo_svc is not None:
+                self._undo_svc.finish_forward_mutation(history_token)
+            raise
 
     def _push_sql_annotation_insert_history(
         self,
@@ -1917,6 +1983,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         skipped_selection_keys: set[str],
         requested_annotation_identities: set[tuple[str, str]],
     ) -> None:
+        history_token = (
+            self._undo_svc.begin_forward_mutation(bid_ref)
+            if self._undo_svc is not None
+            else None
+        )
         identities = [
             (str(annotation.uid), str(annotation.annotation_type))
             for annotation in saved_annotations
@@ -1944,7 +2015,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
         def complete(result: QueuedMutationResult) -> None:
             window = window_ref()
-            if window is None or window._is_closing:
+            if window is None:
+                return
+            if window._is_closing:
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             if window._sql_completion_was_applied(result):
                 return
@@ -1965,6 +2040,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                             requested_annotation_identities
                         )
                     )
+                if window._undo_svc is not None:
+                    window._undo_svc.finish_forward_mutation(history_token)
                 return
             if (
                 window._annotation_context_is_current(
@@ -1985,17 +2062,28 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     saved_annotations,
                     identities,
                 )
+                if window._undo_svc is not None:
+                    window._undo_svc.bind_latest_history_to_forward_mutation(
+                        history_token
+                    )
             window._mark_sql_completion_applied(result)
+            if window._undo_svc is not None:
+                window._undo_svc.finish_forward_mutation(history_token)
 
-        self._project_write_svc.queue_plan_items_delete(
-            bid_ref.file_path,
-            bid_ref.bid_uid,
-            [],
-            identities,
-            complete,
-            page_uids=page_uids,
-            owning_surface="detached-plan",
-        )
+        try:
+            self._project_write_svc.queue_plan_items_delete(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                [],
+                identities,
+                complete,
+                page_uids=page_uids,
+                owning_surface="detached-plan",
+            )
+        except Exception:
+            if self._undo_svc is not None:
+                self._undo_svc.finish_forward_mutation(history_token)
+            raise
 
     def _push_sql_annotation_delete_history(
         self,
@@ -2059,6 +2147,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _on_positions_flushed(self, _takeoff_changes: list, ann_changes: list) -> None:
         if not self._editing_enabled():
+            if ann_changes:
+                self.plan_view.restore_flushed_positions([], ann_changes)
             return
         if self._is_closing or self._ann_write_svc is None or not ann_changes:
             return
@@ -2095,6 +2185,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _on_annotation_text_properties_flushed(self, changes: list) -> None:
         if not self._text_editing_enabled():
+            if changes:
+                self.plan_view.restore_annotation_text_properties(changes)
             return
         if self._is_closing or self._ann_write_svc is None or not changes:
             return
@@ -2137,6 +2229,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _on_annotation_styles_flushed(self, changes: list) -> None:
         if not self._editing_enabled():
+            if changes:
+                self.plan_view.restore_annotation_styles(changes)
             return
         if self._is_closing or self._ann_write_svc is None or not changes:
             return

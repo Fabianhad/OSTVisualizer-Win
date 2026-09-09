@@ -648,6 +648,8 @@ class FakeWriteService:
         self.queued_properties = []
         self.queued_deletes = []
         self.queued_pastes = []
+        self.local_geometry = []
+        self.local_properties = []
         self.local_deletes = []
         self.local_pastes = []
         self.local_annotation_delete_calls = []
@@ -701,6 +703,140 @@ class FakeWriteService:
         }
         self.queued_geometry.append((database_id, bid_uid, updates, callback))
         return len(self.queued_geometry)
+
+    def execute_plan_geometry_local(
+        self,
+        database_id,
+        bid_uid,
+        *,
+        takeoff_positions=(),
+        takeoff_rotations=(),
+        annotation_positions=(),
+        page_uids=(),
+        dependency_resources=(),
+        publish_database_refreshed_after_write=True,
+    ):
+        options = {
+            "page_uids": page_uids,
+            "dependency_resources": dependency_resources,
+            "publish_database_refreshed_after_write": (
+                publish_database_refreshed_after_write
+            ),
+        }
+        self.local_geometry.append(
+            (
+                database_id,
+                bid_uid,
+                list(takeoff_positions),
+                list(takeoff_rotations),
+                list(annotation_positions),
+                options,
+            )
+        )
+        success = True
+        if takeoff_positions:
+            success = self.save_takeoff_positions(
+                database_id,
+                list(takeoff_positions),
+                publish_database_refreshed_after_write=False,
+            )
+        if success and takeoff_rotations:
+            success = self.save_takeoff_rotations(
+                database_id,
+                list(takeoff_rotations),
+                publish_database_refreshed_after_write=False,
+            )
+        if success and annotation_positions:
+            if self.annotation_write_service is None:
+                raise AssertionError("The test must supply its annotation writer")
+            success = self.annotation_write_service.save_annotation_positions(
+                database_id,
+                list(annotation_positions),
+                publish_database_refreshed_after_write=False,
+            )
+        return MutationExecutionResult(
+            outcome_status=(
+                MutationOutcomeStatus.COMMITTED
+                if success
+                else MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+            )
+        )
+
+    def execute_plan_properties_local(
+        self,
+        database_id,
+        bid_uid,
+        property_kind,
+        updates,
+        *,
+        page_uids=(),
+        dependency_resources=(),
+        publish_database_refreshed_after_write=True,
+    ):
+        self.local_properties.append(
+            (database_id, bid_uid, property_kind, list(updates))
+        )
+        success = True
+        if property_kind == "takeoff_text":
+            success = self.save_takeoff_text_properties(
+                database_id,
+                list(updates),
+                publish_database_refreshed_after_write=False,
+            )
+        elif property_kind in {"takeoff_area", "takeoff_condition"}:
+            assignments = {}
+            for takeoff_uid, target_uid in updates:
+                assignments.setdefault(str(target_uid), []).append(str(takeoff_uid))
+            for target_uid, assigned_uids in assignments.items():
+                if property_kind == "takeoff_area":
+                    success = self.save_takeoffs_area(
+                        database_id,
+                        assigned_uids,
+                        target_uid,
+                        publish_database_refreshed_after_write=False,
+                    )
+                else:
+                    success = self.save_takeoffs_condition(
+                        database_id,
+                        assigned_uids,
+                        target_uid,
+                        publish_database_refreshed_after_write=False,
+                    )
+                if not success:
+                    break
+        elif property_kind == "takeoff_negative":
+            assignments = {}
+            for takeoff_uid, value in updates:
+                assignments.setdefault(bool(value), []).append(str(takeoff_uid))
+            for value, assigned_uids in assignments.items():
+                success = self.set_takeoffs_negative(
+                    database_id,
+                    assigned_uids,
+                    value,
+                    publish_database_refreshed_after_write=False,
+                )
+                if not success:
+                    break
+        elif property_kind == "takeoff_curve":
+            for takeoff_uid, position, curve in updates:
+                success = self.set_takeoff_curve(
+                    database_id,
+                    takeoff_uid,
+                    position,
+                    curve,
+                    publish_database_refreshed_after_write=False,
+                )
+                if not success:
+                    break
+        else:
+            raise AssertionError(f"Unsupported fake property kind: {property_kind}")
+        return MutationExecutionResult(
+            outcome_status=(
+                MutationOutcomeStatus.COMMITTED
+                if success
+                else MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+            )
+        )
 
     def request_plan_edit_lease(
         self,
@@ -1234,6 +1370,7 @@ class FakeUndoService:
         self.count = 0
         self.undo = None
         self.redo = None
+        self.forward_mutations = []
 
     def push_local(self, undo, redo):
         self.count += 1
@@ -1247,6 +1384,19 @@ class FakeUndoService:
 
     def push_for_bid(self, _bid_ref, undo_submit, redo_submit):
         self.push(undo_submit, redo_submit)
+
+    def begin_forward_mutation(self, bid_ref):
+        token = object()
+        self.forward_mutations.append((token, bid_ref))
+        return token
+
+    def finish_forward_mutation(self, token):
+        self.forward_mutations = [
+            item for item in self.forward_mutations if item[0] is not token
+        ]
+
+    def bind_latest_history_to_forward_mutation(self, _token):
+        pass
 
 
 class FakeClipboard:
@@ -4129,6 +4279,45 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
+    def test_assign_to_area_undo_restores_each_original_area(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", area_uid="area-1"
+        )
+        data.takeoffs["t2"] = Takeoff(
+            uid="t2", condition_uid="c1", page_uid="p1", area_uid="area-2"
+        )
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+
+        handler.on_assign_to_area(["t1", "t2"])
+        self.assertEqual(
+            (data.takeoffs["t1"].area_uid, data.takeoffs["t2"].area_uid),
+            ("0", "0"),
+        )
+        undo.undo()
+        self.assertEqual(
+            (data.takeoffs["t1"].area_uid, data.takeoffs["t2"].area_uid),
+            ("area-1", "area-2"),
+        )
+        undo.redo()
+        self.assertEqual(
+            (data.takeoffs["t1"].area_uid, data.takeoffs["t2"].area_uid),
+            ("0", "0"),
+        )
+
     def test_set_negative_uses_targeted_update_for_affected_condition(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -4402,6 +4591,115 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(undo.count, 1)
         callback(result)
         self.assertEqual(undo.count, 1)
+
+    def test_sql_mixed_move_blocks_older_undo_until_typed_history_is_ready(self):
+        data = FakeProjectData()
+        data.takeoffs["10"] = Takeoff(
+            uid="10", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        data.takeoffs["99"] = Takeoff(
+            uid="99", condition_uid="c1", page_uid="p1", position=[9.0, 9.0]
+        )
+        annotations = [
+            BidAnnotation(
+                uid="10",
+                annotation_type=annotation_type,
+                page_uid="p1",
+                position=[float(index), float(index)],
+            )
+            for index, annotation_type in enumerate(("line", "arrow", "text"), 1)
+        ]
+        data.annotations = annotations
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {
+            f"10_{annotation.annotation_type}": annotation for annotation in annotations
+        }
+        plan_view.annotation_key_map = {
+            ("10", annotation.annotation_type): f"10_{annotation.annotation_type}"
+            for annotation in annotations
+        }
+        write = FakeWriteService()
+        write.sql_collaboration_mutations = True
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        older_undos = []
+        undo.push_local(lambda: older_undos.append("older") or True, lambda: True)
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            write=write,
+            data=data,
+            undo=undo,
+        )
+        takeoff_changes = [("10", [0.0, 0.0], [5.0, 6.0])]
+        annotation_changes = [
+            (
+                annotation.uid,
+                annotation.annotation_type,
+                list(annotation.position),
+                [annotation.position[0] + 5.0, annotation.position[1] + 6.0],
+            )
+            for annotation in annotations
+        ]
+
+        handler.on_positions_flushed(takeoff_changes, annotation_changes)
+        undo.undo()
+
+        self.assertEqual(older_undos, [])
+        self.assertEqual(len(write.queued_geometry), 1)
+        callback = write.queued_geometry[0][-1]
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        undo.undo()
+
+        self.assertEqual(len(write.queued_geometry), 2)
+        undo_payload = write.queued_geometry[1][2]
+        self.assertEqual(undo_payload["takeoff_positions"], [("10", [0.0, 0.0])])
+        self.assertEqual(
+            set(
+                (uid, annotation_type, tuple(position))
+                for uid, annotation_type, position in undo_payload[
+                    "annotation_positions"
+                ]
+            ),
+            {
+                ("10", "line", (1.0, 1.0)),
+                ("10", "arrow", (2.0, 2.0)),
+                ("10", "text", (3.0, 3.0)),
+            },
+        )
+        self.assertIn("99", data.takeoffs)
+        self.assertEqual(write.queued_deletes, [])
+
+    def test_rejected_mixed_move_restores_preview_instead_of_exposing_older_undo(self):
+        plan_view = FakePlanView()
+        access = FakeAccess(set(Feature).difference({Feature.EDIT_PLAN_ITEMS}))
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=access,
+        )
+        takeoff_changes = [("10", [0.0, 0.0], [5.0, 6.0])]
+        annotation_changes = [("10", "line", [1.0, 1.0], [6.0, 7.0])]
+
+        handler.on_positions_flushed(takeoff_changes, annotation_changes)
+
+        self.assertEqual(
+            plan_view.restored_positions,
+            [(takeoff_changes, annotation_changes)],
+        )
 
     def test_sql_geometry_lease_is_acquired_before_preview_and_consumed_by_write(self):
         data = FakeProjectData()
@@ -5176,6 +5474,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ]
         write = FakeWriteService()
         ann_write = FakeAnnotationWriteService()
+        write.annotation_write_service = ann_write
         event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
@@ -5202,7 +5501,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.TAKEOFFS_CHANGED, AppEvents.ANNOTATIONS_CHANGED],
         )
 
-    def test_failed_annotation_position_save_restores_only_annotations(self):
+    def test_failed_annotation_position_save_restores_complete_mixed_preview(self):
         plan_view = FakePlanView()
         write = FakeWriteService()
         ann_write = FakeAnnotationWriteService()
@@ -5213,7 +5512,32 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         takeoff_changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
         ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
         handler.on_positions_flushed(takeoff_changes, ann_changes)
-        self.assertEqual(plan_view.restored_positions, [([], ann_changes)])
+        self.assertEqual(
+            plan_view.restored_positions,
+            [(takeoff_changes, ann_changes)],
+        )
+
+    def test_access_loss_restores_uncommitted_annotation_style_preview(self):
+        plan_view = FakePlanView()
+        annotation_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set()),
+        )
+        changes = [("10", "line", {"Width": 1.0}, {"Width": 4.0})]
+
+        handler.on_annotation_styles_flushed(changes)
+
+        self.assertEqual(plan_view.restored_annotation_styles, [changes])
+        self.assertEqual(annotation_write.style_calls, [])
 
     def test_polygon_control_point_edits_use_mdb_annotation_undo_path(self):
         old_position = [0.0, 0.0, 100.0, 0.0, 100.0, 100.0, 0.0, 100.0]
@@ -5473,7 +5797,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ),
         )
 
-    def test_failed_annotation_position_save_registers_takeoff_position_undo(self):
+    def test_failed_annotation_position_save_rolls_back_without_history(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
             uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
@@ -5481,6 +5805,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view = FakePlanView(data)
         write = FakeWriteService()
         ann_write = FakeAnnotationWriteService()
+        write.annotation_write_service = ann_write
         ann_write.save_annotation_positions = lambda *args, **_call_options: False
         undo = FakeUndoService()
         handler = PlanViewActionHandler(
@@ -5498,19 +5823,18 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         takeoff_changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
         ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
         handler.on_positions_flushed(takeoff_changes, ann_changes)
-        undo.undo()
-        undo.redo()
-        self.assertEqual(undo.count, 1)
-        self.assertEqual(plan_view.restored_positions, [([], ann_changes)])
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(
+            plan_view.restored_positions,
+            [(takeoff_changes, ann_changes)],
+        )
         self.assertEqual(
             write.position_calls,
             [
                 ("bid.mdb", [("t1", [5.0, 6.0])], False),
-                ("bid.mdb", [("t1", [0.0, 0.0])], False),
-                ("bid.mdb", [("t1", [5.0, 6.0])], False),
             ],
         )
-        self.assertEqual(data.takeoffs["t1"].position, [5.0, 6.0])
+        self.assertEqual(data.takeoffs["t1"].position, [0.0, 0.0])
 
     def test_annotation_text_property_changes_use_annotation_write_service(self):
         data = FakeProjectData()
@@ -5950,7 +6274,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ),
         )
 
-    def test_group_rotation_failure_keeps_persisted_position_change(self):
+    def test_group_rotation_failure_rolls_back_position_change(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
             uid="t1",
@@ -5978,13 +6302,13 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         position_changes = [("t1", [0.0, 0.0], [3.0, 4.0])]
         rotation_changes = [("t1", 0.0, 45.0)]
         handler.on_group_rotation_flushed(position_changes, [], rotation_changes)
-        self.assertEqual(plan_view.restored_positions, [])
+        self.assertEqual(plan_view.restored_positions, [(position_changes, [])])
         self.assertEqual(plan_view.restored_rotations, [rotation_changes])
-        self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
+        self.assertEqual(data.takeoffs["t1"].position, [0.0, 0.0])
         self.assertEqual(data.takeoffs["t1"].rotation, 0.0)
-        self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
+        self.assertEqual(event_bus.events, [])
 
-    def test_group_rotation_failure_registers_position_undo(self):
+    def test_group_rotation_failure_does_not_register_partial_undo(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
             uid="t1",
@@ -6014,23 +6338,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [],
             [("t1", 0.0, 45.0)],
         )
-        undo.undo()
-        undo.redo()
-        self.assertEqual(undo.count, 1)
+        self.assertEqual(undo.count, 0)
         self.assertEqual(
             write.position_calls,
             [
                 ("bid.mdb", [("t1", [3.0, 4.0])], False),
-                ("bid.mdb", [("t1", [0.0, 0.0])], False),
-                ("bid.mdb", [("t1", [3.0, 4.0])], False),
             ],
         )
-        self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
+        self.assertEqual(data.takeoffs["t1"].position, [0.0, 0.0])
         self.assertEqual(data.takeoffs["t1"].rotation, 0.0)
-        self.assertEqual(
-            [event for event, _event_payload in event_bus.events],
-            [AppEvents.TAKEOFFS_CHANGED] * 3,
-        )
+        self.assertEqual(event_bus.events, [])
 
     def test_group_rotation_takeoff_failure_stops_later_writes(self):
         data = FakeProjectData()
@@ -6053,6 +6370,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         write = FakeWriteService()
         write.save_takeoff_positions = lambda *_args, **_kwargs: False
         annotation_write = FakeAnnotationWriteService()
+        write.annotation_write_service = annotation_write
         handler = PlanViewActionHandler(
             plan_view=plan_view,
             ui_state_manager=FakeUiState(),
@@ -6106,6 +6424,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view = FakePlanView(data)
         write = FakeWriteService()
         annotation_write = FakeAnnotationWriteService()
+        write.annotation_write_service = annotation_write
         annotation_write.save_annotation_positions = lambda *_args, **_kwargs: False
         undo = FakeUndoService()
         handler = PlanViewActionHandler(
@@ -6133,13 +6452,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_group_rotation_flushed(
             takeoff_changes, annotation_changes, rotation_changes
         )
-        self.assertEqual(write.rotation_calls, [])
-        self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
-        self.assertEqual(plan_view.restored_positions, [([], annotation_changes)])
+        self.assertEqual(len(write.rotation_calls), 1)
+        self.assertEqual(data.takeoffs["t1"].position, [0.0, 0.0])
+        self.assertEqual(
+            plan_view.restored_positions,
+            [(takeoff_changes, annotation_changes)],
+        )
         self.assertEqual(plan_view.restored_rotations, [rotation_changes])
-        self.assertEqual(undo.count, 1)
+        self.assertEqual(undo.count, 0)
 
-    def test_group_rotation_undo_rotation_failure_projects_saved_position(self):
+    def test_group_rotation_undo_rotation_failure_preserves_post_state(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
             uid="t1",
@@ -6170,11 +6492,11 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         write.save_takeoff_rotations = lambda *_args, **_kwargs: False
         undo.undo()
-        self.assertEqual(data.takeoffs["t1"].position, [0.0, 0.0])
+        self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
         self.assertEqual(data.takeoffs["t1"].rotation, 45.0)
         self.assertEqual(
             [event for event, _payload in events.events],
-            [AppEvents.TAKEOFFS_CHANGED, AppEvents.TAKEOFFS_CHANGED],
+            [AppEvents.TAKEOFFS_CHANGED],
         )
 
     def test_group_rotation_undo_takeoff_failure_stops_later_writes(self):
@@ -6196,6 +6518,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ]
         write = FakeWriteService()
         annotation_write = FakeAnnotationWriteService()
+        write.annotation_write_service = annotation_write
         undo = FakeUndoService()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
@@ -6245,6 +6568,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ]
         write = FakeWriteService()
         annotation_write = FakeAnnotationWriteService()
+        write.annotation_write_service = annotation_write
         undo = FakeUndoService()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
@@ -6272,8 +6596,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [("t1", 0.0, 45.0)],
         )
         write.save_takeoff_positions = lambda *_args, **_kwargs: False
-        undo.undo()
-        self.assertEqual(len(annotation_write.position_calls), 1)
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(len(annotation_write.position_calls), 0)
 
     def test_simple_takeoff_delete_uses_targeted_path(self):
         data = FakeProjectData()
@@ -7668,6 +7992,106 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             plan_view.intelligent_paste_calls,
             [(["ann-1"], (10.0, 20.0))],
         )
+
+    def test_line_paste_undo_removes_authoritative_typed_annotation(self):
+        source = self._copied_annotation(annotation_type="line")
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.intelligent_paste_enabled = False
+        plan_view.annotation_key_map = {("ann-1", "line"): "ann-1"}
+        annotation_write = FakeAnnotationWriteService()
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            ann_write=annotation_write,
+            data=data,
+            undo=undo,
+        )
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+
+        handler.on_paste_requested()
+        self.assertEqual(
+            {(annotation.uid, annotation.annotation_type) for annotation in data.annotations},
+            {("ann-1", "line")},
+        )
+
+        undo.undo()
+
+        self.assertEqual(data.annotations, [])
+        self.assertEqual(plan_view.selected, set())
+        self.assertEqual(
+            handler._write_svc.local_annotation_delete_calls,
+            [("bid.mdb", [("ann-1", "line")], False)],
+        )
+
+    def test_multiple_line_paste_undo_removes_every_generated_identity(self):
+        sources = [
+            self._copied_annotation(uid=f"source-{index}", annotation_type="line")
+            for index in range(3)
+        ]
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.intelligent_paste_enabled = False
+        plan_view.annotation_key_map = {
+            (f"ann-{index}", "line"): f"ann-{index}" for index in range(1, 4)
+        }
+        annotation_write = FakeAnnotationWriteService()
+        annotation_write.next_uids = ["ann-1", "ann-2", "ann-3"]
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            ann_write=annotation_write,
+            data=data,
+            undo=undo,
+        )
+        handler._clipboard_svc = FakeClipboard([], annotations=sources)
+
+        handler.on_paste_requested()
+        undo.undo()
+
+        self.assertEqual(data.annotations, [])
+        self.assertEqual(
+            set(handler._write_svc.local_annotation_delete_calls[-1][1]),
+            {("ann-1", "line"), ("ann-2", "line"), ("ann-3", "line")},
+        )
+
+    def test_mixed_line_takeoff_paste_undo_keeps_typed_membership(self):
+        takeoff = self._copied_takeoff()
+        line = self._copied_annotation(annotation_type="line")
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.intelligent_paste_enabled = False
+        plan_view.annotation_key_map = {("100", "line"): "100_line"}
+        write = FakeWriteService()
+        write.next_annotation_uids = ["100"]
+        annotation_write = FakeAnnotationWriteService()
+        annotation_write.next_uids = ["100"]
+        undo = UndoRedoService()
+        undo.set_active_bid(FakeUiState().get_selected_bid_ref())
+        handler = self._paste_handler(
+            plan_view=plan_view,
+            write=write,
+            ann_write=annotation_write,
+            data=data,
+            undo=undo,
+        )
+        handler._clipboard_svc = FakeClipboard([takeoff], annotations=[line])
+
+        handler.on_paste_requested()
+        self.assertEqual(set(data.takeoffs), {"100"})
+        self.assertEqual(
+            {(annotation.uid, annotation.annotation_type) for annotation in data.annotations},
+            {("100", "line")},
+        )
+
+        undo.undo()
+
+        self.assertEqual(data.takeoffs, {})
+        self.assertEqual(data.annotations, [])
+        self.assertEqual(write.local_deletes[-1][2], ["100"])
+        self.assertEqual(write.local_deletes[-1][3], [("100", "line")])
 
     def test_annotation_only_paste_uses_placement_not_plan_edit_permission(self):
         source = self._copied_annotation()

@@ -1685,17 +1685,17 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     payload.takeoff_uids,
                     payload.annotations,
                 )
-                if payload.takeoff_uids and not self._delete_takeoffs.execute(
-                    database_id,
-                    list(payload.takeoff_uids),
-                ):
-                    raise RuntimeError("The takeoff deletion was incomplete.")
                 if payload.annotations:
                     if not self._delete_annotations.execute(
                         database_id,
                         list(payload.annotations),
                     ):
                         raise RuntimeError("The annotation deletion was incomplete.")
+                if payload.takeoff_uids and not self._delete_takeoffs.execute(
+                    database_id,
+                    list(payload.takeoff_uids),
+                ):
+                    raise RuntimeError("The takeoff deletion was incomplete.")
                 for resource in resources:
                     recorder.record(resource, ChangeOperation.DELETE)
                 for dependency in dependencies:
@@ -1800,16 +1800,16 @@ class ProjectWriteService(DatabaseMutationWriteService):
             )
 
         def delete(recorder):
-            if payload.takeoff_uids and not self._delete_takeoffs.execute(
-                database_id,
-                list(payload.takeoff_uids),
-            ):
-                raise RuntimeError("The takeoff deletion was incomplete.")
             if payload.annotations and not self._delete_annotations.execute(
                 database_id,
                 list(payload.annotations),
             ):
                 raise RuntimeError("The annotation deletion was incomplete.")
+            if payload.takeoff_uids and not self._delete_takeoffs.execute(
+                database_id,
+                list(payload.takeoff_uids),
+            ):
+                raise RuntimeError("The takeoff deletion was incomplete.")
             for resource in resources:
                 recorder.record(resource, ChangeOperation.DELETE)
             for dependency in dependencies:
@@ -1870,6 +1870,202 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     ""
                     if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
                     else "The database rejected deletion."
+                )
+            ),
+            conflict=mutation.conflict,
+            commit_attempted=mutation.commit_attempted,
+            consumed_lock_tokens=mutation.consumed_lock_tokens,
+        )
+
+    def execute_plan_geometry_local(
+        self,
+        database_id: str,
+        bid_uid: str,
+        *,
+        takeoff_positions: List[Tuple[str, List[float]]] = (),
+        takeoff_rotations: List[Tuple[str, float]] = (),
+        annotation_positions: List[Tuple[str, str, List[float]]] = (),
+        page_uids: tuple[str, ...] = (),
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        publish_database_refreshed_after_write: bool = True,
+    ) -> MutationExecutionResult:
+        if self.uses_sql_collaboration_mutations(database_id):
+            raise ValueError("SQL plan geometry must use the collaboration queue")
+        bid_value = int(bid_uid)
+        payload = PlanGeometryPayload(
+            takeoff_positions=tuple(
+                (str(uid), tuple(float(value) for value in position))
+                for uid, position in takeoff_positions
+            ),
+            takeoff_rotations=tuple(
+                (str(uid), float(rotation)) for uid, rotation in takeoff_rotations
+            ),
+            annotation_positions=tuple(
+                (
+                    str(uid),
+                    str(annotation_type),
+                    tuple(float(value) for value in position),
+                )
+                for uid, annotation_type, position in annotation_positions
+            ),
+        )
+        resources = tuple(
+            sorted(
+                {
+                    *(
+                        ResourceRef("takeoff", uid, bid_value)
+                        for uid, _position in payload.takeoff_positions
+                    ),
+                    *(
+                        ResourceRef("takeoff", uid, bid_value)
+                        for uid, _rotation in payload.takeoff_rotations
+                    ),
+                    *(
+                        ResourceRef(
+                            "annotation",
+                            f"{annotation_type}/{uid}",
+                            bid_value,
+                        )
+                        for uid, annotation_type, _position in (
+                            payload.annotation_positions
+                        )
+                    ),
+                }
+            )
+        )
+        dependencies = {
+            *dependency_resources,
+            *(ResourceRef("page", uid, bid_value) for uid in page_uids if uid),
+        }
+
+        def save(recorder):
+            self._mutation_executor.verify_plan_items_exist(
+                database_id,
+                str(bid_uid),
+                tuple(
+                    dict.fromkeys(
+                        [
+                            *(uid for uid, _position in payload.takeoff_positions),
+                            *(uid for uid, _rotation in payload.takeoff_rotations),
+                        ]
+                    )
+                ),
+                tuple(
+                    (uid, annotation_type)
+                    for uid, annotation_type, _position in (
+                        payload.annotation_positions
+                    )
+                ),
+            )
+            if payload.takeoff_positions and not self._save_takeoff_positions.execute(
+                database_id,
+                [(uid, list(position)) for uid, position in payload.takeoff_positions],
+            ):
+                raise RuntimeError("The takeoff position update was incomplete.")
+            if payload.takeoff_rotations and not self._save_takeoff_rotations.execute(
+                database_id,
+                list(payload.takeoff_rotations),
+            ):
+                raise RuntimeError("The takeoff rotation update was incomplete.")
+            if (
+                payload.annotation_positions
+                and not self._save_annotation_positions.execute(
+                    database_id,
+                    [
+                        (uid, annotation_type, list(position))
+                        for uid, annotation_type, position in (
+                            payload.annotation_positions
+                        )
+                    ],
+                )
+            ):
+                raise RuntimeError("The annotation position update was incomplete.")
+            position_resources = {
+                ResourceRef("takeoff", uid, bid_value)
+                for uid, _position in payload.takeoff_positions
+            }.union(
+                ResourceRef(
+                    "annotation",
+                    f"{annotation_type}/{uid}",
+                    bid_value,
+                )
+                for uid, annotation_type, _position in payload.annotation_positions
+            )
+            rotation_resources = {
+                ResourceRef("takeoff", uid, bid_value)
+                for uid, _rotation in payload.takeoff_rotations
+            }
+            for resource in sorted(position_resources.union(rotation_resources)):
+                changed_fields = []
+                if resource in position_resources:
+                    changed_fields.append("position")
+                if resource in rotation_resources:
+                    changed_fields.append("rotation")
+                recorder.record(
+                    resource,
+                    ChangeOperation.UPDATE,
+                    changed_fields=tuple(changed_fields),
+                )
+            return True
+
+        try:
+            mutation = self._execute_database_mutation(
+                database_id,
+                tuple(sorted({*resources, *dependencies})),
+                save,
+                mutation_type=CollaborationMutationType.PLAN_GEOMETRY.value,
+                publish_conflict_event=False,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                message=str(exc),
+            )
+        authoritative = (
+            AuthoritativeMutationResult(
+                updated_resources=resources,
+                affected_page_uids=tuple(page_uids),
+                affected_families=tuple(
+                    family
+                    for family, present in (
+                        (
+                            "takeoffs",
+                            bool(
+                                payload.takeoff_positions or payload.takeoff_rotations
+                            ),
+                        ),
+                        ("annotations", bool(payload.annotation_positions)),
+                    )
+                    if present
+                ),
+            )
+            if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+            else None
+        )
+        if (
+            authoritative is not None
+            and publish_database_refreshed_after_write
+            and not self.reload_and_notify(database_id)
+        ):
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                authoritative_result=authoritative,
+                message=(
+                    "The geometry update committed, but the local database "
+                    "projection could not be refreshed."
+                ),
+                commit_attempted=True,
+            )
+        return MutationExecutionResult(
+            outcome_status=mutation.outcome_status,
+            authoritative_result=authoritative,
+            message=(
+                mutation.conflict.reason
+                if mutation.conflict is not None
+                else (
+                    ""
+                    if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+                    else "The database rejected the geometry update."
                 )
             ),
             conflict=mutation.conflict,
@@ -2085,6 +2281,212 @@ class ProjectWriteService(DatabaseMutationWriteService):
             callback,
         )
 
+    def execute_plan_properties_local(
+        self,
+        database_id: str,
+        bid_uid: str,
+        property_kind: str,
+        updates: list,
+        *,
+        page_uids: tuple[str, ...] = (),
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        publish_database_refreshed_after_write: bool = True,
+    ) -> MutationExecutionResult:
+        if self.uses_sql_collaboration_mutations(database_id):
+            raise ValueError("SQL plan properties must use the collaboration queue")
+        bid_value = int(bid_uid)
+        payload = PlanPropertyPayload.from_updates(property_kind, updates)
+        is_annotation = property_kind.startswith("annotation_")
+        resources = tuple(
+            sorted(
+                {
+                    (
+                        ResourceRef(
+                            "annotation",
+                            f"{str(update[1])}/{str(update[0])}",
+                            bid_value,
+                        )
+                        if is_annotation
+                        else ResourceRef("takeoff", str(update[0]), bid_value)
+                    )
+                    for update in updates
+                    if update and update[0]
+                }
+            )
+        )
+        dependencies = {
+            *dependency_resources,
+            *(ResourceRef("page", uid, bid_value) for uid in page_uids if uid),
+        }
+
+        def save(recorder):
+            changed_fields = self._apply_plan_property_payload(
+                database_id,
+                str(bid_uid),
+                payload,
+                resources,
+            )
+            for resource in resources:
+                recorder.record(
+                    resource,
+                    ChangeOperation.UPDATE,
+                    changed_fields=changed_fields,
+                )
+            return True
+
+        try:
+            mutation = self._execute_database_mutation(
+                database_id,
+                tuple(sorted({*resources, *dependencies})),
+                save,
+                mutation_type=(
+                    CollaborationMutationType.ANNOTATION_UPDATE.value
+                    if is_annotation
+                    else CollaborationMutationType.TAKEOFF_PROPERTIES.value
+                ),
+                publish_conflict_event=False,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                message=str(exc),
+            )
+        authoritative = (
+            AuthoritativeMutationResult(
+                updated_resources=resources,
+                affected_page_uids=tuple(page_uids),
+                affected_families=("annotations" if is_annotation else "takeoffs",),
+            )
+            if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+            else None
+        )
+        if (
+            authoritative is not None
+            and publish_database_refreshed_after_write
+            and not self.reload_and_notify(database_id)
+        ):
+            return MutationExecutionResult(
+                outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                authoritative_result=authoritative,
+                message=(
+                    "The property update committed, but the local database "
+                    "projection could not be refreshed."
+                ),
+                commit_attempted=True,
+            )
+        return MutationExecutionResult(
+            outcome_status=mutation.outcome_status,
+            authoritative_result=authoritative,
+            message=(
+                mutation.conflict.reason
+                if mutation.conflict is not None
+                else (
+                    ""
+                    if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
+                    else "The database rejected the property update."
+                )
+            ),
+            conflict=mutation.conflict,
+            commit_attempted=mutation.commit_attempted,
+            consumed_lock_tokens=mutation.consumed_lock_tokens,
+        )
+
+    def _apply_plan_property_payload(
+        self,
+        database_id: str,
+        bid_uid: str,
+        payload: PlanPropertyPayload,
+        resources: tuple[ResourceRef, ...],
+    ) -> tuple[str, ...]:
+        decoded = payload.decoded_updates()
+        property_kind = payload.property_kind
+        is_annotation = property_kind.startswith("annotation_")
+        takeoff_uids = (
+            tuple(str(update[0]) for update in decoded) if not is_annotation else ()
+        )
+        annotations = (
+            tuple((str(update[0]), str(update[1])) for update in decoded)
+            if is_annotation
+            else ()
+        )
+        self._mutation_executor.verify_plan_items_exist(
+            database_id,
+            bid_uid,
+            takeoff_uids,
+            annotations,
+        )
+        if property_kind == "takeoff_text":
+            success = self._save_takeoff_text_properties.execute(
+                database_id,
+                [(str(uid), dict(properties)) for uid, properties in decoded],
+            )
+            changed_fields = ("text_properties",)
+        elif property_kind in {"takeoff_area", "takeoff_condition"}:
+            use_case = (
+                self._save_takeoffs_area
+                if property_kind == "takeoff_area"
+                else self._save_takeoffs_condition
+            )
+            assignments: dict[str, list[str]] = {}
+            for takeoff_uid, target_uid in decoded:
+                assignments.setdefault(str(target_uid), []).append(str(takeoff_uid))
+            success = all(
+                use_case.execute(database_id, assigned_uids, target_uid)
+                for target_uid, assigned_uids in assignments.items()
+            )
+            changed_fields = (
+                "area" if property_kind == "takeoff_area" else "condition",
+            )
+        elif property_kind == "takeoff_negative":
+            assignments: dict[bool, list[str]] = {}
+            for takeoff_uid, value in decoded:
+                assignments.setdefault(bool(value), []).append(str(takeoff_uid))
+            success = all(
+                self._set_takeoffs_negative.execute(
+                    database_id,
+                    assigned_uids,
+                    value,
+                )
+                for value, assigned_uids in assignments.items()
+            )
+            changed_fields = ("negative",)
+        elif property_kind == "takeoff_curve":
+            success = all(
+                self._set_takeoff_curve.execute(
+                    database_id,
+                    str(uid),
+                    [float(value) for value in position],
+                    int(curve),
+                )
+                for uid, position, curve in decoded
+            )
+            changed_fields = ("position", "curve")
+        elif property_kind == "annotation_text":
+            success = self._save_annotation_text_properties.execute(
+                database_id,
+                [
+                    (str(uid), str(annotation_type), dict(properties))
+                    for uid, annotation_type, properties in decoded
+                ],
+            )
+            changed_fields = ("text_properties",)
+        elif property_kind == "annotation_style":
+            success = self._save_annotation_styles.execute(
+                database_id,
+                [
+                    (str(uid), str(annotation_type), dict(properties))
+                    for uid, annotation_type, properties in decoded
+                ],
+            )
+            changed_fields = ("style",)
+        else:
+            raise ValueError("Unsupported plan property mutation")
+        if not success:
+            raise RuntimeError("The plan property update was incomplete.")
+        if not resources:
+            raise ValueError("A property mutation requires at least one resource")
+        return changed_fields
+
     def queue_plan_properties(
         self,
         database_id: str,
@@ -2147,91 +2549,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def execute() -> MutationExecutionResult:
             def save(recorder):
-                decoded = payload.decoded_updates()
-                takeoff_uids = (
-                    tuple(str(update[0]) for update in decoded)
-                    if not is_annotation
-                    else ()
-                )
-                annotations = (
-                    tuple((str(update[0]), str(update[1])) for update in decoded)
-                    if is_annotation
-                    else ()
-                )
-                self._mutation_executor.verify_plan_items_exist(
+                changed_fields = self._apply_plan_property_payload(
                     database_id,
                     str(bid_uid),
-                    takeoff_uids,
-                    annotations,
+                    payload,
+                    resources,
                 )
-                if property_kind == "takeoff_text":
-                    success = self._save_takeoff_text_properties.execute(
-                        database_id,
-                        [(str(uid), dict(properties)) for uid, properties in decoded],
-                    )
-                    changed_fields = ("text_properties",)
-                elif property_kind in {"takeoff_area", "takeoff_condition"}:
-                    target_uids = {str(update[1]) for update in decoded}
-                    if len(target_uids) != 1:
-                        raise ValueError("A property assignment requires one target")
-                    takeoff_uids = [str(update[0]) for update in decoded]
-                    target_uid = target_uids.pop()
-                    use_case = (
-                        self._save_takeoffs_area
-                        if property_kind == "takeoff_area"
-                        else self._save_takeoffs_condition
-                    )
-                    success = use_case.execute(
-                        database_id,
-                        takeoff_uids,
-                        target_uid,
-                    )
-                    changed_fields = (
-                        "area" if property_kind == "takeoff_area" else "condition",
-                    )
-                elif property_kind == "takeoff_negative":
-                    values = {bool(update[1]) for update in decoded}
-                    if len(values) != 1:
-                        raise ValueError("A negative update requires one value")
-                    success = self._set_takeoffs_negative.execute(
-                        database_id,
-                        [str(update[0]) for update in decoded],
-                        values.pop(),
-                    )
-                    changed_fields = ("negative",)
-                elif property_kind == "takeoff_curve":
-                    success = all(
-                        self._set_takeoff_curve.execute(
-                            database_id,
-                            str(uid),
-                            [float(value) for value in position],
-                            int(curve),
-                        )
-                        for uid, position, curve in decoded
-                    )
-                    changed_fields = ("position", "curve")
-                elif property_kind == "annotation_text":
-                    success = self._save_annotation_text_properties.execute(
-                        database_id,
-                        [
-                            (str(uid), str(annotation_type), dict(properties))
-                            for uid, annotation_type, properties in decoded
-                        ],
-                    )
-                    changed_fields = ("text_properties",)
-                elif property_kind == "annotation_style":
-                    success = self._save_annotation_styles.execute(
-                        database_id,
-                        [
-                            (str(uid), str(annotation_type), dict(properties))
-                            for uid, annotation_type, properties in decoded
-                        ],
-                    )
-                    changed_fields = ("style",)
-                else:
-                    raise ValueError("Unsupported plan property mutation")
-                if not success:
-                    raise RuntimeError("The plan property update was incomplete.")
                 for resource in resources:
                     recorder.record(
                         resource,

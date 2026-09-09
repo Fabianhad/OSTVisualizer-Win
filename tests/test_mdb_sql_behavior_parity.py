@@ -320,6 +320,19 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         service._insert_annotations = _SequenceUseCase(["named-new"], ["rect-new"])
         service._delete_takeoffs = _SequenceUseCase(True)
         service._delete_annotations = _SequenceUseCase(True)
+        service._save_takeoff_positions = _SequenceUseCase(True)
+        service._save_takeoff_rotations = _SequenceUseCase(True)
+        service._save_annotation_positions = _SequenceUseCase(True)
+        service._save_takeoff_text_properties = _SequenceUseCase(True)
+        service._save_takeoffs_area = _SequenceUseCase(True)
+        service._save_takeoffs_condition = _SequenceUseCase(True)
+        service._set_takeoffs_negative = _SequenceUseCase(True)
+        service._set_takeoff_curve = _SequenceUseCase(True)
+        service._save_annotation_text_properties = _SequenceUseCase(True)
+        service._save_annotation_styles = _SequenceUseCase(True)
+        service._mutation_executor = SimpleNamespace(
+            verify_plan_items_exist=lambda *_args: None
+        )
         return service
 
     @staticmethod
@@ -580,6 +593,45 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         self.assertEqual(len(service._delete_annotations.calls), 1)
         self.assertEqual(service.reload_calls, [])
 
+    def test_mdb_mixed_delete_removes_endpoint_annotation_before_takeoff_cascade(self):
+        service = self._local_composite_service()
+        endpoint_line_exists = [True]
+        call_order = []
+
+        class DeleteEndpointLine:
+            def execute(self, _database_id, annotations):
+                call_order.append(("annotations", list(annotations)))
+                if not endpoint_line_exists[0]:
+                    return False
+                endpoint_line_exists[0] = False
+                return True
+
+        class DeleteTakeoffAndCompanions:
+            def execute(self, _database_id, takeoff_uids):
+                call_order.append(("takeoffs", list(takeoff_uids)))
+                endpoint_line_exists[0] = False
+                return True
+
+        service._delete_annotations = DeleteEndpointLine()
+        service._delete_takeoffs = DeleteTakeoffAndCompanions()
+
+        result = service.execute_plan_items_delete_local(
+            "database.mdb",
+            "7",
+            ["takeoff-1"],
+            [("line-1", "line")],
+            publish_database_refreshed_after_write=False,
+        )
+
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            call_order,
+            [
+                ("annotations", [("line-1", "line")]),
+                ("takeoffs", ["takeoff-1"]),
+            ],
+        )
+
     def test_mdb_mixed_delete_failure_has_no_success_projection(self):
         for stage, attribute in (
             ("takeoffs", "_delete_takeoffs"),
@@ -601,6 +653,63 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 self.assertEqual(len(service.mutation_calls), 1)
                 self.assertIsNone(result.authoritative_result)
                 self.assertEqual(service.reload_calls, [])
+
+    def test_mdb_mixed_geometry_runs_in_one_application_mutation(self):
+        service = self._local_composite_service()
+        result = service.execute_plan_geometry_local(
+            "database.mdb",
+            "7",
+            takeoff_positions=[("10", [1.0, 2.0])],
+            annotation_positions=[("10", "line", [3.0, 4.0])],
+            page_uids=("p1",),
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(len(service.mutation_calls), 1)
+        self.assertEqual(
+            set(result.authoritative_result.updated_resources),
+            {
+                ResourceRef("takeoff", "10", 7),
+                ResourceRef("annotation", "line/10", 7),
+            },
+        )
+
+    def test_mdb_mixed_geometry_late_failure_has_no_success_projection(self):
+        service = self._local_composite_service()
+        service._save_annotation_positions = _SequenceUseCase(False)
+        result = service.execute_plan_geometry_local(
+            "database.mdb",
+            "7",
+            takeoff_positions=[("10", [1.0, 2.0])],
+            annotation_positions=[("10", "line", [3.0, 4.0])],
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(
+            result.outcome_status,
+            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+        )
+        self.assertIsNone(result.authoritative_result)
+        self.assertEqual(service.reload_calls, [])
+
+    def test_local_property_replay_restores_distinct_original_areas_atomically(self):
+        service = self._local_composite_service()
+        service._save_takeoffs_area = _SequenceUseCase(True, True)
+        result = service.execute_plan_properties_local(
+            "database.mdb",
+            "7",
+            "takeoff_area",
+            [("takeoff-1", "area-1"), ("takeoff-2", "area-2")],
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(len(service.mutation_calls), 1)
+        self.assertEqual(
+            service._save_takeoffs_area.calls,
+            [
+                ("database.mdb", ["takeoff-1"], "area-1"),
+                ("database.mdb", ["takeoff-2"], "area-2"),
+            ],
+        )
 
     @staticmethod
     def _queued_project_service():
@@ -647,6 +756,21 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         service._save_job_statuses = _SequenceUseCase({"new_status": "status-new"})
         service._save_employees = _SequenceUseCase({"new_employee": "employee-new"})
         service._save_pay_classes = _SequenceUseCase({"new_pay_class": "pay-class-new"})
+        service._delete_takeoffs = _SequenceUseCase(True)
+        service._delete_annotations = _SequenceUseCase(True)
+        service._save_takeoff_positions = _SequenceUseCase(True)
+        service._save_takeoff_rotations = _SequenceUseCase(True)
+        service._save_annotation_positions = _SequenceUseCase(True)
+        service._save_takeoff_text_properties = _SequenceUseCase(True)
+        service._save_takeoffs_area = _SequenceUseCase(True)
+        service._save_takeoffs_condition = _SequenceUseCase(True)
+        service._set_takeoffs_negative = _SequenceUseCase(True)
+        service._set_takeoff_curve = _SequenceUseCase(True)
+        service._save_annotation_text_properties = _SequenceUseCase(True)
+        service._save_annotation_styles = _SequenceUseCase(True)
+        service._mutation_executor = SimpleNamespace(
+            verify_plan_items_exist=lambda *_args: None
+        )
         service.validate_condition_types_delete = (
             lambda _database_id, condition_type_uids: DeleteValidationResult(
                 requested_uids=list(condition_type_uids), blocked_uids=[]
@@ -937,6 +1061,59 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 result = execute()
                 self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
                 self.assertEqual(len(use_case.calls), 1)
+
+    def test_sql_mixed_delete_removes_endpoint_annotation_before_takeoff_cascade(self):
+        service, provider = self._queued_project_service()
+        call_order = []
+
+        class DeleteAnnotations:
+            def execute(self, _database_id, annotations):
+                call_order.append(("annotations", list(annotations)))
+                return True
+
+        class DeleteTakeoffs:
+            def execute(self, _database_id, takeoff_uids):
+                call_order.append(("takeoffs", list(takeoff_uids)))
+                return True
+
+        service._delete_annotations = DeleteAnnotations()
+        service._delete_takeoffs = DeleteTakeoffs()
+        service.queue_plan_items_delete(
+            "database",
+            "7",
+            ["takeoff-1"],
+            [("line-1", "line")],
+            lambda _result: None,
+        )
+        result = provider.requests[-1][1]()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            call_order,
+            [
+                ("annotations", [("line-1", "line")]),
+                ("takeoffs", ["takeoff-1"]),
+            ],
+        )
+
+    def test_sql_property_replay_restores_distinct_original_areas(self):
+        service, provider = self._queued_project_service()
+        service._save_takeoffs_area = _SequenceUseCase(True, True)
+        service.queue_plan_properties(
+            "database",
+            "7",
+            "takeoff_area",
+            [("takeoff-1", "area-1"), ("takeoff-2", "area-2")],
+            lambda _result: None,
+        )
+        result = provider.requests[-1][1]()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            service._save_takeoffs_area.calls,
+            [
+                ("database", ["takeoff-1"], "area-1"),
+                ("database", ["takeoff-2"], "area-2"),
+            ],
+        )
 
     def test_sql_condition_update_records_name_encoded_elevation_fields(self):
         service, provider = self._queued_project_service()

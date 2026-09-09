@@ -1716,6 +1716,12 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                     paste_result = committed("pasted")
                     completion(paste_result)
                     self.assertEqual(surface.get_selected_uids(), ["pasted"])
+                    if older_pending:
+                        queued_delete_count = len(write.queued_deletes)
+                        self.assertFalse(history.can_undo())
+                        surface.undo_requested.emit()
+                        self.assertEqual(len(write.queued_deletes), queued_delete_count)
+                        older_completion(committed("older"))
                     self.assertTrue(history.can_undo())
                     surface.undo_requested.emit()
                     deletion = write.queued_deletes[-1]
@@ -1731,15 +1737,13 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                     completion(paste_result)
                     self.assertEqual(surface.get_selected_uids(), [])
                     self.assertFalse(surface._selection_items)
-                    self.assertFalse(history.can_undo())
+                    self.assertEqual(history.can_undo(), older_pending)
                     self.assertTrue(history.can_redo())
                     surface.redo_requested.emit()
                     insert("redone")
                     write.queued_pastes[-1][3](committed("redone"))
                     surface.set_selected_uids({"redone"})
                     completion(paste_result)
-                    if older_pending:
-                        older_completion(committed("older"))
                     self.assertEqual(surface.get_selected_uids(), ["redone"])
                     self.assertTrue(surface._selection_items)
                     self.assertTrue(history.can_undo())
@@ -1899,26 +1903,15 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                                         [],
                                         (self.data.page.uid,),
                                     )
-                                self.assertTrue(history.can_undo())
-                                for action in (
-                                    [surface.undo_requested.emit]
-                                    if intent == "undo"
-                                    else [
-                                        surface.undo_requested.emit,
-                                        surface.redo_requested.emit,
-                                    ]
-                                ):
-                                    action()
-                                    self.assertFalse(history.can_undo())
-                                    self.assertFalse(history.can_redo())
-                                    queued = write.queued_geometry[-1]
-                                    self.data.annotations[1].position = list(
-                                        queued[2]["annotation_positions"][0][2]
-                                    )
-                                    self.refresh()
-                                    queued[3](result(MutationOutcomeStatus.COMMITTED))
-                                self.assertEqual(history.can_redo(), intent == "undo")
-                                self.assertEqual(history.can_undo(), intent == "redo")
+                                queued_geometry_count = len(write.queued_geometry)
+                                self.assertFalse(history.can_undo())
+                                surface.undo_requested.emit()
+                                if intent == "redo":
+                                    surface.redo_requested.emit()
+                                self.assertEqual(
+                                    len(write.queued_geometry), queued_geometry_count
+                                )
+                                self.assertFalse(history.can_redo())
                             expected = set(surface.get_selected_uids())
                             history_before = (history.can_undo(), history.can_redo())
                             if outcome == MutationOutcomeStatus.COMMITTED:
@@ -1951,7 +1944,10 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                             self.assertEqual(
                                 other_surface.get_selected_uids(), ["other-surface"]
                             )
-                            if outcome == MutationOutcomeStatus.REJECTED:
+                            if intent in ("undo", "redo"):
+                                self.assertTrue(history.can_undo())
+                                self.assertFalse(history.can_redo())
+                            elif outcome == MutationOutcomeStatus.REJECTED:
                                 self.assertEqual(
                                     (history.can_undo(), history.can_redo()),
                                     history_before,

@@ -804,6 +804,7 @@ class FakeUndoService:
     def __init__(self):
         self.pushes = []
         self.async_pushes = []
+        self.forward_mutations = []
 
     def push_local(self, undo, redo):
         self.pushes.append((undo, redo))
@@ -813,6 +814,19 @@ class FakeUndoService:
 
     def push_for_bid(self, _bid_ref, undo, redo):
         self.push(undo, redo)
+
+    def begin_forward_mutation(self, bid_ref):
+        token = object()
+        self.forward_mutations.append((token, bid_ref))
+        return token
+
+    def finish_forward_mutation(self, token):
+        self.forward_mutations = [
+            item for item in self.forward_mutations if item[0] is not token
+        ]
+
+    def bind_latest_history_to_forward_mutation(self, _token):
+        pass
 
 
 class TrackableSignal:
@@ -3079,6 +3093,25 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.restored_positions, [])
         self.assertEqual(plan_view.pending_mutation_uids, set())
+
+    def test_detached_access_loss_restores_uncommitted_geometry_preview(self):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            page_uid="p1",
+        )
+        queued_write = FakeQueuedProjectWriteService()
+        window, plan_view, _annotation_write = self._make_annotation_clipboard_window(
+            [annotation],
+            project_write_service=queued_write,
+        )
+        changes = [("a1", "text", [1.0, 1.0], [2.0, 2.0])]
+        window._access_state = PlanSurfaceAccessState()
+
+        window._on_positions_flushed([], changes)
+
+        self.assertEqual(plan_view.restored_positions, [([], changes)])
+        self.assertEqual(queued_write.geometry_calls, [])
 
     def test_detached_sql_annotation_delete_failure_restores_selection(self):
         annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")

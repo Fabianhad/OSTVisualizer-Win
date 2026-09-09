@@ -71,6 +71,80 @@ class UndoRedoServiceTests(unittest.TestCase):
         )
         self.assertFalse(self.service.can_undo())
 
+    def test_forward_mutation_blocks_older_undo_until_its_history_is_ready(self):
+        calls = []
+        self.service.push_local(
+            lambda: calls.append("older-undo") or True,
+            lambda: True,
+        )
+        bid_ref = BidRef("database", "7")
+        token = self.service.begin_forward_mutation(bid_ref)
+
+        self.assertFalse(self.service.can_undo())
+        self.service.undo()
+        self.assertEqual(calls, [])
+
+        self.service.push_local(
+            lambda: calls.append("newer-undo") or True,
+            lambda: True,
+        )
+        self.assertFalse(self.service.can_undo())
+        self.service.finish_forward_mutation(token)
+        self.assertTrue(self.service.can_undo())
+        self.service.undo()
+        self.assertEqual(calls, ["newer-undo"])
+
+    def test_clearing_history_invalidates_forward_mutation_token(self):
+        bid_ref = BidRef("database", "7")
+        token = self.service.begin_forward_mutation(bid_ref)
+        self.service.clear()
+        self.service.push_local(lambda: True, lambda: True)
+
+        self.service.finish_forward_mutation(token)
+
+        self.assertTrue(self.service.can_undo())
+
+    def test_out_of_order_forward_completions_keep_submission_history_order(self):
+        bid_ref = BidRef("database", "7")
+        first = self.service.begin_forward_mutation(bid_ref)
+        second = self.service.begin_forward_mutation(bid_ref)
+        calls = []
+
+        self.service.push_local(
+            lambda: calls.append("second") or True,
+            lambda: True,
+        )
+        self.service.bind_latest_history_to_forward_mutation(second)
+        self.service.finish_forward_mutation(second)
+        self.assertFalse(self.service.can_undo())
+
+        self.service.push_local(
+            lambda: calls.append("first") or True,
+            lambda: True,
+        )
+        self.service.bind_latest_history_to_forward_mutation(first)
+        self.service.finish_forward_mutation(first)
+        self.service.undo()
+        self.assertEqual(calls, ["second"])
+
+    def test_forward_ordering_does_not_reorder_completed_local_history(self):
+        calls = []
+        bid_ref = BidRef("database", "7")
+        first = self.service.begin_forward_mutation(bid_ref)
+        self.service.push_local(lambda: calls.append("first") or True, lambda: True)
+        self.service.bind_latest_history_to_forward_mutation(first)
+        self.service.finish_forward_mutation(first)
+        self.service.push_local(lambda: calls.append("local") or True, lambda: True)
+        last = self.service.begin_forward_mutation(bid_ref)
+        self.service.push_local(lambda: calls.append("last") or True, lambda: True)
+        self.service.bind_latest_history_to_forward_mutation(last)
+        self.service.finish_forward_mutation(last)
+
+        for _expected in ("last", "local", "first"):
+            self.service.undo()
+
+        self.assertEqual(calls, ["last", "local", "first"])
+
     def test_uncertain_async_history_stays_frozen_until_recovery(self):
         completions = []
         self.service.push(
@@ -127,6 +201,56 @@ class UndoRedoServiceTests(unittest.TestCase):
         self.assertFalse(self.service.can_undo())
         current_complete(self._mutation_result(MutationOutcomeStatus.COMMITTED))
         self.assertTrue(self.service.can_undo())
+
+    def test_typed_mixed_move_has_no_drift_after_one_hundred_cycles(self):
+        selected = {
+            ("takeoff", "10"),
+            ("line", "10"),
+            ("arrow", "10"),
+            ("text", "10"),
+        }
+        unrelated = ("takeoff", "99")
+        before = {identity: (0.0, 0.0) for identity in selected}
+        before[unrelated] = (99.0, 99.0)
+        after = dict(before)
+        for identity in selected:
+            after[identity] = (10.0, 20.0)
+        state = dict(after)
+
+        def restore(snapshot):
+            for identity in selected:
+                state[identity] = snapshot[identity]
+            return True
+
+        self.service.push_local(
+            lambda: restore(before),
+            lambda: restore(after),
+        )
+        for _cycle in range(100):
+            self.service.undo()
+            self.assertEqual(state, before)
+            self.service.redo()
+            self.assertEqual(state, after)
+        self.assertEqual(state[unrelated], (99.0, 99.0))
+
+    def test_main_and_detached_histories_are_isolated(self):
+        detached = UndoRedoService()
+        detached.set_active_bid(BidRef("database", "7"))
+        calls = []
+        self.service.push_local(
+            lambda: calls.append("main") or True,
+            lambda: True,
+        )
+        detached.push_local(
+            lambda: calls.append("detached") or True,
+            lambda: True,
+        )
+
+        self.service.undo()
+        self.assertEqual(calls, ["main"])
+        self.assertTrue(detached.can_undo())
+        detached.undo()
+        self.assertEqual(calls, ["main", "detached"])
 
 
 if __name__ == "__main__":

@@ -24,6 +24,15 @@ class MutationHistoryEntry:
     undo_action: Callable[[Callable[[QueuedMutationResult], None]], None]
     redo_action: Callable[[Callable[[QueuedMutationResult], None]], None]
     state: MutationHistoryState = MutationHistoryState.READY
+    forward_sequence: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class ForwardMutationToken:
+    token_id: str
+    bid_ref: BidRef
+    history_generation: int
+    sequence: int
 
 
 class UndoRedoService:
@@ -37,6 +46,8 @@ class UndoRedoService:
         self._is_write_allowed: Optional[Callable[[], bool]] = None
         self._on_change: Optional[Callable[[], None]] = None
         self._history_transition_pending = False
+        self._forward_mutations: dict[str, ForwardMutationToken] = {}
+        self._next_forward_sequence = 1
         self._history_generation = 0
         self.logger = logger or logging.getLogger(__name__)
 
@@ -54,6 +65,7 @@ class UndoRedoService:
     def can_undo(self) -> bool:
         return bool(
             not self._history_transition_pending
+            and not self._forward_mutations
             and self._undo_stack
             and self._undo_stack[-1].bid_ref == self._active_bid_ref
             and self._undo_stack[-1].state == MutationHistoryState.READY
@@ -62,6 +74,7 @@ class UndoRedoService:
     def can_redo(self) -> bool:
         return bool(
             not self._history_transition_pending
+            and not self._forward_mutations
             and self._redo_stack
             and self._redo_stack[-1].bid_ref == self._active_bid_ref
             and self._redo_stack[-1].state == MutationHistoryState.READY
@@ -142,8 +155,57 @@ class UndoRedoService:
             lambda complete: submit(redo_action, complete),
         )
 
-    def undo(self) -> None:
+    def begin_forward_mutation(self, bid_ref: BidRef) -> Optional[ForwardMutationToken]:
+        if bid_ref != self._active_bid_ref:
+            return None
+        token = ForwardMutationToken(
+            token_id=str(uuid.uuid4()),
+            bid_ref=bid_ref,
+            history_generation=self._history_generation,
+            sequence=self._next_forward_sequence,
+        )
+        self._next_forward_sequence += 1
+        self._forward_mutations[token.token_id] = token
+        self._notify_change()
+        return token
+
+    def bind_latest_history_to_forward_mutation(
+        self, token: Optional[ForwardMutationToken]
+    ) -> None:
+        if token is None:
+            return
+        current = self._forward_mutations.get(token.token_id)
+        if current != token or token.history_generation != self._history_generation:
+            return
         if not self._undo_stack:
+            return
+        entry = self._undo_stack[-1]
+        if entry.bid_ref != token.bid_ref or entry.forward_sequence is not None:
+            return
+        self._undo_stack.pop()
+        entry.forward_sequence = token.sequence
+        insert_at = next(
+            (
+                index
+                for index, existing in enumerate(self._undo_stack)
+                if existing.forward_sequence is not None
+                and existing.forward_sequence > token.sequence
+            ),
+            len(self._undo_stack),
+        )
+        self._undo_stack.insert(insert_at, entry)
+
+    def finish_forward_mutation(self, token: Optional[ForwardMutationToken]) -> None:
+        if token is None:
+            return
+        current = self._forward_mutations.get(token.token_id)
+        if current != token:
+            return
+        self._forward_mutations.pop(token.token_id, None)
+        self._notify_change()
+
+    def undo(self) -> None:
+        if self._forward_mutations or not self._undo_stack:
             return
         if self._is_write_allowed and not self._is_write_allowed():
             return
@@ -160,7 +222,7 @@ class UndoRedoService:
         )
 
     def redo(self) -> None:
-        if not self._redo_stack:
+        if self._forward_mutations or not self._redo_stack:
             return
         if self._is_write_allowed and not self._is_write_allowed():
             return
@@ -226,10 +288,13 @@ class UndoRedoService:
             self._notify_change()
 
     def clear(self) -> None:
-        had_history = bool(self._undo_stack or self._redo_stack)
+        had_history = bool(
+            self._undo_stack or self._redo_stack or self._forward_mutations
+        )
         self._history_generation += 1
         self._undo_stack.clear()
         self._redo_stack.clear()
+        self._forward_mutations.clear()
         self._history_transition_pending = False
         if had_history:
             self._notify_change()
