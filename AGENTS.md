@@ -279,6 +279,15 @@ Threading and events:
   Bid Area editors and pickers likewise query their existing usage provider at
   deletion time. Keep the separate child-Area restriction, preserve current
   selection on query failure, and avoid scanning merely to open the editor.
+- Condition **Duplicate and Reassign Takeoff** composes the existing duplicate
+  use case and Plan property payload inside one database mutation. The captured
+  Page/Condition/Takeoff foreign keys are verified in that transaction; queued SQL
+  writes retain submission-time resource versions through the existing concurrency
+  validator. Condition menu revision and Main Plan ownership guards precede
+  submission, while the Plan property completion owns pending markers and history.
+  Completion never submits a second reassignment, and terminal Condition callbacks
+  are consumed once. Undo changes Takeoff assignments; it retains the duplicated
+  Condition, as normal Condition duplication has no inverse history command.
 - Condition persistence publishes one backend-neutral condition-change event
   after authoritative projection. Changed fields and mutation operation determine
   whether Plan or native-mesh regeneration is required; same-bid regeneration
@@ -716,6 +725,9 @@ Database backends:
   page snapshot on the Qt thread, prepare color and render data on a worker, and
   apply one generation-guarded scene projection on the Qt thread. The SQL feed
   checkpoint remains pending until every registered plan surface completes.
+  Accepted Main Plan projection rebinds the worker's detached Page snapshot to
+  the authoritative Page before applying it, preserving the exact Page ownership
+  used by context actions and selection projection.
 - Schema v1 includes the commit-ordered feed, writer-mode gate, and mandatory
   snapshot isolation. Mixed-application editing must remain disabled unless the
   external change adapter and canonical resource-catalog checksum are validated.

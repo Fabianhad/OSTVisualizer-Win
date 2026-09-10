@@ -386,6 +386,19 @@ class SelectionManagerMixin:
         self.update_selection_visuals(emit=emit)
         self._update_cursor()
 
+    def select_takeoff_uids(self, uids: Collection[str]) -> None:
+        if not self._selection_enabled or self._cursor_mode != CURSOR_MODE_SELECT:
+            return
+        selected_uids = {
+            uid
+            for uid in uids
+            if uid in self._current_takeoffs and self._is_selectable(uid)
+        }
+        if not selected_uids:
+            return
+        self.set_selected_uids(selected_uids)
+        self.takeoff_selection_command_applied.emit(self.get_selected_takeoff_uids())
+
     def select_takeoffs_in_area(self, area_uid: Optional[str]) -> None:
         if not self._selection_enabled or self._cursor_mode != CURSOR_MODE_SELECT:
             return

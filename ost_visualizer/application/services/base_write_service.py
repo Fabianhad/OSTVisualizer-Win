@@ -4,6 +4,7 @@ from typing import Callable, Optional
 from ..dtos.collaboration_dtos import (
     CollaborationMutationType,
     DatabaseMutationRequest,
+    ExpectedResourceVersion,
     DatabaseMutationResult,
     MutationOutcomeStatus,
     ResourceRef,
@@ -100,6 +101,7 @@ class DatabaseMutationWriteService(BaseWriteService):
         block_bid_child_locks: bool = False,
         block_bid_active_editors: bool = False,
         publish_conflict_event: bool = True,
+        captured_versions: tuple[ExpectedResourceVersion, ...] = (),
     ) -> DatabaseMutationResult:
         operation_id = operation_id or str(uuid.uuid4())
         request_hash = request_hash or canonical_mutation_request_hash(
@@ -134,6 +136,12 @@ class DatabaseMutationWriteService(BaseWriteService):
             expected_versions = self._concurrency_tokens.expected_versions(
                 database_id, resources
             )
+            if captured_versions:
+                versions = {item.resource: item for item in expected_versions}
+                versions.update({item.resource: item for item in captured_versions})
+                expected_versions = tuple(
+                    versions[resource] for resource in sorted(versions)
+                )
             request = DatabaseMutationRequest(
                 database_id=database_id,
                 session_id=session_id,

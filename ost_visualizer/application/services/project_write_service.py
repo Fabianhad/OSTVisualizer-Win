@@ -12,6 +12,7 @@ from ...domain.entities.annotation import (
     ANNOTATION_TYPE_NAMED_VIEW,
 )
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
+from ..dtos.condition_takeoff_reassignment import ConditionTakeoffReassignment
 from ..dtos.collaboration_resource_catalog import (
     CollaborationResourceType,
     annotation_resource_id,
@@ -24,6 +25,7 @@ from ..dtos.collaboration_dtos import (
     DatabaseMutationResult,
     EditLeaseHandle,
     EditLeaseResult,
+    ExpectedResourceVersion,
     MutationOutcomeStatus,
     PageSettingsPayload,
     PlanGeometryPayload,
@@ -876,26 +878,36 @@ class ProjectWriteService(DatabaseMutationWriteService):
         return list(result.value or []) if result.success else []
 
     def duplicate_conditions_result(
-        self, db_path: str, bid_uid: str, condition_uids: list
+        self,
+        db_path: str,
+        bid_uid: str,
+        condition_uids: list,
+        *,
+        reassign_takeoffs: Optional[ConditionTakeoffReassignment] = None,
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult([], write_success=False, reload_success=False)
         collection = ResourceRef("conditions_collection", bid_uid, int(bid_uid))
-
-        def duplicate(recorder):
-            new_uids = self._duplicate_conditions.execute(
-                db_path, bid_uid, condition_uids
+        source_uids = self._unique_nonempty_uids(condition_uids)
+        takeoff_resources, dependencies = (
+            self._condition_duplicate_reassignment_resources(
+                bid_uid, source_uids, reassign_takeoffs
             )
-            for new_uid in new_uids or ():
-                recorder.record(
-                    ResourceRef("condition", str(new_uid), int(bid_uid)),
-                    ChangeOperation.CREATE,
-                )
-            if new_uids:
-                recorder.record(collection, ChangeOperation.UPDATE)
-            return new_uids
-
-        mutation = self._execute_database_mutation(db_path, (collection,), duplicate)
+        )
+        try:
+            mutation = self._execute_database_mutation(
+                db_path,
+                tuple(sorted({collection, *takeoff_resources, *dependencies})),
+                lambda recorder: self._apply_condition_duplicate(
+                    db_path,
+                    bid_uid,
+                    source_uids,
+                    recorder,
+                    reassign_takeoffs=reassign_takeoffs,
+                ),
+            )
+        except Exception as exc:
+            return WriteReloadResult([], failure_reason=str(exc))
         new_uids = (
             mutation.value
             if mutation.outcome_status == MutationOutcomeStatus.COMMITTED
@@ -914,6 +926,94 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 [ChangeOperation.CREATE],
             ),
         )
+
+    def _condition_duplicate_reassignment_resources(
+        self,
+        bid_uid: str,
+        source_uids: tuple[str, ...],
+        assignment: Optional[ConditionTakeoffReassignment],
+    ) -> tuple[tuple[ResourceRef, ...], tuple[ResourceRef, ...]]:
+        if assignment is None:
+            return (), ()
+        if tuple(source_uids) != (assignment.condition_uid,):
+            raise ValueError("Reassignment requires exactly the original Condition.")
+        bid_value = int(bid_uid)
+        return (
+            tuple(
+                ResourceRef("takeoff", uid, bid_value)
+                for uid in assignment.takeoff_uids
+            ),
+            (
+                ResourceRef("condition", assignment.condition_uid, bid_value),
+                ResourceRef("page", assignment.page_uid, bid_value),
+            ),
+        )
+
+    def _apply_condition_duplicate(
+        self,
+        database_id: str,
+        bid_uid: str,
+        source_uids: tuple[str, ...],
+        recorder,
+        *,
+        target_changes: Optional[dict] = None,
+        reassign_takeoffs: Optional[ConditionTakeoffReassignment] = None,
+    ) -> tuple[str, ...]:
+        takeoff_resources, _dependencies = (
+            self._condition_duplicate_reassignment_resources(
+                bid_uid, source_uids, reassign_takeoffs
+            )
+        )
+        if reassign_takeoffs is not None:
+            self._mutation_executor.verify_takeoff_reassignment(
+                database_id, bid_uid, reassign_takeoffs
+            )
+        new_uids = tuple(
+            str(uid)
+            for uid in (
+                self._duplicate_conditions.execute(database_id, bid_uid, source_uids)
+                or ()
+            )
+        )
+        if len(new_uids) != len(source_uids):
+            raise RuntimeError(
+                "The condition duplicate returned an incomplete identity map."
+            )
+        if target_changes:
+            for new_uid in new_uids:
+                updates = UpdateConditionDto()
+                for field_name, value in target_changes.items():
+                    updates.set(field_name, value)
+                result = self._update_condition.execute(
+                    database_id, bid_uid, new_uid, updates
+                )
+                if not result.success:
+                    raise RuntimeError(
+                        result.error
+                        or "The duplicated condition target update was incomplete."
+                    )
+        if reassign_takeoffs is not None:
+            fields = self._apply_plan_property_payload(
+                database_id,
+                bid_uid,
+                PlanPropertyPayload.from_updates(
+                    "takeoff_condition",
+                    [(uid, new_uids[0]) for uid in reassign_takeoffs.takeoff_uids],
+                ),
+                takeoff_resources,
+            )
+            for resource in takeoff_resources:
+                recorder.record(resource, ChangeOperation.UPDATE, changed_fields=fields)
+        for new_uid in new_uids:
+            recorder.record(
+                ResourceRef("condition", new_uid, int(bid_uid)), ChangeOperation.CREATE
+            )
+        if new_uids:
+            recorder.record(
+                ResourceRef("conditions_collection", bid_uid, int(bid_uid)),
+                ChangeOperation.UPDATE,
+            )
+        return new_uids
 
     def duplicate_conditions_to_bid(
         self,
@@ -3534,6 +3634,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         authoritative_result,
         *,
         dependency_resources: tuple[ResourceRef, ...] = (),
+        captured_versions: tuple[ExpectedResourceVersion, ...] = (),
         page_uid: str = "",
         owning_surface: str = "desktop",
         block_bid_child_locks: bool = False,
@@ -3573,6 +3674,11 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 block_bid_child_locks=block_bid_child_locks,
                 block_bid_active_editors=block_bid_active_editors,
                 publish_conflict_event=False,
+                **(
+                    {"captured_versions": captured_versions}
+                    if captured_versions
+                    else {}
+                ),
             )
             authoritative = (
                 authoritative_result(mutation.value)
@@ -4859,6 +4965,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         callback: Callable[[QueuedMutationResult], None],
         *,
         target_changes: Optional[dict] = None,
+        reassign_takeoffs: Optional[ConditionTakeoffReassignment] = None,
     ) -> int:
         source_uids = self._unique_nonempty_uids(condition_uids)
         if not source_uids:
@@ -4866,11 +4973,23 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_value = int(bid_uid)
         collection = ResourceRef("conditions_collection", bid_uid, bid_value)
         changes = dict(target_changes or {})
+        takeoff_resources, assignment_dependencies = (
+            self._condition_duplicate_reassignment_resources(
+                bid_uid, source_uids, reassign_takeoffs
+            )
+        )
         payload = ProjectWritePayload.from_values(
             "duplicate_conditions",
-            {"condition_uids": source_uids, "target_changes": changes},
+            {
+                "condition_uids": source_uids,
+                "target_changes": changes,
+                "reassign_takeoffs": (
+                    asdict(reassign_takeoffs) if reassign_takeoffs else None
+                ),
+            },
         )
         dependencies = [ResourceRef("condition", uid, bid_value) for uid in source_uids]
+        dependencies.extend(assignment_dependencies)
         folder_uid = changes.get("folder_uid")
         if folder_uid:
             dependencies.append(
@@ -4880,42 +4999,32 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if cdn_type_uid:
             dependencies.append(ResourceRef("condition_type", str(cdn_type_uid)))
             dependencies.append(ResourceRef("condition_types_collection", "database"))
+        captured_versions = ()
+        if reassign_takeoffs is not None:
+            guarded_resources = (*takeoff_resources, *assignment_dependencies)
+            captured_versions = self._concurrency_tokens.expected_versions(
+                database_id, guarded_resources
+            )
+            if {item.resource for item in captured_versions} != set(guarded_resources):
+                raise ValueError(
+                    "Refresh the Bid before duplicating and reassigning Takeoffs."
+                )
 
         def duplicate(recorder):
-            new_uids = list(
-                self._duplicate_conditions.execute(database_id, bid_uid, source_uids)
-                or ()
+            return self._apply_condition_duplicate(
+                database_id,
+                bid_uid,
+                source_uids,
+                recorder,
+                target_changes=changes,
+                reassign_takeoffs=reassign_takeoffs,
             )
-            if len(new_uids) != len(source_uids):
-                raise RuntimeError(
-                    "The condition duplicate returned an incomplete identity map."
-                )
-            if changes:
-                for new_uid in new_uids:
-                    updates = UpdateConditionDto()
-                    for field_name, value in changes.items():
-                        updates.set(field_name, value)
-                    result = self._update_condition.execute(
-                        database_id, bid_uid, str(new_uid), updates
-                    )
-                    if not result.success:
-                        raise RuntimeError(
-                            result.error
-                            or "The duplicated condition target update was incomplete."
-                        )
-            for new_uid in new_uids:
-                recorder.record(
-                    ResourceRef("condition", str(new_uid), bid_value),
-                    ChangeOperation.CREATE,
-                )
-            recorder.record(collection, ChangeOperation.UPDATE)
-            return tuple(str(uid) for uid in new_uids)
 
         return self._queue_project_write(
             database_id,
             bid_uid,
             payload,
-            (collection,),
+            (collection, *takeoff_resources),
             callback,
             duplicate,
             lambda values: AuthoritativeMutationResult(
@@ -4923,10 +5032,22 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 created_uid_maps=(
                     ("conditions", tuple(zip(source_uids, tuple(values)))),
                 ),
-                affected_condition_uids=tuple(values),
-                affected_families=("conditions",),
+                updated_resources=takeoff_resources,
+                affected_page_uids=(
+                    (reassign_takeoffs.page_uid,) if reassign_takeoffs else ()
+                ),
+                affected_condition_uids=(
+                    tuple(dict.fromkeys((*source_uids, *values)))
+                    if reassign_takeoffs
+                    else tuple(values)
+                ),
+                affected_families=(
+                    ("conditions", "takeoffs") if reassign_takeoffs else ("conditions",)
+                ),
             ),
-            dependency_resources=tuple(dependencies),
+            dependency_resources=tuple(sorted(set(dependencies))),
+            captured_versions=captured_versions,
+            page_uid=reassign_takeoffs.page_uid if reassign_takeoffs else "",
             owning_surface="condition-sidebar",
         )
 

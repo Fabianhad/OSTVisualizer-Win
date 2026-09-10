@@ -1158,88 +1158,18 @@ class PlanViewActionHandler:
         dependency_resources: tuple[ResourceRef, ...] = (),
         restore=None,
     ) -> None:
-        self._release_geometry_edit_lease()
-        history_token = self._undo_svc.begin_forward_mutation(bid_ref)
-        page_identities = self._capture_page_identities(page_uids)
-        self._set_plan_items_pending(
-            bid_ref.file_path,
-            plan_uids,
-            takeoff_uids,
-            True,
-            annotation_identities,
+        complete, abort = self.prepare_sql_property_completion(
+            bid_ref,
+            property_kind,
+            new_updates,
+            old_updates=old_updates,
+            plan_uids=plan_uids,
+            takeoff_uids=takeoff_uids,
+            annotation_identities=annotation_identities,
+            page_uids=page_uids,
+            dependency_resources=dependency_resources,
+            restore=restore,
         )
-        selection_revision = self._plan_view.begin_deferred_selection()
-        handler_ref = weakref.ref(self)
-
-        def complete(result: QueuedMutationResult) -> None:
-            handler = handler_ref()
-            if handler is None:
-                return
-            if handler._sql_completion_was_applied(result):
-                return
-            if result.outcome_status in {
-                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
-                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
-            }:
-                return
-            handler._set_plan_items_pending(
-                bid_ref.file_path,
-                plan_uids,
-                takeoff_uids,
-                False,
-                annotation_identities,
-            )
-            current_plan_uids = (
-                handler._current_plan_keys_for_identities(
-                    takeoff_uids,
-                    annotation_identities,
-                )
-                if annotation_identities
-                else plan_uids
-            )
-            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
-                if (
-                    restore is not None
-                    and handler._is_allowed(Feature.EDIT_PLAN_ITEMS)
-                    and handler._plan_context_is_current(
-                        bid_ref,
-                        page_uids,
-                        page_identities,
-                    )
-                ):
-                    restore()
-                handler._restore_plan_selection_if_current(
-                    bid_ref,
-                    page_uids,
-                    current_plan_uids,
-                    page_identities,
-                    selection_revision=selection_revision,
-                )
-                handler._undo_svc.finish_forward_mutation(history_token)
-                return
-            handler._restore_plan_selection_if_current(
-                bid_ref,
-                page_uids,
-                current_plan_uids,
-                page_identities,
-                selection_revision=selection_revision,
-            )
-            if old_updates and handler._page_identities_are_current(
-                page_uids,
-                page_identities,
-            ):
-                handler._push_sql_property_history(
-                    bid_ref,
-                    property_kind,
-                    list(old_updates),
-                    list(new_updates),
-                    page_uids,
-                    dependency_resources,
-                )
-                handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
-            handler._mark_sql_completion_applied(result)
-            handler._undo_svc.finish_forward_mutation(history_token)
-
         try:
             self._write_svc.queue_plan_properties(
                 bid_ref.file_path,
@@ -1251,8 +1181,140 @@ class PlanViewActionHandler:
                 dependency_resources=dependency_resources,
             )
         except Exception:
-            self._undo_svc.finish_forward_mutation(history_token)
+            abort()
             raise
+
+    def prepare_sql_property_completion(
+        self,
+        bid_ref,
+        property_kind: str,
+        new_updates: list,
+        *,
+        old_updates: list = (),
+        plan_uids: set[str],
+        takeoff_uids: set[str] = frozenset(),
+        annotation_identities: set[tuple[str, str]] = frozenset(),
+        page_uids: tuple[str, ...] = (),
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        restore=None,
+        committed_updates=None,
+        preserve_selection: bool = False,
+        owner_is_current=None,
+    ):
+        self._release_geometry_edit_lease()
+        history_token = self._undo_svc.begin_forward_mutation(bid_ref)
+        page_identities = self._capture_page_identities(page_uids)
+        prior_selection = (
+            self._plan_identities_for_keys(set(self._plan_view.get_selected_uids()))
+            if preserve_selection
+            else None
+        )
+        self._set_plan_items_pending(
+            bid_ref.file_path,
+            plan_uids,
+            takeoff_uids,
+            True,
+            annotation_identities,
+        )
+        selection_revision = self._plan_view.begin_deferred_selection()
+        handler_ref = weakref.ref(self)
+        terminal_delivered = False
+
+        def current_selection(handler) -> set[str]:
+            if prior_selection is not None:
+                return handler._current_plan_keys_for_identities(*prior_selection)
+            if annotation_identities:
+                return handler._current_plan_keys_for_identities(
+                    takeoff_uids, annotation_identities
+                )
+            return plan_uids
+
+        def restore_failed_selection(handler) -> None:
+            if (
+                restore is not None
+                and handler._is_allowed(Feature.EDIT_PLAN_ITEMS)
+                and handler._plan_context_is_current(
+                    bid_ref, page_uids, page_identities
+                )
+            ):
+                restore()
+            handler._restore_plan_selection_if_current(
+                bid_ref,
+                page_uids,
+                current_selection(handler),
+                page_identities,
+                selection_revision=selection_revision,
+            )
+
+        def complete(result: QueuedMutationResult) -> None:
+            nonlocal terminal_delivered
+            handler = handler_ref()
+            if handler is None or terminal_delivered:
+                return
+            if handler._sql_completion_was_applied(result):
+                return
+            if result.outcome_status in {
+                MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            }:
+                return
+            terminal_delivered = True
+            handler._set_plan_items_pending(
+                bid_ref.file_path,
+                plan_uids,
+                takeoff_uids,
+                False,
+                annotation_identities,
+            )
+            if owner_is_current is not None and not owner_is_current():
+                handler._mark_sql_completion_applied(result)
+                handler._undo_svc.finish_forward_mutation(history_token)
+                return
+            if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+                restore_failed_selection(handler)
+                handler._undo_svc.finish_forward_mutation(history_token)
+                return
+            handler._restore_plan_selection_if_current(
+                bid_ref,
+                page_uids,
+                current_selection(handler),
+                page_identities,
+                selection_revision=selection_revision,
+            )
+            if old_updates and handler._page_identities_are_current(
+                page_uids,
+                page_identities,
+            ):
+                history_updates, history_dependencies = (
+                    committed_updates(result)
+                    if committed_updates is not None
+                    else (list(new_updates), dependency_resources)
+                )
+                handler._push_sql_property_history(
+                    bid_ref,
+                    property_kind,
+                    list(old_updates),
+                    history_updates,
+                    page_uids,
+                    history_dependencies,
+                )
+                handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
+            handler._mark_sql_completion_applied(result)
+            handler._undo_svc.finish_forward_mutation(history_token)
+
+        def abort() -> None:
+            nonlocal terminal_delivered
+            if terminal_delivered:
+                return
+            terminal_delivered = True
+            self._set_plan_items_pending(
+                bid_ref.file_path, plan_uids, takeoff_uids, False, annotation_identities
+            )
+            if owner_is_current is None or owner_is_current():
+                restore_failed_selection(self)
+            self._undo_svc.finish_forward_mutation(history_token)
+
+        return complete, abort
 
     def _push_sql_property_history(
         self,
@@ -1647,19 +1709,39 @@ class PlanViewActionHandler:
             dependency_resources=condition_dependencies,
         ):
             return
+        self.record_local_condition_reassignment(bid_ref, old_updates, new_updates)
+
+    def can_reassign_takeoffs(self, uids: set[str]) -> bool:
+        return bool(
+            self._is_allowed(Feature.EDIT_PLAN_ITEMS)
+            and not uids.intersection(self._plan_view.get_pending_mutation_uids())
+            and all(self._command_takeoff(uid) is not None for uid in uids)
+        )
+
+    def record_local_condition_reassignment(
+        self, bid_ref, old_updates, new_updates
+    ) -> None:
+        dependencies = tuple(
+            sorted(
+                {
+                    self._condition_resource(bid_ref, str(condition_uid))
+                    for _uid, condition_uid in (*old_updates, *new_updates)
+                }
+            )
+        )
         if old_updates:
             self._undo_svc.push_local(
                 lambda: self._execute_local_plan_properties(
                     bid_ref,
                     "takeoff_condition",
                     old_updates,
-                    dependency_resources=condition_dependencies,
+                    dependency_resources=dependencies,
                 ),
                 lambda: self._execute_local_plan_properties(
                     bid_ref,
                     "takeoff_condition",
                     new_updates,
-                    dependency_resources=condition_dependencies,
+                    dependency_resources=dependencies,
                 ),
             )
 

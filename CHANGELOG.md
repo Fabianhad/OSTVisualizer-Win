@@ -4,6 +4,18 @@
 
 ### Added
 
+- Condition context menus now include **Duplicate and Reassign Takeoff** below
+  Duplicate. The action copies the right-clicked Condition and reassigns only its
+  current-Page Takeoffs in one MDB or SQL transaction, retaining normal duplication
+  behavior and reassignment history. SQL completion preserves the captured typed
+  selection, including matching Takeoffs, and submission rejection restores it.
+  Stale menus and queued ownership changes
+  cannot redirect the operation to another Page or Condition.
+- Condition context menus now include **Select Objects** below Rename to select
+  that Condition's Takeoffs on the active Main Plan Page using normal
+  multi-selection, including after SQL remote projection. The action requires
+  matching authoritative and displayed Takeoffs and selection access; stale menus
+  cannot override newer Page, Bid, Condition, selection, or tool ownership.
 - Open Databases now includes Database Actions: Compact/Repair for Access MDB
   files, using DAO compaction, validated replacement, and normal database refresh.
   SQL Server explicitly reports that Compact/Repair is unavailable.
@@ -23,7 +35,9 @@
   heterogeneous prior Area values restore correctly, and rejected edits restore
   only their still-current optimistic preview. Replaying Bid-scoped local history
   after Page navigation no longer clears or replaces the current Page's selection,
-  including after a same-UID Page replacement.
+  including after a same-UID Page replacement. Failed SQL property submissions
+  also release their pending Takeoff markers. Repeated terminal property callbacks
+  cannot clear pending markers owned by a newer operation.
 - Clearing a Plan view now releases scene-owned graphics-item references and
   completes its internal empty-state transition before publishing selection,
   cursor, or Page-clear signals. Synchronous toolbar refresh can no longer access

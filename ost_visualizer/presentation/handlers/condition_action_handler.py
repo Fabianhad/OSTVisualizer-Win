@@ -3,7 +3,10 @@ import weakref
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Optional
+from typing import Callable, Optional
+from ...application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
+)
 from PySide6.QtCore import QSignalBlocker
 from shiboken6 import isValid
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
@@ -89,16 +92,19 @@ class ConditionActionHandler:
             return False
         self._pending_sql_operations.add(key)
         handler_ref = weakref.ref(self)
+        terminal_delivered = False
 
         def complete(result: QueuedMutationResult) -> None:
+            nonlocal terminal_delivered
             handler = handler_ref()
-            if handler is None:
+            if handler is None or terminal_delivered:
                 return
             if result.outcome_status in {
                 MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
                 MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
             }:
                 return
+            terminal_delivered = True
             handler._pending_sql_operations.discard(key)
             if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                 if on_committed is not None:
@@ -637,7 +643,13 @@ class ConditionActionHandler:
         if created_uid[0]:
             self._coordinator.highlight_sidebar({created_uid[0]})
 
-    def on_duplicate_requested(self, condition_uids: list) -> None:
+    def on_duplicate_requested(
+        self,
+        condition_uids: list,
+        *,
+        reassign_takeoffs: Optional[ConditionTakeoffReassignment] = None,
+        context_is_current: Optional[Callable[[], bool]] = None,
+    ) -> None:
         if not condition_uids:
             return
         if not self._coordinator.ui_access_manager.is_allowed(
@@ -648,47 +660,178 @@ class ConditionActionHandler:
         if not bid_ref or not write_service:
             return
         sidebar = self._coordinator.conditions_sidebar
+        if reassign_takeoffs is not None:
+            if context_is_current is None:
+                raise ValueError("A reassignment requires its captured Plan context.")
+            if not context_is_current():
+                return
+        options = {"reassign_takeoffs": reassign_takeoffs} if reassign_takeoffs else {}
+        old_updates = (
+            [
+                (uid, reassign_takeoffs.condition_uid)
+                for uid in reassign_takeoffs.takeoff_uids
+            ]
+            if reassign_takeoffs
+            else []
+        )
         if self._uses_sql_queue(bid_ref):
             if not self._flush_deferred_for_bid(bid_ref):
                 return
             bid_owner = self._capture_bid_owner(bid_ref)
             if bid_owner is None:
                 return
+            if context_is_current is not None and not context_is_current():
+                return
+            property_complete = None
+            abort = None
+            finish_is_current = lambda: True
+            selection_is_current = lambda: True
+            if reassign_takeoffs is not None:
+                plan = self._coordinator.plan_view
+                owner = plan._context_menu_owner()
+                tool_revision = plan.tool_revision
+
+                def committed_updates(result):
+                    new_uid = result.authoritative_result.created_resource_ids[0]
+                    return (
+                        [(uid, new_uid) for uid in reassign_takeoffs.takeoff_uids],
+                        tuple(
+                            ResourceRef("condition", uid, int(bid_ref.bid_uid))
+                            for uid in (reassign_takeoffs.condition_uid, new_uid)
+                        ),
+                    )
+
+                property_complete, abort = (
+                    self._coordinator._plan_view_handler.prepare_sql_property_completion(
+                        bid_ref,
+                        "takeoff_condition",
+                        [],
+                        old_updates=old_updates,
+                        plan_uids=set(reassign_takeoffs.takeoff_uids),
+                        takeoff_uids=set(reassign_takeoffs.takeoff_uids),
+                        page_uids=(reassign_takeoffs.page_uid,),
+                        committed_updates=committed_updates,
+                        preserve_selection=True,
+                        owner_is_current=lambda: (
+                            not self._coordinator._is_cleaning_up
+                            and isValid(plan)
+                            and self._coordinator.plan_view is plan
+                            and self._bid_owner_is_current(bid_ref, bid_owner)
+                        ),
+                    )
+                )
+                selection_revision = plan.selection_revision
+                selection_is_current = lambda: (
+                    isValid(plan) and plan.selection_revision == selection_revision
+                )
+
+                def finish_is_current():
+                    return (
+                        not self._coordinator._is_cleaning_up
+                        and isValid(plan)
+                        and self._coordinator.plan_view is plan
+                        and self._ui_state.active_page_uid == reassign_takeoffs.page_uid
+                        and plan._context_menu_owner_is_current(owner)
+                        and self._project_data.get_page(reassign_takeoffs.page_uid)
+                        is owner[1]
+                        and plan.tool_revision == tool_revision
+                        and self._coordinator._is_takeoff_2d_view_active()
+                        and self._coordinator.ui_access_manager.is_allowed(
+                            Feature.EDIT_PLAN_ITEMS
+                        )
+                    )
 
             def committed(result: QueuedMutationResult) -> None:
+                selection_owned = selection_is_current()
+                if property_complete is not None:
+                    property_complete(result)
                 authoritative = result.authoritative_result
                 new_uids = list(
                     authoritative.created_resource_ids if authoritative else ()
                 )
-                if new_uids and self._bid_interaction_still_allowed(
-                    bid_ref,
-                    bid_owner,
-                    Feature.DUPLICATE_CONDITION,
+                if (
+                    new_uids
+                    and selection_owned
+                    and finish_is_current()
+                    and self._bid_interaction_still_allowed(
+                        bid_ref,
+                        bid_owner,
+                        Feature.DUPLICATE_CONDITION,
+                    )
                 ):
                     self._finish_condition_duplicate(new_uids, sidebar)
 
-            self._submit_sql_condition_operation(
+            submitted = self._submit_sql_condition_operation(
                 bid_ref,
-                ("duplicate", *condition_uids),
+                (
+                    ("duplicate_reassign", reassign_takeoffs.page_uid, *condition_uids)
+                    if reassign_takeoffs
+                    else ("duplicate", *condition_uids)
+                ),
                 "Duplicate Conditions",
                 lambda callback: write_service.queue_conditions_duplicate(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
                     condition_uids,
                     callback,
+                    **options,
                 ),
                 committed,
+                on_failed=property_complete,
             )
+            if not submitted and abort is not None:
+                abort()
             return
+        local_plan = (
+            self._coordinator.plan_view if reassign_takeoffs is not None else None
+        )
         result = self._duplicate_conditions_result(
-            bid_ref, write_service, condition_uids, sidebar
+            bid_ref,
+            write_service,
+            condition_uids,
+            sidebar,
+            context_is_current=context_is_current,
+            **options,
         )
         new_uids = list(result.value or [])
         if not new_uids:
             logger.warning("Failed to duplicate conditions %s", condition_uids)
+            if reassign_takeoffs is not None:
+                show_warning(
+                    sidebar.window() if sidebar and isValid(sidebar) else None,
+                    "Duplicate and Reassign Takeoff",
+                    "The operation could not complete. Refresh the database before retrying.",
+                )
             return
         if result.refresh_failed:
             self._warn_condition_refresh_failed("duplicated")
+            return
+        if (
+            reassign_takeoffs is not None
+            and self._ui_state.get_selected_bid_ref() == bid_ref
+        ):
+            self._coordinator._plan_view_handler.record_local_condition_reassignment(
+                bid_ref,
+                old_updates,
+                [(uid, new_uids[0]) for uid in reassign_takeoffs.takeoff_uids],
+            )
+        if reassign_takeoffs is not None and (
+            self._coordinator._is_cleaning_up
+            or not isValid(local_plan)
+            or self._coordinator.plan_view is not local_plan
+            or self._ui_state.get_selected_bid_ref() != bid_ref
+            or self._ui_state.active_page_uid != reassign_takeoffs.page_uid
+            or local_plan.current_page_uid != reassign_takeoffs.page_uid
+            or self._project_data.get_page(reassign_takeoffs.page_uid)
+            is not local_plan._context_menu_owner()[1]
+            or not self._coordinator._is_takeoff_2d_view_active()
+            or not self._coordinator.ui_access_manager.is_allowed(
+                Feature.EDIT_PLAN_ITEMS
+            )
+            or not self._coordinator.ui_access_manager.is_allowed(
+                Feature.DUPLICATE_CONDITION
+            )
+        ):
             return
         self._finish_condition_duplicate(new_uids, sidebar)
 
@@ -872,17 +1015,26 @@ class ConditionActionHandler:
             self._coordinator.highlight_sidebar(set(moved_uids))
 
     def _duplicate_conditions_result(
-        self, bid_ref, write_service, condition_uids: list, sidebar
+        self,
+        bid_ref,
+        write_service,
+        condition_uids: list,
+        sidebar,
+        *,
+        context_is_current=None,
+        **options,
     ):
         if not self._flush_deferred_for_bid(bid_ref):
+            return SimpleNamespace(value=[], refresh_failed=False, write_success=False)
+        if context_is_current is not None and not context_is_current():
             return SimpleNamespace(value=[], refresh_failed=False, write_success=False)
         if sidebar:
             with QSignalBlocker(sidebar):
                 return write_service.duplicate_conditions_result(
-                    bid_ref.file_path, bid_ref.bid_uid, condition_uids
+                    bid_ref.file_path, bid_ref.bid_uid, condition_uids, **options
                 )
         return write_service.duplicate_conditions_result(
-            bid_ref.file_path, bid_ref.bid_uid, condition_uids
+            bid_ref.file_path, bid_ref.bid_uid, condition_uids, **options
         )
 
     def _warn_condition_refresh_failed(self, action: str) -> None:

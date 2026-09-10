@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Callable, Protocol, Sequence, TypeVar
+from ..dtos.condition_takeoff_reassignment import ConditionTakeoffReassignment
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationRequest,
@@ -20,6 +21,12 @@ class IMutationRecorder(Protocol):
         payload: str = "",
     ) -> None: ...
 class IDatabaseMutationExecutor(Protocol):
+    def verify_takeoff_reassignment(
+        self,
+        database_id: str,
+        bid_uid: str,
+        assignment: ConditionTakeoffReassignment,
+    ) -> None: ...
     def execute(
         self,
         request: DatabaseMutationRequest,

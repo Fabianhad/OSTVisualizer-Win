@@ -3,6 +3,9 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
+from ...application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
+)
 from shiboken6 import isValid
 from ...application.dtos.mesh_geometry_dto import (
     MeshGeometry,
@@ -61,7 +64,11 @@ from ..dialogs.set_scale_dialog import ScaleSettings, SetScaleDialog
 from ..dialogs.synchronization_conflict_dialog import SynchronizationConflictDialog
 from ..handlers.condition_action_handler import ConditionActionHandler
 from ..managers.app_config_presentation_manager import AppConfigPresentationManager
-from ..managers.ui_access_manager import Feature, MAIN_PLAN_SURFACE_ID
+from ..managers.ui_access_manager import (
+    Feature,
+    MAIN_PLAN_SURFACE_ID,
+    PlanSurfaceAccessContext,
+)
 from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
@@ -368,6 +375,12 @@ class UIEventCoordinator:
         self._sidebar.conditions_sidebar = sidebar
         self._toolbar.set_conditions_sidebar(sidebar)
         if sidebar:
+            sidebar.set_select_objects_command_factory(
+                self.prepare_condition_object_selection
+            )
+            sidebar.set_duplicate_reassign_command_factory(
+                self.prepare_condition_duplicate_reassignment
+            )
             sidebar.condition_selected.connect(self._on_condition_selected)
             sidebar.create_requested.connect(
                 self._condition_handler.on_create_requested
@@ -400,6 +413,131 @@ class UIEventCoordinator:
                 self._condition_handler.on_condition_type_change_requested
             )
             self._toolbar.refresh()
+
+    def _prepare_condition_takeoff_target(
+        self, condition: Condition, *, require_edit: bool = False
+    ) -> Optional[Callable[[], set[str]]]:
+        """Capture the sidebar target and the owning Main Plan context."""
+        plan = self.plan_view
+        if self._is_cleaning_up or plan is None or not isValid(plan):
+            return None
+        owner = plan._context_menu_owner()
+        bid_ref, page, _selection = owner
+        if bid_ref is None or page is None:
+            return None
+        bid = self.project_data.get_bid(bid_ref)
+        selection_revision = plan.selection_revision
+
+        def matching_uids() -> set[str]:
+            if (
+                self._is_cleaning_up
+                or not self._is_takeoff_2d_view_active()
+                or self.plan_view is not plan
+                or not isValid(plan)
+                or not plan._context_menu_owner_is_current(owner)
+                or plan.selection_revision != selection_revision
+                or self.ui_state_manager.get_selected_bid_ref() != bid_ref
+                or self.ui_state_manager.active_page_uid != page.uid
+                or bid is None
+                or self.project_data.get_bid(bid_ref) is not bid
+                or self.project_data.get_page(page.uid) is not page
+                or self.project_data.get_condition(condition.uid) is not condition
+            ):
+                return set()
+            access = self.ui_access_manager.get_plan_surface_access(
+                PlanSurfaceAccessContext(
+                    surface_id=MAIN_PLAN_SURFACE_ID,
+                    database_id=bid_ref.file_path,
+                    bid_ref=bid_ref,
+                    page_uid=page.uid,
+                    annotation_layer_visible=self.project_data.is_annotation_layer_visible(),
+                )
+            )
+            if not access.can_select_plan_items or (
+                require_edit
+                and (
+                    not access.can_edit_plan_items
+                    or not self.ui_access_manager.is_allowed(
+                        Feature.DUPLICATE_CONDITION
+                    )
+                    or not self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)
+                )
+            ):
+                return set()
+            takeoffs = [
+                takeoff
+                for takeoff in self.project_data.get_page_takeoffs(page.uid)
+                if takeoff.condition_uid == condition.uid
+            ]
+            uids = {
+                takeoff.uid
+                for takeoff in takeoffs
+                if (displayed_takeoff := plan.get_takeoff(takeoff.uid)) is not None
+                and displayed_takeoff.page_uid == page.uid
+                and displayed_takeoff.condition_uid == takeoff.condition_uid
+            }
+            if require_edit and len(uids) != len(takeoffs):
+                return set()
+            return uids
+
+        return matching_uids if matching_uids() else None
+
+    def prepare_condition_object_selection(
+        self, condition: Condition
+    ) -> Optional[Callable[[], None]]:
+        matching_uids = self._prepare_condition_takeoff_target(condition)
+        if matching_uids is None:
+            return None
+        plan = self.plan_view
+        tool_revision = plan.tool_revision
+
+        def select_objects() -> None:
+            if not matching_uids() or plan.tool_revision != tool_revision:
+                return
+            plan.set_cursor_mode(CURSOR_MODE_SELECT)
+            uids = matching_uids()
+            if uids:
+                plan.select_takeoff_uids(uids)
+
+        return select_objects
+
+    def prepare_condition_duplicate_reassignment(
+        self, condition: Condition
+    ) -> Optional[Callable[[], None]]:
+        matching_uids = self._prepare_condition_takeoff_target(
+            condition, require_edit=True
+        )
+        if matching_uids is None or self._plan_view_handler is None:
+            return None
+        plan = self.plan_view
+        page = plan._context_menu_owner()[1]
+        tool_revision = plan.tool_revision
+
+        def current_uids() -> set[str]:
+            if plan.tool_revision != tool_revision:
+                return set()
+            uids = matching_uids()
+            if not uids or not self._plan_view_handler.can_reassign_takeoffs(uids):
+                return set()
+            return uids
+
+        if not current_uids():
+            return None
+
+        def duplicate_and_reassign() -> None:
+            uids = current_uids()
+            if not uids:
+                return
+            assignment = ConditionTakeoffReassignment(
+                condition.uid, page.uid, tuple(sorted(uids))
+            )
+            self._condition_handler.on_duplicate_requested(
+                [condition.uid],
+                reassign_takeoffs=assignment,
+                context_is_current=lambda: current_uids() == uids,
+            )
+
+        return duplicate_and_reassign
 
     def set_condition_summary_tab(self, summary_tab) -> None:
         self.condition_summary_tab = summary_tab

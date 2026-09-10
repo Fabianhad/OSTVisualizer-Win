@@ -1,4 +1,7 @@
 import logging
+from ...application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
+)
 import contextvars
 from contextlib import contextmanager
 from typing import Generator, Optional, Sequence
@@ -95,6 +98,47 @@ class MdbWriter(
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)
+
+    def verify_takeoff_reassignment(
+        self, database_id: str, bid_uid: str, assignment: ConditionTakeoffReassignment
+    ) -> None:
+        with self._connection(database_id) as connection:
+            schema = self._schema(connection)
+            self._require_write_columns(
+                schema,
+                "BidTakeoffs",
+                ("UID", "BidUID", "BidPageUID", "BidConditionUID"),
+            )
+            cursor = connection.cursor()
+            for table, uid in (
+                ("BidPages", assignment.page_uid),
+                ("BidConditions", assignment.condition_uid),
+            ):
+                require_existing_bid_scoped_uid_matches(
+                    cursor, table, (int(uid),), bid_uid
+                )
+            expected = {int(uid) for uid in assignment.takeoff_uids}
+            found = set()
+            for chunk in self._iter_access_chunks(tuple(expected)):
+                placeholders = ",".join("?" for _uid in chunk)
+                cursor.execute(
+                    "SELECT [UID], [BidPageUID], [BidConditionUID] FROM [BidTakeoffs] "
+                    f"WHERE [BidUID]=? AND [UID] IN ({placeholders})",
+                    int(bid_uid),
+                    *chunk,
+                )
+                for uid, page_uid, condition_uid in cursor.fetchall():
+                    if page_uid != int(assignment.page_uid) or condition_uid != int(
+                        assignment.condition_uid
+                    ):
+                        raise MissingBidOwnedUidError(
+                            "A Takeoff changed Page or Condition before reassignment started."
+                        )
+                    found.add(int(uid))
+            if found != expected:
+                raise MissingBidOwnedUidError(
+                    "A Takeoff was deleted or replaced before reassignment started."
+                )
 
     def verify_plan_items_exist(
         self,

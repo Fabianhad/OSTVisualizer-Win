@@ -24,6 +24,8 @@ Built for estimators and construction teams who work with OST project files dail
 - **HTML/PDF Elevation Callouts** -- Independently include visibility-aware four-row takeoff callouts with elevations and cubic-yard quantities in HTML and PDF exports from the Options dialog *(Commercial)*
 - **Font and Color Defaults** -- Set creation defaults for text, area labels, dimensions, style labels, highlights, and hot links from the Options dialog, and choose the live inactive-object color used across 2D, 3D, and exports
 - **Condition Management** -- Create, edit, duplicate, and organize conditions across bids *(Commercial)*
+- **Duplicate and Reassign Takeoff** -- Right-click a Condition in Main's 2D Plan and choose the action below **Duplicate** to copy the Condition and move only its displayed-Page Takeoffs to the copy in one transaction *(Commercial)*
+- **Select Condition Objects** -- In Main's 2D Plan view, right-click a Condition and choose **Select Objects** below **Rename** to replace the selection with that Condition's selectable Takeoffs on the displayed Page *(Commercial)*
 - **Realtime Sync** -- Detects when On-Screen Takeoff is active and picks up changes automatically ([free companion tool](https://fabianhad.com/ost3d/download))
 
 ## Download

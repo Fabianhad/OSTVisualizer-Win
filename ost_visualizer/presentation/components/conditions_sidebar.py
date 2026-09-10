@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections import defaultdict
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from shiboken6 import isValid
@@ -167,6 +167,12 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._conditions: Dict[str, Condition] = {}
         self._block_selection_signal = False
         self._tree_revision = 0
+        self._duplicate_reassign_command_factory: Optional[
+            Callable[[Condition], Optional[Callable[[], None]]]
+        ] = None
+        self._select_objects_command_factory: Optional[
+            Callable[[Condition], Optional[Callable[[], None]]]
+        ] = None
         self._selected_condition_uids: List[str] = []
         self._copied_condition_uids: List[str] = []
         self._condition_clipboard_cut: bool = False
@@ -928,9 +934,29 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 menu, condition_uids, can_modify_conditions
             )
         self._add_rename_action(menu, item, kind, condition_uids)
+        if is_condition_target:
+            condition = self._conditions[self._item_kind_uid(item)[1]]
+            command = (
+                self._select_objects_command_factory(condition)
+                if self._select_objects_command_factory is not None
+                else None
+            )
+            self._add_context_action(
+                menu, "Select Objects", command, command is not None
+            )
         menu.addSeparator()
         self._add_group_expand_actions(menu)
         exec_transient_menu(menu, self.tree.viewport().mapToGlobal(pos))
+
+    def set_select_objects_command_factory(
+        self, factory: Callable[[Condition], Optional[Callable[[], None]]]
+    ) -> None:
+        self._select_objects_command_factory = factory
+
+    def set_duplicate_reassign_command_factory(
+        self, factory: Callable[[Condition], Optional[Callable[[], None]]]
+    ) -> None:
+        self._duplicate_reassign_command_factory = factory
 
     def _select_context_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
         if item.isSelected():
@@ -1009,6 +1035,17 @@ class ConditionsSidebar(QtWidgets.QWidget):
             is_condition_target and bool(condition_uids) and self._duplicate_allowed,
             action_key="duplicate",
         )
+        if is_condition_target:
+            condition = self._conditions[self._item_kind_uid(item)[1]]
+            command = (
+                self._duplicate_reassign_command_factory(condition)
+                if self._duplicate_reassign_command_factory is not None
+                and self._duplicate_allowed
+                else None
+            )
+            self._add_context_action(
+                menu, "Duplicate and Reassign Takeoff", command, command is not None
+            )
         self._add_context_action(
             menu,
             "Cut",
@@ -1075,7 +1112,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         tree_revision = self._tree_revision
 
         def guarded_callback() -> None:
-            if self._tree_revision == tree_revision:
+            if isValid(self) and self._tree_revision == tree_revision and callback:
                 callback()
 
         return ContextMenuManager.add_action(

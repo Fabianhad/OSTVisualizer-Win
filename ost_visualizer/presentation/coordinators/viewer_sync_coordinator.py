@@ -264,7 +264,13 @@ class ViewerSyncCoordinator:
         if self.plan_view is None:
             return False
         snapshot = prepared.snapshot
-        page = snapshot.page
+        page = (
+            self._project_data.get_page(snapshot.page.uid)
+            if snapshot.remote_identity is not None
+            else snapshot.page
+        )
+        if page is None:
+            return False
         conditions = dict(snapshot.conditions)
         takeoffs = list(snapshot.takeoffs)
         page_area_selections = dict(snapshot.page_area_selections)
