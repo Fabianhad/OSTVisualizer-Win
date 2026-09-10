@@ -5,7 +5,6 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtGui, QtWidgets
 from shiboken6 import delete
-
 from ost_visualizer.presentation.components.color_button import ColorButton
 
 

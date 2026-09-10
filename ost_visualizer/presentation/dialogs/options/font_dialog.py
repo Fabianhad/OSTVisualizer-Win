@@ -73,6 +73,7 @@ class FontDialog(QtWidgets.QDialog):
         button_layout.addStretch()
         self.sample_group = QtWidgets.QGroupBox("Sample", self)
         sample_layout = QtWidgets.QVBoxLayout(self.sample_group)
+        sample_layout.setSpacing(COMPACT_SPACING)
         self.sample_label = QtWidgets.QLabel(self.SAMPLE_TEXT, self.sample_group)
         self.sample_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.sample_label.setFrameShape(QtWidgets.QFrame.Shape.Panel)

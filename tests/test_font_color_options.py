@@ -14,7 +14,7 @@ from ost_visualizer.domain.entities.workspace_state import TakeoffWorkspaceState
 from ost_visualizer.infrastructure.persistence.repositories.json_config_repository import (
     JsonConfigRepository,
 )
-from ost_visualizer.presentation.config import FONT_DIALOG_WIDTH
+from ost_visualizer.presentation.config import COMPACT_SPACING, FONT_DIALOG_WIDTH
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.dialogs.options.font_dialog import FontDialog
 from ost_visualizer.presentation.dialogs.options.fonts_colors_tab import (
@@ -300,6 +300,7 @@ class FontColorOptionsTests(unittest.TestCase):
         dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, False))
         long_name = "A deliberately long installed font family or style name"
         try:
+            self.assertEqual(dialog.sample_group.layout().spacing(), COMPACT_SPACING)
             dialog.font_list.addItem(long_name)
             dialog.style_list.addItem(long_name)
             dialog.font_edit.setText(long_name)

@@ -1,6 +1,6 @@
 from PySide6 import QtCore, QtWidgets
 from ....domain.entities.config import Config
-from ...config import NO_MARGINS, RELAXED_MARGINS, RELAXED_SPACING
+from ...config import COMPACT_SPACING, RELAXED_SPACING
 from ...utils.plan_tool_registry import TAKEOFF_TOOLBAR_ITEMS
 
 
@@ -11,42 +11,58 @@ class TakeoffToolbarTab(QtWidgets.QWidget):
         super().__init__(parent)
         self._unknown_hidden: tuple[str, ...] = ()
         self.checks: dict[str, QtWidgets.QCheckBox] = {}
-        outer_layout = QtWidgets.QVBoxLayout(self)
-        outer_layout.setContentsMargins(*NO_MARGINS)
-        scroll = QtWidgets.QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        content = QtWidgets.QWidget(scroll)
-        layout = QtWidgets.QVBoxLayout(content)
-        layout.setContentsMargins(*RELAXED_MARGINS)
-        layout.setSpacing(RELAXED_SPACING)
-        groups = QtWidgets.QGridLayout()
-        groups.setSpacing(RELAXED_SPACING)
-        layout.addLayout(groups)
-        for index, group in enumerate(
-            dict.fromkeys(spec.group for spec in TAKEOFF_TOOLBAR_ITEMS)
-        ):
-            box = QtWidgets.QGroupBox(group, content)
-            group_layout = QtWidgets.QVBoxLayout(box)
-            for spec in TAKEOFF_TOOLBAR_ITEMS:
-                if spec.group != group:
-                    continue
-                check = QtWidgets.QCheckBox(spec.label, box)
-                check.setObjectName(f"takeoff_toolbar_{spec.key}")
-                check.toggled.connect(self.changed)
-                self.checks[spec.key] = check
-                group_layout.addWidget(check)
-            groups.addWidget(
-                box, index // 2, index % 2, alignment=QtCore.Qt.AlignmentFlag.AlignTop
-            )
-        self.restore_button = QtWidgets.QPushButton("Restore Default Toolbar", content)
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        tab_layout = QtWidgets.QVBoxLayout(self)
+        tab_layout.setSpacing(RELAXED_SPACING)
+        annotation_group = self._build_group("Annotation tools", columns=2)
+        tab_layout.addWidget(annotation_group)
+        lower_layout = QtWidgets.QHBoxLayout()
+        lower_layout.setSpacing(RELAXED_SPACING)
+        lower_left_layout = QtWidgets.QVBoxLayout()
+        lower_right_layout = QtWidgets.QVBoxLayout()
+        lower_layout.addLayout(lower_left_layout, 1)
+        lower_layout.addLayout(lower_right_layout, 1)
+        lower_left_layout.addWidget(self._build_group("Page navigation"))
+        lower_left_layout.addWidget(self._build_group("Cursor tools"))
+        lower_right_layout.addWidget(self._build_group("View controls"))
+        lower_right_layout.addWidget(self._build_group("Page Settings"))
+        lower_left_layout.addStretch()
+        lower_right_layout.addStretch()
+        tab_layout.addLayout(lower_layout)
+        self.restore_button = QtWidgets.QPushButton("Restore Default Toolbar", self)
         self.restore_button.clicked.connect(self.restore_defaults)
-        layout.addWidget(
+        tab_layout.addWidget(
             self.restore_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft
         )
-        layout.addStretch(1)
-        scroll.setWidget(content)
-        outer_layout.addWidget(scroll)
+        tab_layout.addStretch()
+
+    def _build_group(self, group_name: str, *, columns: int = 1) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox(group_name)
+        group.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        layout = QtWidgets.QHBoxLayout(group)
+        layout.setSpacing(RELAXED_SPACING)
+        column_layouts = [QtWidgets.QVBoxLayout() for _ in range(columns)]
+        for column_layout in column_layouts:
+            column_layout.setSpacing(COMPACT_SPACING)
+            layout.addLayout(column_layout, 1)
+        specs = tuple(
+            spec for spec in TAKEOFF_TOOLBAR_ITEMS if spec.group == group_name
+        )
+        rows_per_column = (len(specs) + columns - 1) // columns
+        for index, spec in enumerate(specs):
+            check = QtWidgets.QCheckBox(spec.label, group)
+            check.setObjectName(f"takeoff_toolbar_{spec.key}")
+            check.toggled.connect(self.changed)
+            self.checks[spec.key] = check
+            column_layouts[index // rows_per_column].addWidget(check)
+        for column_layout in column_layouts:
+            column_layout.addStretch()
+        return group
 
     def load_hidden_items(self, hidden: tuple[str, ...]) -> None:
         self._unknown_hidden = tuple(key for key in hidden if key not in self.checks)

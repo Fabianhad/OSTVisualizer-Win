@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
+from shiboken6 import delete, isValid
 from test_plan_view_action_handler import (
     FakeAccess,
     FakeAnnotationWriteService,
@@ -314,7 +315,10 @@ class PresentationChaosHarness:
         self._load_active_page()
 
     def cleanup(self) -> None:
-        self.view.cleanup()
+        view = self.view
+        view.cleanup()
+        if isValid(view):
+            delete(view)
         _app().processEvents()
 
     def _record_paste_request(self) -> None:
@@ -696,6 +700,12 @@ class PresentationChaosHarnessTests(unittest.TestCase):
         for seed in _configured_seeds():
             with self.subTest(seed=seed, steps=steps):
                 self._run_harness(seed, steps)
+
+    def test_harness_cleanup_destroys_its_unparented_plan_view(self):
+        harness = PresentationChaosHarness(9000, self)
+        view = harness.view
+        harness.cleanup()
+        self.assertFalse(isValid(view))
 
     def test_known_sequence_page_switch_drops_stale_selection(self):
         harness = PresentationChaosHarness(9001, self)

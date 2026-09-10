@@ -34,6 +34,7 @@ from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.app_config_presentation_manager import (
     AppConfigPresentationManager,
 )
+from ost_visualizer.presentation.config import RELAXED_SPACING
 from ost_visualizer.presentation.managers.shortcut_manager import ShortcutManager
 from ost_visualizer.presentation.utils.plan_tool_registry import (
     TAKEOFF_TOOLBAR_ITEMS,
@@ -451,6 +452,43 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
         self.assertEqual(
             self.model.snapshot().hidden_takeoff_toolbar_items, ("future_tool",)
         )
+
+    def test_takeoff_toolbar_tab_uses_options_tab_layout_design(self):
+        dialog = self.dialog()
+        tab = dialog._takeoff_toolbar_tab
+        self.assertIsInstance(tab.layout(), QtWidgets.QVBoxLayout)
+        self.assertEqual(tab.findChildren(QtWidgets.QScrollArea), [])
+        groups = {
+            group.title(): group for group in tab.findChildren(QtWidgets.QGroupBox)
+        }
+        self.assertEqual(
+            set(groups),
+            {
+                "Annotation tools",
+                "Page navigation",
+                "Cursor tools",
+                "View controls",
+                "Page Settings",
+            },
+        )
+        annotation_layout = groups["Annotation tools"].layout()
+        self.assertIsInstance(annotation_layout, QtWidgets.QHBoxLayout)
+        self.assertEqual(annotation_layout.count(), 2)
+        lower_layout = tab.layout().itemAt(1).layout()
+        self.assertIsInstance(lower_layout, QtWidgets.QHBoxLayout)
+        self.assertEqual(lower_layout.count(), 2)
+        lower_columns = tuple(
+            lower_layout.itemAt(index).layout() for index in range(lower_layout.count())
+        )
+        self.assertTrue(
+            all(isinstance(column, QtWidgets.QVBoxLayout) for column in lower_columns)
+        )
+        self.assertEqual(tab.layout().spacing(), RELAXED_SPACING)
+        self.assertEqual(lower_layout.spacing(), RELAXED_SPACING)
+        self.assertTrue(
+            all(column.spacing() == RELAXED_SPACING for column in lower_columns)
+        )
+        self.assertEqual(len(tab.checks), len(TAKEOFF_TOOLBAR_ITEMS))
 
     def test_apply_ok_cancel_and_restore_defaults_use_one_config_write(self):
         changes = []

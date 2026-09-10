@@ -6985,6 +6985,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             annotation_renderer=FakeAnnotationRenderer(),
             linear_geometry=FakeLinearGeometry(),
         )
+        self.addCleanup(delete, view)
         self.addCleanup(view.cleanup)
         view.set_selection_enabled(True)
         page = Page(uid="page-1", name="Page 1")

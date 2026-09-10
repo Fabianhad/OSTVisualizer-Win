@@ -59,11 +59,15 @@ class OptionsTab(QtWidgets.QWidget):
 
     def _setup_ui(self) -> None:
         tab_layout = QtWidgets.QVBoxLayout(self)
+        tab_layout.setSpacing(RELAXED_SPACING)
         preferences_group = self._build_preferences_group()
         tab_layout.addWidget(preferences_group)
         lower_layout = QtWidgets.QHBoxLayout()
+        lower_layout.setSpacing(RELAXED_SPACING)
         lower_left_layout = QtWidgets.QVBoxLayout()
         lower_right_layout = QtWidgets.QVBoxLayout()
+        lower_left_layout.setSpacing(RELAXED_SPACING)
+        lower_right_layout.setSpacing(RELAXED_SPACING)
         lower_layout.addLayout(lower_left_layout, 1)
         lower_layout.addLayout(lower_right_layout, 1)
         lower_left_layout.addWidget(self._build_snap_angle_group())
@@ -255,6 +259,7 @@ class OptionsTab(QtWidgets.QWidget):
     def _build_snap_angle_group(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox(OPTIONS_GROUP_SNAP_ANGLE)
         layout = QtWidgets.QFormLayout(group)
+        layout.setSpacing(COMPACT_SPACING)
         self.snap_to_grid_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SNAP_TO_GRID)
         self.snap_to_grid_threshold_spin = self._build_snap_threshold_spin()
         layout.addRow(
@@ -328,6 +333,7 @@ class OptionsTab(QtWidgets.QWidget):
     def _build_confirmations_group(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox(OPTIONS_GROUP_CONFIRMATIONS)
         layout = QtWidgets.QVBoxLayout(group)
+        layout.setSpacing(COMPACT_SPACING)
         for label in OPTIONS_DEFERRED_CONFIRMATION_CHECKS:
             layout.addWidget(disabled_check(label))
         return group
@@ -335,6 +341,7 @@ class OptionsTab(QtWidgets.QWidget):
     def _build_auto_zoom_group(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox(OPTIONS_GROUP_AUTO_ZOOM)
         layout = QtWidgets.QVBoxLayout(group)
+        layout.setSpacing(COMPACT_SPACING)
         self.auto_zoom_spin = QtWidgets.QSpinBox()
         self.auto_zoom_spin.setRange(OPTIONS_AUTO_ZOOM_MIN, OPTIONS_AUTO_ZOOM_MAX)
         self.auto_zoom_spin.setSuffix("%")

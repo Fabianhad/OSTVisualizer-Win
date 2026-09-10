@@ -17,6 +17,7 @@ from ...config import (
     OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
+    RELAXED_SPACING,
 )
 from ...components.color_button import ColorButton
 
@@ -29,6 +30,7 @@ class ExportTab(QtWidgets.QWidget):
 
     def _setup_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(RELAXED_SPACING)
         group = QtWidgets.QGroupBox(OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS, self)
         group_layout = QtWidgets.QVBoxLayout(group)
         group_layout.setSpacing(COMPACT_SPACING)

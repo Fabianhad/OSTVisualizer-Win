@@ -82,7 +82,12 @@ from ost_visualizer.presentation.components.plan_view.components.zoom_handler im
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.scene.plan_view_z_order import PAPER_HIGHLIGHT_Z
 from ost_visualizer.presentation.config import (
+    COMPACT_SPACING,
     OPTIONS_DIALOG_TITLE,
+    OPTIONS_GROUP_AUTO_ZOOM,
+    OPTIONS_GROUP_CONFIRMATIONS,
+    OPTIONS_GROUP_PREFERENCES,
+    OPTIONS_GROUP_SNAP_ANGLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
@@ -90,6 +95,7 @@ from ost_visualizer.presentation.config import (
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
     OPTIONS_TAB_EXPORT,
     OPTIONS_WINDOW_WIDTH,
+    RELAXED_SPACING,
     TAB_INDEX_TAKEOFF,
 )
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
@@ -819,6 +825,45 @@ class OptionsPreferencesTests(unittest.TestCase):
 
     def tearDown(self):
         self.app.processEvents()
+
+    def test_options_group_boxes_use_explicit_density_spacing(self):
+        dialog = OptionsDialog(Config())
+        try:
+            options_tab = dialog._options_tab
+            options_layout = options_tab.layout()
+            lower_layout = options_layout.itemAt(1).layout()
+            lower_columns = tuple(
+                lower_layout.itemAt(index).layout()
+                for index in range(lower_layout.count())
+            )
+            self.assertEqual(options_layout.spacing(), RELAXED_SPACING)
+            self.assertEqual(lower_layout.spacing(), RELAXED_SPACING)
+            self.assertTrue(
+                all(column.spacing() == RELAXED_SPACING for column in lower_columns)
+            )
+            self.assertEqual(
+                {
+                    group.title(): group.layout().spacing()
+                    for group in options_tab.findChildren(QtWidgets.QGroupBox)
+                },
+                {
+                    OPTIONS_GROUP_PREFERENCES: RELAXED_SPACING,
+                    OPTIONS_GROUP_SNAP_ANGLE: COMPACT_SPACING,
+                    OPTIONS_GROUP_CONFIRMATIONS: COMPACT_SPACING,
+                    OPTIONS_GROUP_AUTO_ZOOM: COMPACT_SPACING,
+                },
+            )
+            export_tab = dialog._export_tab
+            self.assertEqual(export_tab.layout().spacing(), RELAXED_SPACING)
+            self.assertTrue(
+                all(
+                    group.layout().spacing() == COMPACT_SPACING
+                    for group in export_tab.findChildren(QtWidgets.QGroupBox)
+                )
+            )
+        finally:
+            dialog.close()
+            delete(dialog)
 
     def test_decode_workspace_geometry_rejects_corrupted_non_string_state(self):
         decoded = MainWindow._decode_workspace_geometry(123)

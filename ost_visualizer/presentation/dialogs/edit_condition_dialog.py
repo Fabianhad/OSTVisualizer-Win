@@ -637,6 +637,7 @@ class EditConditionDialog(QtWidgets.QDialog):
     def _build_notes_group(self, parent: QtWidgets.QVBoxLayout) -> None:
         group = QtWidgets.QGroupBox("Notes")
         layout = QtWidgets.QVBoxLayout(group)
+        layout.setSpacing(COMPACT_SPACING)
         self._notes_edit = QtWidgets.QPlainTextEdit()
         self._notes_edit.setMaximumHeight(80)
         self._notes_edit.textChanged.connect(self._mark_dirty)

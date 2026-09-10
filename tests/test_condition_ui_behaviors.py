@@ -59,6 +59,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
 from ost_visualizer.presentation.components.color_button import ColorButton
+from ost_visualizer.presentation.config import COMPACT_SPACING
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
@@ -2568,6 +2569,27 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             lambda _uid, _dto: True,
             read_service=FakeReadService(),
         )
+
+    def test_edit_condition_notes_group_uses_compact_spacing(self):
+        dialog = self._make_dialog(
+            Condition(
+                uid="c1",
+                name="Condition 1",
+                condition_type=Condition.TYPE_LINEAR,
+                ref_no=1,
+            )
+        )
+        try:
+            notes_group = next(
+                group
+                for group in dialog.findChildren(QtWidgets.QGroupBox)
+                if group.title() == "Notes"
+            )
+            self.assertEqual(notes_group.layout().spacing(), COMPACT_SPACING)
+        finally:
+            dialog._dirty = False
+            dialog.close()
+            delete(dialog)
 
     def test_edit_condition_ok_click_saves_once(self):
         condition = Condition(
