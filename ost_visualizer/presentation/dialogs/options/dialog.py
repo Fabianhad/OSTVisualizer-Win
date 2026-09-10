@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 from ....domain.entities.annotation_caption import ANNOTATION_CAPTION_ORDER
 from ....domain.entities.config import Config
 from ...config import (
@@ -231,7 +231,9 @@ class OptionsDialog(QtWidgets.QDialog):
         self._full_window_crosshairs_check.setChecked(
             self._applied_config.use_full_window_crosshairs
         )
-        self._crosshair_color_button.set_color(self._applied_config.crosshair_color)
+        self._crosshair_color_button.set_color(
+            QtGui.QColor(self._applied_config.crosshair_color)
+        )
         self._crosshair_line_thickness_spin.setValue(
             self._applied_config.crosshair_line_thickness
         )
@@ -295,10 +297,10 @@ class OptionsDialog(QtWidgets.QDialog):
             self._applied_config.elevation_callout_include_cubic_yards
         )
         self._html_elevation_callout_color_button.set_color(
-            self._applied_config.html_elevation_callout_color
+            QtGui.QColor(self._applied_config.html_elevation_callout_color)
         )
         self._pdf_elevation_callout_color_button.set_color(
-            self._applied_config.pdf_elevation_callout_color
+            QtGui.QColor(self._applied_config.pdf_elevation_callout_color)
         )
         self._fonts_colors_tab.load_config(self._applied_config)
         self._export_tab.update_callout_controls_enabled()
@@ -414,7 +416,7 @@ class OptionsDialog(QtWidgets.QDialog):
             ),
             default_auto_zoom_level=self._auto_zoom_spin.value(),
             use_full_window_crosshairs=self._full_window_crosshairs_check.isChecked(),
-            crosshair_color=self._crosshair_color_button.color(),
+            crosshair_color=self._crosshair_color_button.color().name(),
             crosshair_line_thickness=self._crosshair_line_thickness_spin.value(),
             allow_add_page_from_takeoff_tab=(
                 self._allow_add_page_from_takeoff_check.isChecked()
@@ -462,10 +464,10 @@ class OptionsDialog(QtWidgets.QDialog):
                 self._elevation_callout_cubic_yards_check.isChecked()
             ),
             html_elevation_callout_color=(
-                self._html_elevation_callout_color_button.color()
+                self._html_elevation_callout_color_button.color().name()
             ),
             pdf_elevation_callout_color=(
-                self._pdf_elevation_callout_color_button.color()
+                self._pdf_elevation_callout_color_button.color().name()
             ),
         )
         return self._fonts_colors_tab.apply_to_config(config)

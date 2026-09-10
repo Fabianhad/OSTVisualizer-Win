@@ -1,4 +1,4 @@
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 from ....application.dtos.annotation_caption_dto import ANNOTATION_CAPTION_SPECS
 from ....domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
@@ -18,7 +18,7 @@ from ...config import (
     OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
 )
-from .components import ColorButton
+from ...components.color_button import ColorButton
 
 
 class ExportTab(QtWidgets.QWidget):
@@ -81,11 +81,15 @@ class ExportTab(QtWidgets.QWidget):
             self.elevation_callout_cubic_yards_check,
         )
         self.html_elevation_callout_color_button = ColorButton(
+            QtGui.QColor("#00ff00"),
             callout_group,
+            show_color_tooltip=True,
             dialog_title=OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR,
         )
         self.pdf_elevation_callout_color_button = ColorButton(
+            QtGui.QColor("#00ff00"),
             callout_group,
+            show_color_tooltip=True,
             dialog_title=OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
         )
         callout_layout.addWidget(self.html_elevation_callouts_check)

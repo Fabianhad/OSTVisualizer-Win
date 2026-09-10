@@ -36,7 +36,7 @@ from ..config import (
     NO_MARGINS,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
-from ..utils.color_swatch import rounded_color_swatch
+from ..components.color_button import ColorButton
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import (
     confirm_not_found,
@@ -77,7 +77,6 @@ _PATTERN_ITEMS = [
     (TRANSPARENT, "Transparent"),
 ]
 _RECT_SHAPES = frozenset({RECTANGLE, ELLIPSE})
-_COLOR_BOX_SIZE = 24
 TYPE_DEFAULTS = {
     Condition.TYPE_LINEAR: {
         "color": 13353215,
@@ -164,54 +163,6 @@ class _DimensionLineEdit(QtWidgets.QLineEdit):
             if val is not None:
                 self.setText(self._inches_to_display(val))
         super().focusOutEvent(event)
-
-
-class ColorButton(QtWidgets.QPushButton):
-    color_changed = QtCore.Signal(int)
-
-    def __init__(self, color_int: int, parent=None):
-        super().__init__(parent)
-        self._color_int = color_int
-        self.setFixedSize(_COLOR_BOX_SIZE, _COLOR_BOX_SIZE)
-        self._update_icon()
-        self.clicked.connect(self._pick_color)
-
-    def set_color(self, color_int: int) -> None:
-        self._color_int = color_int
-        self._update_icon()
-
-    def get_color(self) -> int:
-        return self._color_int
-
-    def _to_qcolor(self) -> QtGui.QColor:
-        r = self._color_int & 0xFF
-        g = (self._color_int >> 8) & 0xFF
-        b = (self._color_int >> 16) & 0xFF
-        return QtGui.QColor(r, g, b)
-
-    def _update_icon(self) -> None:
-        self.setIcon(
-            QtGui.QIcon(rounded_color_swatch(self._to_qcolor(), _COLOR_BOX_SIZE))
-        )
-        self.setIconSize(QtCore.QSize(_COLOR_BOX_SIZE, _COLOR_BOX_SIZE))
-
-    def _pick_color(self) -> None:
-        dlg = QtWidgets.QColorDialog(self._to_qcolor(), self)
-        try:
-            dlg.setWindowTitle("Select Color")
-            remove_minimize_maximize(dlg)
-            result = dlg.exec()
-            if not isValid(self) or not isValid(dlg):
-                return
-            if result == QtWidgets.QDialog.DialogCode.Accepted:
-                color = dlg.currentColor()
-                self._color_int = (
-                    color.red() | (color.green() << 8) | (color.blue() << 16)
-                )
-                self._update_icon()
-                self.color_changed.emit(self._color_int)
-        finally:
-            delete_later_if_valid(dlg)
 
 
 class EditConditionDialog(QtWidgets.QDialog):
@@ -361,6 +312,11 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._tab_widget.addTab(self._general_tab, "General")
         self._tab_widget.addTab(self._advanced_tab, "Advanced")
         self._build_bottom_buttons(main_layout)
+
+    def _on_color_changed(self) -> None:
+        color = self._color_btn.color()
+        self._color_fill = color.red() | (color.green() << 8) | (color.blue() << 16)
+        self._mark_dirty()
 
     def _build_top_section(self, parent_layout: QtWidgets.QVBoxLayout) -> None:
         grid = QtWidgets.QGridLayout()
@@ -609,7 +565,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         row_layout = QtWidgets.QHBoxLayout(group)
         row_layout.setSpacing(COMPACT_SPACING)
         row_layout.addWidget(_flbl("Color"))
-        self._color_btn = ColorButton(0)
+        self._color_btn = ColorButton(QtGui.QColor(0, 0, 0), notify_on_unchanged=True)
         row_layout.addWidget(self._color_btn)
         row_layout.addWidget(_flbl("Pattern"))
         self._pattern_combo = QtWidgets.QComboBox()
@@ -643,7 +599,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         show_shape = condition_type in _COUNT_LIKE_TYPES
         self._shape_label.setVisible(show_shape)
         self._shape_combo.setVisible(show_shape)
-        self._color_btn.color_changed.connect(self._mark_dirty)
+        self._color_btn.colorChanged.connect(self._on_color_changed)
         parent.addWidget(group)
 
     def _build_results_group(self, condition_type: int) -> None:
@@ -898,7 +854,14 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._thickness_edit.setText(self._inches_to_display(cond.thickness))
                 self._rise_edit.setText(str(abs(cond.rise)) if cond.rise else "")
                 self._run_edit.setText(str(abs(cond.run)) if cond.run else "")
-            self._color_btn.set_color(cond.color_fill)
+            self._color_fill = cond.color_fill
+            self._color_btn.set_color(
+                QtGui.QColor(
+                    cond.color_fill & 0xFF,
+                    (cond.color_fill >> 8) & 0xFF,
+                    (cond.color_fill >> 16) & 0xFF,
+                )
+            )
             self._set_combo_by_data(self._pattern_combo, cond.pattern)
             self._spacing_edit.setText(self._inches_to_display(cond.spacing))
             self._update_spacing_visibility()
@@ -958,7 +921,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._line_edit_text(self._display_size_edit),
             self._line_edit_text(self._rise_edit),
             self._line_edit_text(self._run_edit),
-            self._color_btn.get_color(),
+            self._color_fill,
             self._pattern_combo.currentData(),
             self._line_edit_text(self._spacing_edit),
             self._shape_combo.currentData() if self._shape_combo else None,
@@ -1583,7 +1546,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 return None
             if run != cond.run:
                 dto.set("run", run)
-        color = self._color_btn.get_color()
+        color = self._color_fill
         if color != cond.color_fill:
             dto.set("color_fill", color)
         pattern = self._pattern_combo.currentData()

@@ -1,4 +1,4 @@
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 from ...config import (
     COMPACT_SPACING,
     NO_MARGINS,
@@ -48,7 +48,8 @@ from ...config import (
     OPTIONS_SNAP_THRESHOLD_MIN,
     RELAXED_SPACING,
 )
-from .components import ColorButton, disabled_check
+from ...components.color_button import ColorButton
+from .components import disabled_check
 
 
 class OptionsTab(QtWidgets.QWidget):
@@ -192,7 +193,12 @@ class OptionsTab(QtWidgets.QWidget):
             OPTIONS_LABEL_FULL_WINDOW_CROSSHAIRS
         )
         right_column.addWidget(self.full_window_crosshairs_check)
-        self.crosshair_color_button = ColorButton(self)
+        self.crosshair_color_button = ColorButton(
+            QtGui.QColor("#00ff00"),
+            self,
+            dialog_title="Crosshair Color",
+            show_color_tooltip=True,
+        )
         self._add_labeled_widget_row(
             right_column,
             OPTIONS_LABEL_CROSSHAIR_COLOR,

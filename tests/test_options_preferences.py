@@ -99,7 +99,7 @@ from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
-from ost_visualizer.presentation.dialogs.options import components as options_components
+from ost_visualizer.presentation.components import color_button as color_button_module
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.app_config_presentation_manager import (
@@ -873,7 +873,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(dialog._intelligent_paste_check.isChecked())
         self.assertFalse(dialog._advanced_mouse_controls_check.isChecked())
         self.assertTrue(dialog._full_window_crosshairs_check.isChecked())
-        self.assertEqual(dialog._crosshair_color_button.color(), "#123456")
+        self.assertEqual(dialog._crosshair_color_button.color().name(), "#123456")
         self.assertEqual(dialog._crosshair_line_thickness_spin.value(), 3)
         self.assertTrue(dialog._allow_add_page_from_takeoff_check.isChecked())
         self.assertEqual(dialog._mouse_unpressed_snap_angle_combo.currentData(), 30)
@@ -902,8 +902,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(button.minimumWidth(), button.minimumHeight())
         self.assertEqual(button.maximumWidth(), button.maximumHeight())
         self.assertEqual(button.styleSheet(), "")
-        button.set_color("#abcdef")
-        self.assertEqual(button.color(), "#abcdef")
+        button.set_color(QtGui.QColor("#abcdef"))
+        self.assertEqual(button.color().name(), "#abcdef")
         self.assertEqual(button.styleSheet(), "")
         dialog.close()
 
@@ -959,13 +959,13 @@ class OptionsPreferencesTests(unittest.TestCase):
             def deleteLater(self):
                 pass
 
-        original_dialog = options_components.QtWidgets.QColorDialog
-        options_components.QtWidgets.QColorDialog = FakeColorDialog
+        original_dialog = color_button_module.QtWidgets.QColorDialog
+        color_button_module.QtWidgets.QColorDialog = FakeColorDialog
         try:
             button._choose_color()
         finally:
-            options_components.QtWidgets.QColorDialog = original_dialog
-        self.assertEqual(button.color(), "#abcdef")
+            color_button_module.QtWidgets.QColorDialog = original_dialog
+        self.assertEqual(button.color().name(), "#abcdef")
         self.assertEqual(dialog.get_config().crosshair_color, "#123456")
         self.assertEqual(dialog._collect_widget_config().crosshair_color, "#abcdef")
         self.assertTrue(_apply_button(dialog).isEnabled())
@@ -979,7 +979,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog = OptionsDialog(Config(crosshair_color="#123456"))
         button = dialog._crosshair_color_button
         changed = []
-        button.colorChanged.connect(lambda: changed.append(button.color()))
+        button.colorChanged.connect(lambda: changed.append(button.color().name()))
 
         class FakeColorDialog:
             def __init__(self, _color, parent=None):
@@ -1006,13 +1006,13 @@ class OptionsPreferencesTests(unittest.TestCase):
             def deleteLater(self):
                 pass
 
-        original_dialog = options_components.QtWidgets.QColorDialog
-        options_components.QtWidgets.QColorDialog = FakeColorDialog
+        original_dialog = color_button_module.QtWidgets.QColorDialog
+        color_button_module.QtWidgets.QColorDialog = FakeColorDialog
         try:
             button._choose_color()
         finally:
-            options_components.QtWidgets.QColorDialog = original_dialog
-        self.assertEqual(button.color(), "#123456")
+            color_button_module.QtWidgets.QColorDialog = original_dialog
+        self.assertEqual(button.color().name(), "#123456")
         self.assertEqual(changed, [])
         self.assertFalse(_apply_button(dialog).isEnabled())
         dialog.close()
@@ -1030,7 +1030,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 raise AssertionError("destroyed color dialog must not be read")
 
         with mock.patch.object(
-            options_components.QtWidgets,
+            color_button_module.QtWidgets,
             "QColorDialog",
             DestroyingColorDialog,
         ):
@@ -1044,7 +1044,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         try:
             with (
                 mock.patch.object(
-                    options_components.QtWidgets,
+                    color_button_module.QtWidgets,
                     "QColorDialog",
                     side_effect=lambda color, parent: real_color_dialog(color, parent),
                 ),
@@ -1288,8 +1288,12 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertTrue(dialog._elevation_callout_condition_check.isEnabled())
         self.assertTrue(dialog._html_elevation_callout_color_button.isEnabled())
         self.assertFalse(dialog._pdf_elevation_callout_color_button.isEnabled())
-        self.assertEqual(dialog._html_elevation_callout_color_button.color(), "#ff0000")
-        self.assertEqual(dialog._pdf_elevation_callout_color_button.color(), "#ff0000")
+        self.assertEqual(
+            dialog._html_elevation_callout_color_button.color().name(), "#ff0000"
+        )
+        self.assertEqual(
+            dialog._pdf_elevation_callout_color_button.color().name(), "#ff0000"
+        )
         self.assertEqual(
             dialog._html_elevation_callouts_check.text(),
             "Include elevation callouts in HTML export",
@@ -1311,8 +1315,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog._html_elevation_callouts_check.setChecked(False)
         dialog._pdf_elevation_callouts_check.setChecked(True)
         dialog._elevation_callout_top_check.setChecked(False)
-        dialog._html_elevation_callout_color_button.set_color("#123456")
-        dialog._pdf_elevation_callout_color_button.set_color("#abcdef")
+        dialog._html_elevation_callout_color_button.set_color(QtGui.QColor("#123456"))
+        dialog._pdf_elevation_callout_color_button.set_color(QtGui.QColor("#abcdef"))
         _apply_button(dialog).click()
         self.assertFalse(aggregate.snapshot().html_elevation_callouts_enabled)
         self.assertTrue(aggregate.snapshot().pdf_elevation_callouts_enabled)
@@ -2787,7 +2791,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog._intelligent_paste_check.setChecked(False)
         dialog._advanced_mouse_controls_check.setChecked(False)
         dialog._full_window_crosshairs_check.setChecked(True)
-        dialog._crosshair_color_button.set_color("#123456")
+        dialog._crosshair_color_button.set_color(QtGui.QColor("#123456"))
         dialog._crosshair_line_thickness_spin.setValue(4)
         dialog._allow_add_page_from_takeoff_check.setChecked(True)
         dialog._mouse_unpressed_snap_angle_combo.setCurrentIndex(

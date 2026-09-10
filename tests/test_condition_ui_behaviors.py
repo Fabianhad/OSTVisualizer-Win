@@ -58,9 +58,9 @@ from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
+from ost_visualizer.presentation.components.color_button import ColorButton
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
-    ColorButton,
 )
 from ost_visualizer.presentation.handlers.condition_action_handler import (
     ConditionActionHandler,
@@ -2655,10 +2655,33 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             dialog._open_condition_types_dialog()
         self.assertEqual(reloads, [])
 
+    def test_shared_color_picker_preserves_ost_integer_at_dialog_boundary(self):
+        condition = Condition(uid="c1", name="Condition", ref_no=1, color_fill=0x563412)
+        dialog = self._make_dialog(condition)
+        self.addCleanup(delete, dialog)
+        self.assertEqual(dialog._color_btn.color().name(), "#123456")
+        with (
+            patch.object(
+                QtWidgets.QColorDialog,
+                "exec",
+                return_value=QtWidgets.QDialog.DialogCode.Accepted,
+            ),
+            patch.object(
+                QtWidgets.QColorDialog,
+                "currentColor",
+                return_value=QtGui.QColor("#abcdef"),
+            ),
+        ):
+            dialog._color_btn.click()
+        dto = dialog._validate_and_build_dto()
+        self.assertIsNotNone(dto)
+        self.assertEqual(dto.get("color_fill"), 0xEFCDAB)
+        self.assertEqual(condition.color_fill, 0x563412)
+
     def test_condition_color_picker_stops_when_button_is_destroyed(self):
-        button = ColorButton(0)
+        button = ColorButton(QtGui.QColor(0, 0, 0), notify_on_unchanged=True)
         changes = []
-        button.color_changed.connect(changes.append)
+        button.colorChanged.connect(lambda: changes.append(button.color()))
 
         class DestroyingColorDialog(QtWidgets.QColorDialog):
             def exec(self):
@@ -2669,20 +2692,18 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 raise AssertionError("destroyed color dialog must not be read")
 
         with patch(
-            "ost_visualizer.presentation.dialogs.edit_condition_dialog."
-            "QtWidgets.QColorDialog",
+            "ost_visualizer.presentation.components.color_button.QtWidgets.QColorDialog",
             DestroyingColorDialog,
         ):
-            button._pick_color()
+            button._choose_color()
         self.assertEqual(changes, [])
 
     def test_repeated_condition_color_picker_cancellation_releases_dialogs(self):
-        button = ColorButton(0)
+        button = ColorButton(QtGui.QColor(0, 0, 0), notify_on_unchanged=True)
         real_color_dialog = QtWidgets.QColorDialog
         try:
             with patch(
-                "ost_visualizer.presentation.dialogs.edit_condition_dialog."
-                "QtWidgets.QColorDialog",
+                "ost_visualizer.presentation.components.color_button.QtWidgets.QColorDialog",
                 side_effect=lambda color, parent: real_color_dialog(color, parent),
             ), patch.object(
                 real_color_dialog,
@@ -2690,7 +2711,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 return_value=QtWidgets.QDialog.DialogCode.Rejected,
             ):
                 for _ in range(100):
-                    button._pick_color()
+                    button._choose_color()
             self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
             self.app.processEvents()
             self.assertEqual(button.findChildren(real_color_dialog), [])
