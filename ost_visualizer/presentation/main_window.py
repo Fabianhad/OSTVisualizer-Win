@@ -264,6 +264,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._overlay_tools_toolbar = components.overlay_tools_toolbar
         self._view_toolbar = components.view_toolbar
         self._main_toolbar = components.main_toolbar
+        self._takeoff_toolbar_visibility = components.takeoff_toolbar_visibility
         self._cover_sheet_button = components.cover_sheet_button
         self._view_2d_action = components.view_2d_action
         self._view_3d_action = components.view_3d_action
@@ -1699,6 +1700,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def apply_config_preferences(self) -> None:
         AppConfigPresentationManager().apply(self, self._config_model)
+
+    def apply_takeoff_toolbar_visibility(self, hidden_items: tuple[str, ...]) -> None:
+        self._takeoff_toolbar_visibility.apply_hidden_items(hidden_items)
 
     def refresh_detached_plan_views(self) -> None:
         self._annotation_view_manager.refresh_active_view()

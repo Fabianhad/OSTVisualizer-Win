@@ -12,12 +12,16 @@ from ...config import (
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
+    OPTIONS_TAB_TAKEOFF_TOOLBAR,
     OPTIONS_WINDOW_WIDTH,
 )
 from ...utils.messagebox import confirm, show_warning
 from ...utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
-from .components import ExportTab, McpSetupTab, OptionsTab
+from .export_tab import ExportTab
+from .mcp_setup_tab import McpSetupTab
+from .options_tab import OptionsTab
 from .fonts_colors_tab import FontsColorsTab
+from .takeoff_toolbar_tab import TakeoffToolbarTab
 
 
 class OptionsDialog(QtWidgets.QDialog):
@@ -46,6 +50,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._reset_all_button: Optional[QtWidgets.QPushButton] = None
         self._tabs: Optional[QtWidgets.QTabWidget] = None
         self._options_tab: Optional[OptionsTab] = None
+        self._takeoff_toolbar_tab: Optional[TakeoffToolbarTab] = None
         self._fonts_colors_tab: Optional[FontsColorsTab] = None
         self._export_tab: Optional[ExportTab] = None
         self._mcp_setup_tab: Optional[McpSetupTab] = None
@@ -71,6 +76,8 @@ class OptionsDialog(QtWidgets.QDialog):
         self._options_tab = OptionsTab(self._tabs)
         self._bind_options_tab_widgets()
         self._tabs.addTab(self._options_tab, OPTIONS_TAB_OPTIONS)
+        self._takeoff_toolbar_tab = TakeoffToolbarTab(self._tabs)
+        self._tabs.addTab(self._takeoff_toolbar_tab, OPTIONS_TAB_TAKEOFF_TOOLBAR)
         self._fonts_colors_tab = FontsColorsTab(self._tabs)
         self._tabs.addTab(self._fonts_colors_tab, OPTIONS_TAB_FONTS_COLORS)
         self._export_tab = ExportTab(self._tabs)
@@ -177,6 +184,9 @@ class OptionsDialog(QtWidgets.QDialog):
             self._mcp_setup_tab.refresh_status()
 
     def _load_config(self) -> None:
+        self._takeoff_toolbar_tab.load_hidden_items(
+            self._applied_config.hidden_takeoff_toolbar_items
+        )
         self._toolbar_text_check.setChecked(self._applied_config.show_toolbar_text)
         self._display_modes_sync_check.setChecked(
             self._applied_config.display_modes_synced
@@ -294,6 +304,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._export_tab.update_callout_controls_enabled()
 
     def _connect_change_signals(self) -> None:
+        self._takeoff_toolbar_tab.changed.connect(self._update_apply_enabled)
         buttons = (
             self._toolbar_text_check,
             self._display_modes_sync_check,
@@ -387,6 +398,7 @@ class OptionsDialog(QtWidgets.QDialog):
             display_mode_2d=display_mode_2d,
             grayscale_enabled=self._grayscale_check.isChecked(),
             show_toolbar_text=self._toolbar_text_check.isChecked(),
+            hidden_takeoff_toolbar_items=self._takeoff_toolbar_tab.hidden_items(),
             roping_selection_method=(
                 Config.ROPING_SELECTION_INCLUSIVE
                 if self._roping_inclusive_radio.isChecked()
@@ -570,6 +582,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._apply_callback = None
         self._reset_callback = None
         self._options_tab = None
+        self._takeoff_toolbar_tab = None
         self._fonts_colors_tab = None
         self._export_tab = None
         self._mcp_setup_tab = None

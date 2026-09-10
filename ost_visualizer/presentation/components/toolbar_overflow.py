@@ -9,6 +9,21 @@ from ..config import (
 OverflowWidgetFactory = Callable[[QtWidgets.QWidget], QtWidgets.QWidget]
 
 
+def set_widget_action_visible(action: QtWidgets.QWidgetAction, visible: bool) -> None:
+    if action.isVisible() == visible:
+        return
+    widgets = action.createdWidgets()
+    default_widget = action.defaultWidget()
+    if default_widget is not None:
+        widgets.append(default_widget)
+    enabled_states = [
+        (widget, widget.isEnabledTo(widget.parentWidget())) for widget in widgets
+    ]
+    action.setVisible(visible)
+    for widget, enabled in enabled_states:
+        widget.setEnabled(enabled)
+
+
 def add_overflow_widget(
     toolbar: QtWidgets.QToolBar,
     widget: QtWidgets.QWidget,
@@ -43,13 +58,24 @@ class ToolbarOverflowWidgetAction(QtWidgets.QWidgetAction):
         self._toolbar_widget.setParent(parent)
         self._overflow_factory = overflow_factory
         self._visibility_action = visibility_action
+        self._toolbar_visible = True
         self.setText(text)
         if visibility_action is not None:
             visibility_action.changed.connect(self._sync_visibility)
             self._sync_visibility()
 
     def _sync_visibility(self) -> None:
-        self.setVisible(self._visibility_action.isVisible())
+        set_widget_action_visible(
+            self,
+            self._toolbar_visible
+            and (
+                self._visibility_action is None or self._visibility_action.isVisible()
+            ),
+        )
+
+    def set_toolbar_visible(self, visible: bool) -> None:
+        self._toolbar_visible = visible
+        self._sync_visibility()
 
     def createWidget(self, parent: QtWidgets.QWidget) -> Optional[QtWidgets.QWidget]:
         if isinstance(parent, QtWidgets.QToolBar):

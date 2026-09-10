@@ -60,7 +60,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 )
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
-    _ColorButton,
+    ColorButton,
 )
 from ost_visualizer.presentation.handlers.condition_action_handler import (
     ConditionActionHandler,
@@ -2656,7 +2656,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(reloads, [])
 
     def test_condition_color_picker_stops_when_button_is_destroyed(self):
-        button = _ColorButton(0)
+        button = ColorButton(0)
         changes = []
         button.color_changed.connect(changes.append)
 
@@ -2677,7 +2677,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(changes, [])
 
     def test_repeated_condition_color_picker_cancellation_releases_dialogs(self):
-        button = _ColorButton(0)
+        button = ColorButton(0)
         real_color_dialog = QtWidgets.QColorDialog
         try:
             with patch(

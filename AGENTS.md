@@ -326,6 +326,21 @@ Persistence:
 
 - JSON state lives under `~/.ost_visualizer/`.
 - Durable preferences belong in `config.json`.
+- Main's horizontal Takeoff strip uses `Config.hidden_takeoff_toolbar_items` and
+  the ordered descriptors in `plan_tool_registry`. Options owns drafts until
+  Apply/OK; ConfigService and APP_CONFIG_UPDATED own persistence and live
+  projection. Hide toolbar presentation actions through the toolbar-owned
+  visibility controller, preserving the canonical shared QAction's visibility,
+  enablement, checked state, shortcut, and native toolbar focus policy. Overflow
+  wrappers combine their toolbar mask with source-action visibility. Preserve the
+  widgets' own enabled state across QWidgetAction visibility projection, including
+  live overflow widgets; an ancestor toolbar's disabled state is not that intent.
+  Failed Options saves restore the previous Config snapshot without publishing
+  success, so the existing draft and reset flows can retry persistence.
+  Keep the navigation spacer only when both sides contain visible controls, and collapse
+  an empty strip. Unknown saved IDs are retained but ignored; defaults clear the
+  hidden list. This preference does not customize workspace toolbars or detached
+  surfaces, and Tools > Options remains available for recovery.
 - Restorable workspace shell state belongs in `workspace_state.json`.
 - Resizable application-dialog dimensions and maximized state belong in the semantic
   `WorkspaceState.dialog_sizes` and `WorkspaceState.dialog_maximized` maps under

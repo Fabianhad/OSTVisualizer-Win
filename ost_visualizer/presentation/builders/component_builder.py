@@ -11,7 +11,13 @@ from ..actions.action_ids import (
     ACTION_PASTE,
     ACTION_REDO,
     ACTION_UNDO,
+    ACTION_PREVIOUS_PAGE,
+    ACTION_NEXT_PAGE,
+    ACTION_RESET_VIEW,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
 )
+from ..components.takeoff_toolbar_visibility import TakeoffToolbarVisibilityController
 from ..adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ..components.condition_summary import ConditionSummaryTab
 from ..components.conditions_sidebar import ConditionsSidebar
@@ -95,7 +101,13 @@ from ..utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,
     create_annotation_tool_split_button,
 )
-from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_SPECS
+from ..utils.plan_tool_registry import (
+    PAGE_SELECTOR_ITEM,
+    ZOOM_SELECTOR_ITEM,
+    PAGE_SETTINGS_ITEM,
+    PLAN_ANNOTATION_TOOL_SPECS,
+    PLAN_TOOL_SPECS,
+)
 from ..visualization.native_page_plane import NativePageImagePlaneProvider
 
 
@@ -212,6 +224,7 @@ class ComponentBundle:
     overlay_tools_toolbar: QtWidgets.QToolBar
     view_toolbar: QtWidgets.QToolBar
     main_toolbar: QtWidgets.QToolBar
+    takeoff_toolbar_visibility: TakeoffToolbarVisibilityController
     view_2d_action: QtGui.QAction
     view_3d_action: QtGui.QAction
     new_project_action: QtGui.QAction
@@ -394,6 +407,7 @@ class ComponentBuilder:
         main_toolbar.setFloatable(False)
         main_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
         main_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
+        takeoff_toolbar_items = {}
 
         def _create_action_button(
             parent: QtWidgets.QWidget, action: QtGui.QAction
@@ -401,6 +415,8 @@ class ComponentBuilder:
             button = QtWidgets.QToolButton(parent)
             button.setDefaultAction(action)
             button.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
+            if isinstance(parent, QtWidgets.QToolBar):
+                button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             return button
 
         previous_page_action = QtGui.QAction(
@@ -412,7 +428,7 @@ class ComponentBuilder:
         btn_prev_page = QtWidgets.QToolButton()
         btn_prev_page.setDefaultAction(previous_page_action)
         btn_prev_page.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
-        add_overflow_widget(
+        takeoff_toolbar_items[ACTION_PREVIOUS_PAGE] = add_overflow_widget(
             main_toolbar,
             btn_prev_page,
             overflow_factory=lambda parent: _create_action_button(
@@ -421,7 +437,7 @@ class ComponentBuilder:
             text=previous_page_action.text(),
             visibility_action=previous_page_action,
         )
-        main_toolbar.addWidget(page_combo)
+        takeoff_toolbar_items[PAGE_SELECTOR_ITEM] = main_toolbar.addWidget(page_combo)
         next_page_action = QtGui.QAction(ACTION_NEXT_PAGE_LABEL, viewer_container)
         IconManager.apply(next_page_action, IconId.NEXT_PAGE)
         next_page_action.setToolTip(ACTION_NEXT_PAGE_TOOLTIP)
@@ -429,7 +445,7 @@ class ComponentBuilder:
         btn_next_page = QtWidgets.QToolButton()
         btn_next_page.setDefaultAction(next_page_action)
         btn_next_page.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
-        add_overflow_widget(
+        takeoff_toolbar_items[ACTION_NEXT_PAGE] = add_overflow_widget(
             main_toolbar,
             btn_next_page,
             overflow_factory=lambda parent: _create_action_button(
@@ -459,7 +475,7 @@ class ComponentBuilder:
         page_combo.navigation_state_changed.connect(_update_page_nav_actions)
         page_nav_spacer = QtWidgets.QWidget()
         page_nav_spacer.setFixedWidth(6)
-        main_toolbar.addWidget(page_nav_spacer)
+        page_nav_spacer_action = main_toolbar.addWidget(page_nav_spacer)
         plan_tool_group = QtGui.QActionGroup(viewer_container)
         plan_tool_group.setExclusive(True)
         plan_tool_actions = {}
@@ -499,7 +515,7 @@ class ComponentBuilder:
                     action,
                     spec.annotation_type,
                 )
-                add_overflow_widget(
+                takeoff_toolbar_items[spec.action_key] = add_overflow_widget(
                     main_toolbar,
                     split_button,
                     overflow_factory=(
@@ -511,7 +527,15 @@ class ComponentBuilder:
                     visibility_action=action,
                 )
             else:
-                main_toolbar.addAction(action)
+                takeoff_toolbar_items[spec.action_key] = add_overflow_widget(
+                    main_toolbar,
+                    _create_action_button(main_toolbar, action),
+                    overflow_factory=lambda parent, command=action: _create_action_button(
+                        parent, command
+                    ),
+                    text=action.text(),
+                    visibility_action=action,
+                )
         apply_annotation_tool_icon_color(plan_tool_actions)
         select_action = plan_tool_actions["select_tool"]
         place_action = plan_tool_actions["place_tool"]
@@ -525,15 +549,26 @@ class ComponentBuilder:
         fit_action = QtGui.QAction(ACTION_RESET_VIEW_LABEL, viewer_container)
         IconManager.apply(fit_action, IconId.RESET_VIEW)
         fit_action.setToolTip(ACTION_RESET_VIEW_TOOLTIP)
-        main_toolbar.addAction(fit_action)
         zoom_in_action = QtGui.QAction(ACTION_ZOOM_IN_LABEL, viewer_container)
         IconManager.apply(zoom_in_action, IconId.ZOOM_IN)
         zoom_in_action.setToolTip(ACTION_ZOOM_IN_TOOLTIP)
-        main_toolbar.addAction(zoom_in_action)
         zoom_out_action = QtGui.QAction(ACTION_ZOOM_OUT_LABEL, viewer_container)
         IconManager.apply(zoom_out_action, IconId.ZOOM_OUT)
         zoom_out_action.setToolTip(ACTION_ZOOM_OUT_TOOLTIP)
-        main_toolbar.addAction(zoom_out_action)
+        for key, command in (
+            (ACTION_RESET_VIEW, fit_action),
+            (ACTION_ZOOM_IN, zoom_in_action),
+            (ACTION_ZOOM_OUT, zoom_out_action),
+        ):
+            takeoff_toolbar_items[key] = add_overflow_widget(
+                main_toolbar,
+                _create_action_button(main_toolbar, command),
+                overflow_factory=lambda parent, action=command: _create_action_button(
+                    parent, action
+                ),
+                text=command.text(),
+                visibility_action=command,
+            )
         zoom_combo = PopupTrackingComboBox(
             popup_hidden_delay_ms=VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS
         )
@@ -655,7 +690,7 @@ class ComponentBuilder:
                 on_text_submitted=_on_overflow_zoom_text_submitted,
             )
 
-        add_overflow_widget(
+        takeoff_toolbar_items[ZOOM_SELECTOR_ITEM] = add_overflow_widget(
             main_toolbar,
             zoom_combo,
             overflow_factory=_create_zoom_overflow_widget,
@@ -683,13 +718,16 @@ class ComponentBuilder:
             ui_access_manager=ui_access_manager,
             workspace_state_model=workspace_state_model,
         )
-        add_overflow_widget(
+        takeoff_toolbar_items[PAGE_SETTINGS_ITEM] = add_overflow_widget(
             main_toolbar,
             page_settings_bar,
             overflow_factory=lambda parent: PageSettingsOverflowWidget(
                 page_settings_bar, parent
             ),
             text="Page settings",
+        )
+        takeoff_toolbar_visibility = TakeoffToolbarVisibilityController(
+            main_toolbar, takeoff_toolbar_items, page_nav_spacer_action
         )
         plan_view.set_selection_enabled(True)
         _undo_svc = UndoRedoService()
@@ -1245,6 +1283,7 @@ class ComponentBuilder:
             overlay_tools_toolbar=overlay_tools_toolbar,
             view_toolbar=workspace_view_toolbar,
             main_toolbar=workspace_main_toolbar,
+            takeoff_toolbar_visibility=takeoff_toolbar_visibility,
             view_2d_action=btn_2d_action,
             view_3d_action=btn_3d_action,
             new_project_action=new_project_action,

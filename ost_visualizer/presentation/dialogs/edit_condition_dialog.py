@@ -166,7 +166,7 @@ class _DimensionLineEdit(QtWidgets.QLineEdit):
         super().focusOutEvent(event)
 
 
-class _ColorButton(QtWidgets.QPushButton):
+class ColorButton(QtWidgets.QPushButton):
     color_changed = QtCore.Signal(int)
 
     def __init__(self, color_int: int, parent=None):
@@ -609,7 +609,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         row_layout = QtWidgets.QHBoxLayout(group)
         row_layout.setSpacing(COMPACT_SPACING)
         row_layout.addWidget(_flbl("Color"))
-        self._color_btn = _ColorButton(0)
+        self._color_btn = ColorButton(0)
         row_layout.addWidget(self._color_btn)
         row_layout.addWidget(_flbl("Pattern"))
         self._pattern_combo = QtWidgets.QComboBox()

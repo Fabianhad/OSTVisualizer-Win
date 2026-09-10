@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Options > Takeoff Toolbar** configures all 24 controls in Main's horizontal
+  Takeoff strip, including annotation tools, navigation and zoom selectors, and
+  grouped Scale/Area settings. Apply/OK persists visibility across restarts without
+  changing shared menu commands, shortcuts, tool state, or detached windows.
+  Restore Default Toolbar and Reset All Settings restore the original layout;
+  hiding all controls collapses the strip, with Options remaining available.
+  Showing controls preserves their current enabled state, including overflow
+  controls and widgets updated while hidden.
 - Condition context menus now include **Duplicate and Reassign Takeoff** below
   Duplicate. The action copies the right-clicked Condition and reassigns only its
   current-Page Takeoffs in one MDB or SQL transaction, retaining normal duplication
@@ -26,6 +34,8 @@
 
 ### Fixed
 
+- Failed Options saves now restore the prior in-memory preferences, so retrying
+  Apply or Reset All Settings persists the change and updates the UI normally.
 - Plan Undo/Redo now preserves typed annotation identity when raw UIDs collide,
   deletes pasted Line/Arrow/Dimension companions before Takeoff cascades, and
   replays mixed geometry and property changes as one atomic mutation on MDB and

@@ -46,8 +46,20 @@ from ..config import (
     ACTION_TEXT_ANNOTATION_TOOLTIP,
     ACTION_ZOOM_LABEL,
     ACTION_ZOOM_TOOLTIP,
+    ACTION_PREVIOUS_PAGE_LABEL,
+    ACTION_NEXT_PAGE_LABEL,
+    ACTION_RESET_VIEW_LABEL,
+    ACTION_ZOOM_IN_LABEL,
+    ACTION_ZOOM_OUT_LABEL,
 )
 from ..managers.icon_manager import IconId
+from ..actions.action_ids import (
+    ACTION_PREVIOUS_PAGE,
+    ACTION_NEXT_PAGE,
+    ACTION_RESET_VIEW,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
+)
 
 
 @dataclass(frozen=True)
@@ -176,4 +188,38 @@ PLAN_TOOL_ACTION_KEYS = tuple(spec.action_key for spec in PLAN_TOOL_SPECS)
 PLAN_TOOL_MENU_ITEMS = tuple(("shared", spec.action_key) for spec in PLAN_TOOL_SPECS)
 PLAN_TOOL_CONTEXT_ACTIONS = tuple(
     (spec.label, spec.action_key) for spec in PLAN_TOOL_SPECS
+)
+PAGE_SELECTOR_ITEM = "page_selector"
+ZOOM_SELECTOR_ITEM = "zoom_selector"
+PAGE_SETTINGS_ITEM = "page_settings"
+
+
+@dataclass(frozen=True)
+class TakeoffToolbarItemSpec:
+    key: str
+    label: str
+    group: str
+
+
+TAKEOFF_TOOLBAR_ITEMS = (
+    TakeoffToolbarItemSpec(
+        ACTION_PREVIOUS_PAGE, ACTION_PREVIOUS_PAGE_LABEL, "Page navigation"
+    ),
+    TakeoffToolbarItemSpec(PAGE_SELECTOR_ITEM, "Page selector", "Page navigation"),
+    TakeoffToolbarItemSpec(ACTION_NEXT_PAGE, ACTION_NEXT_PAGE_LABEL, "Page navigation"),
+    *(
+        TakeoffToolbarItemSpec(spec.action_key, spec.label, "Cursor tools")
+        for spec in PLAN_CURSOR_TOOL_SPECS
+    ),
+    *(
+        TakeoffToolbarItemSpec(spec.action_key, spec.label, "Annotation tools")
+        for spec in PLAN_ANNOTATION_TOOL_SPECS
+    ),
+    TakeoffToolbarItemSpec(ACTION_RESET_VIEW, ACTION_RESET_VIEW_LABEL, "View controls"),
+    TakeoffToolbarItemSpec(ACTION_ZOOM_IN, ACTION_ZOOM_IN_LABEL, "View controls"),
+    TakeoffToolbarItemSpec(ACTION_ZOOM_OUT, ACTION_ZOOM_OUT_LABEL, "View controls"),
+    TakeoffToolbarItemSpec(ZOOM_SELECTOR_ITEM, "Zoom percentage", "View controls"),
+    TakeoffToolbarItemSpec(
+        PAGE_SETTINGS_ITEM, "Page Settings (Scale and Area)", "Page Settings"
+    ),
 )

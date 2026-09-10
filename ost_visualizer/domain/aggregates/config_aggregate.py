@@ -305,6 +305,9 @@ class ConfigAggregate:
             ),
             hotlink_target=hotlink_target,
             show_toolbar_text=bool(config.show_toolbar_text),
+            hidden_takeoff_toolbar_items=Config.normalize_hidden_toolbar_items(
+                config.hidden_takeoff_toolbar_items
+            ),
             disable_high_resolution_images=bool(config.disable_high_resolution_images),
             enable_intelligent_paste=bool(config.enable_intelligent_paste),
             enable_advanced_mouse_controls=bool(config.enable_advanced_mouse_controls),
@@ -394,12 +397,17 @@ class ConfigAggregate:
                 )
 
     def update_options(self, config: Config) -> list[str]:
-        previous = self._config.to_dict()
+        previous_config = self._config
+        previous = previous_config.to_dict()
         self._apply_config(config, save_corrections=False)
         current = self._config.to_dict()
         changed = [key for key, value in current.items() if previous.get(key) != value]
         if changed:
-            self._save_config()
+            try:
+                self._save_config()
+            except OSError:
+                self._config = previous_config
+                raise
         return changed
 
     def _validated_snap_angle(self, value: int, default: int) -> int:

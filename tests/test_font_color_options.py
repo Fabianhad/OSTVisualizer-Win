@@ -150,7 +150,7 @@ class FontColorOptionsTests(unittest.TestCase):
         try:
             self.assertEqual(
                 [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())],
-                ["Options", "Fonts/Colors", "Export", "MCP Setup"],
+                ["Options", "Takeoff Toolbar", "Fonts/Colors", "Export", "MCP Setup"],
             )
             tab = dialog._fonts_colors_tab
             self.assertEqual(

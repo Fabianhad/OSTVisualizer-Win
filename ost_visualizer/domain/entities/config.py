@@ -61,6 +61,7 @@ class Config:
     display_sheet_number_with_sheet_name: bool = False
     hotlink_target: str = DEFAULT_HOTLINK_TARGET
     show_toolbar_text: bool = True
+    hidden_takeoff_toolbar_items: tuple[str, ...] = ()
     disable_high_resolution_images: bool = False
     enable_intelligent_paste: bool = True
     enable_advanced_mouse_controls: bool = True
@@ -103,6 +104,14 @@ class Config:
     default_hotlink_color: str = DEFAULT_HOTLINK_COLOR
     inactive_object_color: str = DEFAULT_INACTIVE_OBJECT_COLOR
 
+    @staticmethod
+    def normalize_hidden_toolbar_items(values) -> tuple[str, ...]:
+        if not isinstance(values, (list, tuple)) or any(
+            not isinstance(value, str) for value in values
+        ):
+            raise TypeError("hidden_takeoff_toolbar_items must be a list of strings")
+        return tuple(sorted({value.strip() for value in values if value.strip()}))
+
     def to_dict(self) -> dict:
         return {
             "display_modes_synced": self.display_modes_synced,
@@ -118,6 +127,7 @@ class Config:
             ),
             "hotlink_target": self.hotlink_target,
             "show_toolbar_text": self.show_toolbar_text,
+            "hidden_takeoff_toolbar_items": list(self.hidden_takeoff_toolbar_items),
             "disable_high_resolution_images": self.disable_high_resolution_images,
             "enable_intelligent_paste": self.enable_intelligent_paste,
             "enable_advanced_mouse_controls": self.enable_advanced_mouse_controls,
@@ -202,6 +212,10 @@ class Config:
             config.hotlink_target = str(data["hotlink_target"])
         if "show_toolbar_text" in data:
             config.show_toolbar_text = _config_bool(data, "show_toolbar_text")
+        if "hidden_takeoff_toolbar_items" in data:
+            config.hidden_takeoff_toolbar_items = cls.normalize_hidden_toolbar_items(
+                data["hidden_takeoff_toolbar_items"]
+            )
         if "disable_high_resolution_images" in data:
             config.disable_high_resolution_images = _config_bool(
                 data, "disable_high_resolution_images"

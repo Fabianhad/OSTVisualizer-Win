@@ -19,6 +19,9 @@ class AppConfigPresentationManager:
         apply_config_owned_annotation_defaults(config_model.snapshot())
         window._refresh_annotation_style_controls()
         self.apply_toolbar_text(window, config_model)
+        window.apply_takeoff_toolbar_visibility(
+            config_model.snapshot().hidden_takeoff_toolbar_items
+        )
         if window.takeoff_sidebar:
             window.takeoff_sidebar.set_label_options(
                 config_model.display_page_index_with_sheet_name,

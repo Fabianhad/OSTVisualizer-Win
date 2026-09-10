@@ -87,6 +87,7 @@ from ost_visualizer.presentation.config import (
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
+    OPTIONS_TAB_TAKEOFF_TOOLBAR,
     OPTIONS_TAB_EXPORT,
     OPTIONS_WINDOW_WIDTH,
     TAB_INDEX_TAKEOFF,
@@ -1254,11 +1255,12 @@ class OptionsPreferencesTests(unittest.TestCase):
 
     def test_options_dialog_contains_options_export_and_mcp_setup_tabs(self):
         dialog = OptionsDialog(Config())
-        self.assertEqual(dialog._tabs.count(), 4)
+        self.assertEqual(dialog._tabs.count(), 5)
         self.assertEqual(dialog._tabs.tabText(0), OPTIONS_TAB_OPTIONS)
-        self.assertEqual(dialog._tabs.tabText(1), OPTIONS_TAB_FONTS_COLORS)
-        self.assertEqual(dialog._tabs.tabText(2), OPTIONS_TAB_EXPORT)
-        self.assertEqual(dialog._tabs.tabText(3), OPTIONS_TAB_MCP_SETUP)
+        self.assertEqual(dialog._tabs.tabText(1), OPTIONS_TAB_TAKEOFF_TOOLBAR)
+        self.assertEqual(dialog._tabs.tabText(2), OPTIONS_TAB_FONTS_COLORS)
+        self.assertEqual(dialog._tabs.tabText(3), OPTIONS_TAB_EXPORT)
+        self.assertEqual(dialog._tabs.tabText(4), OPTIONS_TAB_MCP_SETUP)
         dialog.close()
 
     def test_export_tab_defaults_off_with_every_caption_unselected_and_disabled(self):
@@ -5884,6 +5886,9 @@ class OptionsPreferencesTests(unittest.TestCase):
                 self.cover_sheet_button = QtWidgets.QToolButton()
                 self.annotation_style_refreshes = 0
 
+            def apply_takeoff_toolbar_visibility(self, hidden_items):
+                self.hidden_toolbar_items = hidden_items
+
             def get_workspace_toolbars(self):
                 return []
 
@@ -5902,6 +5907,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         window = FakeWindow()
         MainWindow.apply_config_preferences(window)
         self.assertEqual(window.annotation_style_refreshes, 1)
+        self.assertEqual(window.hidden_toolbar_items, ())
         self.assertEqual(
             window.plan_view.calls,
             [
