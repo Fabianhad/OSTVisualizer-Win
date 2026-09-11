@@ -6,7 +6,10 @@ from ....domain.aggregates.ost_aggregate import OstAggregate
 from ....domain.entities.identity_refs import BidRef
 from ....domain.entities.layer import normalize_layer_name
 from ....domain.entities.page import build_pages_from_bid_data
-from ....domain.entities.project_factory import build_bid
+from ....domain.entities.project_factory import (
+    build_bid,
+    build_page_folder_uid_map,
+)
 from ....domain.entities.file_results import BidLoadResult
 from ....domain.services.file_manager_service import FileManager
 
@@ -86,8 +89,12 @@ class LoadBidUseCase:
         pages = bid_data.pages
         if not pages:
             pages = build_pages_from_bid_data(
-                bid_data.bid_pages, self.model.bid_takeoffs
+                bid_data.bid_pages,
+                self.model.bid_takeoffs,
             )
+        page_folder_uid_map = build_page_folder_uid_map(bid_info)
+        for page in pages.values():
+            page.folder_uid = page_folder_uid_map.get(str(page.uid))
         selected_page_uid = bid_data.selected_page_uid
         if prepared.sql_workspace_state is not None:
             pages_by_uid = {str(page.uid): page for page in pages.values()}

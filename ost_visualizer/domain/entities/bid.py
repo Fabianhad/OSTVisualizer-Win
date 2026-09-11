@@ -38,7 +38,8 @@ class Bid:
         self.pages_without_folder.clear()
         ordered_pages = sorted(pages, key=lambda page: page.sequence)
         for page in ordered_pages:
-            folder = folders_by_uid.get(str(page.folder_uid or ""))
+            folder_uid = str(page.folder_uid or "")
+            folder = folders_by_uid.get(folder_uid)
             if folder is None:
                 self.pages_without_folder.append(page)
             else:

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 from .bid import Bid
 from .folder import Folder
 from .hierarchy_data import (
@@ -101,12 +101,37 @@ def build_bid(bid_info: Optional[HierarchyBidInfo]) -> Bid:
     )
 
 
+def build_page_folder_uid_map(
+    bid_info: Optional[HierarchyBidInfo],
+) -> Dict[str, str]:
+    if bid_info is None:
+        return {}
+    result: Dict[str, str] = {}
+
+    def walk(folders) -> None:
+        for folder_uid, folder_info in folders.items():
+            normalized_folder_uid = str(folder_uid)
+            for page_info in folder_info.pages:
+                page_uid = str(page_info.uid)
+                if page_uid in result:
+                    raise ValueError(
+                        f"Page {page_uid} appears in multiple page folders"
+                    )
+                result[page_uid] = normalized_folder_uid
+            walk(folder_info.subfolders)
+
+    walk(bid_info.folders)
+    return result
+
+
 def _build_folder(uid: str, folder_info: HierarchyFolderInfo) -> Folder:
     return Folder(
         uid=uid,
         name=folder_info.name,
         description=folder_info.description,
-        pages=[_build_page(p) for p in folder_info.pages],
+        pages=[
+            _build_page(page_info, folder_uid=uid) for page_info in folder_info.pages
+        ],
         subfolders={
             sub_uid: _build_folder(sub_uid, sub_info)
             for sub_uid, sub_info in folder_info.subfolders.items()
@@ -114,10 +139,14 @@ def _build_folder(uid: str, folder_info: HierarchyFolderInfo) -> Folder:
     )
 
 
-def _build_page(page_info: HierarchyPageInfo) -> Page:
+def _build_page(
+    page_info: HierarchyPageInfo,
+    folder_uid: Optional[str] = None,
+) -> Page:
     return Page(
         uid=page_info.uid,
         name=page_info.name,
         sheet_no=str(page_info.sheet_no or ""),
         sequence=int(page_info.sequence or 0),
+        folder_uid=str(folder_uid) if folder_uid else None,
     )
