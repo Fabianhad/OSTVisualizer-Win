@@ -1,3 +1,4 @@
+from ost_visualizer.domain.entities.page_info import BidPageInfo
 import json
 import threading
 import time
@@ -402,6 +403,12 @@ class _DelayedMutationDispatcher:
 
 
 class _Reconciliation:
+    def capture_navigation_owner(self, _database_id):
+        return None
+
+    def navigation_owner_is_current(self, _database_id, owner):
+        return owner is None
+
     def __init__(self):
         self.batches = []
         self.projection_barriers = []
@@ -423,12 +430,12 @@ class _Reconciliation:
         )
 
 
-class _RaisingReconciliation:
+class _RaisingReconciliation(_Reconciliation):
     def apply(self, _batch, projection_barrier=None, *, local_completion=False):
         raise RuntimeError("reconciliation callback failed")
 
 
-class _DeferredProjectionReconciliation:
+class _DeferredProjectionReconciliation(_Reconciliation):
     def __init__(self):
         self.token = None
 
@@ -437,7 +444,7 @@ class _DeferredProjectionReconciliation:
         return ReconciliationResult(applied=True)
 
 
-class _FailFirstLocalProjectionReconciliation:
+class _FailFirstLocalProjectionReconciliation(_Reconciliation):
     def __init__(self):
         self.token = None
         self.local_projection_started = threading.Event()
@@ -1455,7 +1462,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 {},
             ),
             _parse_bid_pages_for_bid=lambda *_args: {
-                "20": SimpleNamespace(
+                "20": BidPageInfo(
                     name="Sheet",
                     sheet_no="",
                     sequence=0,
@@ -5143,6 +5150,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 HydratedDatabaseChangeBatch(
                     _batch(descriptor.database_id, "epoch", 0, 0)
                 ),
+                None,
             )
         )
         failure_payload = next(
@@ -5205,6 +5213,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                     runtime.generation,
                     runtime.session_generation,
                     hydrated,
+                    None,
                 )
             )
         self.assertEqual(runtime.acknowledged_version, 7)
@@ -6469,6 +6478,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 HydratedDatabaseChangeBatch(
                     _batch(descriptor.database_id, "epoch", 0, 0)
                 ),
+                None,
             )
         )
         self.assertTrue(store.recovery_queried.is_set())
@@ -6561,6 +6571,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 runtime.generation,
                 first_session_generation,
                 hydrated,
+                None,
             )
         )
         second_session_generation = coordinator._install_session(
@@ -6579,6 +6590,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 runtime.generation,
                 second_session_generation,
                 hydrated,
+                None,
             )
         )
         dispatcher.deliver_pending()
@@ -7612,6 +7624,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 runtime.generation,
                 runtime.session_generation,
                 hydrated,
+                None,
             )
         )
         failure_payload = next(
@@ -7661,6 +7674,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 runtime.generation,
                 runtime.session_generation,
                 hydrated,
+                None,
             )
         )
         self.assertEqual(runtime.acknowledged_version, 7)
@@ -7708,6 +7722,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 HydratedDatabaseChangeBatch(
                     _batch(descriptor.database_id, "epoch", 1, 12)
                 ),
+                None,
             )
         )
         runtime.session = DatabaseSession(descriptor.database_id, "session-after")
@@ -7803,6 +7818,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 HydratedDatabaseChangeBatch(
                     _batch(descriptor.database_id, "epoch", 1, 12)
                 ),
+                None,
             )
         )
         reconciliation.token.complete(False)

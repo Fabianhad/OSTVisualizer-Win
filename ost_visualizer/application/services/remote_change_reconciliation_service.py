@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import replace
+from ...domain.entities.bid import Bid
 from ..layer_change_impact import layer_rename_preserves_rendering
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
@@ -44,6 +45,15 @@ class RemoteChangeReconciliationService:
         self._concurrency_tokens = concurrency_tokens
         self._drafts = drafts
         self._conflict_resolution = conflict_resolution
+
+    def capture_navigation_owner(self, database_id: str) -> Bid | None:
+        active_ref = self._project_data.get_current_bid_ref()
+        if active_ref is None or active_ref.file_path != database_id:
+            return None
+        return self._project_data.get_bid(active_ref)
+
+    def navigation_owner_is_current(self, database_id: str, owner: Bid | None) -> bool:
+        return self.capture_navigation_owner(database_id) is owner
 
     def apply(
         self,

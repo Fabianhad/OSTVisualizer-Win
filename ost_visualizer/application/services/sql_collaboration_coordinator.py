@@ -1081,6 +1081,9 @@ class SqlCollaborationCoordinator:
                     )
                     session_generation = self._install_session(runtime, session)
                     self._concurrency_tokens.load_database(runtime.database_id)
+                    navigation_owner = self._reconciliation.capture_navigation_owner(
+                        runtime.database_id
+                    )
                     hydrated = self._remote_reader.initial_reconciliation(
                         runtime.database_id,
                         runtime.bid_uid,
@@ -1094,6 +1097,7 @@ class SqlCollaborationCoordinator:
                             runtime.generation,
                             session_generation,
                             hydrated,
+                            navigation_owner,
                         ),
                     )
                     while not runtime.stop_event.is_set():
@@ -2302,6 +2306,9 @@ class SqlCollaborationCoordinator:
             acknowledged = runtime.acknowledged_version
             session_id = runtime.session.session_id
             session_generation = runtime.session_generation
+        navigation_owner = self._reconciliation.capture_navigation_owner(
+            runtime.database_id
+        )
         poll_result = self._store.poll_changes(
             runtime.database_id,
             acknowledged,
@@ -2360,6 +2367,7 @@ class SqlCollaborationCoordinator:
                 runtime.generation,
                 session_generation,
                 poll_result.remote_batch,
+                navigation_owner,
             ),
         )
 
@@ -2427,9 +2435,25 @@ class SqlCollaborationCoordinator:
         return max(0.05, base + random.uniform(-jitter, jitter))
 
     def _on_session_started(self, payload) -> None:
-        database_id, generation, session_generation, hydrated = payload
+        database_id, generation, session_generation, hydrated, navigation_owner = (
+            payload
+        )
         runtime = self._session_runtime(database_id, generation, session_generation)
         if runtime is None:
+            return
+        if not self._reconciliation.navigation_owner_is_current(
+            database_id, navigation_owner
+        ):
+            self._on_session_reconciliation_required(
+                (
+                    database_id,
+                    generation,
+                    session_generation,
+                    "Navigation replaced the loaded Bid while SQL session-start hydration was pending.",
+                ),
+                navigation_replaced=True,
+            )
+            runtime.ready_event.set()
             return
         attempt = self._apply_reconciliation(hydrated)
         if not attempt.applied:
@@ -2696,9 +2720,24 @@ class SqlCollaborationCoordinator:
         )
 
     def _on_remote_batch(self, payload) -> None:
-        database_id, generation, session_generation, hydrated = payload
+        database_id, generation, session_generation, hydrated, navigation_owner = (
+            payload
+        )
         runtime = self._session_runtime(database_id, generation, session_generation)
         if runtime is None:
+            return
+        if not self._reconciliation.navigation_owner_is_current(
+            database_id, navigation_owner
+        ):
+            self._on_session_reconciliation_required(
+                (
+                    database_id,
+                    generation,
+                    session_generation,
+                    "Navigation replaced the loaded Bid while a SQL snapshot was pending.",
+                ),
+                navigation_replaced=True,
+            )
             return
         started = time.perf_counter()
         barrier = RemoteProjectionBarrier(
@@ -2828,14 +2867,17 @@ class SqlCollaborationCoordinator:
             reason=reason,
         )
 
-    def _on_session_reconciliation_required(self, payload) -> None:
+    def _on_session_reconciliation_required(
+        self, payload, *, navigation_replaced: bool = False
+    ) -> None:
         database_id, generation, session_generation, reason = payload
-        if not self._is_session_current(
-            database_id,
-            generation,
-            session_generation,
-        ):
+        runtime = self._session_runtime(database_id, generation, session_generation)
+        if runtime is None:
             return
+        if navigation_replaced:
+            with runtime.lock:
+                if not runtime.recovery_requested:
+                    runtime.recovery_attempted = False
         self._on_reconciliation_required((database_id, generation, reason))
 
     def _handle_worker_failure(

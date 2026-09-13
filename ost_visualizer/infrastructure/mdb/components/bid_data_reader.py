@@ -612,6 +612,7 @@ class BidDataReaderMixin:
             [
                 "[UID]",
                 schema.optional_column("BidPages", "Name", "NULL"),
+                schema.optional_column("BidPages", "BidPageFolderUID", "NULL"),
                 schema.optional_column("BidPages", "SheetNo", "NULL"),
                 schema.optional_column("BidPages", "Sequence", "0"),
                 schema.optional_column("BidPages", "ImagePath", "NULL"),
@@ -638,12 +639,16 @@ class BidDataReaderMixin:
                 schema.optional_column("BidPages", "Bitonal", "0"),
             ]
         )
+        order_clause = schema.order_by_existing(
+            "BidPages", ("Sequence", "Name", "UID"), "[UID]"
+        )
         with connection.cursor() as cursor:
             cursor.execute(
                 f"""
                 SELECT {page_select}
                 FROM [BidPages]
                 WHERE [BidUID] = ?
+                ORDER BY {order_clause}
                 """,
                 bid_uid,
             )
@@ -664,6 +669,9 @@ class BidDataReaderMixin:
                     overlay_rect = EMPTY_OVERLAY_RECT
                 bid_pages[uid] = BidPageInfo(
                     name=name_str,
+                    folder_uid=(
+                        str(row.BidPageFolderUID) if row.BidPageFolderUID else None
+                    ),
                     sheet_no=decode_value(row.SheetNo),
                     sequence=int(row.Sequence or 0),
                     image_path=decode_value(row.ImagePath) or None,

@@ -26,6 +26,7 @@ class Bid:
     pages_without_folder: List[Page] = field(default_factory=list)
 
     def replace_pages(self, pages: Iterable[Page]) -> None:
+        ordered_pages = sorted(pages, key=lambda page: page.sequence)
         folders_by_uid: Dict[str, Folder] = {}
 
         def index_folders(folders: Iterable[Folder]) -> None:
@@ -36,7 +37,6 @@ class Bid:
 
         index_folders(self.folders.values())
         self.pages_without_folder.clear()
-        ordered_pages = sorted(pages, key=lambda page: page.sequence)
         for page in ordered_pages:
             folder_uid = str(page.folder_uid or "")
             folder = folders_by_uid.get(folder_uid)

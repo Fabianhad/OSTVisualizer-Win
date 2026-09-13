@@ -1,15 +1,13 @@
 import logging
 from dataclasses import dataclass
 from typing import Optional
+from ...dtos.collaboration_dtos import ConcurrencyToken, ResourceRef
 from ...dtos.user_workspace_state_dtos import UserBidWorkspaceState
 from ....domain.aggregates.ost_aggregate import OstAggregate
 from ....domain.entities.identity_refs import BidRef
 from ....domain.entities.layer import normalize_layer_name
 from ....domain.entities.page import build_pages_from_bid_data
-from ....domain.entities.project_factory import (
-    build_bid,
-    build_page_folder_uid_map,
-)
+from ....domain.entities.project_factory import build_bid
 from ....domain.entities.file_results import BidLoadResult
 from ....domain.services.file_manager_service import FileManager
 
@@ -18,6 +16,7 @@ from ....domain.services.file_manager_service import FileManager
 class PreparedBidLoad:
     bid_data: BidLoadResult
     sql_workspace_state: Optional[UserBidWorkspaceState]
+    resource_versions: Optional[tuple[tuple[ResourceRef, ConcurrencyToken], ...]] = None
 
 
 class LoadBidUseCase:
@@ -49,7 +48,9 @@ class LoadBidUseCase:
         return self.apply_prepared(bid_ref, bid_data)
 
     def prepare(self, bid_ref: BidRef) -> PreparedBidLoad:
-        self._concurrency_tokens.load_bid(bid_ref.file_path, bid_ref.bid_uid)
+        resource_versions = self._concurrency_tokens.load_bid(
+            bid_ref.file_path, bid_ref.bid_uid
+        )
         bid_data = self.file_manager.prepare_bid_load(
             bid_ref.bid_uid, bid_ref.file_path
         )
@@ -58,9 +59,20 @@ class LoadBidUseCase:
             workspace_state = self._sql_workspace.load_bid_state(
                 bid_ref.file_path, bid_ref.bid_uid
             )
-        return PreparedBidLoad(bid_data, workspace_state)
+        return PreparedBidLoad(bid_data, workspace_state, resource_versions)
 
     def apply_prepared(self, bid_ref: BidRef, prepared: PreparedBidLoad) -> bool:
+        if prepared.resource_versions is None:
+            return self._apply_prepared(bid_ref, prepared)
+        with self._concurrency_tokens.mutation_scope(bid_ref.file_path):
+            if not self._concurrency_tokens.bid_versions_are_current(
+                bid_ref.file_path, bid_ref.bid_uid, prepared.resource_versions
+            ):
+                self.logger.info("Discarding navigation superseded by resource changes")
+                return False
+            return self._apply_prepared(bid_ref, prepared)
+
+    def _apply_prepared(self, bid_ref: BidRef, prepared: PreparedBidLoad) -> bool:
         bid_data = prepared.bid_data
         self.file_manager.apply_bid_load(bid_ref.file_path)
         self.model.bid_conditions = bid_data.bid_conditions
@@ -92,9 +104,6 @@ class LoadBidUseCase:
                 bid_data.bid_pages,
                 self.model.bid_takeoffs,
             )
-        page_folder_uid_map = build_page_folder_uid_map(bid_info)
-        for page in pages.values():
-            page.folder_uid = page_folder_uid_map.get(str(page.uid))
         selected_page_uid = bid_data.selected_page_uid
         if prepared.sql_workspace_state is not None:
             pages_by_uid = {str(page.uid): page for page in pages.values()}

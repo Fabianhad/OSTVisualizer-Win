@@ -115,6 +115,10 @@ class _RowsConnection:
 
 class _AllPageColumnsSchema:
     @staticmethod
+    def order_by_existing(_table, columns, _fallback):
+        return ", ".join(f"[{column}]" for column in columns)
+
+    @staticmethod
     def optional_column(_table, column, _fallback):
         return f"[{column}]"
 
@@ -130,6 +134,7 @@ class _RecordingLogger:
 def _page_row(overlay_rect):
     return SimpleNamespace(
         UID=58227,
+        BidPageFolderUID=None,
         Name="Copy of S201S.pdf",
         SheetNo="S201S",
         Sequence=1,

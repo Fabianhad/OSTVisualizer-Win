@@ -30,3 +30,4 @@ class BidPageInfo:
     current_y: float = 0.0
     invert: bool = False
     bitonal: bool = False
+    folder_uid: Optional[str] = None

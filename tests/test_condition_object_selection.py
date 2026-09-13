@@ -17,6 +17,12 @@ from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
 )
 from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+    HierarchyBidInfo,
+    HierarchyPageInfo,
+)
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
@@ -87,6 +93,25 @@ class ConditionObjectSelectionTests(unittest.TestCase):
         self.model = OstAggregate(Mock())
         self.model.current_bid_ref = self.bid_ref
         self.model.current_bid = Bid(uid="bid", name="Bid")
+        self.model.set_hierarchy(
+            HierarchyData(
+                loaded_files=[
+                    HierarchyFileEntry(
+                        file_path=self.bid_ref.file_path,
+                        orphan_bids=[
+                            HierarchyBidInfo(
+                                uid=self.bid_ref.bid_uid,
+                                name="Bid",
+                                pages_without_folder=[
+                                    HierarchyPageInfo(uid=p.uid, name=p.name)
+                                    for p in (self.page, self.other_page)
+                                ],
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
         self.model.bid_conditions = self.conditions
         self.model.set_pages({"p1": self.page, "p2": self.other_page})
         self.data = ProjectDataService(self.model)

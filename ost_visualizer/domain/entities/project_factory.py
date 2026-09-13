@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict
+from typing import List, Optional
 from .bid import Bid
 from .folder import Folder
 from .hierarchy_data import (
@@ -99,29 +99,6 @@ def build_bid(bid_info: Optional[HierarchyBidInfo]) -> Bid:
             _build_page(page_info) for page_info in bid_info.pages_without_folder
         ],
     )
-
-
-def build_page_folder_uid_map(
-    bid_info: Optional[HierarchyBidInfo],
-) -> Dict[str, str]:
-    if bid_info is None:
-        return {}
-    result: Dict[str, str] = {}
-
-    def walk(folders) -> None:
-        for folder_uid, folder_info in folders.items():
-            normalized_folder_uid = str(folder_uid)
-            for page_info in folder_info.pages:
-                page_uid = str(page_info.uid)
-                if page_uid in result:
-                    raise ValueError(
-                        f"Page {page_uid} appears in multiple page folders"
-                    )
-                result[page_uid] = normalized_folder_uid
-            walk(folder_info.subfolders)
-
-    walk(bid_info.folders)
-    return result
 
 
 def _build_folder(uid: str, folder_info: HierarchyFolderInfo) -> Folder:

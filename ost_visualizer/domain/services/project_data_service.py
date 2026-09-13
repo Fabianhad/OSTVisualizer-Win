@@ -239,6 +239,32 @@ class ProjectDataService:
                 )
         self.model.set_hierarchy(hierarchy)
         self.model.projects = build_projects(hierarchy)
+        current_bid = self.model.current_bid
+        if (
+            current_bid_ref is not None
+            and current_bid is not None
+            and normalize_path(current_bid_ref.file_path)
+            == normalize_path(file_entry.file_path)
+        ):
+            bid_info = self.model.find_bid_info(current_bid_ref)
+            if bid_info is not None:
+                refreshed_bid = build_bid(bid_info)
+                current_bid.name = refreshed_bid.name
+                current_bid.bid_no = refreshed_bid.bid_no
+                current_bid.bid_date = refreshed_bid.bid_date
+                current_bid.notes = refreshed_bid.notes
+                current_bid.job_id = refreshed_bid.job_id
+                current_bid.status = refreshed_bid.status
+                current_bid.status_uid = refreshed_bid.status_uid
+                current_bid.estimator = refreshed_bid.estimator
+                current_bid.condition_count = refreshed_bid.condition_count
+                current_bid.measure_base = refreshed_bid.measure_base
+                current_bid.takeoff_increments = refreshed_bid.takeoff_increments
+                current_bid.orig_bid_project_uid = refreshed_bid.orig_bid_project_uid
+                current_bid.copy_from_bid_no = refreshed_bid.copy_from_bid_no
+                current_bid.copy_timestamp = refreshed_bid.copy_timestamp
+                current_bid.folders = refreshed_bid.folders
+                current_bid.replace_pages(self.model.get_all_pages())
 
     def get_current_file_path(self) -> Optional[str]:
         return self.model.get_current_file_path()
@@ -263,11 +289,11 @@ class ProjectDataService:
         return self.model.get_all_pages()
 
     def get_bid(self, bid_ref: BidRef) -> Optional[Bid]:
-        if self.model.current_bid_ref == bid_ref and self.model.current_bid:
-            return self.model.current_bid
         bid_info = self.model.find_bid_info(bid_ref)
         if not bid_info:
             return None
+        if self.model.current_bid_ref == bid_ref and self.model.current_bid:
+            return self.model.current_bid
         return build_bid(bid_info)
 
     def get_bid_conditions(self) -> Dict[str, Condition]:

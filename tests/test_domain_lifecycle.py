@@ -55,6 +55,7 @@ class DomainLifecycleTests(unittest.TestCase):
             file_manager=_FileManager(),
             cdn_types={},
             current_bid_ref=BidRef("c:\\data\\test.mdb", "bid-1"),
+            current_bid=None,
             bid_conditions={condition.uid: condition},
             set_hierarchy=lambda _hierarchy: None,
             projects=[],

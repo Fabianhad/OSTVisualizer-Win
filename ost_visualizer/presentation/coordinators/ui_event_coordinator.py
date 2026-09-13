@@ -417,7 +417,6 @@ class UIEventCoordinator:
     def _prepare_condition_takeoff_target(
         self, condition: Condition, *, require_edit: bool = False
     ) -> Optional[Callable[[], set[str]]]:
-        """Capture the sidebar target and the owning Main Plan context."""
         plan = self.plan_view
         if self._is_cleaning_up or plan is None or not isValid(plan):
             return None

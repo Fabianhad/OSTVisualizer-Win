@@ -244,6 +244,7 @@ def build_pages_from_bid_data(
         pages[uid] = Page(
             uid=uid,
             name=info.name,
+            folder_uid=info.folder_uid,
             sheet_no=info.sheet_no,
             sequence=info.sequence,
             takeoffs=takeoffs_by_page.get(uid, []),

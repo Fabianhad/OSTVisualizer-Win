@@ -49,7 +49,9 @@ class DatabaseConcurrencyTokenService:
                 for resource, token in loaded.items():
                     self._tokens[(database_id, resource)] = token
 
-    def load_bid(self, database_id: str, bid_uid: str) -> None:
+    def load_bid(
+        self, database_id: str, bid_uid: str
+    ) -> tuple[tuple[ResourceRef, ConcurrencyToken], ...]:
         with self.mutation_scope(database_id):
             loaded = self._reader.read_bid_versions(database_id, bid_uid)
             parsed_bid_uid = int(bid_uid)
@@ -64,6 +66,25 @@ class DatabaseConcurrencyTokenService:
                 for resource, token in loaded.items():
                     self._tokens[(database_id, resource)] = token
                 self._loaded_bids.add((database_id, parsed_bid_uid))
+                return tuple(loaded.items())
+
+    def bid_versions_are_current(
+        self,
+        database_id: str,
+        bid_uid: str,
+        versions: tuple[tuple[ResourceRef, ConcurrencyToken], ...],
+    ) -> bool:
+        parsed_bid_uid = int(bid_uid)
+        with self._lock:
+            current = {
+                resource: token
+                for (owner, resource), token in self._tokens.items()
+                if owner == database_id and resource.bid_uid == parsed_bid_uid
+            }
+            return (
+                database_id,
+                parsed_bid_uid,
+            ) in self._loaded_bids and current == dict(versions)
 
     def ensure_resources_loaded(
         self, database_id: str, resources: tuple[ResourceRef, ...]

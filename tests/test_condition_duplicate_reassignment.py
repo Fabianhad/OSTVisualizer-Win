@@ -61,6 +61,7 @@ class ConditionDuplicateReassignmentTests(unittest.TestCase):
 
     def setUp(self):
         selection_tests.ConditionObjectSelectionTests.setUp(self)
+        self.model.find_bid_info(self.bid_ref).uid = "7"
         self.bid_ref = BidRef(self.bid_ref.file_path, "7")
         self.model.current_bid_ref = self.bid_ref
         self.model.current_bid.uid = "7"

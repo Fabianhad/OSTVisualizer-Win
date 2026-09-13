@@ -268,7 +268,14 @@ Threading and events:
   badge projection to the Page-family owner after it resolves final selection;
   do not project Takeoff-derived state first against a Page that may disappear.
   Remote Page hydration also replaces the loaded Bid and cached navigation Page
-  hierarchy from the authoritative Page objects. Detached Page badges update for
+  hierarchy from the authoritative Page objects. Page folder ownership travels
+  with `BidPageInfo` into `Page` through the shared MDB/SQL reader and constructor;
+  do not overwrite freshly read folder assignments from cached hierarchy metadata.
+  Page hydration uses the hierarchy reader's schema-aware Sequence/Name/UID order
+  so equal-sequence Pages retain their navigation order after remote replacement.
+  Hierarchy replacement refreshes the active Bid folder structure through the domain
+  factory, then rebinds the retained authoritative Pages. Cached active Bids are
+  returned only while they still exist in the current database hierarchy. Detached Page badges update for
   unaffected Page takeoff changes without requesting a canvas refresh.
 - Layer deletion confirmation refreshes its in-use set from current authoritative
   content on demand. Annotation/Takeoff changes on other Pages must not leave a
