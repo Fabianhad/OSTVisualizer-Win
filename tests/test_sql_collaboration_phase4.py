@@ -1326,7 +1326,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             level="ERROR",
         ) as captured:
             coordinator._apply_local_mutation_result(
-                (results.append, result, object(), runtime.session_generation)
+                (results.append, result, object(), runtime.session_generation, None)
             )
         self.assertIn(
             "SQL local-completion reconciliation failed",

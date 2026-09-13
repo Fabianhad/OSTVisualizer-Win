@@ -6827,6 +6827,7 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
         coordinator._pending_hotlink_page_uid = None
         coordinator._pending_hotlink_named_view = None
         coordinator._update_export_menu_state = lambda: None
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
         return coordinator
 
     def test_annotation_change_for_detached_page_does_not_move_main_plan_view(self):

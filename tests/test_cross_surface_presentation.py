@@ -1491,6 +1491,78 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         )
         return toolbar, (copy, delete, duplicate), coordinator
 
+    def test_queued_plan_reload_restores_annotation_and_page_settings_controls(self):
+        from ost_visualizer.presentation.utils.qt_callback_bridge import QtVoidCallback
+
+        toolbar, _actions, coordinator = self._main_edit_action_projection()
+        annotation = QtGui.QAction(self.main_plan)
+        toolbar.set_annotation_tool_actions([annotation])
+        toolbar.set_page_settings_bar(self.bar)
+        coordinator._sidebar = SimpleNamespace(
+            update_conditions_quantities=lambda: None
+        )
+        self.main_plan.page_fully_loaded.connect(
+            coordinator._on_plan_view_page_fully_loaded
+        )
+        self.addCleanup(
+            self.main_plan.page_fully_loaded.disconnect,
+            coordinator._on_plan_view_page_fully_loaded,
+        )
+        self.main_plan.show()
+        self.app.processEvents()
+        toolbar.refresh()
+        page = self.data.page
+        self.assertTrue(annotation.isEnabled())
+        self.assertTrue(self.bar.area_combo.isEnabled())
+        self.assertTrue(self.bar.scale_combo.isEnabled())
+
+        # A completed floating 3D scene queues this same Main Plan refresh.
+        # Force the visual replacement branch rather than the overlay-only fast path.
+        page.rotation = 90
+        during_clear = []
+
+        def observe_clear(_selection):
+            if self.main_plan.current_page_uid is None:
+                during_clear.append(annotation.isEnabled())
+
+        self.main_plan.takeoff_selection_changed.connect(observe_clear)
+        self.addCleanup(
+            self.main_plan.takeoff_selection_changed.disconnect, observe_clear
+        )
+        callback = QtVoidCallback(coordinator._update_plan_view_for_active)
+        self.addCleanup(callback.cleanup)
+        QtCore.QMetaObject.invokeMethod(
+            callback, "_invoke", QtCore.Qt.ConnectionType.QueuedConnection
+        )
+        self.app.processEvents()
+
+        self.assertTrue(during_clear)
+        self.assertFalse(any(during_clear))
+        self.assertIs(self.main_plan._current_page, page)
+        self.assertEqual(self.main_plan.current_page_uid, page.uid)
+        self.assertTrue(annotation.isEnabled())
+        self.assertTrue(self.bar.area_combo.isEnabled())
+        self.assertTrue(self.bar.scale_combo.isEnabled())
+
+        toolbar._tab_widget.setCurrentIndex(0)
+        coordinator._on_plan_view_page_fully_loaded()
+        self.assertFalse(annotation.isEnabled())
+        toolbar._tab_widget.setCurrentIndex(1)
+
+        # Completion re-evaluates permission and Page ownership; it never forces
+        # controls on for an absent Page or a restricted surface.
+        toolbar._access.is_allowed = lambda _feature: False
+        coordinator._on_plan_view_page_fully_loaded()
+        self.assertFalse(annotation.isEnabled())
+        self.assertFalse(self.bar.area_combo.isEnabled())
+        self.assertFalse(self.bar.scale_combo.isEnabled())
+        toolbar._access.is_allowed = lambda _feature: True
+        self.main_plan.clear()
+        coordinator._on_plan_view_page_fully_loaded()
+        self.assertFalse(annotation.isEnabled())
+        self.assertFalse(self.bar.area_combo.isEnabled())
+        self.assertFalse(self.bar.scale_combo.isEnabled())
+
     def test_annotation_selection_deletion_and_recovery_refresh_main_edit_actions(self):
         toolbar, (copy, delete, duplicate), coordinator = (
             self._main_edit_action_projection()

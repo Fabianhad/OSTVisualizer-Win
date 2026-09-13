@@ -1,7 +1,10 @@
 from __future__ import annotations
+from dataclasses import replace
 from typing import Optional
 import pyodbc
 from ...application.dtos.collaboration_resource_catalog import (
+    COLLABORATION_RESOURCE_CATALOG,
+    coalesced_resource_type,
     AREA_RESOURCE_TYPES,
     BID_CONTENT_RESOURCE_TYPES,
     CONDITION_RESOURCE_TYPES,
@@ -126,28 +129,59 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
     def hydrate_connection(
         self, batch: DatabaseChangeBatch, connection
     ) -> HydratedDatabaseChangeBatch:
+        global_bid_types = {
+            name
+            for name, definition in COLLABORATION_RESOURCE_CATALOG.items()
+            if definition.bid_scoped and coalesced_resource_type(name) == name
+        }
+        global_changes = tuple(
+            change
+            for change in batch.changes
+            if change.resource.bid_uid is None
+            and change.resource.resource_type in global_bid_types
+        )
+        hydration_changes = batch.changes
+        if global_changes:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT [UID] FROM [Bids] ORDER BY [UID]")
+                bid_uids = tuple(int(row[0]) for row in cursor.fetchall())
+            expanded_changes = []
+            for change in batch.changes:
+                if change not in global_changes:
+                    expanded_changes.append(change)
+                    continue
+                expanded_changes.extend(
+                    replace(
+                        change,
+                        resource=replace(
+                            change.resource, resource_id=str(bid_uid), bid_uid=bid_uid
+                        ),
+                    )
+                    for bid_uid in bid_uids
+                )
+            hydration_changes = tuple(expanded_changes)
         takeoff_bids = {
             change.resource.bid_uid
-            for change in batch.changes
+            for change in hydration_changes
             if change.resource.bid_uid is not None
             and BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(change.resource.resource_type)
             == CollaborationResourceFamily.TAKEOFFS.value
         }
         condition_bids = {
             change.resource.bid_uid
-            for change in batch.changes
+            for change in hydration_changes
             if change.resource.bid_uid is not None
             and change.resource.resource_type in CONDITION_RESOURCE_TYPES
         }.union(takeoff_bids)
         area_bids = {
             change.resource.bid_uid
-            for change in batch.changes
+            for change in hydration_changes
             if change.resource.bid_uid is not None
             and change.resource.resource_type in AREA_RESOURCE_TYPES
         }
         bid_data_bids = {
             change.resource.bid_uid
-            for change in batch.changes
+            for change in hydration_changes
             if change.resource.bid_uid is not None
             and change.resource.resource_type in BID_CONTENT_RESOURCE_TYPES
         }
@@ -160,11 +194,11 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         needs_hierarchy = any(
             change.resource.resource_type in HIERARCHY_RESOURCE_TYPES
             or change.resource.resource_type in hierarchy_display_master_types
-            for change in batch.changes
+            for change in hydration_changes
         )
         cover_sheet_bids = {
             change.resource.bid_uid
-            for change in batch.changes
+            for change in hydration_changes
             if change.resource.bid_uid is not None
             and change.resource.resource_type
             == CollaborationResourceType.COVER_SHEET.value
@@ -172,7 +206,7 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         delete_content_bids = set(cover_sheet_bids)
         delete_content_bids.update(
             change.resource.bid_uid
-            for change in batch.changes
+            for change in hydration_changes
             if change.resource.bid_uid is not None
             and change.resource.resource_type
             in {
@@ -183,11 +217,11 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         needs_default_layers = any(
             change.resource.resource_type
             == CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value
-            for change in batch.changes
+            for change in hydration_changes
         )
         master_resource_types = {
             change.resource.resource_type
-            for change in batch.changes
+            for change in hydration_changes
             if change.resource.resource_type in MASTER_DATA_RESOURCE_TYPES
         }
         if (
@@ -216,7 +250,7 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
                     CollaborationResourceType.TAKEOFF.value,
                     CollaborationResourceType.TAKEOFFS_COLLECTION.value,
                 }
-                for change in batch.changes
+                for change in hydration_changes
             )
         )
         if takeoff_only:
@@ -326,7 +360,7 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         families_by_bid = {
             bid_uid: {
                 BID_CONTENT_FAMILY_BY_RESOURCE_TYPE[change.resource.resource_type]
-                for change in batch.changes
+                for change in hydration_changes
                 if change.resource.bid_uid == bid_uid
                 and change.resource.resource_type in BID_CONTENT_FAMILY_BY_RESOURCE_TYPE
             }

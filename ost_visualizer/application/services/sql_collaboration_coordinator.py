@@ -1355,6 +1355,7 @@ class SqlCollaborationCoordinator:
             )
             failure: DatabaseCatalogError | OSError | None = None
             local_hydrated = None
+            navigation_owner = None
             consumed_lock_tokens: tuple[str, ...] = ()
             try:
                 all_resources = request.resources + request.dependency_resources
@@ -1465,6 +1466,11 @@ class SqlCollaborationCoordinator:
                         authoritative_result=work_result.authoritative_result,
                     )
                     try:
+                        navigation_owner = (
+                            self._reconciliation.capture_navigation_owner(
+                                request.database_id
+                            )
+                        )
                         local_hydrated = self._store.hydrate_operation(
                             request.database_id,
                             request.operation_id,
@@ -1583,6 +1589,7 @@ class SqlCollaborationCoordinator:
                         result,
                         local_hydrated,
                         session_generation,
+                        navigation_owner,
                     )
                 else:
                     self._dispatch_mutation_result(request.callback, result)
@@ -1746,14 +1753,15 @@ class SqlCollaborationCoordinator:
         result: QueuedMutationResult,
         hydrated,
         session_generation: int,
+        navigation_owner,
     ) -> None:
         self._dispatcher.dispatch(
             self._apply_local_mutation_result,
-            (callback, result, hydrated, session_generation),
+            (callback, result, hydrated, session_generation, navigation_owner),
         )
 
     def _apply_local_mutation_result(self, payload) -> None:
-        callback, result, hydrated, session_generation = payload
+        callback, result, hydrated, session_generation, navigation_owner = payload
         if not self._is_session_current(
             result.database_id,
             result.runtime_generation,
@@ -1768,6 +1776,11 @@ class SqlCollaborationCoordinator:
                 commit_attempted=True,
             )
             self._complete_mutation_request((callback, stale_result))
+            return
+        if not self._reconciliation.navigation_owner_is_current(
+            result.database_id, navigation_owner
+        ):
+            self._finish_local_mutation_result(callback, result, False)
             return
         pending = self._pending_mutations.get(result.operation_id)
         resource_uid_aliases_by_family: dict[str, tuple[str, ...]] = {}

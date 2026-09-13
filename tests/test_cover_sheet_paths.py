@@ -4785,6 +4785,12 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                     finally:
                         dialog.close()
                         dialog.deleteLater()
+                        # processEvents() alone does not deliver DeferredDelete in
+                        # this synchronous test runner. Release this dialog's
+                        # children too, including the nested picker's focus owner.
+                        QtCore.QCoreApplication.sendPostedEvents(
+                            dialog, QtCore.QEvent.Type.DeferredDelete
+                        )
 
     def test_nested_picker_cancel_preserves_cover_sheet_combo_and_page_drafts(self):
         for kind in ("employee", "job_status"):
@@ -4866,6 +4872,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                     finally:
                         dialog.close()
                         dialog.deleteLater()
+                        QtCore.QCoreApplication.sendPostedEvents(
+                            dialog, QtCore.QEvent.Type.DeferredDelete
+                        )
 
     def test_employee_picker_cancel_restores_existing_estimator_selection(self):
         data = _cover_sheet_data()

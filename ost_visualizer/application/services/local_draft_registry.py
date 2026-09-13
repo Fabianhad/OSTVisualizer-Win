@@ -3,6 +3,10 @@ import threading
 import uuid
 from dataclasses import replace
 from typing import Optional
+from ..dtos.collaboration_resource_catalog import (
+    coalesced_resource_type,
+    resource_definition,
+)
 from ..dtos.collaboration_dtos import (
     ConcurrencyToken,
     DatabaseChange,
@@ -149,6 +153,11 @@ class LocalDraftRegistry:
         seen = set()
         with self._lock:
             for change in changes:
+                bid_collection = (
+                    resource_definition(change.resource.resource_type).bid_scoped
+                    and coalesced_resource_type(change.resource.resource_type)
+                    == change.resource.resource_type
+                )
                 for draft_id, draft in self._drafts.items():
                     if draft.database_id != database_id:
                         continue
@@ -159,7 +168,39 @@ class LocalDraftRegistry:
                         )
                     )
                     if (
-                        change.resource.lease_identity not in resource_identities
+                        not (
+                            change.resource.lease_identity in resource_identities
+                            or bid_collection
+                            and any(
+                                coalesced_resource_type(resource.resource_type)
+                                == change.resource.resource_type
+                                and (
+                                    change.resource.bid_uid is None
+                                    or resource.bid_uid == change.resource.bid_uid
+                                )
+                                for resource in (
+                                    draft.affected_resources
+                                    + draft.dependency_resources
+                                )
+                            )
+                            or any(
+                                resource_definition(resource.resource_type).bid_scoped
+                                and coalesced_resource_type(resource.resource_type)
+                                == resource.resource_type
+                                and coalesced_resource_type(
+                                    change.resource.resource_type
+                                )
+                                == resource.resource_type
+                                and (
+                                    resource.bid_uid is None
+                                    or resource.bid_uid == change.resource.bid_uid
+                                )
+                                for resource in (
+                                    draft.affected_resources
+                                    + draft.dependency_resources
+                                )
+                            )
+                        )
                         or draft_id in seen
                     ):
                         continue

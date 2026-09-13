@@ -1235,6 +1235,7 @@ class UIEventCoordinator:
 
     def _on_plan_view_page_fully_loaded(self) -> None:
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
+        self._toolbar.refresh()
 
     def _on_plan_view_state_changed(
         self, page_uid: str, zoom_fac: float, current_x: float, current_y: float
