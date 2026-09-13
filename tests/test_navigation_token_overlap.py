@@ -2,7 +2,6 @@ from copy import deepcopy
 import unittest
 import threading
 from unittest.mock import Mock
-
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ConcurrencyToken,
     DatabaseMutationResult,

@@ -128,6 +128,7 @@ class MainWindow(QtWidgets.QMainWindow):
     PLAN_TOOLS_TOOLBAR_KEY = "plan_tools_toolbar"
     OVERLAY_TOOLS_TOOLBAR_KEY = "overlay_tools_toolbar"
     _application_shutdown_finalized = False
+    _shutdown_hidden_windows: tuple[QtWidgets.QWidget, ...] = ()
 
     def __init__(
         self, app_controller, splash_screen=None, startup_project_file_args=None
@@ -1192,6 +1193,14 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def _resume_shutdown_deferred_callbacks(self) -> None:
+        hidden_windows = self._shutdown_hidden_windows
+        self._shutdown_hidden_windows = ()
+        for window in hidden_windows:
+            if isValid(window) and any(
+                window is current
+                for current in (*self._detached_plan_windows(), self.get_mesh_window())
+            ):
+                window.show()
         callbacks_by_key = self._shutdown_deferred_callbacks
         callbacks = []
         for key in ("load_files_from_config", "show_main_window"):
@@ -1205,6 +1214,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _discard_shutdown_deferred_callbacks(self) -> None:
         self._shutdown_deferred_callbacks.clear()
+        self._shutdown_hidden_windows = ()
 
     def _check_for_updates(self) -> None:
         if self._defer_during_application_shutdown(
@@ -2393,6 +2403,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self._collaboration_shutdown_complete:
             self._collaboration_shutdown_pending = True
+            windows = (*self._detached_plan_windows(), self.get_mesh_window())
+            self._shutdown_hidden_windows = tuple(
+                window
+                for window in windows
+                if window is not None and isValid(window) and window.isVisible()
+            )
+            for window in self._shutdown_hidden_windows:
+                window.hide()
             self.hide()
             event.ignore()
             QtCore.QTimer.singleShot(0, self._begin_application_shutdown)

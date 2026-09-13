@@ -1169,6 +1169,62 @@ class FakeCloseEvent:
 
 
 class DeferredPersistenceShutdownTests(unittest.TestCase):
+    def setUp(self):
+        # These partial MainWindow fixtures do not construct detached managers.
+        for name, result in (("_detached_plan_windows", ()), ("get_mesh_window", None)):
+            patcher = patch.object(MainWindow, name, return_value=result)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_tentative_shutdown_hides_owned_windows_and_abort_restores_visibility(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = MainWindow.__new__(MainWindow)
+        QtWidgets.QMainWindow.__init__(window)
+        window.showEvent = lambda event: QtWidgets.QMainWindow.showEvent(window, event)
+        plan, mesh, hidden_plan = [QtWidgets.QWidget() for _ in range(3)]
+        for widget in (window, plan, mesh, hidden_plan):
+            self.addCleanup(widget.deleteLater)
+        window.handlers = SimpleNamespace(
+            file_ops=SimpleNamespace(maintenance_pending=False)
+        )
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window._shutdown_deferred_callbacks = {}
+        window._begin_application_shutdown = lambda: None
+        window._detached_plan_windows = lambda: (plan, hidden_plan)
+        window.get_mesh_window = lambda: mesh
+        for widget in (window, plan, mesh):
+            widget.show()
+        app.processEvents()
+        scheduled = []
+        with patch.object(
+            QtCore.QTimer, "singleShot", side_effect=lambda _, fn: scheduled.append(fn)
+        ):
+            window.close()
+            self.assertTrue(window._collaboration_shutdown_pending)
+            self.assertEqual(len(scheduled), 1)
+            self.assertFalse(window.isVisible())
+            self.assertFalse(plan.isVisible())
+            self.assertFalse(mesh.isVisible())
+            self.assertIs(window.get_mesh_window(), mesh)
+            self.assertEqual(window._detached_plan_windows(), (plan, hidden_plan))
+            window._collaboration_shutdown_pending = False
+            window.show()
+            window._resume_shutdown_deferred_callbacks()
+            self.assertTrue(plan.isVisible())
+            self.assertTrue(mesh.isVisible())
+            self.assertFalse(hidden_plan.isVisible())
+            window.close()
+            window.get_mesh_window = lambda: None
+            window._collaboration_shutdown_pending = False
+            window.show()
+            window._resume_shutdown_deferred_callbacks()
+            self.assertTrue(plan.isVisible())
+            self.assertFalse(mesh.isVisible())
+        for widget in (window, plan, mesh):
+            widget.hide()
+
     @staticmethod
     def _guarded_shutdown_callback(window, key, calls):
         def callback():

@@ -1,6 +1,5 @@
 import unittest
 from unittest.mock import MagicMock, Mock
-
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     ResourceRef,
@@ -20,7 +19,6 @@ from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChan
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 from tests import test_remote_batch_navigation_handoff
 from tests.test_sql_collaboration_phase4 import _batch, _change
-
 
 FAMILIES = (
     "pages_collection",

@@ -489,6 +489,8 @@ class _CollaborationStore:
         display_name,
         machine_name,
         application_version,
+        *,
+        stop_requested=None,
     ):
         self.start_count += 1
         self.session_id = session_id
@@ -586,13 +588,13 @@ class _CredentialRecoveryStore(_CollaborationStore):
         self.failed = threading.Event()
         self.restarted = threading.Event()
 
-    def start_session(self, *args):
+    def start_session(self, *args, **kwargs):
         self.attempts += 1
         if self.attempts == 1:
             self.failed.set()
             raise DatabaseCatalogError("Sign in again.", credential_required=True)
         self.restarted.set()
-        return super().start_session(*args)
+        return super().start_session(*args, **kwargs)
 
 
 class _TransientRecoveryStore(_CollaborationStore):
@@ -600,8 +602,8 @@ class _TransientRecoveryStore(_CollaborationStore):
         super().__init__()
         self.failed_once = False
 
-    def start_session(self, *args):
-        session = super().start_session(*args)
+    def start_session(self, *args, **kwargs):
+        session = super().start_session(*args, **kwargs)
         return session
 
     def heartbeat(self, *args):
@@ -626,6 +628,8 @@ class _AlwaysUnavailableStore(_CollaborationStore):
         display_name,
         machine_name,
         application_version,
+        *,
+        stop_requested=None,
     ):
         self.start_threads.append(threading.get_ident())
         self.start_count += 1
@@ -1344,9 +1348,9 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 super().__init__()
                 self.starts = []
 
-            def start_session(self, *args):
+            def start_session(self, *args, **kwargs):
                 self.starts.append((args[1], args[2], args[3]))
-                return super().start_session(*args)
+                return super().start_session(*args, **kwargs)
 
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -8810,6 +8814,81 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             SynchronizationState.RECONCILIATION_REQUIRED,
         )
         _shutdown_coordinator(coordinator)
+
+    def test_shutdown_does_not_start_later_polling_phases(self):
+        for held_phase in ("heartbeat", "locks"):
+            with self.subTest(held_phase=held_phase):
+                entered = threading.Event()
+                release = threading.Event()
+                calls = []
+
+                def record(phase):
+                    calls.append(phase)
+                    if phase == held_phase:
+                        entered.set()
+                        if not release.wait(5):
+                            raise AssertionError("Shutdown probe was not released")
+
+                class Store(_CollaborationStore):
+                    def heartbeat(self, *args):
+                        record("heartbeat")
+                        return super().heartbeat(*args)
+
+                    def list_locks(self, *args):
+                        record("locks")
+                        return super().list_locks(*args)
+
+                    def poll_changes(self, *args):
+                        record("changes")
+                        return super().poll_changes(*args)
+
+                    def close_session(self, *args):
+                        record("close")
+                        return super().close_session(*args)
+
+                descriptors = DatabaseDescriptorRegistry()
+                descriptor = DatabaseDescriptor.for_sql_server(
+                    SqlServerDatabaseLocation(server="localhost", database="TEST"),
+                    schema_version=SQL_SCHEMA_V1.version,
+                )
+                descriptors.register(descriptor)
+                store = Store()
+                tokens, drafts = _token_service()
+                coordinator = _coordinator(
+                    descriptors,
+                    store,
+                    _RemoteReader(),
+                    _Dispatcher(),
+                    _Reconciliation(),
+                    DatabaseCapabilityService(descriptors, _PermissionProbe()),
+                    DatabaseSessionRegistry(),
+                    tokens,
+                    drafts,
+                    _EventBus(),
+                    SQL_SCHEMA_V1.version,
+                )
+                completed = threading.Event()
+                results = []
+                try:
+                    self.assertTrue(coordinator.start_database(descriptor.database_id))
+                    self.assertTrue(entered.wait(2))
+                    coordinator.request_shutdown(
+                        lambda success, message: (
+                            results.append((success, message)),
+                            completed.set(),
+                        )
+                    )
+                    self.assertFalse(completed.is_set())
+                    release.set()
+                    self.assertTrue(completed.wait(2))
+                    expected = ["heartbeat"]
+                    if held_phase == "locks":
+                        expected.append("locks")
+                    self.assertEqual(calls, expected + ["close"])
+                    self.assertEqual(results, [(True, "")])
+                finally:
+                    release.set()
+                    _shutdown_coordinator(coordinator)
 
     def test_shutdown_drains_a_blocked_poll_without_blocking_the_caller(self):
         descriptors = DatabaseDescriptorRegistry()

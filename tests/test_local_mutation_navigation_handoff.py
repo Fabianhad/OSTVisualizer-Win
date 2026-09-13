@@ -1,7 +1,6 @@
 from copy import deepcopy
 import unittest
 from unittest.mock import patch
-
 from ost_visualizer.application.dtos.collaboration_dtos import (
     CollaborationMutationType,
     ConcurrencyToken,

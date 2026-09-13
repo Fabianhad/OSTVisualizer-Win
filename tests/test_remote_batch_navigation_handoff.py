@@ -2,7 +2,6 @@ from copy import deepcopy
 from dataclasses import replace
 import unittest
 from unittest.mock import Mock
-
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseChangePollResult,
@@ -231,10 +230,8 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
                 used_employee_uids=frozenset(),
             )
         )
-        self.store.start_session.side_effect = (
-            lambda database_id, session_id, *_args: DatabaseSession(
-                database_id, session_id
-            )
+        self.store.start_session.side_effect = lambda database_id, session_id, *_args, stop_requested=None: DatabaseSession(
+            database_id, session_id
         )
         if not self.runtime.recovery_requested:
             self.runtime.session = None
@@ -273,7 +270,6 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
             ),
             1,
         )
-
         # Complete the existing recovery handshake, then accept fresh startup
         # hydration and a genuinely newer poll without advancing the startup checkpoint.
         old_session = self.runtime.session
@@ -311,7 +307,6 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
         r0(payload0)
         self.assertTrue(self.coordinator.resume_controlled_recovery("database"))
         r1, payload1 = self.queue_startup_snapshot(version=2)
-
         # A -> B -> A changes the incarnation while preserving database and Bid UID.
         self.data.replace_database_hierarchy(
             HierarchyFileEntry(
@@ -355,7 +350,6 @@ class RemoteBatchNavigationHandoffTests(unittest.TestCase):
         self.assertTrue(self.coordinator.resume_controlled_recovery("database"))
         r1(payload1)
         self.assertFalse(self.coordinator.resume_controlled_recovery("database"))
-
         r2, payload2 = self.queue_startup_snapshot(version=3)
         r2(payload2)
         self.assertFalse(self.runtime.recovery_requested)

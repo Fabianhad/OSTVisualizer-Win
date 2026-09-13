@@ -1,5 +1,4 @@
 import unittest
-
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     ResourceRef,

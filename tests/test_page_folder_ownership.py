@@ -3,7 +3,6 @@ import logging
 import sqlite3
 import unittest
 from unittest.mock import Mock
-
 from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,
     PreparedBidLoad,

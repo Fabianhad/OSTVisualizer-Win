@@ -1,7 +1,6 @@
 from copy import deepcopy
 import unittest
 from unittest.mock import MagicMock, Mock
-
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     ConcurrencyToken,
@@ -130,7 +129,6 @@ class GlobalConditionScopeTests(unittest.TestCase):
         self.connection.cursor.return_value.__enter__.return_value.execute.assert_called_once_with(
             "SELECT [UID] FROM [Bids] ORDER BY [UID]"
         )
-
         # Inactive content is not cached: later navigation reads SQL content and
         # Bid-scoped versions afresh, independently of the acknowledged feed.
         self.context.data.replace_database_hierarchy(

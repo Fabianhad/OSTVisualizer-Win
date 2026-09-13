@@ -1078,9 +1078,16 @@ class SqlCollaborationCoordinator:
                         getpass.getuser(),
                         platform.node(),
                         APPLICATION_VERSION,
+                        stop_requested=runtime.stop_event.is_set,
                     )
+                    if session is None:
+                        break
                     session_generation = self._install_session(runtime, session)
+                    if runtime.stop_event.is_set():
+                        break
                     self._concurrency_tokens.load_database(runtime.database_id)
+                    if runtime.stop_event.is_set():
+                        break
                     navigation_owner = self._reconciliation.capture_navigation_owner(
                         runtime.database_id
                     )
@@ -1089,7 +1096,11 @@ class SqlCollaborationCoordinator:
                         runtime.bid_uid,
                         session.last_acknowledged_version,
                     )
+                    if runtime.stop_event.is_set():
+                        break
                     self._recover_journaled_operations(runtime)
+                    if runtime.stop_event.is_set():
+                        break
                     self._dispatcher.dispatch(
                         self._on_session_started,
                         (
@@ -1110,12 +1121,20 @@ class SqlCollaborationCoordinator:
                 self._process_release_requests(runtime)
                 self._process_mutation_requests(runtime)
                 self._process_edit_requests(runtime)
+                if runtime.stop_event.is_set():
+                    break
                 now = time.monotonic()
                 if now >= next_heartbeat:
                     self._heartbeat(runtime)
                     next_heartbeat = now + self._polling_policy.heartbeat_seconds
+                if runtime.stop_event.is_set():
+                    break
                 self._poll_locks(runtime)
+                if runtime.stop_event.is_set():
+                    break
                 self._poll(runtime)
+                if runtime.stop_event.is_set():
+                    break
                 with runtime.lock:
                     caught_up = (
                         not runtime.pending_delivery
@@ -1151,6 +1170,8 @@ class SqlCollaborationCoordinator:
                 runtime.command_event.wait(self._next_poll_interval(runtime))
                 runtime.command_event.clear()
             except DatabaseCatalogError as exc:
+                if runtime.stop_event.is_set():
+                    break
                 failed_before_establishment = not runtime.established
                 failure_state = (
                     SynchronizationState.CREDENTIAL_REQUIRED
@@ -1175,6 +1196,8 @@ class SqlCollaborationCoordinator:
                 )
                 runtime.stop_event.wait(delay)
             except OSError as exc:
+                if runtime.stop_event.is_set():
+                    break
                 failed_before_establishment = not runtime.established
                 self._handle_worker_failure(runtime, str(exc))
                 if failed_before_establishment and not runtime.retry_initial_failure:

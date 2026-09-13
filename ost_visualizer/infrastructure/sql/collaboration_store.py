@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 import pyodbc
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
@@ -66,9 +66,15 @@ class SqlCollaborationStore(ICollaborationStore):
         display_name: str,
         machine_name: str,
         application_version: str,
-    ) -> DatabaseSession:
+        *,
+        stop_requested: Optional[Callable[[], bool]] = None,
+    ) -> Optional[DatabaseSession]:
         request = self._requests.request(database_id, read_only=False)
+        if stop_requested is not None and stop_requested():
+            return None
         with self._connections.connection(request, autocommit=False) as lease:
+            if stop_requested is not None and stop_requested():
+                return None
             committed = False
             try:
                 with lease.cursor() as cursor:

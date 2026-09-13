@@ -1515,7 +1515,6 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.assertTrue(annotation.isEnabled())
         self.assertTrue(self.bar.area_combo.isEnabled())
         self.assertTrue(self.bar.scale_combo.isEnabled())
-
         # A completed floating 3D scene queues this same Main Plan refresh.
         # Force the visual replacement branch rather than the overlay-only fast path.
         page.rotation = 90
@@ -1535,7 +1534,6 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             callback, "_invoke", QtCore.Qt.ConnectionType.QueuedConnection
         )
         self.app.processEvents()
-
         self.assertTrue(during_clear)
         self.assertFalse(any(during_clear))
         self.assertIs(self.main_plan._current_page, page)
@@ -1543,12 +1541,10 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.assertTrue(annotation.isEnabled())
         self.assertTrue(self.bar.area_combo.isEnabled())
         self.assertTrue(self.bar.scale_combo.isEnabled())
-
         toolbar._tab_widget.setCurrentIndex(0)
         coordinator._on_plan_view_page_fully_loaded()
         self.assertFalse(annotation.isEnabled())
         toolbar._tab_widget.setCurrentIndex(1)
-
         # Completion re-evaluates permission and Page ownership; it never forces
         # controls on for an absent Page or a restricted surface.
         toolbar._access.is_allowed = lambda _feature: False

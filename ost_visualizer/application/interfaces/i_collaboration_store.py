@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 from ..dtos.collaboration_dtos import (
     DatabaseChangePollResult,
     DatabaseSession,
@@ -21,7 +21,9 @@ class ICollaborationStore(Protocol):
         display_name: str,
         machine_name: str,
         application_version: str,
-    ) -> DatabaseSession: ...
+        *,
+        stop_requested: Optional[Callable[[], bool]] = None,
+    ) -> Optional[DatabaseSession]: ...
     def heartbeat(
         self,
         database_id: str,
