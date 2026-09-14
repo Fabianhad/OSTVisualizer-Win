@@ -4980,6 +4980,38 @@ class UIEventCoordinator:
             if uses_sql_queue
             else None
         )
+
+        def save(settings: ImageAdjustmentSettings) -> bool:
+            nonlocal page
+            try:
+                success = self._save_image_adjustments(
+                    bid_ref, page_uid, page, settings
+                )
+            except Exception:
+                logger.exception(
+                    "Image adjustment save raised (database=%s, bid=%s, page=%s)",
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    page_uid,
+                )
+                return False
+            if not success:
+                logger.warning(
+                    "Image adjustment save failed (database=%s, bid=%s, page=%s, "
+                    "context_current=%s)",
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    page_uid,
+                    self._page_dialog_context_is_current(bid_ref, page_uid, page),
+                )
+                return False
+            current_page = self.project_data.get_page(page_uid)
+            if current_page is not None and self._page_dialog_context_is_current(
+                bid_ref, page_uid, current_page
+            ):
+                page = current_page
+            return True
+
         dialog = AdjustImagesDialog(
             self._icon_provider,
             self.main_window,
@@ -4988,9 +5020,7 @@ class UIEventCoordinator:
             page.flip_y,
             page.invert,
             page.bitonal,
-            save_fn=lambda settings: self._save_image_adjustments(
-                bid_ref, page_uid, page, settings
-            ),
+            save_fn=save,
             save_async_fn=(
                 (
                     lambda settings, completed: lease_session.submit_mutation(
