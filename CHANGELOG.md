@@ -534,6 +534,15 @@
 
 ### Changed
 
+- SQL database creation opens **Database Properties (SQL Server)** directly for
+  server, authentication, and database-name entry. As with finding an existing
+  database, the selected Windows or SQL login is used for normal access. Creation requests
+  separate temporary creator credentials when submitted. Setup runs with progress
+  and verifies runtime permissions before registration;
+  completion waits for healthy opening, recognizes completion at the timeout
+  boundary, and discards setup results after dialog cleanup. Both SQL dialogs fit their contents and
+  expose certificate settings directly, without duplicate application-user fields.
+
 - Layout-sized dialogs now keep their established widths while deriving fixed
   heights from their current controls, spacing, padding, text wrapping, and
   system fonts.

@@ -4818,17 +4818,33 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertFalse(coordinator.start_database(access_descriptor.database_id))
         self.assertFalse(coordinator.start_database(unversioned_descriptor.database_id))
         self.assertFalse(coordinator.start_database(future_descriptor.database_id))
-        self.assertTrue(coordinator.start_database(sql_descriptor.database_id))
+        initial_results = []
+        initial_complete = threading.Event()
+
+        def initial_open(ready, message):
+            initial_results.append(
+                (ready, message, capabilities.is_editable(sql_descriptor.database_id))
+            )
+            initial_complete.set()
+
+        self.assertTrue(
+            coordinator.start_database(
+                sql_descriptor.database_id, on_initial_open=initial_open
+            )
+        )
         runtime = coordinator._runtime(sql_descriptor.database_id)
         try:
             self.assertTrue(store.started.wait(5))
             self.assertTrue(store.polled.wait(5))
             self.assertTrue(healthy.wait(5))
+            self.assertTrue(initial_complete.wait(5))
+            self.assertEqual(initial_results, [(True, "", True)])
             _stop_database(coordinator, sql_descriptor.database_id)
             self.assertTrue(store.closed.wait(5))
             self.assertEqual(sessions.get(sql_descriptor.database_id), "")
             self.assertIsNotNone(runtime)
             self.assertFalse(runtime.thread.is_alive())
+            self.assertEqual(len(initial_results), 1)
         finally:
             _shutdown_coordinator(coordinator)
 
@@ -8761,14 +8777,25 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 reconnect_backoff_seconds=(0.0,),
             ),
         )
+        initial_results = []
+        initial_complete = threading.Event()
+
+        def initial_open(ready, message):
+            initial_results.append((ready, message))
+            initial_complete.set()
+
         caller_thread = threading.get_ident()
         self.assertTrue(
             coordinator.start_database(
                 descriptor.database_id,
                 retry_initial_failure=False,
+                on_initial_open=initial_open,
             )
         )
         self.assertTrue(store.first_failure.wait(2))
+        self.assertTrue(initial_complete.wait(2))
+        self.assertFalse(initial_results[0][0])
+        self.assertTrue(initial_results[0][1])
         self.assertFalse(store.repeated_failure.wait(0.1))
         self.assertEqual(store.start_count, 1)
         self.assertNotEqual(store.start_threads, [caller_thread])

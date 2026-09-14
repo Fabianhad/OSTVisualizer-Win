@@ -74,6 +74,7 @@ class _DatabaseRuntime:
     generation: int
     session_generation: int = 0
     retry_initial_failure: bool = True
+    initial_open_callback: Optional[Callable[[bool, str], None]] = None
     stop_event: threading.Event = field(default_factory=threading.Event)
     ready_event: threading.Event = field(default_factory=threading.Event)
     command_event: threading.Event = field(default_factory=threading.Event)
@@ -264,6 +265,7 @@ class SqlCollaborationCoordinator:
         database_id: str,
         *,
         retry_initial_failure: bool = True,
+        on_initial_open: Optional[Callable[[bool, str], None]] = None,
     ) -> bool:
         descriptor = self._registry.resolve(database_id)
         if (
@@ -289,6 +291,7 @@ class SqlCollaborationCoordinator:
                 database_id,
                 self._next_generation,
                 retry_initial_failure=retry_initial_failure,
+                initial_open_callback=on_initial_open,
             )
             runtime.thread = threading.Thread(
                 target=self._worker,
@@ -357,6 +360,7 @@ class SqlCollaborationCoordinator:
             runtime = self._runtimes.pop(database_id, None)
         if runtime is None:
             return None
+        self._complete_initial_open(runtime, False, "SQL database opening was stopped.")
         runtime.close_reason = reason
         runtime.stop_event.set()
         runtime.ready_event.set()
@@ -3093,8 +3097,28 @@ class SqlCollaborationCoordinator:
     def _set_state(
         self, database_id: str, state: SynchronizationState, message: str = ""
     ) -> None:
+        runtime = self._runtime(database_id)
         self._capabilities.set_collaboration_state(database_id, state, message)
         self._publish_state(database_id, state, message)
+        if (
+            runtime is not None
+            and self._runtime(database_id) is runtime
+            and state
+            not in {
+                SynchronizationState.CONNECTING,
+                SynchronizationState.CATCHING_UP,
+            }
+        ):
+            ready = (
+                state == SynchronizationState.HEALTHY
+                and self._capabilities.is_editable(database_id)
+            )
+            self._complete_initial_open(runtime, ready, message)
+
+    def _complete_initial_open(self, runtime, ready: bool, message: str) -> None:
+        callback, runtime.initial_open_callback = runtime.initial_open_callback, None
+        if callback is not None:
+            self._invoke_completion_callback(callback, ready, message)
 
     def _publish_state(
         self, database_id: str, state: SynchronizationState, message: str = ""

@@ -277,6 +277,15 @@ def validate_sql_database_name(name: str) -> None:
         raise ValueError("A SQL Server system database cannot be used.")
 
 
+def validate_sql_database_creation_name(name: str) -> None:
+    validate_sql_database_name(name)
+    if len(name.encode("utf-16-le")) > 150:
+        raise ValueError(
+            "New database names must fit within 75 UTF-16 characters because "
+            "the complete name is stored in the database settings."
+        )
+
+
 def _saved_bool(data: Mapping[str, object], key: str) -> bool:
     value = data.get(key)
     if not isinstance(value, bool):

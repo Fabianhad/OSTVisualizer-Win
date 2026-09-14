@@ -103,7 +103,6 @@ from ost_visualizer.presentation.config import (
     NEW_DATABASE_TYPE_DIALOG_WIDTH,
     SELECT_DATABASE_TYPE_DIALOG_WIDTH,
     SQL_CONNECTION_DIALOG_WIDTH,
-    SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT,
     SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
     RELAXED_MARGINS,
     RELAXED_SPACING,
@@ -160,9 +159,6 @@ class _Catalog:
 
 
 class _SqlDatabaseCreator:
-    def can_create_database(self, _location, _password=""):
-        return False
-
     def create_database(
         self,
         _location,
@@ -723,7 +719,7 @@ class SqlDialogTests(unittest.TestCase):
             dialog.sql_auth_radio.setChecked(True)
             self.assertTrue(dialog.username_input.isEnabled())
             self.assertTrue(dialog.password_input.isEnabled())
-            self.assertNotIn("trust_certificate_checkbox", dialog.__dict__)
+            self.assertTrue(dialog.trust_certificate_checkbox.isChecked())
             dialog.server_input.setText("localhost")
             dialog.username_input.setText("test-user")
             dialog.password_input.setText("temporary-secret")
@@ -735,13 +731,7 @@ class SqlDialogTests(unittest.TestCase):
 
     def test_sql_dialog_titles_dimensions_and_modes(self):
         self.assertEqual(SQL_CONNECTION_DIALOG_WIDTH, 320)
-        self.assertEqual(
-            (
-                SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
-                SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT,
-            ),
-            (320, 280),
-        )
+        self.assertEqual(SQL_DATABASE_PROPERTIES_DIALOG_WIDTH, 320)
         self.assertEqual(NEW_DATABASE_TYPE_DIALOG_WIDTH, 350)
         connection = SqlConnectionDialog(self.icon_provider)
         margins = connection.layout().contentsMargins()
@@ -779,14 +769,14 @@ class SqlDialogTests(unittest.TestCase):
                 dialog.size().width(), SQL_DATABASE_PROPERTIES_DIALOG_WIDTH
             )
             self.assertEqual(
-                dialog.size().height(), SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT
+                dialog.size().height(), dialog.layout().sizeHint().height()
             )
             self.assertEqual(dialog.minimumSize(), dialog.maximumSize())
             self.assertTrue(dialog.server_input.isReadOnly())
             self.assertFalse(dialog.database_combo.isHidden())
             self.assertTrue(dialog.database_name_input.isHidden())
             self.assertEqual(dialog.database_combo.count(), 1)
-            self.assertNotIn("trust_certificate_checkbox", dialog.__dict__)
+            self.assertTrue(dialog.trust_certificate_checkbox.isChecked())
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -800,7 +790,7 @@ class SqlDialogTests(unittest.TestCase):
             self.assertFalse(create_dialog.server_input.isReadOnly())
             self.assertTrue(create_dialog.database_combo.isHidden())
             self.assertFalse(create_dialog.database_name_input.isHidden())
-            self.assertNotIn("trust_certificate_checkbox", create_dialog.__dict__)
+            self.assertTrue(create_dialog.trust_certificate_checkbox.isChecked())
         finally:
             create_dialog.cleanup()
             create_dialog.deleteLater()
@@ -1160,21 +1150,27 @@ class SqlDialogTests(unittest.TestCase):
         ), patch.object(QtWidgets, "QInputDialog", _DestroyingNameDialog):
             MenuController._new_database(controller)
 
+    @patch.object(
+        SqlDatabasePropertiesDialog,
+        "_request_creator_connection",
+        new=lambda _dialog, _location: SqlConnectionDialogResult(
+            SqlServerDatabaseLocation(server="localhost", database="")
+        ),
+    )
     def test_create_mode_initializes_before_accepting(self):
         class _Creator:
             should_fail = False
 
-            def can_create_database(self, _location, _password=""):
-                return True
-
-            def create_database(
+            def create_database_for_client(
                 self,
                 location,
                 database_name,
                 _password="",
                 *,
+                runtime_credentials,
                 application_version,
                 actor="",
+                progress=None,
             ):
                 _ = application_version, actor
                 if self.should_fail:
@@ -1183,6 +1179,8 @@ class SqlDialogTests(unittest.TestCase):
                     SqlServerDatabaseLocation(
                         server=location.server,
                         database=database_name,
+                        authentication_mode=runtime_credentials.authentication_mode,
+                        username=runtime_credentials.username,
                         database_guid=("00000000-0000-0000-0000-000000000789"),
                     ),
                     1,
@@ -1651,7 +1649,9 @@ class SqlDialogTests(unittest.TestCase):
                 stop_database_async=lambda _database_id, _reason, callback: callback(
                     True, ""
                 ),
-                start_database=lambda _database_id: True,
+                start_database=lambda _database_id, **kwargs: (
+                    kwargs["on_initial_open"](True, "") or True
+                ),
             ),
             database_catalog=_Catalog([]),
             credential_store=store,

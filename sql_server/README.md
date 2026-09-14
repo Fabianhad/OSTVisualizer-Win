@@ -10,6 +10,134 @@ canonical schema, checksum, inspector, validator, database creator, client
 permission contract, and collaboration implementation from the parent
 repository; there is no duplicate schema or Linux application runtime.
 
+## Creating a database from the Windows application
+
+Use **File > New > Database > Microsoft SQL Server** to open
+**Database Properties (SQL Server)** directly. Enter the SQL Server at the top,
+select Windows or SQL authentication for normal access, and enter the new name
+in the Database text box. Finding an existing database through Open Files keeps
+its separate **Connect to SQL Server** step. The dialogs retain their configured
+width and calculate height from their contents. Certificate settings appear
+in the form; there are no tabs, Options button, or duplicate application-user fields.
+On **OK**, creation reuses the
+Connect dialog with the title **Connect to SQL Server - Database Creator** to
+request a separate temporary setup account. This prompt starts with empty login
+fields; its server and transport settings are fixed to the selected connection.
+Cancelling it returns to Properties without provisioning or registering anything.
+Both identities use
+the same server and connection security settings. New database names must fit
+within 75 UTF-16 code units because the complete name is stored in the canonical
+`dbo.Settings.Name` field; names are never truncated.
+
+The creator needs effective `CREATE DATABASE` in `master`, `CREATE ANY DATABASE`,
+or `ALTER ANY DATABASE`. `sysadmin` is not required. The creator remains the
+database owner and performs initialization and user provisioning. Ownership and
+server privileges are never transferred or removed by this workflow.
+
+Normal access requires a **different, existing individual login** without server
+administration or database-creation privileges. Normal access uses the account
+selected in Properties: Windows authentication uses the account
+running OST Visualizer without a password or impersonation; SQL authentication
+uses the selected SQL login. The creator prompt also supports Windows or SQL
+authentication, but using the same identity for both roles is rejected. IT must
+provision both server logins first; the desktop app creates only the runtime
+database user. Group-only Windows login access
+is rejected before creation rather than assumed to satisfy the client gate.
+
+Before creation the application authenticates both identities, checks creation
+authority, and rejects an elevated or identical runtime identity. It then creates
+and initializes canonical schema v1, maps the existing runtime login, and calls
+the same `apply_sql_client_permissions()` used by deployment tooling. A fresh
+connection with runtime credentials must pass the production client editing gate,
+including collaboration permissions and protected-table write restrictions,
+before registration. Only runtime credentials are returned to the desktop
+handler. Both creation and Open Files save the selected normal-access identity.
+For SQL authentication only its password goes to Windows Credential Manager,
+never `file_state.json`; Windows authentication saves no password. The creator
+password is used only for setup and is cleared from the temporary prompt. Shared
+provisioning services and deployment tooling use the same permission contract.
+
+If runtime provisioning or verification fails, the initialized database remains
+on the server and no descriptor is registered. The error identifies the failed
+stage. IT can repair the selected login's mapping/permissions and the user can
+add the database through **Open Files**, without repeating database creation.
+Successful registration starts collaboration with one initial attempt. The
+creation workflow waits for initial reconciliation, change-feed catch-up, the
+normal capability check, and main-thread `HEALTHY` publication before reporting
+success. Startup failure retains the saved runtime connection and reports that
+the database is not ready for editing; retry through Open Files. A bounded opening
+wait can expire without cancelling the underlying connection attempt. A terminal
+result received before the progress dialog closes takes precedence over that
+timeout. Setup results are discarded if the owning Properties workflow has been
+cleaned up. The wait is
+at least 30 seconds, otherwise the login timeout plus four command timeouts.
+
+Permission checks, creation, schema initialization, and runtime provisioning run
+in the existing desktop progress worker. Stage messages cross the Qt signal
+bridge. Cancel works before submission; active SQL setup cannot be cancelled.
+Application shutdown waits until the creation/opening workflow returns. Saving
+the connection stays on the main thread after successful runtime verification.
+
+Additional users, Windows groups, administrative ownership policy, backups, and
+future upgrades remain IT responsibilities. This change does not add schema
+migrations or change desktop TLS defaults. Deployment tooling retains its existing
+TLS and provisioning policy.
+
+## Schema upgrade design recommendation (not implemented)
+
+The current production contract is canonical schema v1, including an exact
+`SchemaMigrations.Checksum`, application/physical-database identity, and the
+collaboration object/permission contract. `SqlSchemaValidator`, discovery, and the
+editing gate reject older, unversioned, or noncanonical databases. The ledger
+records successful bootstrap; it is not an executable migration system. There
+are no Alembic runtime/configuration/revisions in this checkout.
+
+Recommend explicit, ordered native SQL Server migrations using that ledger when
+the first schema change is designed. This fits the existing pyodbc DDL, inspector,
+validator, checksum, and SQL Server-specific collaboration objects. Alembic's
+revision graph/runner could be useful if multiple dialects, branches, or an
+SQLAlchemy metadata model become requirements; it would not replace the custom
+schema, Change Tracking, seed, permission, or collaboration validation. No
+migration dependency or executor is added by this pass.
+
+The proposed implementation contract is:
+
+- Retain the published v1 contract/checksum as an immutable migration source.
+  Every migration declares its exact source and target versions/checksums and
+  preconditions. Never stamp an arbitrary/unversioned database as trusted.
+- Use explicit temporary administrative credentials, separate from the saved
+  runtime identity. A database owner is a practical supported starting contract;
+  derive narrower grants from each migration's actual DDL, DML, metadata, grants,
+  and database-option statements and verify them with disposable principals.
+  `db_ddladmin` alone is not a complete contract for protected metadata writes or
+  permission provisioning. No normal-client grants should be broadened.
+- Require an IT-controlled maintenance window: drain accepted mutations, resolve
+  pending operation journals, and quiesce all application and external writers.
+  The existing schema application lock alone does not exclude normal writers.
+  Acquire the schema lock and revalidate database identity/version immediately
+  before changing anything.
+- Use one explicit transaction with `XACT_ABORT ON` for eligible schema/data
+  changes, validation, and final ledger/version updates. Publish the new version
+  only after validation succeeds. Failure rolls back those transactional changes.
+  Database options or other nontransactional operations need separately reviewed
+  stages, preconditions, and restart/repair rules; never assume rollback covers
+  them.
+- Require a recent server-side backup and a tested restore procedure before
+  upgrade, with DBA confirmation of the intended database and recovery point.
+  Restoration is the fallback for irreversible/data-changing failures; automatic
+  down-migrations and desktop backup scheduling are outside this proposal.
+- Initially support one exact client/schema version during the maintenance
+  transition. Old clients must reject the upgraded database. A mixed-version
+  window would require explicit read/write, resource-token, feed, and projection
+  compatibility tests before it could be offered.
+- Test fresh target-version creation against migrated v1 for complete schema,
+  reference data, checksums, permissions, collaboration, preserved user data, and
+  close/reopen parity. Include interrupted execution, failed validation,
+  insufficient permissions, and disposable live restore/retry acceptance.
+
+Microsoft documents the distinction between database-owner, DDL, DML, and
+permission-management roles in its [database-level role reference](https://learn.microsoft.com/en-us/sql/relational-databases/security/authentication-access/database-level-roles).
+
 ## Architecture
 
 The private deployment uses the official non-root Microsoft SQL Server 2025
@@ -242,6 +370,14 @@ Username: <CLIENT_LOGIN>
 Encrypt: yes
 Trust server certificate: no
 ```
+
+In the desktop connection dialog or SQL Properties form, leave
+**Encrypt connection** selected and clear **Trust server certificate** to select
+this policy. Clearing trust bypass requires a trusted certificate matching the
+entered server hostname. These controls apply equally to creator and runtime
+connections. Existing saved values and both timeouts are retained; new desktop
+connections retain the existing `Encrypt=yes;TrustServerCertificate=yes` default
+for compatibility, so deployment users must explicitly clear trust bypass.
 
 Transfer the client password from the private `client.json` through an approved
 secret channel. Never print it, place it in a command argument, or put it in an

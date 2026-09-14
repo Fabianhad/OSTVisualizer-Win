@@ -2392,7 +2392,10 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        if self.handlers.file_ops.maintenance_pending:
+        if (
+            self.handlers.file_ops.maintenance_pending
+            or self.handlers.file_ops.sql_creation_pending
+        ):
             event.ignore()
             return
         if self._application_shutdown_finalized:

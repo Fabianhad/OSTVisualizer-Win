@@ -1185,7 +1185,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         for widget in (window, plan, mesh, hidden_plan):
             self.addCleanup(widget.deleteLater)
         window.handlers = SimpleNamespace(
-            file_ops=SimpleNamespace(maintenance_pending=False)
+            file_ops=SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            )
         )
         window._collaboration_shutdown_pending = False
         window._collaboration_shutdown_complete = False
@@ -1623,7 +1625,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
             window.handlers = SimpleNamespace(
-                file_ops=SimpleNamespace(maintenance_pending=False)
+                file_ops=SimpleNamespace(
+                    maintenance_pending=False, sql_creation_pending=False
+                )
             )
             MainWindow.closeEvent(window, event)
             scheduled.pop()()
@@ -1697,7 +1701,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
             window.handlers = SimpleNamespace(
-                file_ops=SimpleNamespace(maintenance_pending=False)
+                file_ops=SimpleNamespace(
+                    maintenance_pending=False, sql_creation_pending=False
+                )
             )
             MainWindow.closeEvent(window, event)
             self.assertEqual(calls, ["hide"])
@@ -1744,11 +1750,15 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
             window.handlers = SimpleNamespace(
-                file_ops=SimpleNamespace(maintenance_pending=False)
+                file_ops=SimpleNamespace(
+                    maintenance_pending=False, sql_creation_pending=False
+                )
             )
             MainWindow.closeEvent(window, first)
             window.handlers = SimpleNamespace(
-                file_ops=SimpleNamespace(maintenance_pending=False)
+                file_ops=SimpleNamespace(
+                    maintenance_pending=False, sql_creation_pending=False
+                )
             )
             MainWindow.closeEvent(window, second)
         self.assertTrue(first.ignored)
@@ -1803,7 +1813,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "quit",
             side_effect=lambda: calls.append("qt_quit"),
         ):
-            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
+            window.handlers.file_ops = SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            )
             MainWindow.closeEvent(window, event)
         self.assertEqual(
             calls,
@@ -1865,9 +1877,13 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "quit",
             side_effect=lambda: calls.append("qt_quit"),
         ):
-            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
+            window.handlers.file_ops = SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            )
             MainWindow.closeEvent(window, first)
-            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
+            window.handlers.file_ops = SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            )
             MainWindow.closeEvent(window, second)
         self.assertTrue(second.accepted)
         self.assertEqual(
@@ -1932,7 +1948,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             "quit",
             side_effect=lambda: calls.append("qt_quit"),
         ):
-            window.handlers.file_ops = SimpleNamespace(maintenance_pending=False)
+            window.handlers.file_ops = SimpleNamespace(
+                maintenance_pending=False, sql_creation_pending=False
+            )
             MainWindow.closeEvent(window, event)
         self.assertEqual(len(captured.output), 3)
         self.assertEqual(
@@ -1986,7 +2004,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ):
             window.handlers = SimpleNamespace(
-                file_ops=SimpleNamespace(maintenance_pending=False)
+                file_ops=SimpleNamespace(
+                    maintenance_pending=False, sql_creation_pending=False
+                )
             )
             MainWindow.closeEvent(window, event)
             scheduled.pop()()
@@ -2020,7 +2040,9 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             )
             event = FakeCloseEvent()
             window.handlers = SimpleNamespace(
-                file_ops=SimpleNamespace(maintenance_pending=False)
+                file_ops=SimpleNamespace(
+                    maintenance_pending=False, sql_creation_pending=False
+                )
             )
             MainWindow.closeEvent(window, event)
         finally:

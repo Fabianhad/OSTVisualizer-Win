@@ -1,4 +1,5 @@
 import logging
+import threading
 from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.events.app_events import AppEvents
@@ -67,6 +68,7 @@ class FileOperationHandler:
         self._workspace_state_model = workspace_state_model
         self._file_operation_pending = False
         self._maintenance_active = False
+        self._sql_creation_active = False
         self._file_operation_serial = 0
 
     def open_files(self) -> None:
@@ -162,6 +164,10 @@ class FileOperationHandler:
             original_entries,
             reconfigured_database_ids,
         )
+
+    @property
+    def sql_creation_pending(self) -> bool:
+        return self._sql_creation_active
 
     @property
     def maintenance_pending(self) -> bool:
@@ -483,6 +489,18 @@ class FileOperationHandler:
         self._cleanup_removed_entries(original_entries, retained_ids)
 
     def create_sql_database(self) -> bool:
+        if self._file_operation_pending:
+            self._warn_file_operation_pending()
+            return False
+        token = self._begin_pending_file_operation()
+        self._sql_creation_active = True
+        try:
+            return self._create_sql_database()
+        finally:
+            self._sql_creation_active = False
+            self._finish_pending_file_operation(token)
+
+    def _create_sql_database(self) -> bool:
         if not self._ui_access_manager.is_allowed(Feature.CREATE_DATABASE):
             return False
         if (
@@ -568,12 +586,66 @@ class FileOperationHandler:
             )
             return False
         self._register_entries([entry])
-        loaded = self._load_specific_entries([entry])
-        if descriptor.database_id not in loaded:
-            entry.is_checked = False
-            self._file_state_model.update_entries([*original_entries, entry])
+        return self._open_created_sql_database(entry)
+
+    def _open_created_sql_database(self, entry: FileEntry) -> bool:
+        completed = threading.Event()
+        outcome = [False, ""]
+
+        def on_initial_open(ready: bool, message: str) -> None:
+            outcome[:] = [ready, message]
+            completed.set()
+
+        if not self._sql_collaboration.start_database(
+            entry.database_id,
+            retry_initial_failure=False,
+            on_initial_open=on_initial_open,
+        ):
+            show_warning(
+                self.window,
+                "SQL Server",
+                "The database and connection were saved, but opening could not start. "
+                "Reconnect through Open Files. The server database was retained.",
+            )
             return False
-        return True
+        location = entry.descriptor.sql_location
+        timeout = max(
+            30,
+            location.connection_timeout_seconds + 4 * location.command_timeout_seconds,
+        )
+
+        def wait_for_open():
+            if not completed.wait(timeout):
+                return False, "Opening has not completed within the waiting period."
+            return tuple(outcome)
+
+        progress = ProgressDialog(
+            entry.descriptor.display_name,
+            wait_for_open,
+            parent=self.window,
+            action_text="Opening SQL database",
+        )
+        try:
+            progress.exec()
+            result = progress.result if progress.error is None else None
+        finally:
+            progress.cleanup()
+            delete_later_if_valid(progress)
+        if not isValid(self.window):
+            return False
+        if completed.is_set():
+            result = tuple(outcome)
+        if result and result[0]:
+            return True
+        detail = result[1] if result else "Opening could not complete."
+        show_warning(
+            self.window,
+            "SQL database not ready",
+            "The database was created and its connection saved, but it is not ready "
+            "for editing. " + detail + " Reconnect through Open Files. "
+            "The server database and saved runtime credentials were retained.",
+        )
+        return False
 
     def _load_specific_entries(self, entries) -> set:
         loaded_database_ids = set()

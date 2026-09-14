@@ -125,15 +125,28 @@ is authenticated, **Database Properties (SQL Server)** lists the accessible
 databases; the descriptor and credential are saved only after its final **OK**.
 
 Microsoft ODBC Driver 18 for SQL Server is required. New connections use
-encryption and validate the SQL Server certificate and hostname by default.
-The server certificate must chain to a CA trusted by Windows and its DNS name
+encryption with **Trust server certificate** selected for compatibility. To
+validate the certificate and hostname, leave **Encrypt connection** selected and
+clear **Trust server certificate** in the connection or properties form. The
+server certificate must then chain to a CA trusted by Windows and its DNS name
 must match the SQL Server name entered in OST Visualizer.
 
 **New Database** first offers Microsoft Access and Microsoft SQL Server. The
 Access option keeps the existing local database-name workflow. The SQL Server
-option uses **Database Properties (SQL Server)** to authenticate, create, and
-initialize a new OST Visualizer database when the login has server
-database-creation permission.
+option opens **Database Properties (SQL Server)** directly. Enter the server,
+choose Windows or SQL authentication for normal access, and enter the new
+database name. Finding an existing database keeps its separate Connect step.
+The forms fit their height to the contents.
+On **OK**, creation requests a separate temporary account in **Connect to SQL
+Server - Database Creator** to initialize the database. It then provisions and
+verifies the originally selected Windows or SQL account for normal access before
+saving the connection. The normal-access account needs an existing individual
+server login without elevated privileges; the creator needs database-creation
+permission. The creator remains the database owner, and its password is never
+saved for normal access.
+Creation and setup run in a progress worker; completion waits for healthy opening.
+See the [SQL deployment guide](sql_server/README.md) for permissions and recovery
+when setup or opening fails.
 Removing a saved SQL entry removes only the local entry and its saved credential.
 It never drops or deletes the SQL Server database. Unchecking an entry closes the
 runtime connection while keeping it available for reconnect.

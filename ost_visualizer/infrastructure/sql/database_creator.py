@@ -1,20 +1,26 @@
 from __future__ import annotations
 import getpass
 from dataclasses import replace
-from typing import Optional
+from typing import Callable, Optional
 import pyodbc
 from ...domain.entities.database_descriptor import (
     SqlServerDatabaseLocation,
-    validate_sql_database_name,
+    validate_sql_database_creation_name,
 )
 from ...application.interfaces.i_sql_database_creator import (
     SqlDatabaseCreationResult,
+    SqlDatabaseRuntimeCredentials,
 )
 from ..mdb.database_creator import (
     get_reference_seed_data,
 )
 from .connection_manager import SqlConnectionManager, SqlConnectionRequest
 from .client_permissions import apply_sql_client_permissions
+from .client_provisioning import (
+    authenticate_runtime_client,
+    provision_runtime_client,
+    verify_runtime_client,
+)
 from .errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -28,6 +34,12 @@ from .schema_definition import (
 from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaValidator
 from .schema_lock import SQL_SCHEMA_LOCK_RESOURCE, acquire_schema_transaction_lock
+
+_CREATE_PERMISSION_PREDICATE = (
+    "HAS_PERMS_BY_NAME(NULL, NULL, N'CREATE ANY DATABASE')=1 "
+    "OR HAS_PERMS_BY_NAME(NULL, NULL, N'ALTER ANY DATABASE')=1 "
+    "OR HAS_PERMS_BY_NAME(N'master', N'DATABASE', N'CREATE DATABASE')=1"
+)
 
 
 def _add_exception_note(error: BaseException, note: str) -> None:
@@ -47,23 +59,129 @@ class SqlDatabaseCreator:
         self._inspector = SqlSchemaInspector(self._connections)
         self._validator = SqlSchemaValidator(self._schema_model)
 
-    def can_create_database(
-        self, location: SqlServerDatabaseLocation, password: str = ""
-    ) -> bool:
-        request = SqlConnectionRequest(
-            location=location,
-            password=password,
-            database_override="master",
+    def create_database_for_client(
+        self,
+        location: SqlServerDatabaseLocation,
+        database_name: str,
+        password: str = "",
+        *,
+        runtime_credentials: SqlDatabaseRuntimeCredentials,
+        application_version: str,
+        actor: str = "",
+        progress: Callable[[str], None] | None = None,
+    ) -> SqlDatabaseCreationResult:
+        validate_sql_database_creation_name(database_name)
+        if progress:
+            progress("Connecting and checking creation permissions")
+        creator_request = SqlConnectionRequest(
+            location, password, database_override="master"
         )
-        with self._connections.connection(request, autocommit=True) as lease:
+        with self._connections.connection(creator_request, autocommit=True) as lease:
             with lease.cursor() as cursor:
                 cursor.execute(
-                    "SELECT CASE WHEN IS_SRVROLEMEMBER(N'dbcreator')=1 "
-                    "OR IS_SRVROLEMEMBER(N'sysadmin')=1 "
-                    "OR HAS_PERMS_BY_NAME(NULL, NULL, N'CREATE ANY DATABASE')=1 "
-                    "THEN 1 ELSE 0 END"
+                    f"SELECT CASE WHEN {_CREATE_PERMISSION_PREDICATE} THEN 1 ELSE 0 END, "
+                    "SUSER_SID(), CONVERT(nvarchar(128), SERVERPROPERTY(N'ServerName'))"
                 )
-                return bool(cursor.fetchone()[0])
+                creator = cursor.fetchone()
+                if (
+                    creator is None
+                    or creator[0] != 1
+                    or not creator[1]
+                    or not creator[2]
+                ):
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.PERMISSION_DENIED,
+                            "Cannot create a database on this SQL Server. Ask your SQL "
+                            "administrator for database-creation permission in master "
+                            "or CREATE ANY DATABASE permission.",
+                        )
+                    )
+        client_location = replace(
+            location,
+            database="",
+            database_guid="",
+            authentication_mode=runtime_credentials.authentication_mode,
+            username=runtime_credentials.username,
+        )
+        client_request = SqlConnectionRequest(
+            client_location, runtime_credentials.password, database_override="master"
+        )
+        if progress:
+            progress("Authenticating application user")
+        try:
+            client = authenticate_runtime_client(self._connections, client_request)
+        except SqlInfrastructureError as exc:
+            raise SqlInfrastructureError(
+                replace(
+                    exc.details,
+                    user_message="Normal-use authentication preflight failed. "
+                    + exc.details.user_message,
+                )
+            ) from None
+        if client.sid == bytes(creator[1]) or client.server_name != str(creator[2]):
+            raise SqlInfrastructureError(
+                SqlErrorDetails(
+                    SqlErrorCode.PERMISSION_DENIED,
+                    "Creator and normal-use access must be different logins on the same "
+                    "SQL Server. The creator remains database owner; choose a separate "
+                    "normal-use login or different creator credentials.",
+                )
+            )
+        if progress:
+            progress("Creating database")
+        created = self.create_database(
+            location,
+            database_name,
+            password,
+            application_version=application_version,
+            actor=actor,
+            progress=progress,
+        )
+        client_location = replace(
+            client_location,
+            database=created.location.database,
+            database_guid=created.location.database_guid,
+        )
+        stage = "Runtime user provisioning"
+        try:
+            if progress:
+                progress("Provisioning application user")
+            provision_runtime_client(
+                self._connections,
+                SqlConnectionRequest(created.location, password),
+                client,
+            )
+            stage = "Runtime permission verification"
+            if progress:
+                progress("Verifying runtime permissions")
+            verify_runtime_client(
+                self._connections,
+                SqlConnectionRequest(client_location, runtime_credentials.password),
+                client,
+            )
+        except (SqlInfrastructureError, OSError, ValueError) as exc:
+            detail = (
+                exc.details
+                if isinstance(exc, SqlInfrastructureError)
+                else SqlErrorDetails(
+                    SqlErrorCode.PERMISSION_DENIED,
+                    "The normal-use connection could not be prepared.",
+                )
+            )
+            raise SqlInfrastructureError(
+                replace(
+                    detail,
+                    user_message=(
+                        f"{stage} failed. Database '{database_name}' was created and "
+                        "its schema initialized, but no connection was saved. "
+                        "The database was retained. Ask your SQL administrator to check "
+                        "the selected login's mapping and canonical client permissions, "
+                        "then add it through Open Files. " + detail.user_message
+                    ),
+                )
+            ) from None
+        return SqlDatabaseCreationResult(client_location, created.schema_version)
 
     def create_database(
         self,
@@ -73,8 +191,9 @@ class SqlDatabaseCreator:
         *,
         application_version: str,
         actor: str = "",
+        progress: Callable[[str], None] | None = None,
     ) -> SqlDatabaseCreationResult:
-        validate_sql_database_name(database_name)
+        validate_sql_database_creation_name(database_name)
         master_request = SqlConnectionRequest(
             location=location,
             password=password,
@@ -96,6 +215,8 @@ class SqlDatabaseCreator:
                 cursor.execute(f"CREATE DATABASE {_quote_identifier(database_name)}")
         target = replace(location, database=database_name)
         try:
+            if progress:
+                progress("Initializing schema and reference data")
             return self.initialize_blank_database(
                 target,
                 password,
@@ -134,6 +255,7 @@ class SqlDatabaseCreator:
     ) -> SqlDatabaseCreationResult:
         if not location.database:
             raise ValueError("A target SQL Server database is required")
+        validate_sql_database_creation_name(location.database)
         self._validate_blank_candidate(location, password)
         enabled_snapshot_isolation = self._ensure_snapshot_isolation(location, password)
         enabled_change_tracking = False
