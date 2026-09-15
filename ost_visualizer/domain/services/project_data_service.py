@@ -361,10 +361,17 @@ class ProjectDataService:
     ) -> None:
         layer_set = self._bid_layer_set()
         for annotation in self.model.get_all_annotations():
-            annotation_layer_uid = str(annotation.layer_uid or "")
-            if layer_uids is not None and annotation_layer_uid not in layer_uids:
+            visibility = layer_set.resolve_layer_or_default(
+                annotation.layer_uid or None, ANNOTATION_LAYER_NAME
+            )
+            annotation_layer_uid = str(visibility.uid or "")
+            if (
+                layer_uids is not None
+                and annotation_layer_uid not in layer_uids
+                and str(annotation.layer_uid or "") not in layer_uids
+            ):
                 continue
-            annotation.visible = layer_set.is_visible(annotation.layer_uid)
+            annotation.visible = visibility.visible
 
     def _replace_bid_layer_visibility_state(self, layers: Iterable[BidLayer]) -> None:
         layer_list = list(layers)
@@ -474,6 +481,31 @@ class ProjectDataService:
 
     def get_annotation_layer_uid(self) -> Optional[str]:
         return self._bid_layer_set().annotation_layer_uid()
+
+    def get_bid_annotation_layer_uid(self, bid_ref: BidRef) -> Optional[str]:
+        current = self.model.current_bid_ref
+        if (
+            current is None
+            or normalize_path(current.file_path) != normalize_path(bid_ref.file_path)
+            or str(current.bid_uid) != str(bid_ref.bid_uid)
+        ):
+            raise ValueError("Annotation Layer lookup requires the current Bid context")
+        owned_layers = merge_layers_for_bid(
+            [
+                layer
+                for layer in self.model.bid_layers
+                if str(layer.bid_uid) == str(bid_ref.bid_uid)
+            ]
+        )
+        return next(
+            (
+                str(layer.uid)
+                for layer in owned_layers
+                if normalize_layer_name(layer.name) == ANNOTATION_LAYER_NAME
+                and layer.uid
+            ),
+            None,
+        )
 
     def is_image_layer_uid(self, layer_uid: str) -> bool:
         layer_name = self.model.bid_layer_names_by_uid.get(str(layer_uid))

@@ -430,7 +430,17 @@ Persistence:
   parent, typical-group, typical-page, and typical-group-marker links.
 - Annotation insertion validates the required Page, every persisted optional
   Layer, and every positive Hot Link target against the exact target bid before
-  allocating identities. Named View deletion is one atomic dependency batch:
+  allocating identities. Annotation creation resolves its writable default from
+  that Bid's owned Layer rows, not the sidebar's cross-Bid template/visibility
+  list. Without an owned Annotation Layer, retain the existing optional unassigned
+  Layer contract. Explicit Layer references are never remapped by persistence.
+  Unassigned annotations follow the Annotation display Layer for visibility only:
+  initial Bid loading, local insertion, and remote hydration use the domain visibility
+  projection without assigning its UID. Existing Plan items reproject that authoritative
+  visibility on Layer changes, including hide/show and selection eligibility.
+  MDB ownership rejection returns a failed mutation only after transaction rollback;
+  failed annotation placement must not add model or undo state.
+  Named View deletion is one atomic dependency batch:
   every targeting Hot Link must be included, while Page deletion owns the
   automatic Named View/Hot Link cascade. Direct, Page, Condition, and Bid-level
   takeoff deletion all remove line, arrow, and dimension companions linked

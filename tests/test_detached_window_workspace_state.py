@@ -708,6 +708,9 @@ class FakeAnnotationProjectData:
     def get_annotation_layer_uid(self):
         return "detached-annotation-layer"
 
+    def get_bid_annotation_layer_uid(self, _bid_ref):
+        return "detached-annotation-layer"
+
     def get_all_annotations(self):
         return list(self.annotations)
 

@@ -6752,6 +6752,39 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(original_items[0].isVisible())
         view.cleanup()
 
+    def test_unassigned_annotation_reprojects_canonical_visibility_in_existing_items(
+        self,
+    ):
+        view = self._make_plan_view()
+        self.addCleanup(view.cleanup)
+        page = Page(uid="page-1", name="Page", width_pts=612, height_pts=792)
+        annotation = BidAnnotation(
+            uid="ann-1",
+            annotation_type="text",
+            page_uid=page.uid,
+            position=[20, 20, 80, 24],
+            properties={"Text": "Note"},
+            layer_uid="",
+            visible=True,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}, annotations=[annotation]))
+        items = list(view._uid_to_items["ann-1"])
+        self.assertTrue(items[0].isVisible())
+        self.assertTrue(view._is_selectable("ann-1"))
+        # ProjectDataService has already updated the authoritative annotation.
+        annotation.visible = False
+        view.apply_layer_visibility("2", False, {})
+        self.assertFalse(items[0].isVisible())
+        self.assertFalse(view._is_selectable("ann-1"))
+        view.apply_layer_visibility("unrelated", True, {})
+        self.assertFalse(items[0].isVisible())
+        annotation.visible = True
+        view.apply_layer_visibility("2", True, {})
+        self.assertTrue(items[0].isVisible())
+        self.assertTrue(view._is_selectable("ann-1"))
+        self.assertEqual(view._uid_to_items["ann-1"], items)
+        self.assertEqual(annotation.layer_uid, "")
+
     def test_hidden_annotation_layer_stays_hidden_after_overlay_refresh(self):
         view = self._make_plan_view()
         page = Page(uid="page-1", name="Page 1", width_pts=612.0, height_pts=792.0)

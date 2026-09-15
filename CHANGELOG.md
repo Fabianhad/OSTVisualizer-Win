@@ -34,6 +34,12 @@
 
 ### Fixed
 
+- Annotation creation no longer writes global or foreign template Layer IDs.
+  It uses the active Bid's owned Annotation Layer when present, otherwise leaving
+  the optional Layer unassigned. Unassigned annotations retain Annotation Layer
+  visibility during editing, reopening, and remote refresh without storing a
+  template UID. Access ownership failures are reported without
+  an unhandled exception or an invalid annotation/undo entry.
 - Switching between light and dark appearance now preserves annotation toolbar
   colors and refreshes existing database and folder icons in trees and dialogs.
   Icon refresh preserves action state, tree selection, and pending edits.

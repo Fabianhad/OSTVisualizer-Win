@@ -149,6 +149,9 @@ class SharedPageData(FakeProjectData):
     def get_annotation_layer_uid(self):
         return "annotation-layer"
 
+    def get_bid_annotation_layer_uid(self, _bid_ref):
+        return "annotation-layer"
+
     def get_selected_page_uids(self):
         return [self.page.uid]
 
@@ -974,7 +977,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         handler._ui_state = self.state
         self.detached._project_write_svc = write
         self.detached._annotation_write_coordinator = SimpleNamespace(
-            apply_default_annotation_layer=lambda _specs: None
+            apply_default_annotation_layer=lambda _bid_ref, _specs: None
         )
         self.detached._project_data_svc = self.data
         self.data.annotations = [

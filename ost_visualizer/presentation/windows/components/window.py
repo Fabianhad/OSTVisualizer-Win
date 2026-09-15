@@ -1829,12 +1829,14 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     ) -> None:
         if not specs:
             return
+        self._annotation_write_coordinator.apply_default_annotation_layer(
+            bid_ref, specs
+        )
         history_token = (
             self._undo_svc.begin_forward_mutation(bid_ref)
             if self._undo_svc is not None
             else None
         )
-        self._annotation_write_coordinator.apply_default_annotation_layer(specs)
         sources = tuple(
             source_uids
             or (

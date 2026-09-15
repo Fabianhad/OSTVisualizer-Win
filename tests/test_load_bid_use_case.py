@@ -41,6 +41,7 @@ class LoadBidUseCaseTests(unittest.TestCase):
             SimpleNamespace(
                 replace_cover_sheet_data=lambda *_args: None,
                 replace_page_delete_content_uids=lambda *_args: None,
+                set_bid_layer_visibility=lambda _layers: None,
             ),
             SimpleNamespace(apply_bid_load=lambda _database_id: None),
             SimpleNamespace(load_bid=lambda *_args: None),
@@ -76,6 +77,7 @@ class LoadBidUseCaseTests(unittest.TestCase):
         project_data = SimpleNamespace(
             replace_cover_sheet_data=lambda *_args: None,
             replace_page_delete_content_uids=lambda *_args: None,
+            set_bid_layer_visibility=lambda _layers: None,
         )
         use_case = LoadBidUseCase(
             model,
@@ -120,6 +122,9 @@ class LoadBidUseCaseTests(unittest.TestCase):
                 calls.append(("apply", file_path))
 
         class ProjectData:
+            def set_bid_layer_visibility(self, _layers):
+                pass
+
             def replace_cover_sheet_data(self, database_id, bid_uid, value):
                 calls.append(("cover", database_id, bid_uid, value))
 

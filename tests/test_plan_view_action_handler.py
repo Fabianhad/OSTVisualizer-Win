@@ -618,6 +618,9 @@ class FakeProjectData:
     def get_annotation_layer_uid(self):
         return self.annotation_layer_uid
 
+    def get_bid_annotation_layer_uid(self, _bid_ref):
+        return self.annotation_layer_uid
+
     def get_page_name(self, page_uid):
         return self.page_names.get(page_uid, "")
 
@@ -2579,7 +2582,10 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
-    def test_named_view_write_failure_does_not_refresh_or_reactivate_tool(self):
+    @patch("ost_visualizer.presentation.handlers.plan_view_action_handler.show_warning")
+    def test_named_view_write_failure_does_not_refresh_or_reactivate_tool(
+        self, warning
+    ):
         plan_view = FakePlanView()
         ann_write = FakeAnnotationWriteService()
         ann_write.next_uids = []
@@ -2605,6 +2611,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(event_bus.events, [])
         self.assertEqual(plan_view.activated_annotations, [])
         self.assertEqual(plan_view.selected, set())
+        warning.assert_called_once()
 
     def test_empty_named_view_commit_is_not_written(self):
         ann_write = FakeAnnotationWriteService()
@@ -2716,7 +2723,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
-    def test_hotlink_write_failure_does_not_reactivate_tool(self):
+    @patch("ost_visualizer.presentation.handlers.plan_view_action_handler.show_warning")
+    def test_hotlink_write_failure_does_not_reactivate_tool(self, _warning):
         data = FakeProjectData()
         data.annotations = [
             BidAnnotation(

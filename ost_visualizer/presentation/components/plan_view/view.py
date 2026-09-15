@@ -2357,6 +2357,9 @@ class TakeoffPlanView(
                 continue
             self._apply_uid_items_visibility(uid)
         for uid, annotation in self._current_annotations.items():
+            if not annotation.layer_uid:
+                self._apply_uid_items_visibility(uid)
+                continue
             if str(annotation.layer_uid or "") != layer_key:
                 continue
             annotation.visible = bool(show)

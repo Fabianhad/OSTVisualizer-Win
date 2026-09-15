@@ -24,6 +24,7 @@ from ..mdb.connection_manager import MdbConnectionManager
 from ..mdb.mdb_writer import MdbWriter
 from ..sql.writer import SqlProjectWriter
 from .descriptor_registry import resolve_database_backend
+from .bid_owned_identity import MissingBidOwnedUidError
 from .schema_inspector_contract import IDatabaseSchemaInspector
 
 T = TypeVar("T")
@@ -109,8 +110,20 @@ class DatabaseProjectWriter(SqlProjectWriter):
         with self._backend_scope(request.database_id) as backend:
             if backend == DatabaseBackend.SQL_SERVER:
                 return SqlProjectWriter.execute(self, request, operation)
-            with MdbWriter._connection(self, request.database_id):
-                value = operation(_AccessMutationRecorder())
+            try:
+                with MdbWriter._connection(self, request.database_id):
+                    value = operation(_AccessMutationRecorder())
+            except MissingBidOwnedUidError as exc:
+                self.logger.exception(
+                    "MDB mutation rejected an invalid owner: database=%s operation=%s",
+                    request.database_id,
+                    request.operation_id,
+                )
+                return DatabaseMutationResult(
+                    operation_id=request.operation_id,
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                    failure_reason=str(exc),
+                )
             return DatabaseMutationResult(
                 operation_id=request.operation_id,
                 outcome_status=MutationOutcomeStatus.COMMITTED,

@@ -79,7 +79,7 @@ class AnnotationWriteCoordinator:
         specs: List[InsertAnnotationSpec],
         ref_remap: Optional[PasteRefRemap] = None,
     ) -> List[str]:
-        self.apply_default_annotation_layer(specs)
+        self.apply_default_annotation_layer(bid_ref, specs)
         new_uids = self._write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -336,8 +336,14 @@ class AnnotationWriteCoordinator:
             return
         self._data_svc.update_named_view_names(renames)
 
-    def apply_default_annotation_layer(self, specs: List[InsertAnnotationSpec]) -> None:
-        factory = AnnotationCreationFactory(self._data_svc.get_annotation_layer_uid())
+    def apply_default_annotation_layer(
+        self, bid_ref: BidRef, specs: List[InsertAnnotationSpec]
+    ) -> None:
+        if not any(not spec.layer_uid for spec in specs):
+            return
+        factory = AnnotationCreationFactory(
+            self._data_svc.get_bid_annotation_layer_uid(bid_ref)
+        )
         factory.assign_default_layer_to_specs(specs)
 
     def project_inserted_annotations(

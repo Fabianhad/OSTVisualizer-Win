@@ -2838,8 +2838,8 @@ class PlanViewActionHandler:
         specs: List[InsertAnnotationSpec],
         after_success=None,
     ) -> None:
+        self._annotation_writes.apply_default_annotation_layer(bid_ref, specs)
         history_token = self._undo_svc.begin_forward_mutation(bid_ref)
-        self._annotation_writes.apply_default_annotation_layer(specs)
         source_uids = tuple(
             annotation_resource_id(spec.annotation_type, str(uuid.uuid4()))
             for spec in specs
@@ -2992,9 +2992,27 @@ class PlanViewActionHandler:
         specs: List[InsertAnnotationSpec],
         ref_remap: Optional[PasteRefRemap] = None,
     ) -> List[str]:
-        return self._annotation_writes.insert_annotations(
+        new_uids = self._annotation_writes.insert_annotations(
             bid_ref, specs, ref_remap=ref_remap
         )
+        if specs and not new_uids:
+            logger.warning(
+                "Annotation insertion failed: database=%s bid=%s count=%s first_targets=%s",
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                len(specs),
+                [
+                    (spec.page_uid, spec.annotation_type, spec.layer_uid)
+                    for spec in specs[:10]
+                ],
+            )
+            show_warning(
+                self._plan_view,
+                "Database Write",
+                "The annotations could not be saved. Refresh the Bid and verify "
+                "its Page and Layer settings before trying again. See the log for details.",
+            )
+        return new_uids
 
     def _delete_annotations_fast(
         self, db_path: str, uids: List[str], specs: List[InsertAnnotationSpec]
@@ -4346,7 +4364,9 @@ class PlanViewActionHandler:
         )
         if not source_takeoffs and not annotations:
             return None
-        self._annotation_writes.apply_default_annotation_layer(annotation_specs)
+        self._annotation_writes.apply_default_annotation_layer(
+            bid_ref, annotation_specs
+        )
         payload = PlanItemsPastePayload(
             source_bid_uid=source_bid_uid,
             destination_bid_uid=str(bid_ref.bid_uid),

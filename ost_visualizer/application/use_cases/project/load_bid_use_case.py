@@ -123,6 +123,7 @@ class LoadBidUseCase:
                 page.current_y = view_state.current_y
         self.model.set_pages(pages)
         self.model.set_annotations(bid_data.bid_annotations)
+        self._project_data.set_bid_layer_visibility(self.model.bid_layers)
         if bid_data.cover_sheet_data is not None:
             self._project_data.replace_cover_sheet_data(
                 bid_ref.file_path,
