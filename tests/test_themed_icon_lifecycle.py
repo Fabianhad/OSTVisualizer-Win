@@ -12,12 +12,12 @@ class ThemedIconLifecycleTests(unittest.TestCase):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def setUp(self):
-        self._registry = list(themed_icon._REGISTRY)
+        self._registry = dict(themed_icon._REGISTRY)
         themed_icon._REGISTRY.clear()
 
     def tearDown(self):
         themed_icon._REGISTRY.clear()
-        themed_icon._REGISTRY.extend(self._registry)
+        themed_icon._REGISTRY.update(self._registry)
 
     def test_themed_icon_registry_does_not_own_destroyed_target_wrappers(self):
         target_refs = []
@@ -33,7 +33,7 @@ class ThemedIconLifecycleTests(unittest.TestCase):
         gc.collect()
         self.assertTrue(all(target_ref() is None for target_ref in target_refs))
         themed_icon.rebuild_all_icons()
-        self.assertEqual(themed_icon._REGISTRY, [])
+        self.assertEqual(themed_icon._REGISTRY, {})
 
     def test_live_themed_icon_target_remains_registered_for_rebuild(self):
         button = QtWidgets.QToolButton()
@@ -44,10 +44,10 @@ class ThemedIconLifecycleTests(unittest.TestCase):
             )
             themed_icon.rebuild_all_icons()
             self.assertEqual(len(themed_icon._REGISTRY), 1)
-            target_ref, svg_name = themed_icon._REGISTRY[0]
-            self.assertIs(target_ref(), button)
+            binding = next(iter(themed_icon._REGISTRY.values()))
+            self.assertIs(binding.target_ref(), button)
             self.assertEqual(
-                svg_name,
+                binding.svg_name,
                 "pan_tool_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
             )
         finally:

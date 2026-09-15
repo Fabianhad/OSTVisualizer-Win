@@ -32,7 +32,13 @@ from ..actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ..utils.themed_icon import apply_themed_icon, build_colored_icon, themed_icon
+from ..utils.themed_icon import (
+    apply_colored_icon,
+    apply_themed_icon,
+    apply_themed_item_icon,
+    build_colored_icon,
+    themed_icon,
+)
 
 
 class IconId(Enum):
@@ -293,7 +299,13 @@ class IconManager:
 
     @staticmethod
     def apply_colored(target: IconTarget, icon_id: IconId, hex_color: str) -> None:
-        target.setIcon(IconManager.colored_icon(icon_id, hex_color))
+        apply_colored_icon(target, ICON_SPECS[icon_id].svg_name, hex_color)
+
+    @staticmethod
+    def apply_to_item(
+        item: QtWidgets.QTreeWidgetItem, column: int, icon_id: IconId
+    ) -> None:
+        apply_themed_item_icon(item, column, ICON_SPECS[icon_id].svg_name)
 
     @staticmethod
     def apply_to_action(action: QtGui.QAction, action_key: str) -> None:

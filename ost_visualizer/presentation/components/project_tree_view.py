@@ -710,7 +710,7 @@ class ProjectView(QtWidgets.QWidget):
 
     @staticmethod
     def _apply_item_icon(item: QtWidgets.QTreeWidgetItem, icon_id: IconId) -> None:
-        item.setIcon(0, IconManager.icon(icon_id))
+        IconManager.apply_to_item(item, 0, icon_id)
 
     def _start_pending_rename(self) -> None:
         if not isValid(self):

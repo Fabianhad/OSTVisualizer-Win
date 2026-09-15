@@ -370,7 +370,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
             item.setFirstColumnSpanned(True)
             self._set_row_bold(item)
             if node.kind == SUMMARY_NODE_FOLDER:
-                item.setIcon(_COL_NUMBER, IconManager.icon(IconId.FOLDER))
+                IconManager.apply_to_item(item, _COL_NUMBER, IconId.FOLDER)
             return item
         self._populate_value_columns(item, node)
         if node.kind in (SUMMARY_NODE_CONDITION, SUMMARY_NODE_MULTI_AREA_TOTAL):

@@ -34,6 +34,9 @@
 
 ### Fixed
 
+- Switching between light and dark appearance now preserves annotation toolbar
+  colors and refreshes existing database and folder icons in trees and dialogs.
+  Icon refresh preserves action state, tree selection, and pending edits.
 - Adjust Images and Set Scale now support repeated Apply operations in the same
   dialog after an Access database reload. Failed saves log their Page context, while
   unrelated Page replacements and permission changes still prevent stale edits.

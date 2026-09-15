@@ -1,18 +1,35 @@
 import re
 import weakref
-from typing import Dict, List, Tuple, Union
+from dataclasses import dataclass
+from typing import Dict, Tuple, Union
 from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
+from shiboken6 import isValid
 from ..configurators.window_configurator import resource_path
 
 _FILL_RE = re.compile(r'fill="[^"]*"')
 _ICON_CACHE: Dict[Tuple[str, str], QtGui.QIcon] = {}
-ThemedIconTarget = Union[QtGui.QAction, QtWidgets.QAbstractButton]
+ThemedIconTarget = Union[
+    QtGui.QAction, QtWidgets.QAbstractButton, QtWidgets.QTreeWidgetItem
+]
 ThemedIconTargetRef = weakref.ReferenceType[ThemedIconTarget]
-_REGISTRY: List[Tuple[ThemedIconTargetRef, str]] = []
+
+
+@dataclass(frozen=True)
+class _IconBinding:
+    target_ref: ThemedIconTargetRef
+    svg_name: str
+    hex_color: str | None = None
+    column: int | None = None
+
+
+_REGISTRY: Dict[Tuple[int, int | None], _IconBinding] = {}
 
 
 def _discard_dead_targets() -> None:
-    _REGISTRY[:] = [entry for entry in _REGISTRY if entry[0]() is not None]
+    for key, entry in tuple(_REGISTRY.items()):
+        target = entry.target_ref()
+        if target is None or not isValid(target):
+            _REGISTRY.pop(key, None)
 
 
 def current_text_hex() -> str:
@@ -57,23 +74,64 @@ def themed_icon(svg_name: str) -> QtGui.QIcon:
 
 
 def apply_themed_icon(target: ThemedIconTarget, svg_name: str) -> None:
-    target.setIcon(themed_icon(svg_name))
-    _discard_dead_targets()
-    _REGISTRY.append((weakref.ref(target), svg_name))
+    _apply_icon(target, svg_name)
+
+
+def apply_colored_icon(target: ThemedIconTarget, svg_name: str, hex_color: str) -> None:
+    _apply_icon(target, svg_name, hex_color=hex_color)
+
+
+def apply_themed_item_icon(
+    target: QtWidgets.QTreeWidgetItem, column: int, svg_name: str
+) -> None:
+    _apply_icon(target, svg_name, column=column)
+
+
+def _assign_icon(
+    target: ThemedIconTarget, icon: QtGui.QIcon, column: int | None
+) -> None:
+    if isinstance(target, QtWidgets.QTreeWidgetItem):
+        assert column is not None
+        tree = target.treeWidget()
+        if tree is None:
+            target.setIcon(column, icon)
+        else:
+            with QtCore.QSignalBlocker(tree):
+                target.setIcon(column, icon)
+    else:
+        target.setIcon(icon)
+
+
+def _apply_icon(
+    target: ThemedIconTarget,
+    svg_name: str,
+    *,
+    hex_color: str | None = None,
+    column: int | None = None,
+) -> None:
+    _assign_icon(target, _build_icon(svg_name, hex_color or current_text_hex()), column)
+    key = (id(target), column)
+
+    def released(target_ref: ThemedIconTargetRef) -> None:
+        current = _REGISTRY.get(key)
+        if current is not None and current.target_ref is target_ref:
+            _REGISTRY.pop(key, None)
+
+    _REGISTRY[key] = _IconBinding(
+        weakref.ref(target, released), svg_name, hex_color, column
+    )
 
 
 def rebuild_all_icons() -> None:
     _ICON_CACHE.clear()
     hex_color = current_text_hex()
-    alive = []
-    for target_ref, svg_name in _REGISTRY:
-        target = target_ref()
-        if target is None:
+    for key, binding in tuple(_REGISTRY.items()):
+        target = binding.target_ref()
+        if target is None or not isValid(target) or _REGISTRY.get(key) is not binding:
             continue
-        try:
-            target.setIcon(_build_icon(svg_name, hex_color))
-            alive.append((target_ref, svg_name))
-        except RuntimeError:
-            pass
-    _REGISTRY.clear()
-    _REGISTRY.extend(alive)
+        _assign_icon(
+            target,
+            _build_icon(binding.svg_name, binding.hex_color or hex_color),
+            binding.column,
+        )
+    _discard_dead_targets()

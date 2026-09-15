@@ -73,6 +73,10 @@ infrastructure ----------|
 Threading and events:
 
 - UI work must stay on the main Qt thread.
+- Icon bindings retain the source SVG and either current-palette or explicit tool
+  color policy. A later assignment replaces the previous binding for that target
+  and tree column. Keep targets weakly owned, refresh existing tree icons without
+  emitting edit signals, and preserve annotation tool colors during palette changes.
 - Worker threads must marshal back through existing Qt bridges before UI updates or EventBus publication.
 - Do not publish EventBus events from worker threads.
 - Subscribe in constructors/init paths and unsubscribe in `cleanup()`.

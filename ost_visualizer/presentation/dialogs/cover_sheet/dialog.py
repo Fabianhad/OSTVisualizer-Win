@@ -1348,7 +1348,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     @staticmethod
     def _apply_folder_icon(item: QtWidgets.QTreeWidgetItem) -> None:
-        item.setIcon(0, IconManager.icon(IconId.FOLDER))
+        IconManager.apply_to_item(item, 0, IconId.FOLDER)
 
     def _add_page_item(self, parent, page) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem(

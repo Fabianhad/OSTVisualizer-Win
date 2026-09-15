@@ -622,7 +622,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             folder_font = folder_item.font(0)
             folder_font.setBold(True)
             folder_item.setFont(0, folder_font)
-            folder_item.setIcon(_COL_NO, IconManager.icon(IconId.FOLDER))
+            IconManager.apply_to_item(folder_item, _COL_NO, IconId.FOLDER)
             parent_item.addChild(folder_item)
             folder_item.setFirstColumnSpanned(True)
             self._folder_items[folder.uid] = folder_item
