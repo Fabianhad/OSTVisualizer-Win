@@ -5191,14 +5191,48 @@ class UIEventCoordinator:
             if uses_sql_queue and bid_ref is not None
             else None
         )
+
+        def save(settings: ScaleSettings) -> bool:
+            nonlocal page
+            try:
+                success = self._save_scale_settings(bid_ref, page_uid, page, settings)
+            except Exception:
+                logger.exception(
+                    "Page scale save raised (database=%s, bid=%s, page=%s)",
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    page_uid,
+                )
+                return False
+            if not success:
+                logger.warning(
+                    "Page scale save failed (database=%s, bid=%s, page=%s, "
+                    "context_current=%s, page_present=%s, page_current=%s, "
+                    "selection_current=%s, edit_allowed=%s)",
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    page_uid,
+                    self._page_dialog_context_is_current(bid_ref, page_uid, page),
+                    self.project_data.get_page(page_uid) is not None,
+                    self.project_data.get_page(page_uid) is page,
+                    self.ui_state_manager.get_selected_bid_ref() == bid_ref
+                    and self.ui_state_manager.active_page_uid == page_uid,
+                    self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS),
+                )
+                return False
+            current_page = self.project_data.get_page(page_uid)
+            if current_page is not None and self._page_dialog_context_is_current(
+                bid_ref, page_uid, current_page
+            ):
+                page = current_page
+            return True
+
         dialog = SetScaleDialog(
             self._icon_provider,
             self.main_window,
             page.scale_factor1,
             page.scale_factor2,
-            save_fn=lambda settings: self._save_scale_settings(
-                bid_ref, page_uid, page, settings
-            ),
+            save_fn=save,
             save_async_fn=(
                 (
                     lambda settings, completed: lease_session.submit_mutation(

@@ -34,9 +34,9 @@
 
 ### Fixed
 
-- Adjust Images now supports repeated Apply operations in the same dialog after
-  an Access database reload. Failed saves log their Page context, while unrelated
-  Page replacements and permission changes still prevent stale edits.
+- Adjust Images and Set Scale now support repeated Apply operations in the same
+  dialog after an Access database reload. Failed saves log their Page context, while
+  unrelated Page replacements and permission changes still prevent stale edits.
 - Failed Options saves now restore the prior in-memory preferences, so retrying
   Apply or Reset All Settings persists the change and updates the UI normally.
 - Plan Undo/Redo now preserves typed annotation identity when raw UIDs collide,

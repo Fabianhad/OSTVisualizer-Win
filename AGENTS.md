@@ -93,9 +93,9 @@ Threading and events:
   changed, the authoritative hierarchy entity was replaced even with the same
   UID, or the owning window was cleaned up or destroyed while the dialog was
   open.
-- Adjust Images advances its captured exact Page reference after its own successful
-  MDB save reloads the authoritative Page, provided the selected context and edit
-  access still match. Unrelated replacements remain invalid; never resolve by UID
+- Adjust Images and Set Scale advance their captured exact Page reference after
+  their own successful MDB save reloads the authoritative Page, provided the selected
+  context and edit access still match. Unrelated replacements remain invalid; never resolve by UID
   afresh on submission to bypass the dialog's ownership check.
 - Context menus and internal Qt drags also run nested event loops. Bind delayed
   actions to the exact model or surface revision, selection, and authoritative
