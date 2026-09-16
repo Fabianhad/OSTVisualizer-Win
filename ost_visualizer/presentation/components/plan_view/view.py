@@ -520,9 +520,21 @@ class TakeoffPlanView(
         self._editing_named_view_uid: Optional[str] = None
         self._editing_named_view_item: Optional[QGraphicsTextItem] = None
         self._editing_text_document = None
+        self._inline_text_lifetime_item: Optional[QGraphicsTextItem] = None
         self._editing_text_original: str = ""
         self._finishing_text_annotation_edit: bool = False
         self._finishing_named_view_rename: bool = False
+        view_ref = weakref.ref(self)
+
+        def release_inline_edit_on_destroy() -> None:
+            view = view_ref()
+            if view is not None:
+                view._inline_text_lifetime_item = None
+                view._editing_text_document = None
+                view._set_inline_text_edit_target()
+                view._editing_text_original = ""
+
+        self.destroyed.connect(release_inline_edit_on_destroy)
         self._text_annotation_inline_edit_enabled: bool = True
         self._text_annotation_inline_edit_allowed_fn = None
         self._annotation_placement_allowed_fn = None
@@ -1257,6 +1269,10 @@ class TakeoffPlanView(
     ) -> None:
         self._editing_text_original = text
         item.setPlainText(self._editing_text_original)
+        if self._inline_text_lifetime_item is not item:
+            self._clear_inline_text_item_lifetime()
+            self._inline_text_lifetime_item = item
+            item.destroyed.connect(self._on_inline_text_item_destroyed)
         self._set_inline_text_document(item.document())
         item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, True)
@@ -1392,25 +1408,62 @@ class TakeoffPlanView(
         *,
         item: Optional[QGraphicsTextItem] = None,
         text_annotation_uid: Optional[str] = None,
+        owner_destroyed: bool = False,
     ) -> None:
         was_active = self.is_text_annotation_inline_edit_active()
         if item is None:
             item = self._active_inline_text_item()
-        if item is not None:
+        # Release ownership before focus/selection signals can reenter the view.
+        self._release_inline_text_edit_ownership()
+        if not owner_destroyed and self._is_live_graphics_item(item):
             self._clear_inline_text_item_selection(item)
             item.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
             item.clearFocus()
-        self._clear_inline_text_document()
-        self._set_inline_text_edit_target()
-        self._editing_text_original = ""
         if (
             text_annotation_uid is not None
             and self._selected_text_annotation_uid == text_annotation_uid
         ):
             self._clear_text_toolbar_target()
-        self._update_cursor()
+        if not owner_destroyed:
+            self._update_cursor()
         if was_active:
             self.text_annotation_edit_mode_changed.emit(False)
+
+    def _release_inline_text_edit_ownership(self) -> None:
+        self._clear_inline_text_item_lifetime()
+        self._clear_inline_text_document()
+        self._set_inline_text_edit_target()
+        self._editing_text_original = ""
+
+    def _clear_inline_text_item_lifetime(self) -> None:
+        item = self._inline_text_lifetime_item
+        self._inline_text_lifetime_item = None
+        if self._is_live_graphics_item(item):
+            item.destroyed.disconnect(self._on_inline_text_item_destroyed)
+
+    def _on_inline_text_item_destroyed(self) -> None:
+        item = self._inline_text_lifetime_item
+        self._inline_text_lifetime_item = None
+        self._on_inline_text_owner_destroyed(item)
+
+    def _on_inline_text_document_destroyed(self) -> None:
+        # During destroyed delivery isValid() can still report True although
+        # PySide has already released the signal source. Qt owns disconnection.
+        self._editing_text_document = None
+        self._on_inline_text_owner_destroyed(self._inline_text_lifetime_item)
+
+    def _on_inline_text_owner_destroyed(
+        self, item: Optional[QGraphicsTextItem]
+    ) -> None:
+        # Qt removes connections from a destroyed sender itself. Do not touch
+        # the item's cursor/control while either native owner is being torn down.
+        if self._selected_text_item is item:
+            self._selected_text_item = None
+            self._selected_text_annotation_uid = None
+            self._selected_text_model_font_size = None
+            self._selected_text_annotation_font_scale = 1.0
+        self._prune_deleted_page_overlay_items()
+        self._clear_inline_text_edit_state(owner_destroyed=True)
 
     def _remove_text_annotation_draft(self) -> None:
         uid = self._draft_text_annotation_uid
@@ -1547,14 +1600,15 @@ class TakeoffPlanView(
         self._clear_inline_text_document()
         self._editing_text_document = document
         document.contentsChanged.connect(self._refresh_active_inline_text_visuals)
+        document.destroyed.connect(self._on_inline_text_document_destroyed)
 
     def _clear_inline_text_document(self) -> None:
-        if self._editing_text_document is None:
-            return
-        self._editing_text_document.contentsChanged.disconnect(
-            self._refresh_active_inline_text_visuals
-        )
+        document = self._editing_text_document
         self._editing_text_document = None
+        if document is None or not isValid(document):
+            return
+        document.contentsChanged.disconnect(self._refresh_active_inline_text_visuals)
+        document.destroyed.disconnect(self._on_inline_text_document_destroyed)
 
     def _refresh_active_inline_text_visuals(self) -> None:
         self._refresh_selected_text_annotation_selection_visuals()
@@ -1713,12 +1767,22 @@ class TakeoffPlanView(
                 )
             finally:
                 self._finishing_named_view_rename = False
+            if (
+                self._editing_named_view_item is not item
+                or self._current_annotations.get(uid) is not ann
+            ):
+                return
             if not is_valid_name:
                 self._refresh_named_view_label_background(uid)
                 return
         draft_payload: Optional[Tuple[List[float], str, Dict[str, object]]] = None
         self._finishing_named_view_rename = True
         try:
+            if item is not None and not commit:
+                item.setPlainText(self._editing_text_original)
+            self._clear_inline_text_edit_state(item=item)
+            if self._current_annotations.get(uid) is not ann:
+                return
             if item is not None:
                 if commit and ann is not None:
                     if self._is_named_view_draft_uid(uid):
@@ -1730,9 +1794,6 @@ class TakeoffPlanView(
                             )
                     else:
                         self._persist_named_view_name(uid, pending_text_stripped)
-                elif not commit:
-                    item.setPlainText(self._editing_text_original)
-            self._clear_inline_text_edit_state(item=item)
         finally:
             self._finishing_named_view_rename = False
         if self._is_named_view_draft_uid(uid):
@@ -5513,6 +5574,11 @@ class TakeoffPlanView(
         }
 
     def _remove_annotation_overlay_items(self, keys: Set[str]) -> None:
+        if (
+            self._editing_named_view_uid in keys
+            or self._editing_text_annotation_uid in keys
+        ):
+            self._clear_inline_text_edit_state()
         removed_items = set()
         for key in keys:
             for item in self._uid_to_items.pop(key, []):
@@ -5881,7 +5947,9 @@ class TakeoffPlanView(
         self._handle_infos.clear()
         self._selected_uids.clear()
         self._clear_text_selection()
+        self._clear_inline_text_edit_state()
         self._remove_text_annotation_draft()
+        self._remove_named_view_draft()
         self._takeoff_items.clear()
         self._hotlink_items.clear()
         self._uid_to_items = {}

@@ -130,6 +130,11 @@ Threading and events:
   cursor, or Page-clear signals. `QGraphicsScene.clear()` destroys the C++
   graphics items synchronously, so signal-driven toolbar projection must never
   observe the prior Python wrappers during that teardown.
+  Inline text edits release item/document ownership before named-view persistence
+  callbacks can rebuild the scene, and scene/item replacement clears rejected or
+  reentrant edits before removal. Native item/document destruction also releases
+  edit ownership. A destroyed signal source is dropped without disconnecting it:
+  Qt owns that disconnection, and `isValid()` may still be true during delivery.
 - Progress-worker exceptions carry `None` plus the explicit exception object;
   they must not substitute a Boolean for a task's structured result. Duplicate
   Bid uses `WriteReloadResult` from service through presentation completion, so

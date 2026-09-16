@@ -34,6 +34,9 @@
 
 ### Fixed
 
+- Named-view inline rename no longer raises deleted Qt item/document errors after
+  a Plan refresh or rename-triggered rebuild. Subsequent clicks and renames remain
+  usable in Main and detached Plan views.
 - Annotation creation no longer writes global or foreign template Layer IDs.
   It uses the active Bid's owned Annotation Layer when present, otherwise leaving
   the optional Layer unassigned. Unassigned annotations retain Annotation Layer
