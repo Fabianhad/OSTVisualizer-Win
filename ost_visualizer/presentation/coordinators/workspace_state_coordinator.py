@@ -23,6 +23,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         "main_area",
         "annotation_page",
         "annotation_named_views",
+        "annotation_scale",
         "view_page",
         "view_named_views",
     }

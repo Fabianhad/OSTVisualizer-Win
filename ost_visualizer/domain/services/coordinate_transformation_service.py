@@ -104,17 +104,54 @@ class OSTCoordinateSystem:
         return _native.transform_to_2d(ost_x, ost_y, self.scale_ratio, self.view_scale)
 
     def transform_to_3d(self, ost_x: float, ost_y: float) -> Tuple[float, float]:
+        if self.rotation or self.flip_x or self.flip_y:
+            return self._transform_page_vertices_to_3d([(ost_x, ost_y)])[0]
         return _native.transform_to_3d(ost_x, ost_y, self.scale_ratio)
 
     def transform_vertices_to_3d(
         self, vertices: List[Tuple[float, float]]
     ) -> List[Tuple[float, float]]:
+        if self.rotation or self.flip_x or self.flip_y:
+            return self._transform_page_vertices_to_3d(vertices)
         return _native.transform_vertices_to_3d(vertices, self.scale_ratio)
 
     def transform_holes_to_3d(self, holes: Holes) -> Holes:
         if not holes:
             return None
+        if self.rotation or self.flip_x or self.flip_y:
+            return [self._transform_page_vertices_to_3d(hole) for hole in holes]
         return _native.transform_holes_to_3d(holes, self.scale_ratio)
+
+    def _transform_page_vertices_to_3d(
+        self, vertices: List[Tuple[float, float]]
+    ) -> List[Tuple[float, float]]:
+        if not vertices:
+            return []
+        position = [coordinate for vertex in vertices for coordinate in vertex]
+        pdf_vertices = self.ost_to_pdf_coordinates(position, self._page_info)
+        page_width_ost = self.width / self.PDF_POINTS_PER_INCH * self.scale_ratio
+        page_height_ost = self.height / self.PDF_POINTS_PER_INCH * self.scale_ratio
+        page_corners = self.ost_to_pdf_coordinates(
+            [
+                0.0,
+                0.0,
+                page_width_ost,
+                0.0,
+                page_width_ost,
+                page_height_ost,
+                0.0,
+                page_height_ost,
+            ],
+            self._page_info,
+        )
+        output_height = max(point[1] for point in page_corners)
+        return [
+            (
+                -pdf_x / self.PDF_POINTS_PER_INCH,
+                (output_height - pdf_y) / self.PDF_POINTS_PER_INCH,
+            )
+            for pdf_x, pdf_y in pdf_vertices
+        ]
 
     def transform_vertices_to_2d(self, position: List[float]) -> List[float]:
         if not position or len(position) < 2:

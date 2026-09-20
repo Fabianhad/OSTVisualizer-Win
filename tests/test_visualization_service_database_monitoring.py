@@ -10,6 +10,7 @@ from ost_visualizer.application.services.visualization_service import (
 )
 from ost_visualizer.domain.entities.database_descriptor import DatabaseBackend
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.infrastructure.monitoring.transaction_monitor import (
     MonitorState,
     TransactionMonitor,
@@ -89,6 +90,17 @@ class _CallbackBridge:
             callback(payload)
 
 
+def _page(page_uid: str) -> Page:
+    return Page(
+        uid=page_uid,
+        name=page_uid,
+        width_pts=720.0,
+        height_pts=360.0,
+        scale_factor1=1.0,
+        scale_factor2=1.0,
+    )
+
+
 def _service(
     locator: str,
     backend: DatabaseBackend,
@@ -118,6 +130,43 @@ def _service(
 
 
 class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
+    def test_mesh_refresh_snapshots_persisted_page_transform_for_worker(self):
+        page = _page("page-flipped")
+        page.rotation = 90
+        page.flip_x = True
+        page.flip_y = False
+        service = VisualizationService.__new__(VisualizationService)
+        service.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("db.mdb", "bid-1"),
+            collect_takeoffs_for_pages=lambda _pages: SimpleNamespace(
+                takeoffs=[object()]
+            ),
+            get_bid_conditions=lambda: {},
+            get_page_area_selections=lambda: {},
+            get_page=lambda uid: page if uid == page.uid else None,
+        )
+        service.config_model = SimpleNamespace(
+            display_mode_3d="condition",
+            grayscale_enabled=False,
+            inactive_object_color="#2468ac",
+        )
+        service._mesh_generation_lock = threading.Lock()
+        service._mesh_generation_id = 0
+        service._mesh_generation_identity = None
+        service._mesh_generation_delivered = True
+        service._mesh_pending_task = None
+        service._mesh_shutdown = threading.Event()
+        service._mesh_task_event = SimpleNamespace(set=lambda: None)
+        service.refresh_mesh_view([page.uid])
+        page_info = service._mesh_pending_task[-2][page.uid]
+        page.flip_x = False
+        page.flip_y = True
+        self.assertEqual(page_info["rotation"], 90)
+        self.assertTrue(page_info["flip_x"])
+        self.assertFalse(page_info["flip_y"])
+        self.assertEqual(page_info["width"], 720.0)
+        self.assertEqual(page_info["height"], 360.0)
+
     def test_monitor_closes_commit_event_when_status_setup_fails(self):
         class _CommitEvent:
             def __init__(self) -> None:
@@ -278,6 +327,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             ),
             get_bid_conditions=lambda: {},
             get_page_area_selections=lambda: {},
+            get_page=lambda uid: _page(uid),
         )
         service.config_model = SimpleNamespace(
             display_mode_3d="condition",
@@ -321,6 +371,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             ),
             get_bid_conditions=lambda: {},
             get_page_area_selections=lambda: {},
+            get_page=lambda uid: _page(uid),
         )
         service.config_model = SimpleNamespace(
             display_mode_3d="condition",
@@ -365,6 +416,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
                 grayscale_enabled=True,
                 *,
                 inactive_object_color,
+                page_infos=None,
             ):
                 del (
                     bid_conditions,
@@ -373,6 +425,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
                     display_mode,
                     grayscale_enabled,
                     inactive_object_color,
+                    page_infos,
                 )
                 self.calls += 1
                 if self.calls == 1:
@@ -387,6 +440,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             ),
             get_bid_conditions=lambda: {},
             get_page_area_selections=lambda: {},
+            get_page=lambda uid: _page(uid),
         )
         service.config_model = SimpleNamespace(
             display_mode_3d="condition",
@@ -455,6 +509,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
                 ),
                 get_bid_conditions=lambda: {},
                 get_page_area_selections=lambda: {},
+                get_page=lambda uid: _page(uid),
             )
             service.config_model = SimpleNamespace(
                 display_mode_3d="condition",

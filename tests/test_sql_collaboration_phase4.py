@@ -975,6 +975,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             (("show_mode", "unknown"), ChangeOperation.UPDATE, False),
             (("invert",), ChangeOperation.UPDATE, True),
             (("bitonal",), ChangeOperation.UPDATE, True),
+            (("image_adjustments",), ChangeOperation.UPDATE, False),
             (("invert", "overlay_image"), ChangeOperation.UPDATE, False),
             (("overlay_rect",), ChangeOperation.UPDATE, True),
             (("overlay_rect", "overlay_image"), ChangeOperation.UPDATE, False),

@@ -1,3 +1,4 @@
+import math
 from typing import Dict, List, Optional, Sequence, Union
 from ..application.dtos.page_visualization_page_dto import PageVisualizationPageDto
 from ..application.dtos.mesh_geometry_dto import MeshGeometry
@@ -108,8 +109,35 @@ class _MeshGeneratorAdapter(IMeshGenerator):
         grayscale_enabled: bool = True,
         *,
         inactive_object_color: str,
+        page_infos: Optional[Dict] = None,
     ):
         coord_system = self._coord_factory.create()
+        coordinate_systems_by_page = {}
+        for page_uid, page_info in (page_infos or {}).items():
+            page_coord_system = self._coord_factory.create()
+            scale_factor1 = float(page_info.get("scale_factor1") or 1.0)
+            scale_factor2 = float(page_info.get("scale_factor2") or 1.0)
+            scale_ratio = scale_factor2 / scale_factor1
+            mesh_width = float(page_info.get("width") or 0.0) * scale_ratio
+            mesh_height = float(page_info.get("height") or 0.0) * scale_ratio
+            if (
+                not math.isfinite(mesh_width)
+                or not math.isfinite(mesh_height)
+                or mesh_width <= 0.0
+                or mesh_height <= 0.0
+            ):
+                continue
+            mesh_page_info = dict(page_info)
+            mesh_page_info.update(
+                {
+                    "scale_factor1": 1.0,
+                    "scale_factor2": 1.0,
+                    "width": mesh_width,
+                    "height": mesh_height,
+                }
+            )
+            page_coord_system.update_page_info(mesh_page_info)
+            coordinate_systems_by_page[str(page_uid)] = page_coord_system
         meshes, mesh_colors, bounds = process_takeoffs_to_meshes(
             bid_conditions,
             bid_takeoffs,
@@ -120,6 +148,7 @@ class _MeshGeneratorAdapter(IMeshGenerator):
             display_mode=display_mode,
             grayscale_enabled=grayscale_enabled,
             inactive_object_color=inactive_object_color,
+            coordinate_systems_by_page=coordinate_systems_by_page,
         )
         return meshes, mesh_colors, bounds
 

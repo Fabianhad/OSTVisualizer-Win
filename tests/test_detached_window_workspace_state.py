@@ -56,8 +56,13 @@ from ost_visualizer.presentation.components.page_combo import (
     _ITEM_ROLE_PRECHECK_ICON,
     SinglePageComboBox,
 )
+from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
-from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.components.resizable_combo import ResizableComboBox
+from ost_visualizer.presentation.config import (
+    TAB_INDEX_TAKEOFF,
+    VIEWER_SCALE_COMBO_WIDTH,
+)
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
@@ -1626,7 +1631,8 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         state.geometry_b64 = _encoded_geometry()
         state.is_maximized = is_maximized
         coordinator._state.takeoff_workspace.dropdown_popup_sizes = {
-            "annotation_page": [320, 360]
+            "annotation_page": [320, 360],
+            "annotation_scale": [517, 413],
         }
         return coordinator
 
@@ -1773,7 +1779,10 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertEqual(window.restored_geometries, [])
         self.assertEqual(window.show_normal_calls, 0)
         self.assertEqual(window.show_maximized_calls, 0)
-        self.assertEqual(window.dropdown_sizes, {"annotation_page": [320, 360]})
+        self.assertEqual(
+            window.dropdown_sizes,
+            {"annotation_page": [320, 360], "annotation_scale": [517, 413]},
+        )
 
     def test_public_tracking_methods_schedule_detached_page_windows(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
@@ -1896,6 +1905,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             get_takeoff_dropdown_popup_sizes=lambda: {
                 "annotation_page": [0, 360],
                 "annotation_named_views": [640, 420],
+                "annotation_scale": [517, 413],
                 "view_page": [700, 500],
                 "view_named_views": [710, 510],
                 "unknown_popup": [900, 900],
@@ -1908,6 +1918,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             {
                 "annotation_page": [320, 360],
                 "annotation_named_views": [640, 420],
+                "annotation_scale": [517, 413],
                 "view_page": [700, 500],
                 "view_named_views": [710, 510],
             },
@@ -2476,6 +2487,95 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         finally:
             window.cleanup()
             window.deleteLater()
+
+    def test_annotation_scale_uses_main_resizable_combo_contract(self):
+        main_bar = PageSettingsBar(
+            FakeWindowIconProvider(),
+            EventBus(),
+            lambda _file_path: None,
+            SimpleNamespace(is_allowed=lambda _feature: True),
+            SimpleNamespace(),
+            get_page_fn=lambda _uid: None,
+        )
+        window = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            self.assertIs(type(window._scale_combo), type(main_bar.scale_combo))
+            self.assertIsInstance(window._scale_combo, ResizableComboBox)
+            self.assertEqual(window._scale_combo.width(), VIEWER_SCALE_COMBO_WIDTH)
+            self.assertEqual(
+                window._scale_combo.minimumSize(), main_bar.scale_combo.minimumSize()
+            )
+            self.assertEqual(
+                window._scale_combo.maximumSize(), main_bar.scale_combo.maximumSize()
+            )
+            self.assertEqual(
+                window._scale_combo._popup.minimumSize(),
+                main_bar.scale_combo._popup.minimumSize(),
+            )
+            self.assertIsNotNone(
+                window._scale_combo._popup.findChild(QtWidgets.QSizeGrip)
+            )
+        finally:
+            window.cleanup()
+            window.deleteLater()
+            main_bar.scale_combo.cleanup_popup()
+            main_bar.area_combo.cleanup_popup()
+            main_bar.deleteLater()
+
+    def test_main_and_annotation_scale_popup_sizes_persist_independently(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        merged = coordinator._merge_dropdown_popup_sizes(
+            {"main_scale": [320, 360], "annotation_scale": [420, 380]},
+            {"annotation_scale": [517, 413]},
+        )
+        self.assertEqual(
+            merged,
+            {"main_scale": [320, 360], "annotation_scale": [517, 413]},
+        )
+
+    def test_annotation_scale_popup_resizes_clamps_and_emits_shared_signal(self):
+        window = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            changes = []
+            window.dropdown_size_changed.connect(lambda: changes.append(True))
+            window._scale_combo.set_popup_size([10, 20])
+            self.assertEqual(window._scale_combo.get_popup_size(), [200, 220])
+            window._scale_combo.showPopup()
+            self.app.processEvents()
+            window._scale_combo._popup.resize(517, 413)
+            self.app.processEvents()
+            self.assertEqual(window._scale_combo.get_popup_size(), [517, 413])
+            self.assertTrue(changes)
+        finally:
+            window.cleanup()
+            window.deleteLater()
+
+    def test_annotation_scale_popup_size_restores_and_survives_content_and_theme(self):
+        first = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            first._scale_combo.set_popup_size([517, 413])
+            saved = first.get_dropdown_popup_sizes()
+        finally:
+            first.cleanup()
+            first.deleteLater()
+        reopened = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            reopened.set_dropdown_popup_sizes(saved)
+            self.assertEqual(reopened._scale_combo.get_popup_size(), [517, 413])
+            page = Page(uid="page-1", name="Drawing")
+            page.scale_factor1 = 0.26
+            page.scale_factor2 = 12.0
+            reopened.update_page(PageViewDto(page=page))
+            self.assertEqual(reopened._scale_combo.currentText(), '0.26" = 1\' 0"')
+            self.assertEqual(reopened._scale_combo.get_popup_size(), [517, 413])
+            self.app.sendEvent(
+                reopened._scale_combo._popup,
+                QtCore.QEvent(QtCore.QEvent.Type.PaletteChange),
+            )
+            self.assertEqual(reopened._scale_combo.get_popup_size(), [517, 413])
+        finally:
+            reopened.cleanup()
+            reopened.deleteLater()
 
     def test_view_window_does_not_create_empty_annotation_toolbar_row(self):
         window = self._make_toolbar_window(ViewWindow)

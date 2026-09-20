@@ -57,6 +57,7 @@ from ...config import (
     SCALE_LABEL,
     SCALE_TOOLTIP,
     VIEW_LABEL,
+    VIEWER_SCALE_COMBO_WIDTH,
 )
 from ...dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ...managers.icon_manager import IconId, IconManager
@@ -245,7 +246,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._snap_to_takeoffs_threshold_px = int(snap_to_takeoffs_threshold_px)
         self._snap_to_right_angle_enabled = bool(snap_to_right_angle_enabled)
         self._snap_to_right_angle_threshold_px = int(snap_to_right_angle_threshold_px)
-        self._scale_combo: Optional[QtWidgets.QComboBox] = None
+        self._scale_combo: Optional[ResizableComboBox] = None
         self._btn_select: Optional[QtWidgets.QToolButton] = None
         self._annotation_tool_buttons: dict[str, QtWidgets.QToolButton] = {}
         self._annotation_style_getter = (
@@ -403,8 +404,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         nav_layout.addWidget(QtWidgets.QLabel(VIEW_LABEL))
         nav_layout.addWidget(self._named_view_combo, 1)
         if self._config.show_scale_combo:
-            self._scale_combo = QtWidgets.QComboBox()
-            self._scale_combo.setFixedWidth(120)
+            self._scale_combo = ResizableComboBox()
+            self._scale_combo.setFixedWidth(VIEWER_SCALE_COMBO_WIDTH)
             self._scale_combo.setToolTip(SCALE_TOOLTIP)
             for sf1, sf2, label in ALL_SCALES:
                 self._scale_combo.addItem(label, (sf1, sf2))
@@ -574,6 +575,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         if self._scale_combo is not None:
             self._scale_combo.activated.connect(self._on_scale_activated)
+            self._scale_combo.popup_size_changed.connect(self.dropdown_size_changed)
         if self._btn_select is not None:
             self._btn_select.toggled.connect(
                 lambda checked: (
@@ -1224,15 +1226,20 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def get_dropdown_popup_sizes(self) -> dict[str, list[int]]:
         prefix = self._config.dropdown_state_key
-        return {
+        sizes = {
             f"{prefix}_page": self._page_combo.get_popup_size(),
             f"{prefix}_named_views": self._named_view_combo.get_popup_size(),
         }
+        if self._scale_combo is not None:
+            sizes[f"{prefix}_scale"] = self._scale_combo.get_popup_size()
+        return sizes
 
     def set_dropdown_popup_sizes(self, sizes: dict[str, list[int]]) -> None:
         prefix = self._config.dropdown_state_key
         self._page_combo.set_popup_size(sizes.get(f"{prefix}_page", []))
         self._named_view_combo.set_popup_size(sizes.get(f"{prefix}_named_views", []))
+        if self._scale_combo is not None:
+            self._scale_combo.set_popup_size(sizes.get(f"{prefix}_scale", []))
 
     def _get_db_path(self) -> Optional[str]:
         return self._file_path
@@ -3021,6 +3028,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 "clean up the named-view combo", named_view_combo.cleanup_popup
             )
         self._named_view_combo = None
+        scale_combo = self._scale_combo
+        cleanup_scale_popup = getattr(scale_combo, "cleanup_popup", None)
+        if cleanup_scale_popup is not None:
+            cleanup_step("clean up the scale combo", cleanup_scale_popup)
         self._scale_combo = None
         self._btn_select = None
         self._annotation_tool_buttons = {}

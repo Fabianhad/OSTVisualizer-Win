@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Mapping, Optional, Tuple, Union
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
@@ -66,6 +66,26 @@ def _create_mesh(
     return mesh_factory.create_mesh_for_takeoff(takeoff, condition, holes)
 
 
+def _apply_page_transform(
+    mesh: MeshData, coord_system: ICoordinateTransformer
+) -> MeshData:
+    page_info = coord_system.page_info
+    if not (
+        int(page_info.get("rotation", 0))
+        or bool(page_info.get("flip_x", False))
+        or bool(page_info.get("flip_y", False))
+    ):
+        return mesh
+    transformed_vertices = []
+    for world_x, world_y, world_z in mesh.vertices:
+        transformed_x, transformed_y = coord_system.transform_to_3d(-world_x, world_y)
+        transformed_vertices.append((transformed_x, transformed_y, world_z))
+    mesh.vertices = transformed_vertices
+    if bool(page_info.get("flip_x", False)) != bool(page_info.get("flip_y", False)):
+        mesh.faces = [face[::-1] for face in mesh.faces]
+    return mesh
+
+
 def process_takeoffs_to_meshes(
     bid_conditions: Dict[str, Condition],
     bid_takeoffs: List[Takeoff],
@@ -77,6 +97,7 @@ def process_takeoffs_to_meshes(
     inactive_object_color: str,
     display_mode: str = Config.DISPLAY_MODE_SOLID,
     grayscale_enabled: bool = True,
+    coordinate_systems_by_page: Optional[Mapping[str, ICoordinateTransformer]] = None,
 ) -> Tuple[List[MeshData], Dict[str, Union[Dict[str, object], str]], Bounds]:
     if not bid_takeoffs:
         return [], {}, calculate_mesh_bounds([])
@@ -116,6 +137,11 @@ def process_takeoffs_to_meshes(
                 inactive_object_color=inactive_object_color,
             )
             mesh = _create_mesh(takeoff, condition, area_holes_map, mesh_factory)
+            page_coord_system = (coordinate_systems_by_page or {}).get(
+                str(takeoff.page_uid)
+            )
+            if mesh is not None and page_coord_system is not None:
+                mesh = _apply_page_transform(mesh, page_coord_system)
             if mesh and mesh.vertices and mesh.faces:
                 is_negative = takeoff.is_negative
                 metadata: MeshMetadata = {

@@ -1,6 +1,7 @@
 import logging
 import threading
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+from ...domain.dtos.page_render_info_dto import PageRenderInfo
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ...domain.entities.identity_refs import BidRef
 from ...domain.services.project_data_service import ProjectDataService
@@ -128,6 +129,7 @@ class VisualizationService:
             return
         conditions = self.project_data.get_bid_conditions()
         page_area_selections = self.project_data.get_page_area_selections()
+        page_infos = self._snapshot_page_render_info(normalized_page_uids)
         display_mode = self.config_model.display_mode_3d
         grayscale_enabled = self.config_model.grayscale_enabled
         inactive_object_color = self.config_model.inactive_object_color
@@ -140,9 +142,30 @@ class VisualizationService:
                 display_mode,
                 grayscale_enabled,
                 inactive_object_color,
+                page_infos,
                 identity.generation,
             )
         self._mesh_task_event.set()
+
+    def _snapshot_page_render_info(
+        self, page_uids: List[str]
+    ) -> Dict[str, PageRenderInfo]:
+        page_infos: Dict[str, PageRenderInfo] = {}
+        for page_uid in page_uids:
+            page = self.project_data.get_page(page_uid)
+            if page is None:
+                continue
+            page_infos[page_uid] = {
+                "scale_factor1": float(page.scale_factor1 or 1.0),
+                "scale_factor2": float(page.scale_factor2 or 1.0),
+                "rotation": int(page.rotation or 0),
+                "flip_x": bool(page.flip_x),
+                "flip_y": bool(page.flip_y),
+                "width": float(page.width_pts or 0.0),
+                "height": float(page.height_pts or 0.0),
+                "view_scale": 1.0,
+            }
+        return page_infos
 
     def _publish_empty_mesh_scene(self, bid_ref: BidRef, page_uids: List[str]) -> None:
         with self._mesh_generation_lock:
@@ -176,6 +199,7 @@ class VisualizationService:
                 display_mode,
                 grayscale_enabled,
                 inactive_object_color,
+                page_infos,
                 gen_id,
             ) = task
             try:
@@ -188,6 +212,7 @@ class VisualizationService:
                     display_mode=display_mode,
                     grayscale_enabled=grayscale_enabled,
                     inactive_object_color=inactive_object_color,
+                    page_infos=page_infos,
                 )
                 if not self._is_current_mesh_generation(gen_id):
                     continue
