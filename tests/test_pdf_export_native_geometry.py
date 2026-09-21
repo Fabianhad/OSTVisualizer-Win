@@ -214,6 +214,39 @@ class NativePdfExportGeometryTests(unittest.TestCase):
             scale_factor2=72.0,
         )
 
+    def test_ink_calibration_matches_plan_geometry_without_mutating_position(self):
+        exporter = self._exporter()
+        page_info = {
+            "width": 400.0,
+            "height": 300.0,
+            "rotation": 0,
+            "flip_x": False,
+            "flip_y": False,
+            "scale_factor1": 1.0,
+            "scale_factor2": 144.0,
+        }
+        for position in (
+            [0.0, 20.0, 40.0, 80.0, 100.0],
+            [math.pi / 2, 20.0, 40.0, 80.0, 100.0],
+            [20.0, 40.0, 80.0, 100.0],
+        ):
+            with self.subTest(position=position):
+                ink = BidAnnotation(
+                    uid="ink",
+                    annotation_type="ink",
+                    page_uid="page",
+                    position=list(position),
+                )
+                exported = exporter._collect_inks("page", [ink], page_info)
+                self.assertEqual(len(exported), 1)
+                self.assertEqual(
+                    [tuple(point) for point in exported[0].strokes[0]],
+                    [(10.0, 280.0), (40.0, 250.0)],
+                )
+                rendered = calculate_annotation_geometry(ink, lambda coords: coords)
+                self.assertEqual(rendered["points"], [(20.0, 40.0), (80.0, 100.0)])
+                self.assertEqual(ink.position, position)
+
     def test_rotated_ellipse_takeoff_exports_rotated_physical_footprint(self):
         exporter = self._exporter()
         takeoff = Takeoff(
@@ -710,6 +743,25 @@ class NativePdfExportGeometryTests(unittest.TestCase):
                     name="Area",
                     condition_type=Condition.TYPE_AREA,
                 )
+                # Ink coordinates are already Page-space x/y pairs. An odd
+                # position has one leading annotation-rotation metadata value.
+                ink_positions = [
+                    [0.0, *takeoff.position],
+                    [math.pi / 2, *takeoff.position],
+                    list(takeoff.position),
+                    [0.0, 50.0, 140.0, 50.0, 140.0, 120.0],
+                ]
+                inks = [
+                    BidAnnotation(
+                        uid=f"matrix-ink-{index}",
+                        annotation_type="ink",
+                        page_uid=page.uid,
+                        position=list(position),
+                        color="#884422",
+                        width=2.0,
+                    )
+                    for index, position in enumerate(ink_positions)
+                ]
                 exporter = self._exporter()
                 page_info = exporter._build_page_info(page)
                 result = exporter.export(
@@ -726,7 +778,7 @@ class NativePdfExportGeometryTests(unittest.TestCase):
                     AnnotationCaptionSettingsDto(False, ()),
                     False,
                     inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
-                    bid_annotations=[line],
+                    bid_annotations=[line, *inks],
                 )
                 self.assertTrue(result.success, result.error_message)
                 output_geometry = ost_pdf_writer.PDFWriter().get_page_geometries(
@@ -755,6 +807,38 @@ class NativePdfExportGeometryTests(unittest.TestCase):
                     flip_y,
                 )
                 self.assertEqual(actual_vertices, expected_vertices)
+                ink_blocks = _annotation_blocks(pdf_text, "Ink")
+                self.assertEqual(len(ink_blocks), len(inks))
+                for ink, block, original in zip(inks, ink_blocks, ink_positions):
+                    coordinates = original[1:] if len(original) % 2 else original
+                    expected_ink = self._canonical_pdf_points(
+                        coordinates,
+                        page_info["width"],
+                        page_info["height"],
+                        user_rotation,
+                        flip_x,
+                        flip_y,
+                    )
+                    stroke = re.search(r"/InkList\s*\[\s*\[([^\]]*)\]", block)
+                    self.assertIsNotNone(stroke)
+                    self.assertEqual(
+                        [float(value) for value in stroke.group(1).split()],
+                        expected_ink,
+                    )
+                    appearance = _appearance_stream(_appearance_block(pdf_text, block))
+                    drawn_points = re.findall(
+                        r"([-\d.]+)\s+([-\d.]+)\s+[ml]\b", appearance
+                    )
+                    self.assertEqual(
+                        [float(value) for point in drawn_points for value in point],
+                        expected_ink,
+                    )
+                    self.assertIn("2 w", appearance)
+                    self.assertEqual(
+                        _array_values(block, "C"),
+                        [0.533333, 0.266667, 0.133333],
+                    )
+                    self.assertEqual(ink.position, original)
                 line_block = _annotation_blocks(pdf_text, "Line")[0]
                 self.assertEqual(
                     _array_values(line_block, "L"),

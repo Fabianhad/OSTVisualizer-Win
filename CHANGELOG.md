@@ -37,6 +37,9 @@
 
 ### Fixed
 
+- Ink annotations in PDF exports now retain their Page-space geometry and align
+  with Takeoffs across Page rotations and flips.
+
 - Named-view inline rename no longer raises deleted Qt item/document errors after
   a Plan refresh or rename-triggered rebuild. Subsequent clicks and renames remain
   usable in Main and detached Plan views.

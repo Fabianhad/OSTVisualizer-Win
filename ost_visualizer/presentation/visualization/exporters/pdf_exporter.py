@@ -1144,14 +1144,12 @@ class PDFExporter:
             position = annotation.position
             if len(position) < 4:
                 continue
-            start_idx = 2 if (len(position) >= 2 and position[0] == 0) else 0
-            raw_slice = position[start_idx:]
-            pair_count = len(raw_slice) // 2
-            flat = []
-            for i in range(pair_count):
-                flat.append(raw_slice[i * 2 + 1])
-                flat.append(raw_slice[i * 2])
-            stroke_points = self._coord_system.ost_to_pdf_coordinates(flat, page_info)
+            # Ink stores Page-space x/y pairs, optionally preceded by one
+            # rotation metadata value. Geometry already includes that rotation.
+            start = 1 if len(position) % 2 else 0
+            stroke_points = self._coord_system.ost_to_pdf_coordinates(
+                position[start:], page_info
+            )
             if len(stroke_points) < 2:
                 continue
             ink_data = ost_pdf_writer.InkAnnotationData()
