@@ -26,6 +26,9 @@
   cannot override newer Page, Bid, Condition, selection, or tool ownership.
 - Open Databases now includes Database Actions: Compact/Repair for Access MDB
   files, using DAO compaction, validated replacement, and normal database refresh.
+  It reserves the database before confirmation and captures its source after
+  cached writers close, avoiding false first-request database-change errors while
+  continuing to reject external replacements and stale targets.
   SQL Server explicitly reports that Compact/Repair is unavailable.
 - Maintenance stages output before revalidating the selected database and access,
   preserves Windows file security, and restores newer external contents if the

@@ -269,6 +269,12 @@ class DatabaseMaintenanceTests(unittest.TestCase):
                             with connection.cursor() as cursor:
                                 cursor.execute("SELECT COUNT(*) FROM SurvivingData")
                                 self.assertEqual(cursor.fetchone()[0], 3)
+                                if not mode:
+                                    cursor.execute(
+                                        "UPDATE SurvivingData SET Payload = ? WHERE UID = 0",
+                                        (payload,),
+                                    )
+                                    connection.commit()
                     before = source.stat().st_size
                     self.assertTrue(
                         MdbDatabaseMaintenance(manager).compact(str(source)).success

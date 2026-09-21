@@ -14,5 +14,11 @@ class SqlDatabaseMaintenance:
     def prepare(self, locator: str, identity: object):
         raise RuntimeError(self.unavailable_reason(locator))
 
+    def is_target_current(self, locator: str, identity: object) -> bool:
+        return False
+
+    def release_target(self, locator: str, identity: object) -> None:
+        raise RuntimeError(self.unavailable_reason(locator))
+
     def compact(self, locator: str) -> DatabaseMaintenanceResult:
         return DatabaseMaintenanceResult(False, self.unavailable_reason(locator))

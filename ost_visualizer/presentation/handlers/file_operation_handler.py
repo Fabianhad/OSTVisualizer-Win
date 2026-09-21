@@ -190,6 +190,7 @@ class FileOperationHandler:
             return
         token = self._begin_pending_file_operation()
         self._maintenance_active = True
+        target = None
         prepared = None
         error_reported = False
         dialog.set_maintenance_busy(True)
@@ -274,8 +275,12 @@ class FileOperationHandler:
                 )
         finally:
             try:
-                if prepared is not None:
-                    self._database_maintenance.discard(prepared)
+                try:
+                    if prepared is not None:
+                        self._database_maintenance.discard(prepared)
+                finally:
+                    if target is not None:
+                        self._database_maintenance.release_target(target)
             except Exception as exc:
                 if (
                     not error_reported

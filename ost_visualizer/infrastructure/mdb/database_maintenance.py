@@ -71,8 +71,36 @@ class MdbDatabaseMaintenance:
             return "Select an existing Microsoft Access MDB database."
         return ""
 
-    def capture_target(self, locator: str) -> tuple:
-        return _signature(Path(locator))
+    def capture_target(self, locator: str):
+        source = Path(locator).absolute()
+        file_identity = _signature(source)[:2]
+        lease = self._connections.maintenance(str(source))
+        lease.__enter__()
+        try:
+            # ACE can finalize bytes and timestamps when its last writer closes.
+            # Capture the stable source only after our handles have closed, and
+            # retain exclusion so confirmation/startup cannot reopen them.
+            identity = _signature(source)
+            if identity[:2] != file_identity:
+                raise RuntimeError(
+                    "The selected database changed; start maintenance again."
+                )
+            return _MdbMaintenanceTarget(source, identity, lease)
+        except BaseException:
+            lease.__exit__(None, None, None)
+            raise
+
+    def is_target_current(self, locator: str, identity: object) -> bool:
+        return (
+            isinstance(identity, _MdbMaintenanceTarget)
+            and identity.active
+            and os.path.normcase(os.path.abspath(locator))
+            == os.path.normcase(str(identity.source))
+            and _signature(identity.source) == identity.signature
+        )
+
+    def release_target(self, locator: str, identity: object) -> None:
+        identity.close()
 
     def compact(self, locator: str) -> DatabaseMaintenanceResult:
         prepared = self.prepare(locator, self.capture_target(locator))
@@ -82,12 +110,11 @@ class MdbDatabaseMaintenance:
             prepared.close()
 
     def prepare(self, locator: str, identity: object):
-        source = Path(locator).absolute()
-        lease = self._connections.maintenance(str(source))
-        lease.__enter__()
-        prepared = _PreparedMdbMaintenance(source, identity, lease, self._connections)
+        prepared = _PreparedMdbMaintenance(
+            identity.source, identity.signature, identity, self._connections
+        )
         try:
-            if _signature(source) != identity:
+            if not self.is_target_current(locator, identity):
                 raise RuntimeError(
                     "The selected database changed; start maintenance again."
                 )
@@ -100,6 +127,22 @@ class MdbDatabaseMaintenance:
         except BaseException:
             prepared.close()
             raise
+
+
+class _MdbMaintenanceTarget:
+    def __init__(self, source, signature, lease):
+        self.source = source
+        self.signature = signature
+        self._lease = lease
+
+    @property
+    def active(self) -> bool:
+        return self._lease is not None
+
+    def close(self) -> None:
+        if self._lease is not None:
+            self._lease.__exit__(None, None, None)
+            self._lease = None
 
 
 class _PreparedMdbMaintenance:
@@ -128,7 +171,7 @@ class _PreparedMdbMaintenance:
             os.fsync(compacted.fileno())
 
     def commit(self) -> DatabaseMaintenanceResult:
-        if self._lease is None or self._committed:
+        if self._lease is None or not self._lease.active or self._committed:
             raise RuntimeError("This maintenance result is no longer pending.")
         if self._connections.is_write_blocked():
             raise RuntimeError(
@@ -189,5 +232,5 @@ class _PreparedMdbMaintenance:
                 self._work = None
         finally:
             if self._lease is not None:
-                self._lease.__exit__(None, None, None)
+                self._lease.close()
                 self._lease = None

@@ -8,6 +8,12 @@ from ost_visualizer.infrastructure.mdb.database_maintenance import (
     MdbDatabaseMaintenance,
 )
 from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
+)
+from ost_visualizer.infrastructure.database.maintenance_router import (
+    DatabaseMaintenanceRouter,
+)
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -33,6 +39,143 @@ class MaintenanceOwnershipTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def test_first_request_captures_source_after_cached_writer_finalizes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "db.mdb"
+            source.write_bytes(b"before writer closes")
+            manager = MdbConnectionManager()
+            backend = MdbDatabaseMaintenance(manager)
+            files = Mock()
+            owner = SimpleNamespace(file_path=str(source))
+            files.data_service.get_hierarchy.return_value.loaded_files = [owner]
+            files.reload_database.return_value.success = True
+            router = DatabaseMaintenanceRouter(
+                DatabaseDescriptorRegistry(), backend, Mock()
+            )
+            service = DatabaseMaintenanceService(router, files, Mock())
+            engine = Mock()
+            engine.CompactDatabase.side_effect = lambda src, dst: Path(dst).write_bytes(
+                Path(src).read_bytes()
+            )
+
+            def replace(src, dst, backup):
+                os.rename(src, backup)
+                os.rename(dst, src)
+
+            with patch(
+                "ost_visualizer.infrastructure.mdb.database_maintenance.win32com.client.Dispatch",
+                return_value=engine,
+            ), patch(
+                "ost_visualizer.infrastructure.mdb.database_maintenance._table_counts",
+                return_value={"Data": 1},
+            ), patch(
+                "ost_visualizer.infrastructure.mdb.database_maintenance._replace_file",
+                replace,
+            ):
+                for operation in range(2):
+                    writer = Mock()
+                    finalized = f"committed writer {operation}".encode()
+                    writer.close.side_effect = lambda: source.write_bytes(finalized)
+                    manager._write_conns[os.path.normcase(str(source))] = writer
+                    target = service.capture_target(str(source))
+                    progress = ProgressDialog(
+                        str(source), lambda: service.prepare(target)
+                    )
+                    try:
+                        progress.exec()
+                        if progress.error is not None:
+                            raise progress.error
+                        prepared = progress.result
+                    finally:
+                        progress.cleanup()
+                        delete(progress)
+                    self.assertTrue(service.finish(target, prepared, Mock()).success)
+                    self.assertEqual(source.read_bytes(), finalized)
+                    writer.close.assert_called_once()
+                    self.assertFalse(manager._maintenance_paths)
+                    self.assertFalse(manager._write_conns)
+                    self.assertFalse(service._operation_lock.locked())
+            self.assertEqual(files.reload_database.call_count, 2)
+
+    def test_changed_owner_or_source_before_prepare_never_starts_compaction(self):
+        for change in ("owner", "unload", "source", "replacement"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as folder:
+                source = Path(folder) / "db.mdb"
+                source.write_bytes(b"original")
+                manager = MdbConnectionManager()
+                backend = MdbDatabaseMaintenance(manager)
+                files = Mock()
+                hierarchy = SimpleNamespace(
+                    loaded_files=[SimpleNamespace(file_path=str(source))]
+                )
+                files.data_service.get_hierarchy.return_value = hierarchy
+                service = DatabaseMaintenanceService(backend, files, Mock())
+                target = service.capture_target(str(source))
+                if change == "owner":
+                    hierarchy.loaded_files = [SimpleNamespace(file_path=str(source))]
+                elif change == "unload":
+                    hierarchy.loaded_files = []
+                elif change == "source":
+                    source.write_bytes(b"new external contents")
+                else:
+                    replacement = source.with_suffix(".replacement")
+                    replacement.write_bytes(source.read_bytes())
+                    stamp = source.stat()
+                    os.utime(replacement, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+                    os.replace(replacement, source)
+                with patch(
+                    "ost_visualizer.infrastructure.mdb.database_maintenance.win32com.client.Dispatch"
+                ) as engine:
+                    with self.assertRaisesRegex(
+                        RuntimeError, "selected database changed"
+                    ):
+                        service.prepare(target)
+                    engine.assert_not_called()
+                self.assertFalse(manager._maintenance_paths)
+                self.assertFalse(service._operation_lock.locked())
+                files.reload_database.assert_not_called()
+                service.release_target(target)
+
+    def test_capture_reserves_closed_handles_until_cancelled(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "db.mdb"
+            source.write_bytes(b"original")
+            manager = MdbConnectionManager()
+            backend = MdbDatabaseMaintenance(manager)
+            identity = backend.capture_target(str(source))
+            try:
+                for mode in (True, False):
+                    with self.assertRaisesRegex(RuntimeError, "maintenance"):
+                        with manager.connection(str(source), autocommit=mode):
+                            self.fail("confirmation reopened an MDB connection")
+                self.assertTrue(backend.is_target_current(str(source), identity))
+                with self.assertRaisesRegex(RuntimeError, "active operations"):
+                    backend.capture_target(str(source))
+            finally:
+                backend.release_target(str(source), identity)
+            backend.release_target(str(source), identity)
+            self.assertFalse(manager._maintenance_paths)
+            self.assertFalse(backend.is_target_current(str(source), identity))
+            replacement = backend.capture_target(str(source))
+            backend.release_target(str(source), replacement)
+            self.assertFalse(manager._maintenance_paths)
+
+    def test_replacement_during_handle_release_is_not_adopted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "db.mdb"
+            source.write_bytes(b"original")
+            replacement = source.with_suffix(".replacement")
+            replacement.write_bytes(b"replacement")
+            manager = MdbConnectionManager()
+            writer = Mock()
+            writer.close.side_effect = lambda: os.replace(replacement, source)
+            manager._write_conns[os.path.normcase(str(source))] = writer
+            with self.assertRaisesRegex(RuntimeError, "selected database changed"):
+                MdbDatabaseMaintenance(manager).capture_target(str(source))
+            self.assertFalse(manager._maintenance_paths)
+            self.assertFalse(manager._write_conns)
+            self.assertEqual(source.read_bytes(), b"replacement")
 
     def test_escape_cannot_finish_progress_before_worker(self):
         release = threading.Event()
@@ -75,7 +218,7 @@ class MaintenanceOwnershipTests(unittest.TestCase):
         host.hide.assert_not_called()
         queued.assert_not_called()
 
-    def _run_ordering(self, transition, during_progress):
+    def _run_ordering(self, transition, during_progress, *, before_prepare=False):
         host = QtWidgets.QWidget()
         entry = FileEntry("test.mdb")
         owner = SimpleNamespace(file_path=entry.runtime_locator)
@@ -87,6 +230,9 @@ class MaintenanceOwnershipTests(unittest.TestCase):
         backend = Mock()
         backend.unavailable_reason.return_value = ""
         backend.capture_target.return_value = "source-A"
+        backend.is_target_current.side_effect = (
+            lambda _locator, identity: backend.capture_target.return_value == identity
+        )
         committed = Mock(return_value=DatabaseMaintenanceResult(True, "done"))
         staged = Mock()
         staged.commit.side_effect = committed
@@ -144,15 +290,17 @@ class MaintenanceOwnershipTests(unittest.TestCase):
         def confirm(*_args):
             if not during_progress:
                 change()
-            return True
+            return transition != "cancel"
 
         def progress_exec(progress):
+            if before_prepare:
+                change()
             try:
                 progress._result = progress._task_fn()
             except Exception as exc:
                 progress._result = False
                 progress._error = exc
-            if during_progress:
+            if during_progress and not before_prepare:
                 change()
             return QtWidgets.QDialog.DialogCode.Accepted
 
@@ -181,10 +329,19 @@ class MaintenanceOwnershipTests(unittest.TestCase):
                 files.reload_database.assert_not_called()
                 info.assert_not_called()
             self.assertFalse(service._operation_lock.locked())
+            if transition != "initial_selection":
+                backend.release_target.assert_called_with(
+                    entry.runtime_locator, "source-A"
+                )
+                backend.capture_target.assert_called_once()
+            if before_prepare:
+                backend.prepare.assert_not_called()
             if transition == "initial_selection":
                 handler._deferred_persistence.flush_for_file.assert_not_called()
             self.assertLessEqual(warning.call_count, 1)
             self.assertFalse(handler._file_operation_pending)
+            self.assertFalse(handler.maintenance_pending)
+            self.assertFalse(dialog._maintenance_busy)
         finally:
             dialog.cleanup()
             delete(host)
@@ -201,11 +358,17 @@ class MaintenanceOwnershipTests(unittest.TestCase):
                 "engine",
                 "initial_selection",
                 "cleanup_failure",
+                "cancel",
             ):
                 with self.subTest(
                     during_progress=during_progress, transition=transition
                 ):
                     self._run_ordering(transition, during_progress)
+
+    def test_database_switch_during_progress_startup_rejects_before_prepare(self):
+        for transition in ("replacement", "unload", "source"):
+            with self.subTest(transition=transition):
+                self._run_ordering(transition, True, before_prepare=True)
 
     def test_staging_holds_leases_until_commit_or_discard(self):
         for failure in ("fsync", "replace", "partial_replace", "restore", "none"):

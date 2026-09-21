@@ -511,6 +511,12 @@ Database backends:
   to different Access file instances. A handle that fails to close remains owned
   by the connection manager and the failure stays explicit so cleanup can retry;
   partial cleanup must not drop the only reference to that handle.
+  Compact/Repair reserves the MDB and closes cached handles before capturing its
+  source signature: ACE may finalize bytes and timestamps during writer close.
+  Preserve physical file identity across that close, retain the reservation through
+  confirmation and preparation, and release it on cancellation or failure. Worker
+  preparation and replacement validate the captured source and exact loaded owner;
+  never recapture an external replacement as the maintenance target.
   Authoritative post-write reload is a different lifecycle transition: it keeps
   that known database incarnation and reuses the shared serialized reader/writer
   handles. Do not route routine mutation completion through explicit refresh;

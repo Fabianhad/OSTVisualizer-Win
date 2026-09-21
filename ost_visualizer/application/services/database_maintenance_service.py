@@ -33,23 +33,35 @@ class DatabaseMaintenanceService:
         )
 
     def capture_target(self, locator: str) -> DatabaseMaintenanceTarget:
+        owner = self._loaded_owner(locator)
         return DatabaseMaintenanceTarget(
-            locator, self._backend.capture_target(locator), self._loaded_owner(locator)
+            locator, self._backend.capture_target(locator), owner
         )
 
+    def release_target(self, target: DatabaseMaintenanceTarget) -> None:
+        self._backend.release_target(target.locator, target.source_identity)
+
     def is_target_current(self, target: DatabaseMaintenanceTarget) -> bool:
-        return (
-            self._loaded_owner(target.locator) is target.loaded_owner
-            and self._backend.capture_target(target.locator) == target.source_identity
+        return self._loaded_owner(
+            target.locator
+        ) is target.loaded_owner and self._backend.is_target_current(
+            target.locator, target.source_identity
         )
 
     def prepare(self, target: DatabaseMaintenanceTarget):
         if not self._operation_lock.acquire(blocking=False):
             raise RuntimeError("Database maintenance is already running.")
         try:
+            if not self.is_target_current(target):
+                raise RuntimeError(
+                    "The selected database changed; start maintenance again."
+                )
             return self._backend.prepare(target.locator, target.source_identity)
         except BaseException:
-            self._operation_lock.release()
+            try:
+                self.release_target(target)
+            finally:
+                self._operation_lock.release()
             raise
 
     def discard(self, prepared) -> None:

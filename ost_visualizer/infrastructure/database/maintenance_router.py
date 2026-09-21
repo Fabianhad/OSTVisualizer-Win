@@ -19,6 +19,12 @@ class DatabaseMaintenanceRouter:
     def prepare(self, locator: str, identity: object):
         return self._backend(locator).prepare(locator, identity)
 
+    def is_target_current(self, locator: str, identity: object) -> bool:
+        return self._backend(locator).is_target_current(locator, identity)
+
+    def release_target(self, locator: str, identity: object) -> None:
+        self._backend(locator).release_target(locator, identity)
+
     def unavailable_reason(self, locator: str) -> str:
         return self._backend(locator).unavailable_reason(locator)
 
