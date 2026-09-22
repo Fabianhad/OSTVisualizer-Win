@@ -37,6 +37,9 @@
 
 ### Fixed
 
+- Undoing deletion of an Area with Backouts now reconnects the restored Backouts
+  to the Area's new identity in Plan, including repeated undo/redo cycles.
+
 - Ink annotations in PDF exports now retain their Page-space geometry and align
   with Takeoffs across Page rotations and flips.
 

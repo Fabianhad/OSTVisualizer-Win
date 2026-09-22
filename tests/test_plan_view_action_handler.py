@@ -6944,6 +6944,93 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.TAKEOFFS_CHANGED],
         )
 
+    def test_area_backout_delete_restore_projects_authoritative_parent_each_cycle(self):
+        data = FakeProjectData()
+        originals = []
+        for parent_uid, offset in (("area-a", 0.0), ("area-b", 20.0)):
+            originals.append(
+                Takeoff(
+                    uid=parent_uid,
+                    condition_uid="c1",
+                    page_uid="p1",
+                    position=[offset, 0.0, offset + 10.0, 0.0, offset + 10.0, 10.0],
+                )
+            )
+            for index in (1, 2):
+                x = offset + index
+                originals.append(
+                    Takeoff(
+                        uid=f"{parent_uid}-hole-{index}",
+                        condition_uid="c1",
+                        page_uid="p1",
+                        position=[x, 2.0, x + 0.5, 2.0, x + 0.5, 3.0],
+                        parent_uid=parent_uid,
+                        is_negative=True,
+                    )
+                )
+        data.takeoffs = {item.uid: item for item in originals}
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_elements_deleted(["area-b", "area-a"])
+        self.assertEqual(data.takeoffs, {})
+        for cycle in range(3):
+            parents = [f"b-{cycle}", f"a-{cycle}"]
+            holes = [f"hole-{cycle}-{index}" for index in range(4)]
+            write.uid_batches = [parents, holes]
+            undo.undo()
+            self.assertEqual(set(data.takeoffs), set(parents + holes))
+            # Persistence already receives remapped parents. Model projection
+            # must agree with those rows, not the deleted snapshot's parent IDs.
+            persisted_specs = write.calls[-2][2] + write.calls[-1][2]
+            for uid, spec in zip(parents + holes, persisted_specs):
+                restored = data.takeoffs[uid]
+                self.assertEqual(restored.parent_uid, spec.parent_uid)
+                self.assertEqual(restored.position, spec.position)
+                self.assertEqual(restored.is_negative, spec.is_negative)
+                self.assertEqual(restored.rotation, spec.rotation)
+                self.assertEqual(restored.curve, spec.curve)
+                original = next(
+                    item for item in originals if item.position == spec.position
+                )
+                expected_parent = (
+                    "0"
+                    if original.parent_uid == "0"
+                    else (parents[0] if original.parent_uid == "area-b" else parents[1])
+                )
+                self.assertEqual(restored.parent_uid, expected_parent)
+                if restored.is_negative:
+                    self.assertIn(restored.parent_uid, data.takeoffs)
+            self.assertEqual(write.reloads, [])
+            undo.redo()
+            self.assertEqual(data.takeoffs, {})
+        # A fresh delete must discover children through their restored parent
+        # identities, rather than leaving them behind as orphaned Backouts.
+        write.uid_batches = [["b-next", "a-next"], ["h1", "h2", "h3", "h4"]]
+        undo.undo()
+        handler.on_elements_deleted(["a-next", "b-next"])
+        self.assertEqual(data.takeoffs, {})
+        write.uid_batches = [["a-final", "b-final"], ["h5", "h6", "h7", "h8"]]
+        undo.undo()
+        self.assertEqual(len(data.takeoffs), len(originals))
+        for restored in data.takeoffs.values():
+            if restored.is_negative:
+                self.assertEqual(
+                    restored.parent_uid,
+                    "a-final" if restored.position[0] < 20.0 else "b-final",
+                )
+
     def test_takeoff_delete_with_unknown_extras_uses_targeted_removal(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(

@@ -1,6 +1,7 @@
 import logging
 import unittest
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.collaboration_dtos import (
@@ -427,6 +428,65 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             service._insert_annotations.calls[1][3].namedview_uids,
             {"shared": "named-new"},
         )
+
+    def test_mdb_and_sql_restore_backouts_after_authoritative_parent_allocation(self):
+        parent, hole = self._mixed_paste_payload().takeoff_specs
+        payload = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            # Children may precede their parents in the selection snapshot.
+            takeoff_source_uids=("hole-b", "parent-a", "hole-a", "parent-b"),
+            takeoff_specs=(
+                replace(hole, parent_uid="parent-b"),
+                parent,
+                replace(hole, parent_uid="parent-a"),
+                parent,
+            ),
+        )
+        for sql in (False, True):
+            for cycle in range(2):
+                with self.subTest(sql=sql, cycle=cycle):
+                    if sql:
+                        service, provider = self._queued_project_service()
+                    else:
+                        service = self._local_composite_service()
+                    parents = [f"a-{cycle}", f"b-{cycle}"]
+                    holes = [f"hole-b-{cycle}", f"hole-a-{cycle}"]
+                    service._insert_takeoffs = _SequenceUseCase(parents, holes)
+                    if sql:
+                        service.queue_plan_items_paste(
+                            "database", payload, lambda _r: None
+                        )
+                        result = provider.requests[0][1]()
+                    else:
+                        result = service.execute_plan_items_paste_local(
+                            "database.mdb", payload
+                        )
+                    self.assertEqual(
+                        result.outcome_status, MutationOutcomeStatus.COMMITTED
+                    )
+                    calls = service._insert_takeoffs.calls
+                    self.assertEqual(
+                        [spec.parent_uid for spec in calls[0][2]], ["0", "0"]
+                    )
+                    self.assertEqual(
+                        [spec.parent_uid for spec in calls[1][2]], parents[::-1]
+                    )
+                    self.assertEqual(
+                        [spec.position for spec in calls[1][2]], [hole.position] * 2
+                    )
+                    uid_map = dict(
+                        dict(result.authoritative_result.created_uid_maps)["takeoffs"]
+                    )
+                    self.assertEqual(
+                        uid_map,
+                        dict(
+                            zip(
+                                ("parent-a", "parent-b", "hole-b", "hole-a"),
+                                parents + holes,
+                            )
+                        ),
+                    )
 
     def test_sql_plan_paste_locks_takeoff_area_dependency(self):
         service, provider = self._queued_project_service()

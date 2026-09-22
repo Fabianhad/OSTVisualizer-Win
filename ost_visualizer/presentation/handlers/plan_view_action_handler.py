@@ -4131,7 +4131,14 @@ class PlanViewActionHandler:
             ]
             self._add_inserted_takeoffs_to_model(
                 takeoff_uids,
-                list(payload.takeoff_specs),
+                [
+                    (
+                        replace(spec, parent_uid=takeoff_map[str(spec.parent_uid)])
+                        if str(spec.parent_uid or "0") not in {"", "0", "None"}
+                        else spec
+                    )
+                    for spec in payload.takeoff_specs
+                ],
             )
             self._publish_takeoffs_changed_for_pages(
                 self._takeoff_spec_page_uids(list(payload.takeoff_specs)),
