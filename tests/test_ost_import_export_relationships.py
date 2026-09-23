@@ -2497,6 +2497,81 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(selected_uid, page_uid)
 
+    def test_ost_import_drops_only_stale_named_views_and_their_hotlinks(self):
+        for bid_uid in ("1", "2"):
+            with self.subTest(
+                bid_uid=bid_uid
+            ), tempfile.TemporaryDirectory() as temp_dir:
+                root = ET.fromstring(_orphan_named_view_hotlink_xml())
+                bid = root.find("Bid")
+                bid.set("UID", bid_uid)
+                for row in bid.iter():
+                    if "BidUID" in row.attrib:
+                        row.set("BidUID", bid_uid)
+                links = bid.find("BidHotLinks")
+                for row in list(links):
+                    if row.get("UID") in ("42", "43"):
+                        links.remove(row)
+                # Same-name candidates cannot establish ownership of missing 99.
+                ET.SubElement(
+                    bid.find("BidPages"),
+                    "BidPage",
+                    UID="21",
+                    BidUID=bid_uid,
+                    Name="Sheet",
+                    GUID="different",
+                )
+                views = bid.find("BidNamedViews")
+                ET.SubElement(
+                    views,
+                    "BidNamedView",
+                    UID="32",
+                    BidUID=bid_uid,
+                    BidPageUID="99",
+                    Name="Second stale",
+                    Position="1;2;3;4;0",
+                )
+                valid = dict(views[0].attrib)
+                path = Path(temp_dir) / "partial.ost"
+                ET.ElementTree(root).write(path, encoding="unicode")
+                with self.assertLogs(
+                    "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                    level="WARNING",
+                ):
+                    result = OstImporter(None)._validated_raw_data(str(path))
+                self.assertEqual(result.bid_tables["BidNamedViews"], [valid])
+                self.assertEqual(
+                    [row["UID"] for row in result.bid_tables["BidHotLinks"]], ["40"]
+                )
+                self.assertEqual(len(result.bid_tables["BidPages"]), 2)
+                self.assertEqual(validate_raw_bid_integrity(result), [])
+                remapped = OstImporter(None)._transform(result, 100, {}, {}, {}, {})
+                self.assertEqual(validate_raw_bid_integrity(remapped), [])
+                view = remapped.bid_tables["BidNamedViews"][0]
+                self.assertEqual(view["Name"], valid["Name"])
+                self.assertEqual(
+                    view["BidPageUID"], remapped.bid_tables["BidPages"][0]["UID"]
+                )
+                self.assertEqual(
+                    remapped.bid_tables["BidHotLinks"][0]["BidPageViewUID"], view["UID"]
+                )
+
+    def test_stale_named_view_normalization_does_not_hide_invalid_bid_or_duplicate_uid(
+        self,
+    ):
+        for invalid_attributes in ({"BidUID": "2"}, {"UID": "30"}, {"UID": "bad"}):
+            with self.subTest(
+                attributes=invalid_attributes
+            ), tempfile.TemporaryDirectory() as temp_dir:
+                root = ET.fromstring(_orphan_named_view_hotlink_xml())
+                bid = root.find("Bid")
+                bid.remove(bid.find("BidHotLinks"))
+                bid.find("BidNamedViews")[1].attrib.update(invalid_attributes)
+                path = Path(temp_dir) / "invalid.ost"
+                ET.ElementTree(root).write(path, encoding="unicode")
+                with self.assertRaisesRegex(ValueError, "invalid references"):
+                    OstImporter(None)._validated_raw_data(str(path))
+
     def test_ost_import_rejects_named_views_and_hotlinks_for_missing_pages(self):
         connection = sqlite3.connect(":memory:")
         connection.execute("PRAGMA foreign_keys=ON")

@@ -2311,13 +2311,6 @@ class PlanViewActionHandler:
             and result.runtime_generation == pending.runtime_generation
         )
         if not completion_matches:
-            logger.debug(
-                "Ignoring stale SQL takeoff placement completion %s for %s at "
-                "runtime %s",
-                result.operation_id,
-                result.database_id,
-                result.runtime_generation,
-            )
             return
         self._pending_takeoff_placements.pop(result.operation_id, None)
         self._data_svc.remove_takeoffs(pending.pending_uids)

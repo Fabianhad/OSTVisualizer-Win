@@ -1413,7 +1413,6 @@ class TakeoffPlanView(
         was_active = self.is_text_annotation_inline_edit_active()
         if item is None:
             item = self._active_inline_text_item()
-        # Release ownership before focus/selection signals can reenter the view.
         self._release_inline_text_edit_ownership()
         if not owner_destroyed and self._is_live_graphics_item(item):
             self._clear_inline_text_item_selection(item)
@@ -1447,16 +1446,12 @@ class TakeoffPlanView(
         self._on_inline_text_owner_destroyed(item)
 
     def _on_inline_text_document_destroyed(self) -> None:
-        # During destroyed delivery isValid() can still report True although
-        # PySide has already released the signal source. Qt owns disconnection.
         self._editing_text_document = None
         self._on_inline_text_owner_destroyed(self._inline_text_lifetime_item)
 
     def _on_inline_text_owner_destroyed(
         self, item: Optional[QGraphicsTextItem]
     ) -> None:
-        # Qt removes connections from a destroyed sender itself. Do not touch
-        # the item's cursor/control while either native owner is being torn down.
         if self._selected_text_item is item:
             self._selected_text_item = None
             self._selected_text_annotation_uid = None

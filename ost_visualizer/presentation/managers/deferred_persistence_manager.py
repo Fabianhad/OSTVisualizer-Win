@@ -769,11 +769,6 @@ class DeferredPersistenceManager(QtCore.QObject):
                 continue
             if self._pending.get(key) is item:
                 self._pending.pop(key, None)
-            self._logger.debug(
-                "Abandoning noncritical deferred persistence during shutdown: %s (%s)",
-                item.description,
-                item.key,
-            )
         self._flushing = True
         try:
             failed = self._flush_keys(

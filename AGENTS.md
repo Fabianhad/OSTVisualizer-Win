@@ -445,6 +445,11 @@ Persistence:
   visibility on Layer changes, including hide/show and selection eligibility.
   MDB ownership rejection returns a failed mutation only after transaction rollback;
   failed annotation placement must not add model or undo state.
+  OST/OSP import discards same-Bid Named Views referencing absent Pages and their
+  targeting Hot Links, matching original OST import. Normalize only when those
+  absent-Page references are the remaining integrity issues; malformed/duplicate
+  identities, foreign ownership, and unrelated broken references still reject.
+  Runtime validation remains strict.
   Named View deletion is one atomic dependency batch:
   every targeting Hot Link must be included, while Page deletion owns the
   automatic Named View/Hot Link cascade. Direct, Page, Condition, and Bid-level

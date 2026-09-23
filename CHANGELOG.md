@@ -37,6 +37,10 @@
 
 ### Fixed
 
+- OST/OSP import now matches On-Screen Takeoff by dropping stale Named Views
+  whose Pages are absent and their dependent Hot Links, while retaining valid
+  views and rejecting unrelated invalid references.
+
 - Undoing deletion of an Area with Backouts now reconnects the restored Backouts
   to the Area's new identity in Plan, including repeated undo/redo cycles.
 

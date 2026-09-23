@@ -8,6 +8,7 @@ from ....application.dtos.collaboration_dtos import (
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ...database.page_area_selection import canonicalize_page_area_settings
 from ..raw_bid_integrity import (
+    RawBidIntegrityIssue,
     clear_missing_annotation_takeoff_references,
     clear_missing_selected_page_references,
     format_integrity_issues,
@@ -195,9 +196,51 @@ class OstImporter:
                 len(cleared_annotation_refs),
                 format_integrity_issues(cleared_annotation_refs),
             )
+        self._discard_stale_named_views(raw_data)
         if not self._validate_page_references(raw_data):
             raise ValueError("The imported project contains invalid references.")
         return raw_data
+
+    @staticmethod
+    def _discard_stale_named_views(raw_data: RawBidData) -> None:
+        page_uids = {row.get("UID") for row in raw_data.bid_tables.get("BidPages", [])}
+        views = raw_data.bid_tables.get("BidNamedViews", [])
+        stale = {
+            RawBidIntegrityIssue(
+                "BidNamedViews",
+                row.get("UID", ""),
+                "BidPageUID",
+                row.get("BidPageUID", ""),
+                "BidPages",
+            )
+            for row in views
+            if row.get("BidUID") == raw_data.bid_row.get("UID")
+            and row.get("BidPageUID", "").isascii()
+            and row.get("BidPageUID", "").isdecimal()
+            and int(row["BidPageUID"]) > 0
+            and row["BidPageUID"] not in page_uids
+        }
+        if not stale or any(
+            issue not in stale for issue in validate_raw_bid_integrity(raw_data)
+        ):
+            return
+        stale_uids = {issue.row_uid for issue in stale}
+        links = raw_data.bid_tables.get("BidHotLinks", [])
+        retained_links = [
+            row for row in links if row.get("BidPageViewUID") not in stale_uids
+        ]
+        raw_data.bid_tables["BidNamedViews"] = [
+            row for row in views if row.get("UID") not in stale_uids
+        ]
+        raw_data.bid_tables["BidHotLinks"] = retained_links
+        logger.warning(
+            "Discarded %d stale Named View(s) and %d dependent Hot Link(s) during "
+            "OST import for Bid %s; absent Page references: %s",
+            len(stale_uids),
+            len(links) - len(retained_links),
+            raw_data.bid_row.get("UID"),
+            format_integrity_issues(sorted(stale, key=lambda issue: issue.row_uid)),
+        )
 
     def _transform(
         self,

@@ -77,9 +77,6 @@ class MdbDatabaseMaintenance:
         lease = self._connections.maintenance(str(source))
         lease.__enter__()
         try:
-            # ACE can finalize bytes and timestamps when its last writer closes.
-            # Capture the stable source only after our handles have closed, and
-            # retain exclusion so confirmation/startup cannot reopen them.
             identity = _signature(source)
             if identity[:2] != file_identity:
                 raise RuntimeError(
