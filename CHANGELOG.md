@@ -37,6 +37,16 @@
 
 ### Fixed
 
+- Detached Annotation and View windows preserve their saved size and window state
+  during slow Bid reopening and capture the latest geometry before closing.
+  Recent moves, resizes, and window-state changes also survive application exit
+  when shutdown hides the windows before the pending workspace save.
+  Late Page loading cannot re-show a window hidden for shutdown or reset its size.
+  Fullscreen restoration retains the underlying normal window size instead of
+  replacing it with a screen-sized rectangle.
+- Arrow keys nudge selected annotations immediately after placement in Main and
+  detached Plan, while retaining the active annotation tool. Inline text editing
+  and scrolling with no selected movable item retain their normal behavior.
 - Takeoff property undo follows authoritative Takeoff/Backout identities
   across deletion, restoration, and repeated UID allocation. Separate entities
   that reuse a UID retain separate history lifetimes, and separately restored

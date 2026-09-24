@@ -1034,9 +1034,11 @@ class CreationDialogIdentityTests(unittest.TestCase):
                     return dialog.result()
 
                 state = SimpleNamespace(file_entries=[])
-                state.update_entries = lambda entries: setattr(
-                    state, "file_entries", list(entries)
-                )
+
+                def update_entries(entries):
+                    state.file_entries = list(entries)
+
+                state.update_entries = update_entries
                 registry = DatabaseDescriptorRegistry()
                 credentials = Mock()
                 credentials.read_password.return_value = _RUNTIME.password

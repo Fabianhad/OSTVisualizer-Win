@@ -189,7 +189,11 @@ class UIAccessPlanEditingTests(unittest.TestCase):
 
     def test_stale_mouse_release_cannot_commit_after_access_revocation(self):
         event = SimpleNamespace(accepted=False)
-        event.accept = lambda: setattr(event, "accepted", True)
+
+        def accept():
+            event.accepted = True
+
+        event.accept = accept
         view = SimpleNamespace(
             _editing_enabled=False,
             _cursor_mode=CURSOR_MODE_PLACE,

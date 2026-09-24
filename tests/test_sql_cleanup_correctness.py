@@ -3465,7 +3465,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "change tracking cleanup failed" in note
-                for note in getattr(raised.exception, "__notes__", ())
+                for note in raised.exception.__notes__
             )
         )
         disable_snapshot.assert_called_once_with(location, "")
@@ -3550,11 +3550,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         disable_snapshot.assert_called_once_with(location, "")
 
     def test_exception_note_helper_is_safe_without_python_311_api(self):
-        exception_without_add_note = SimpleNamespace()
+        class ExceptionWithoutNotes(RuntimeError):
+            add_note = None
+
+        exception_without_add_note = ExceptionWithoutNotes("initialization failed")
         _add_exception_note(exception_without_add_note, "cleanup failed")
         modern_exception = RuntimeError("initialization failed")
         _add_exception_note(modern_exception, "cleanup failed")
-        self.assertIn("cleanup failed", getattr(modern_exception, "__notes__", ()))
+        self.assertIn("cleanup failed", modern_exception.__notes__)
 
     def test_snapshot_cleanup_failure_preserves_verification_error(self):
         class _SnapshotVerificationCursor(_CreationCursor):
@@ -3583,8 +3586,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertIn("could not be enabled", str(raised.exception))
         self.assertTrue(
             any(
-                "snapshot cleanup failed" in note
-                for note in getattr(raised.exception, "__notes__", ())
+                "snapshot cleanup failed" in note for note in raised.exception.__notes__
             )
         )
 

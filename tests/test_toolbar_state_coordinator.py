@@ -820,7 +820,7 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         )
         annotation_action.toggled.connect(
             lambda checked: (
-                setattr(plan_view, "cursor_mode", CURSOR_MODE_ANNOTATION_PLACE)
+                plan_view.set_cursor_mode(CURSOR_MODE_ANNOTATION_PLACE)
                 if checked
                 else None
             )
@@ -915,7 +915,7 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         )
         annotation_action.toggled.connect(
             lambda checked: (
-                setattr(plan_view, "cursor_mode", CURSOR_MODE_ANNOTATION_PLACE)
+                plan_view.set_cursor_mode(CURSOR_MODE_ANNOTATION_PLACE)
                 if checked
                 else None
             )

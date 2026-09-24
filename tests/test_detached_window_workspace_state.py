@@ -375,73 +375,6 @@ class FakeDetachedWindow:
             self.installed_filters.remove(event_filter)
 
 
-class FakeInitialGeometryWindow:
-    _constrained_geometry_for_available_screen = staticmethod(
-        DetachedPageViewWindow._constrained_geometry_for_available_screen
-    )
-
-    def __init__(self, frame: QtCore.QRect, available: QtCore.QRect):
-        self._frame = QtCore.QRect(frame)
-        self._available = QtCore.QRect(available)
-        self.applied_geometry = None
-
-    def _available_geometry_for_initial_show(self):
-        return QtCore.QRect(self._available)
-
-    def frameGeometry(self):
-        return QtCore.QRect(self._frame)
-
-    def minimumWidth(self):
-        return 1
-
-    def minimumHeight(self):
-        return 1
-
-    def setGeometry(self, geometry):
-        self.applied_geometry = QtCore.QRect(geometry)
-        self._frame = QtCore.QRect(geometry)
-
-
-class FakeInitialRestoreWindow(FakeInitialGeometryWindow):
-    _restore_initial_geometry = DetachedPageViewWindow._restore_initial_geometry
-    _constrain_initial_geometry_to_single_screen = (
-        DetachedPageViewWindow._constrain_initial_geometry_to_single_screen
-    )
-
-    def __init__(
-        self,
-        *,
-        restored_frame: QtCore.QRect,
-        available: QtCore.QRect,
-    ):
-        super().__init__(restored_frame, available)
-        self._restored_frame = QtCore.QRect(restored_frame)
-        self.visible = False
-        self.restored_geometries = []
-        self.show_calls = 0
-        self.show_fullscreen_calls = 0
-        self.show_maximized_calls = 0
-
-    def restoreGeometry(self, geometry):
-        self.restored_geometries.append(bytes(geometry))
-        self._frame = QtCore.QRect(self._restored_frame)
-
-    def isVisible(self):
-        return self.visible
-
-    def show(self):
-        self.show_calls += 1
-        self.visible = True
-
-    def showFullScreen(self):
-        self.show_fullscreen_calls += 1
-        self.visible = True
-
-    def showMaximized(self):
-        self.show_maximized_calls += 1
-        self.visible = True
-
-
 class FakeDetachedPlanView:
     def __init__(self, annotations=None):
         self.selection_revision = 0
@@ -1563,59 +1496,6 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             [260, 340],
         )
 
-    def test_initial_show_geometry_is_constrained_to_one_screen(self):
-        window = FakeInitialGeometryWindow(
-            frame=QtCore.QRect(-120, 20, 4200, 1100),
-            available=QtCore.QRect(0, 0, 1920, 1040),
-        )
-        DetachedPageViewWindow._constrain_initial_geometry_to_single_screen(window)
-        self.assertIsNotNone(window.applied_geometry)
-        self.assertTrue(window._available.contains(window.applied_geometry))
-
-    def test_explicit_fullscreen_initial_geometry_is_bounded_before_showing(self):
-        window = FakeInitialRestoreWindow(
-            restored_frame=QtCore.QRect(-1920, 0, 3840, 1080),
-            available=QtCore.QRect(0, 0, 1920, 1040),
-        )
-        geometry = QtCore.QByteArray(b"fullscreen-geometry")
-        DetachedPageViewWindow.set_initial_window_state(window, geometry, False, True)
-        self.assertTrue(window._initial_show_fullscreen)
-        self.assertIsNone(window.applied_geometry)
-        DetachedPageViewWindow._show_initial_window(window)
-        self.assertIsNotNone(window.applied_geometry)
-        self.assertTrue(window._available.contains(window.applied_geometry))
-        self.assertEqual(window.show_fullscreen_calls, 1)
-        self.assertEqual(window.show_maximized_calls, 0)
-        self.assertEqual(window.restored_geometries, [bytes(geometry)])
-
-    def test_initial_restore_oversized_normal_geometry_is_clamped_before_show(self):
-        window = FakeInitialRestoreWindow(
-            restored_frame=QtCore.QRect(-100, 40, 3200, 1200),
-            available=QtCore.QRect(0, 0, 1600, 900),
-        )
-        geometry = QtCore.QByteArray(b"normal-geometry")
-        DetachedPageViewWindow.set_initial_window_state(window, geometry, False)
-        self.assertIsNone(window.applied_geometry)
-        DetachedPageViewWindow._show_initial_window(window)
-        self.assertEqual(window.show_calls, 1)
-        self.assertEqual(window.show_fullscreen_calls, 0)
-        self.assertEqual(window.restored_geometries, [bytes(geometry)])
-        self.assertTrue(window._available.contains(window.applied_geometry))
-
-    def test_normal_initial_geometry_inside_one_screen_restores_unchanged(self):
-        frame = QtCore.QRect(120, 80, 1000, 700)
-        window = FakeInitialRestoreWindow(
-            restored_frame=frame,
-            available=QtCore.QRect(0, 0, 1920, 1040),
-        )
-        DetachedPageViewWindow.set_initial_window_state(
-            window, QtCore.QByteArray(b"normal-geometry"), False
-        )
-        self.assertIsNone(window.applied_geometry)
-        DetachedPageViewWindow._show_initial_window(window)
-        self.assertIsNone(window.applied_geometry)
-        self.assertEqual(window.frameGeometry(), frame)
-
     def _coordinator_for_window(
         self,
         window,
@@ -2100,7 +1980,8 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window._on_scale_changed = lambda _page, _sf1, _sf2: None
         window._page_combo = CleanupCombo()
         window._named_view_combo = CleanupCombo()
-        window._scale_combo = retained
+        scale_combo = CleanupCombo()
+        window._scale_combo = scale_combo
         window._btn_select = retained
         window._named_views = [retained]
         window.event_bus = retained
@@ -2110,6 +1991,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         with self.assertLogs(window.logger, level="ERROR") as logs:
             DetachedPageViewWindow.cleanup(window)
         self.assertTrue(plan_view.cleaned)
+        self.assertTrue(scale_combo.cleaned)
         self.assertEqual(released_leases, [lease])
         self.assertIn("disconnect page geometry", "\n".join(logs.output))
         self.assertIn("release the geometry edit lease", "\n".join(logs.output))
@@ -4605,21 +4487,18 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._visibility_changed_callback = lambda visible: calls.append(
             ("visible", visible)
         )
-        for attribute in (
-            "icon_provider",
-            "repository",
-            "project_data",
-            "config_model",
-            "_coord_factory",
-            "parent_window",
-            "_color_service",
-            "_infrastructure_provider",
-            "_window_factory",
-            "_write_service",
-            "_annotation_write_service",
-            "_saved_window_state_provider",
-        ):
-            setattr(manager, attribute, object())
+        manager.icon_provider = object()
+        manager.repository = object()
+        manager.project_data = object()
+        manager.config_model = object()
+        manager._coord_factory = object()
+        manager.parent_window = object()
+        manager._color_service = object()
+        manager._infrastructure_provider = object()
+        manager._window_factory = object()
+        manager._write_service = object()
+        manager._annotation_write_service = object()
+        manager._saved_window_state_provider = object()
         with self.assertLogs(manager.logger, level="ERROR"):
             manager.shutdown()
         self.assertEqual(len(event_bus.calls), 11)

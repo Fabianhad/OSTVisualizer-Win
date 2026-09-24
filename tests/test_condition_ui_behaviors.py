@@ -1057,12 +1057,14 @@ class ConditionUiBehaviorTests(unittest.TestCase):
 
         toolbar = Toolbar()
         placement = Placement()
+
+        def set_highlighted_conditions(uids):
+            ui_state.highlighted_condition_uids = set(uids)
+
         ui_state = SimpleNamespace(
             highlighted_condition_uids={deleted_uid},
             get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1"),
-            set_highlighted_conditions=lambda uids: setattr(
-                ui_state, "highlighted_condition_uids", set(uids)
-            ),
+            set_highlighted_conditions=set_highlighted_conditions,
         )
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_access_manager = access

@@ -396,6 +396,20 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         else:
             window_key = self._find_tracked_detached_window_key(watched)
             if window_key is not None:
+                if event_type in (
+                    QtCore.QEvent.Type.Move,
+                    QtCore.QEvent.Type.Resize,
+                    QtCore.QEvent.Type.Show,
+                    QtCore.QEvent.Type.WindowStateChange,
+                    QtCore.QEvent.Type.Close,
+                ):
+                    previous = self._get_detached_window_state(window_key)
+                    captured = self._capture_detached_window_state(
+                        previous, watched, is_open=previous.open
+                    )
+                    previous.geometry_b64 = captured.geometry_b64
+                    previous.is_maximized = captured.is_maximized
+                    previous.is_fullscreen = captured.is_fullscreen
                 if (
                     window_key == self._DETACHED_MESH
                     and event_type == QtCore.QEvent.Type.Show
@@ -845,7 +859,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         window: Optional[QtWidgets.QWidget],
         is_open: bool,
     ) -> DetachedWindowState:
-        if window is None:
+        if window is None or not window.isVisible():
             return DetachedWindowState(
                 open=is_open,
                 geometry_b64=previous_state.geometry_b64,

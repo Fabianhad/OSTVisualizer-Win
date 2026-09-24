@@ -2441,7 +2441,12 @@ class InputHandlerMixin:
             self._selection_enabled
             and self._editing_enabled
             and self._cursor_mode
-            in (CURSOR_MODE_SELECT, CURSOR_MODE_PLACE, CURSOR_MODE_ROTATE)
+            in (
+                CURSOR_MODE_SELECT,
+                CURSOR_MODE_PLACE,
+                CURSOR_MODE_ANNOTATION_PLACE,
+                CURSOR_MODE_ROTATE,
+            )
             and self._selected_uids
             and event.key() in _arrow_keys
         ):

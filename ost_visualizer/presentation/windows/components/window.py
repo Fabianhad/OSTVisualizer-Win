@@ -299,50 +299,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._initial_show_maximized = bool(is_maximized)
         self._initial_show_fullscreen = bool(is_fullscreen)
 
-    @staticmethod
-    def _constrained_geometry_for_available_screen(
-        frame: QtCore.QRect,
-        available: QtCore.QRect,
-        minimum_width: int,
-        minimum_height: int,
-    ) -> QtCore.QRect:
-        width = min(max(frame.width(), minimum_width, 1), available.width())
-        height = min(max(frame.height(), minimum_height, 1), available.height())
-        max_x = available.right() - width + 1
-        max_y = available.bottom() - height + 1
-        x = min(max(frame.x(), available.x()), max_x)
-        y = min(max(frame.y(), available.y()), max_y)
-        return QtCore.QRect(x, y, width, height)
-
     def _restore_initial_geometry(self) -> None:
         if not self._initial_geometry or self._initial_geometry.isEmpty():
             return
         self.restoreGeometry(self._initial_geometry)
-        self._constrain_initial_geometry_to_single_screen()
-
-    def _available_geometry_for_initial_show(self) -> Optional[QtCore.QRect]:
-        center = self.frameGeometry().center()
-        screen = QtWidgets.QApplication.screenAt(center)
-        if screen is None:
-            screen = self.screen()
-        if screen is None and self.parentWidget() is not None:
-            screen = self.parentWidget().screen()
-        if screen is None:
-            screen = QtWidgets.QApplication.primaryScreen()
-        return screen.availableGeometry() if screen is not None else None
-
-    def _constrain_initial_geometry_to_single_screen(self) -> None:
-        available = self._available_geometry_for_initial_show()
-        if available is None or available.isEmpty():
-            return
-        frame = self.frameGeometry()
-        if available.contains(frame):
-            return
-        self.setGeometry(
-            self._constrained_geometry_for_available_screen(
-                frame, available, self.minimumWidth(), self.minimumHeight()
-            )
-        )
 
     def show_when_page_ready(self) -> None:
         if self._is_closing or self.isVisible():
@@ -1095,6 +1055,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _show_initial_window(self) -> None:
         if self.isVisible():
             return
+        self._initial_show_requested = False
         geometry = self._initial_geometry
         if geometry and not geometry.isEmpty():
             self._restore_initial_geometry()
@@ -3029,9 +2990,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
         self._named_view_combo = None
         scale_combo = self._scale_combo
-        cleanup_scale_popup = getattr(scale_combo, "cleanup_popup", None)
-        if cleanup_scale_popup is not None:
-            cleanup_step("clean up the scale combo", cleanup_scale_popup)
+        if scale_combo is not None:
+            cleanup_step("clean up the scale combo", scale_combo.cleanup_popup)
         self._scale_combo = None
         self._btn_select = None
         self._annotation_tool_buttons = {}

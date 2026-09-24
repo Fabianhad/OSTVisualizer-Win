@@ -3055,22 +3055,26 @@ class CtrlDragTests(unittest.TestCase):
         view._annotation_place_points = [(1.0, 1.0)]
         view._panning = False
         view._last_mouse_vp_pos = QtCore.QPoint(4, 5)
-        view.cancel_overlay_move_mode = lambda restore_preview=True: setattr(
-            view, "_overlay_move_dragging", False
-        )
-        view._cancel_rotation_drag_interaction = lambda: setattr(
-            view, "_rotation_drag_active", False
-        )
+
+        def cancel_overlay_move_mode(restore_preview=True):
+            view._overlay_move_dragging = False
+
+        def cancel_rotation_drag_interaction():
+            view._rotation_drag_active = False
+
+        def reset_place_session_state():
+            view._place_linear_dragging = False
+            view._place_area_rect_dragging = False
+
+        view.cancel_overlay_move_mode = cancel_overlay_move_mode
+        view._cancel_rotation_drag_interaction = cancel_rotation_drag_interaction
         view._discard_unflushed_geometry_edits = lambda: (
             TakeoffPlanView._discard_unflushed_geometry_edits(view)
         )
         view.finish_intelligent_paste_placement = lambda: None
         view.cancel_paste_backout = lambda: view._paste_backout_preview_items.clear()
         view.clear_place_preview = lambda: None
-        view._reset_place_session_state = lambda: (
-            setattr(view, "_place_linear_dragging", False),
-            setattr(view, "_place_area_rect_dragging", False),
-        )
+        view._reset_place_session_state = reset_place_session_state
         view._set_area_placement_in_progress = lambda _active: None
         view._rebuild_current_overlays_from_model = lambda: None
         view._editing_annotation_uids = lambda: (

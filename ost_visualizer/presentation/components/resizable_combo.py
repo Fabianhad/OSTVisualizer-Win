@@ -8,10 +8,9 @@ class ResizableComboBox(TreePopupComboBoxBase):
         self._tree.setModel(self.model())
         self._tree.clicked.connect(self._on_item_clicked)
 
-    def setModel(self, model):
+    def setModel(self, model: QtCore.QAbstractItemModel) -> None:
         super().setModel(model)
-        if hasattr(self, "_tree"):
-            self._tree.setModel(model)
+        self._tree.setModel(model)
 
     def showPopup(self) -> None:
         super().showPopup()

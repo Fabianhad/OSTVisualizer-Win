@@ -395,6 +395,16 @@ Persistence:
   hidden list. This preference does not customize workspace toolbars or detached
   surfaces, and Tools > Options remains available for recovery.
 - Restorable workspace shell state belongs in `workspace_state.json`.
+  Detached-window capture preserves the previous geometry/state while the window
+  is hidden, including initial Page loading. Capture visible geometry/state
+  changes in memory immediately, including Close before layout teardown and
+  manager removal, independently of the disk-save debounce. Main hides detached
+  windows before shutdown flush, so hiding must retain the latest user changes.
+  Annotation and View share the Page-ready/timeout show boundary and
+  Qt's `restoreGeometry()` screen, normal-geometry, and window-state restoration;
+  do not apply a second frame-to-client geometry clamp after Qt restores state.
+  Consume the initial show request before applying native state, so late Page
+  readiness cannot re-show a window hidden for shutdown or reapply old geometry.
 - Resizable application-dialog dimensions and maximized state belong in the semantic
   `WorkspaceState.dialog_sizes` and `WorkspaceState.dialog_maximized` maps under
   stable presentation-owned keys. Restored normal sizes are bounded to the
