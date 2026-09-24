@@ -17,6 +17,7 @@ from ...application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     MutationOutcomeStatus,
     ResourceRef,
+    PlanTakeoffOwnership,
 )
 from ...domain.dtos.raw_bid_data_dto import RawBidData
 from ...domain.entities.database_descriptor import DatabaseBackend
@@ -302,6 +303,8 @@ class DatabaseProjectWriter(SqlProjectWriter):
         bid_uid: str,
         takeoff_uids: Sequence[str],
         annotations: Sequence[tuple[str, str]],
+        *,
+        takeoff_ownership: Sequence[PlanTakeoffOwnership] = (),
     ) -> None:
         if self._is_sql(database_id):
             return SqlProjectWriter.verify_plan_items_exist(
@@ -310,6 +313,7 @@ class DatabaseProjectWriter(SqlProjectWriter):
                 bid_uid,
                 takeoff_uids,
                 annotations,
+                takeoff_ownership=takeoff_ownership,
             )
         return MdbWriter.verify_plan_items_exist(
             self,
@@ -317,6 +321,7 @@ class DatabaseProjectWriter(SqlProjectWriter):
             bid_uid,
             takeoff_uids,
             annotations,
+            takeoff_ownership=takeoff_ownership,
         )
 
     def create_project(self, db_path: str, name: str) -> Optional[str]:

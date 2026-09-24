@@ -338,6 +338,7 @@ class PlanItemsPastePayload:
     takeoff_specs: tuple[InsertTakeoffSpec, ...] = ()
     annotation_source_uids: tuple[str, ...] = ()
     annotation_specs: tuple[InsertAnnotationSpec, ...] = ()
+    takeoff_external_parent_sources: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.takeoff_source_uids) != len(self.takeoff_specs):
@@ -348,6 +349,20 @@ class PlanItemsPastePayload:
             raise ValueError("A plan-item paste requires at least one item")
         if len(set(self.takeoff_source_uids)) != len(self.takeoff_source_uids):
             raise ValueError("Paste takeoff source identities must be unique")
+        external_sources = set(self.takeoff_external_parent_sources)
+        if len(external_sources) != len(
+            self.takeoff_external_parent_sources
+        ) or not external_sources.issubset(self.takeoff_source_uids):
+            raise ValueError(
+                "Existing-parent bindings must name unique paste Takeoff sources"
+            )
+        for source_uid, spec in zip(self.takeoff_source_uids, self.takeoff_specs):
+            if source_uid in external_sources and str(spec.parent_uid or "0") in {
+                "",
+                "0",
+                "None",
+            }:
+                raise ValueError("An existing-parent binding requires a parent UID")
         if len(set(self.annotation_source_uids)) != len(self.annotation_source_uids):
             raise ValueError("Paste annotation source identities must be unique")
         for source_uid, spec in zip(
@@ -380,10 +395,20 @@ class PlanGeometryPayload:
             raise ValueError("Geometry mutation identities cannot be empty")
 
 
+@dataclass(frozen=True)
+class PlanTakeoffOwnership:
+    uid: str
+    page_uid: str
+    condition_uid: str
+    area_uid: str
+    parent_uid: str
+
+
 @dataclass(frozen=True, kw_only=True)
 class PlanPropertyPayload:
     property_kind: str
     updates_json: str
+    takeoff_ownership: tuple[PlanTakeoffOwnership, ...] = ()
 
     def __post_init__(self) -> None:
         if self.property_kind not in {

@@ -1,3 +1,5 @@
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.entities.identity_refs import BidRef
 import logging
 import unittest
 import uuid
@@ -332,7 +334,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         service._save_annotation_text_properties = _SequenceUseCase(True)
         service._save_annotation_styles = _SequenceUseCase(True)
         service._mutation_executor = SimpleNamespace(
-            verify_plan_items_exist=lambda *_args: None
+            verify_plan_items_exist=lambda *_args, **_kwargs: None
         )
         return service
 
@@ -487,6 +489,36 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                             )
                         ),
                     )
+
+    def test_mdb_and_sql_restore_backout_with_existing_external_parent(self):
+        parent, hole = self._mixed_paste_payload().takeoff_specs
+        payload = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            takeoff_source_uids=("child",),
+            takeoff_specs=(replace(hole, parent_uid="retained-parent"),),
+        )
+        for sql in (False, True):
+            with self.subTest(sql=sql):
+                if sql:
+                    service, provider = self._queued_project_service()
+                    service._insert_takeoffs = _SequenceUseCase(["restored-child"])
+                    service.queue_plan_items_paste("database", payload, lambda _r: None)
+                    result = provider.requests[0][1]()
+                    self.assertIn(
+                        ResourceRef("takeoff", "retained-parent", 7),
+                        provider.requests[0][0].dependency_resources,
+                    )
+                else:
+                    service = self._local_composite_service()
+                    result = service.execute_plan_items_paste_local(
+                        "database.mdb", payload
+                    )
+                self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+                calls = service._insert_takeoffs.calls
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][2][0].parent_uid, "retained-parent")
+                self.assertEqual(calls[0][2][0].position, hole.position)
 
     def test_sql_plan_paste_locks_takeoff_area_dependency(self):
         service, provider = self._queued_project_service()
@@ -752,6 +784,13 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
     def test_local_property_replay_restores_distinct_original_areas_atomically(self):
         service = self._local_composite_service()
         service._save_takeoffs_area = _SequenceUseCase(True, True)
+        service._project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("database.mdb", "7"),
+            get_all_takeoffs=lambda: [
+                Takeoff(uid=uid, page_uid="20", condition_uid="30")
+                for uid in ("takeoff-1", "takeoff-2")
+            ],
+        )
         result = service.execute_plan_properties_local(
             "database.mdb",
             "7",
@@ -827,7 +866,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         service._save_annotation_text_properties = _SequenceUseCase(True)
         service._save_annotation_styles = _SequenceUseCase(True)
         service._mutation_executor = SimpleNamespace(
-            verify_plan_items_exist=lambda *_args: None
+            verify_plan_items_exist=lambda *_args, **_kwargs: None
         )
         service.validate_condition_types_delete = (
             lambda _database_id, condition_type_uids: DeleteValidationResult(
@@ -1156,6 +1195,22 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
     def test_sql_property_replay_restores_distinct_original_areas(self):
         service, provider = self._queued_project_service()
         service._save_takeoffs_area = _SequenceUseCase(True, True)
+        service._project_data.get_current_bid_ref = lambda: BidRef("database", "7")
+        service._project_data.get_all_takeoffs = lambda: [
+            Takeoff(uid=uid, page_uid="20", condition_uid="30")
+            for uid in ("takeoff-1", "takeoff-2")
+        ]
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            ExpectedResourceVersion,
+            ConcurrencyToken,
+        )
+
+        service._concurrency_tokens = SimpleNamespace(
+            expected_versions=lambda _database, resources: tuple(
+                ExpectedResourceVersion(resource, ConcurrencyToken(b"a" * 8))
+                for resource in resources
+            )
+        )
         service.queue_plan_properties(
             "database",
             "7",

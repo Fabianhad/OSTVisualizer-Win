@@ -1,4 +1,6 @@
+import json
 import logging
+from types import SimpleNamespace
 import sqlite3
 import unittest
 from contextlib import contextmanager
@@ -32,6 +34,7 @@ from ost_visualizer.domain.entities.annotation import (
     BidAnnotation,
     ANNOTATION_TYPE_TEXT,
 )
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.presentation.components import conditions_sidebar as sidebar_module
@@ -630,6 +633,10 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.assignment = ConditionTakeoffReassignment("20", "10", ("1", "2"))
         self.writer = _TransactionWriter(self.db)
         self.service = ProjectWriteService.__new__(ProjectWriteService)
+        self.service._project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("database", "7"),
+            get_all_takeoffs=self.takeoffs,
+        )
         self.service._duplicate_conditions = DuplicateConditionsUseCase(self.writer)
         self.service._save_takeoffs_condition = SaveTakeoffsConditionUseCase(
             self.writer
@@ -665,6 +672,21 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.service._concurrency_tokens.load_bid("database", "7")
         self.provider = _CapturedQueueProvider()
         self.service._sql_collaboration_provider = lambda: self.provider
+
+    def takeoffs(self):
+        columns = self.writer.schema.get_columns("BidTakeoffs")
+        parent_column = "ParentUID" if "ParentUID" in columns else "NULL"
+        return [
+            Takeoff(
+                uid=str(uid),
+                page_uid=str(page),
+                condition_uid=str(condition),
+                parent_uid=str(parent or 0),
+            )
+            for uid, page, condition, parent in self.db.execute(
+                f"SELECT UID, BidPageUID, BidConditionUID, {parent_column} FROM BidTakeoffs"
+            )
+        ]
 
     def run_duplicate(self, *, sql=False):
         if not sql:
@@ -705,6 +727,60 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         self.assertEqual(self.writer.connection.commits, 1)
         self.service._reload_database.assert_called_once()
         self.service._event_bus.publish.assert_called_once()
+
+    def test_duplicate_reassign_preserves_unselected_child_from_other_condition(self):
+        self.db.execute("ALTER TABLE BidTakeoffs ADD COLUMN ParentUID INTEGER")
+        self.db.execute("UPDATE BidTakeoffs SET ParentUID=1 WHERE UID=4")
+        self.db.commit()
+        result = self.run_duplicate()
+        self.assertTrue(result.success, result.failure_reason)
+        self.assertEqual(self.rows()[-1], (4, 10, 21))
+        self.assertEqual(
+            self.db.execute("SELECT ParentUID FROM BidTakeoffs WHERE UID=4").fetchone(),
+            (1,),
+        )
+
+    def test_queued_duplicate_reassign_preserves_unselected_child(self):
+        self.db.execute("ALTER TABLE BidTakeoffs ADD COLUMN ParentUID INTEGER")
+        self.db.execute("UPDATE BidTakeoffs SET ParentUID=1 WHERE UID=4")
+        self.db.commit()
+        self.service._concurrency_tokens.apply_result(
+            "database", {ResourceRef("takeoff", "4", 7): ConcurrencyToken(b"c" * 8)}
+        )
+        result = self.run_duplicate(sql=True)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(self.rows()[-1], (4, 10, 21))
+
+    def test_queued_duplicate_retains_child_snapshot_and_rolls_back_on_reparent(self):
+        self.db.execute("ALTER TABLE BidTakeoffs ADD COLUMN ParentUID INTEGER")
+        self.db.execute("UPDATE BidTakeoffs SET ParentUID=1 WHERE UID=4")
+        self.db.commit()
+        child_resource = ResourceRef("takeoff", "4", 7)
+        self.service._concurrency_tokens.apply_result(
+            "database", {child_resource: ConcurrencyToken(b"c" * 8)}
+        )
+        self.service.queue_conditions_duplicate(
+            "database", "7", ["20"], Mock(), reassign_takeoffs=self.assignment
+        )
+        request, execute, _callback = self.provider.requests[-1]
+        self.assertIn(child_resource, request.dependency_resources)
+        self.assertNotIn(child_resource, request.resources)
+        self.assertEqual(
+            json.loads(request.payload.values_json)["takeoff_ownership"][-1][
+                "parent_uid"
+            ],
+            "1",
+        )
+        self.db.execute("UPDATE BidTakeoffs SET ParentUID=2 WHERE UID=4")
+        self.db.commit()
+        before = self.rows()
+        with self.assertRaisesRegex(RuntimeError, "ownership changed"):
+            execute()
+        self.assertEqual(self.rows(), before)
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM BidConditions").fetchone()[0], 2
+        )
+        self.assertEqual(self.writer.connection.rollbacks, 1)
 
     def test_queued_sql_work_uses_same_duplicate_and_property_paths_in_one_transaction(
         self,

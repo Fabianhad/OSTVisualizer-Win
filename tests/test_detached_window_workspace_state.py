@@ -4622,7 +4622,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             setattr(manager, attribute, object())
         with self.assertLogs(manager.logger, level="ERROR"):
             manager.shutdown()
-        self.assertEqual(len(event_bus.calls), 10)
+        self.assertEqual(len(event_bus.calls), 11)
         self.assertIn(AppEvents.FILE_UNLOADED, event_bus.calls)
         self.assertIn(("access-clear", "detached-plan:test"), calls)
         self.assertIn("signaler-delete", calls)

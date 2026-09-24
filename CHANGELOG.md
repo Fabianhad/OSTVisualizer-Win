@@ -37,6 +37,31 @@
 
 ### Fixed
 
+- Takeoff property undo follows authoritative Takeoff/Backout identities
+  across deletion, restoration, and repeated UID allocation. Separate entities
+  that reuse a UID retain separate history lifetimes, and separately restored
+  Backouts follow their restored parent's current UID. Committed Bid Area deletion
+  clears the owning Plan histories so older assignments cannot target a different
+  Area that reused the deleted UID. Placement undo/redo shares that lifetime
+  tracking, including negative, curve, and text property history. Late SQL
+  completions cannot recreate invalidated history, and queued Area saves retain
+  their submitted draft. MDB composite restore preserves Backouts whose parent
+  remains outside the restored selection, matching SQL behavior, including when
+  the parent's reallocated UID overlaps a historical Backout UID. Late undo
+  completions cannot invalidate newer history after a UID is reused.
+- Multi-selection Takeoff property edits validate unselected Backouts without
+  changing their properties. Area assignments preserve batch atomicity and reject
+  external ownership changes before writing, on both MDB and SQL.
+  Duplicate-and-reassign Condition follows the same descendant contract. Queued
+  property edits retain their original concurrency versions, stale local captures
+  return a failed operation, and MDB rejects foreign-Bid child relationships.
+  SQL ownership conflicts stay scoped to the Bid's Takeoffs without blocking
+  the database session.
+- Plan context menus use the top-level window as their native owner, avoiding
+  Qt warnings when Plan is embedded beside a native render surface.
+  Retained menus cannot dispatch commands or query annotation actions after their
+  originating Plan is cleaned up or its native widget is destroyed.
+
 - OST/OSP import now matches On-Screen Takeoff by dropping stale Named Views
   whose Pages are absent and their dependent Hot Links, while retaining valid
   views and rejecting unrelated invalid references.

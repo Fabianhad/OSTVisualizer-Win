@@ -5755,6 +5755,10 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertFalse(insert_calls[0]["publish_conflict_event"])
 
     def test_queued_takeoff_reassign_rejects_missing_member_before_bulk_update(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            ExpectedResourceVersion,
+        )
+
         queued = []
 
         class MutationQueue:
@@ -5767,7 +5771,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 self.verifications = []
 
             def verify_plan_items_exist(
-                self, database_id, bid_uid, takeoff_uids, annotations
+                self,
+                database_id,
+                bid_uid,
+                takeoff_uids,
+                annotations,
+                *,
+                takeoff_ownership=(),
             ):
                 self.verifications.append(
                     (database_id, bid_uid, tuple(takeoff_uids), tuple(annotations))
@@ -5778,6 +5788,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         save_calls = []
         service = ProjectWriteService.__new__(ProjectWriteService)
         service._sql_collaboration_provider = lambda: MutationQueue()
+        service._project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("database", "8"),
+            get_all_takeoffs=lambda: [
+                Takeoff(uid=uid, page_uid="30", condition_uid="20")
+                for uid in ("101", "102")
+            ],
+        )
         service._mutation_executor = executor
         service._save_takeoffs_condition = SimpleNamespace(
             execute=lambda *_args: save_calls.append(_args) or True
@@ -5797,6 +5814,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             )
 
         service._execute_database_mutation = execute_mutation
+        service._concurrency_tokens = SimpleNamespace(
+            expected_versions=lambda _database, resources: tuple(
+                ExpectedResourceVersion(resource, ConcurrencyToken(b"a" * 8))
+                for resource in resources
+            )
+        )
         service.queue_plan_properties(
             "database",
             "8",

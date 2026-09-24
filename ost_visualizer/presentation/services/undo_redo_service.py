@@ -19,12 +19,21 @@ class MutationHistoryState(str, Enum):
 
 
 @dataclass
+class TakeoffHistoryTarget:
+    bid_ref: BidRef
+    page_uid: str
+    uid: str
+    available: bool = True
+
+
+@dataclass
 class MutationHistoryEntry:
     bid_ref: BidRef
     undo_action: Callable[[Callable[[QueuedMutationResult], None]], None]
     redo_action: Callable[[Callable[[QueuedMutationResult], None]], None]
     state: MutationHistoryState = MutationHistoryState.READY
     forward_sequence: Optional[int] = None
+    takeoff_targets: tuple[TakeoffHistoryTarget, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,33 +93,39 @@ class UndoRedoService:
         self,
         undo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
+        *,
+        takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
     ) -> None:
         bid_ref = self._active_bid_ref
         if not bid_ref:
             return
-        self._push_entry(bid_ref, undo_submit, redo_submit)
+        self._push_entry(bid_ref, undo_submit, redo_submit, takeoff_targets)
 
     def push_for_bid(
         self,
         bid_ref: BidRef,
         undo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
+        *,
+        takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
     ) -> None:
         if bid_ref != self._active_bid_ref:
             return
-        self._push_entry(bid_ref, undo_submit, redo_submit)
+        self._push_entry(bid_ref, undo_submit, redo_submit, takeoff_targets)
 
     def _push_entry(
         self,
         bid_ref: BidRef,
         undo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
+        takeoff_targets: tuple[TakeoffHistoryTarget, ...],
     ) -> None:
         self._undo_stack.append(
             MutationHistoryEntry(
                 bid_ref,
                 undo_submit,
                 redo_submit,
+                takeoff_targets=takeoff_targets,
             )
         )
         if len(self._undo_stack) > self._max_size:
@@ -122,6 +137,8 @@ class UndoRedoService:
         self,
         undo_action: Callable[[], bool],
         redo_action: Callable[[], bool],
+        *,
+        takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
     ) -> None:
         def submit(
             action: Callable[[], bool],
@@ -153,7 +170,61 @@ class UndoRedoService:
         self.push(
             lambda complete: submit(undo_action, complete),
             lambda complete: submit(redo_action, complete),
+            takeoff_targets=takeoff_targets,
         )
+
+    def suspend_deleted_takeoffs(
+        self, bid_ref: BidRef, deleted: tuple[TakeoffHistoryTarget, ...]
+    ) -> tuple[TakeoffHistoryTarget, ...]:
+        if bid_ref != self._active_bid_ref:
+            return ()
+        identities = {
+            (target.page_uid, target.uid)
+            for target in deleted
+            if target.available and target.bid_ref == bid_ref
+        }
+        candidates = [
+            *deleted,
+            *(
+                target
+                for entry in (*self._undo_stack, *self._redo_stack)
+                if entry.bid_ref == bid_ref
+                for target in entry.takeoff_targets
+            ),
+        ]
+        suspended = []
+        for target in candidates:
+            if (
+                target.available
+                and target.bid_ref == bid_ref
+                and (target.page_uid, target.uid) in identities
+            ):
+                target.available = False
+                suspended.append(target)
+        return tuple(suspended)
+
+    def rebind_restored_takeoffs(
+        self,
+        bid_ref: BidRef,
+        restored: dict[tuple[str, str], str],
+        targets: tuple[TakeoffHistoryTarget, ...],
+    ) -> None:
+        if bid_ref != self._active_bid_ref:
+            return
+        retained = {
+            id(target)
+            for entry in (*self._undo_stack, *self._redo_stack)
+            if entry.bid_ref == bid_ref
+            for target in entry.takeoff_targets
+        }
+        replacements = [
+            (target, restored[(target.page_uid, target.uid)])
+            for target in targets
+            if id(target) in retained and target.bid_ref == bid_ref
+        ]
+        for target, uid in replacements:
+            target.uid = uid
+            target.available = True
 
     def begin_forward_mutation(self, bid_ref: BidRef) -> Optional[ForwardMutationToken]:
         if bid_ref != self._active_bid_ref:
@@ -172,10 +243,7 @@ class UndoRedoService:
     def bind_latest_history_to_forward_mutation(
         self, token: Optional[ForwardMutationToken]
     ) -> None:
-        if token is None:
-            return
-        current = self._forward_mutations.get(token.token_id)
-        if current != token or token.history_generation != self._history_generation:
+        if not self.is_forward_mutation_current(token):
             return
         if not self._undo_stack:
             return
@@ -194,6 +262,15 @@ class UndoRedoService:
             len(self._undo_stack),
         )
         self._undo_stack.insert(insert_at, entry)
+
+    def is_forward_mutation_current(
+        self, token: Optional[ForwardMutationToken]
+    ) -> bool:
+        return bool(
+            token is not None
+            and token.history_generation == self._history_generation
+            and self._forward_mutations.get(token.token_id) == token
+        )
 
     def finish_forward_mutation(self, token: Optional[ForwardMutationToken]) -> None:
         if token is None:
@@ -291,6 +368,9 @@ class UndoRedoService:
         had_history = bool(
             self._undo_stack or self._redo_stack or self._forward_mutations
         )
+        for entry in (*self._undo_stack, *self._redo_stack):
+            for target in entry.takeoff_targets:
+                target.available = False
         self._history_generation += 1
         self._undo_stack.clear()
         self._redo_stack.clear()

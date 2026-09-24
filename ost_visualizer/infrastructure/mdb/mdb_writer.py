@@ -1,3 +1,4 @@
+from ...application.dtos.collaboration_dtos import PlanTakeoffOwnership
 import logging
 from ...application.dtos.condition_takeoff_reassignment import (
     ConditionTakeoffReassignment,
@@ -17,6 +18,7 @@ from ..database.bid_owned_identity import (
     MissingBidOwnedUidError,
     require_existing_bid_scoped_uid_matches,
     require_existing_unique_bid_owned_uid_matches,
+    require_plan_takeoff_ownership,
 )
 from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from .components.import_operations import ImportOperationsMixin
@@ -146,6 +148,8 @@ class MdbWriter(
         bid_uid: str,
         takeoff_uids: Sequence[str],
         annotations: Sequence[tuple[str, str]],
+        *,
+        takeoff_ownership: Sequence[PlanTakeoffOwnership] = (),
     ) -> None:
         with self._connection(database_id) as connection:
             schema = self._schema(connection)
@@ -163,9 +167,8 @@ class MdbWriter(
                         placeholders = ",".join("?" for _uid in uid_chunk)
                         cursor.execute(
                             "SELECT [UID] FROM [BidTakeoffs] "
-                            "WHERE [BidUID]=? AND [ParentUID] IN "
+                            "WHERE [ParentUID] IN "
                             f"({placeholders})",
-                            int(bid_uid),
                             *uid_chunk,
                         )
                         if any(
@@ -176,6 +179,9 @@ class MdbWriter(
                                 "The takeoff relationship graph changed before "
                                 "the Plan mutation started."
                             )
+            require_plan_takeoff_ownership(
+                cursor, schema, normalized_takeoffs, takeoff_ownership
+            )
             annotation_uids_by_table: dict[str, list[int]] = {}
             for uid, annotation_type in annotations:
                 table = ANNOTATION_TABLE_BY_TYPE.get(annotation_type)

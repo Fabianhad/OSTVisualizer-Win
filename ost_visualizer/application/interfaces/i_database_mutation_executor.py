@@ -6,6 +6,7 @@ from ..dtos.collaboration_dtos import (
     DatabaseMutationRequest,
     DatabaseMutationResult,
     ResourceRef,
+    PlanTakeoffOwnership,
 )
 
 T = TypeVar("T")
@@ -38,4 +39,6 @@ class IDatabaseMutationExecutor(Protocol):
         bid_uid: str,
         takeoff_uids: Sequence[str],
         annotations: Sequence[tuple[str, str]],
+        *,
+        takeoff_ownership: Sequence[PlanTakeoffOwnership] = (),
     ) -> None: ...

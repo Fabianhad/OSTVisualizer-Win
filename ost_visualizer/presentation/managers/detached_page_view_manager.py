@@ -159,6 +159,7 @@ class DetachedPageViewManager(IShutdownAware):
             ),
             (AppEvents.CONDITIONS_CHANGED, self._on_conditions_changed),
             (AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed),
+            (AppEvents.BID_AREAS_DELETED, self._on_bid_areas_deleted),
             (AppEvents.REMOTE_HIERARCHY_CHANGED, self._on_remote_hierarchy_changed),
             (
                 AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
@@ -227,6 +228,7 @@ class DetachedPageViewManager(IShutdownAware):
                     self._on_conditions_changed,
                 ),
                 (AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed),
+                (AppEvents.BID_AREAS_DELETED, self._on_bid_areas_deleted),
                 (AppEvents.REMOTE_HIERARCHY_CHANGED, self._on_remote_hierarchy_changed),
                 (
                     AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
@@ -500,6 +502,16 @@ class DetachedPageViewManager(IShutdownAware):
             self._window_undo_service.clear()
         if not defer_plan_projection and plan_refresh_required:
             self._refresh_signaler.request()
+
+    def _on_bid_areas_deleted(self, database_id: str, bid_uid: str, area_uids) -> None:
+        view = self.repository.get_active_view()
+        if (
+            area_uids
+            and view is not None
+            and view.bid_ref == BidRef(database_id, bid_uid)
+            and self._window_undo_service is not None
+        ):
+            self._window_undo_service.clear()
 
     def _on_remote_areas_changed(
         self,

@@ -357,6 +357,7 @@ class InputHandlerHarness(
     InputHandlerMixin, DragHandlerMixin, SelectionManagerMixin, BaseKeyHandler
 ):
     def __init__(self):
+        self._is_cleaning_up = False
         self._editing_enabled = True
         self._inactive_object_color = Config.DEFAULT_INACTIVE_OBJECT_COLOR
         self._pending_mutation_uids = set()
@@ -370,6 +371,9 @@ class InputHandlerHarness(
         self.annotation_place_release_consumed = False
         self._editing_text_annotation_uid = None
         self._editing_named_view_uid = None
+
+    def window(self):
+        return self
 
     def _condition_text_label_at(self, _vp_pos):
         return None

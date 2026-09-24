@@ -153,6 +153,39 @@ Threading and events:
   cleared selection only while the originating exact Page object still owns that
   Plan surface; another Page or a same-UID Page replacement retains its own
   selection.
+  Takeoff property, placement, and paste/delete history retains Page-scoped lifetime targets.
+  Committed deletion suspends exactly those live targets; only its accepted
+  restore map can reactivate them with new UIDs. A later entity reusing a deleted
+  UID is a different history lifetime. Separately deleted Backouts retain their
+  parent's history target as a dependency, not an implicit mutation target.
+  Committed Bid Area deletion invalidates
+  that Bid's Main and detached Plan history before the Area UID can be reused.
+  Forward completions check their original history generation before recording
+  an entry; completing persistence must not repopulate invalidated history.
+  Clearing history also invalidates retained Takeoff lifetime targets, so late
+  replay completions cannot suspend a new lifetime that reused their UIDs.
+  Queued Area saves copy their changeset at submission, so persistence, request
+  identity, and committed deletion notifications describe the same draft.
+  Composite Backout restoration remaps parents restored in the same batch and
+  retains independently validated external parents on both MDB and SQL.
+  Restore payloads explicitly identify Takeoff sources with external parents;
+  a retained parent's current UID may overlap a historical source UID without
+  becoming an internal batch relationship.
+- Plan property requests capture Takeoff Page/Condition/Area/parent ownership for
+  selected items and their descendant graph before entering the write scope or
+  collaboration queue. Validate that complete snapshot once before any property
+  writes, retaining the graph-closure guard. Descendants are validation dependencies,
+  not implicit property targets; deletion and geometry retain their own selection
+  contracts. MDB and SQL reject externally changed ownership under their existing
+  transaction boundary. Duplicate-and-reassign Condition uses the same captured
+  descendant ownership, including children retained on another Condition. Queued
+  Takeoff property writes retain submission-time resource versions through the
+  existing concurrency validator; later hydration cannot advance that baseline.
+  SQL Takeoff preflight conflicts remain optimistic conflicts scoped to that
+  Bid's Takeoff collection, not database-session failures.
+  Local snapshot rejection returns the normal failed mutation result. Top-level-
+  owned Plan menus validate their originating Plan's native lifetime and cleanup
+  state before querying action state or dispatching commands.
 - Accepted native 3D scene and texture completions may update a hidden surface's
   retained scene, but only `showEvent` may resume its renderer. Hide and cleanup
   own the suspended state even while regeneration is pending; the canonical

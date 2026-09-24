@@ -29,6 +29,7 @@ from ...application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     MutationOutcomeStatus,
     ResourceRef,
+    PlanTakeoffOwnership,
     SynchronizationConflict,
     SynchronizationConflictKind,
 )
@@ -41,6 +42,10 @@ from ..mdb.components.constants import (
     TAKEOFF_SELF_REFERENCE_COLUMNS,
 )
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
+from ..database.bid_owned_identity import (
+    MissingBidOwnedUidError,
+    require_plan_takeoff_ownership,
+)
 from ..database.master_data_identity import (
     MasterDataCandidateIndex,
     add_master_data_candidate,
@@ -112,13 +117,15 @@ class _OptimisticConflict(SqlInfrastructureError):
     def __init__(
         self,
         resource: ResourceRef,
-        expected: ConcurrencyToken,
+        expected: Optional[ConcurrencyToken],
         actual: Optional[ConcurrencyToken],
+        *,
+        message: str = "This SQL item changed in another session. Reload it before saving.",
     ) -> None:
         super().__init__(
             SqlErrorDetails(
                 SqlErrorCode.CONFLICT,
-                "This SQL item changed in another session. Reload it before saving.",
+                message,
             )
         )
         self.resource = resource
@@ -219,6 +226,8 @@ class SqlProjectWriter(MdbWriter):
         bid_uid: str,
         takeoff_uids: Sequence[str],
         annotations: Sequence[tuple[str, str]],
+        *,
+        takeoff_ownership: Sequence[PlanTakeoffOwnership] = (),
     ) -> None:
         with self._connection(database_id) as connection:
             schema = self._schema(connection)
@@ -297,20 +306,24 @@ class SqlProjectWriter(MdbWriter):
             if row is None:
                 raise RuntimeError("SQL plan-item validation returned no result.")
             status = int(row[0])
+            takeoffs_resource = ResourceRef(
+                CollaborationResourceType.TAKEOFFS_COLLECTION.value,
+                str(bid_uid),
+                int(bid_uid),
+            )
             if status == 1:
-                raise SqlInfrastructureError(
-                    SqlErrorDetails(
-                        SqlErrorCode.CONFLICT,
-                        "A takeoff changed or was deleted before this operation "
-                        "started.",
-                    )
+                raise _OptimisticConflict(
+                    takeoffs_resource,
+                    None,
+                    None,
+                    message="A takeoff changed or was deleted before this operation started.",
                 )
             if status == 2:
-                raise SqlInfrastructureError(
-                    SqlErrorDetails(
-                        SqlErrorCode.CONFLICT,
-                        "The takeoff relationship graph changed before deletion.",
-                    )
+                raise _OptimisticConflict(
+                    takeoffs_resource,
+                    None,
+                    None,
+                    message="The takeoff relationship graph changed before the Plan mutation started.",
                 )
             if status == 3:
                 raise SqlInfrastructureError(
@@ -324,6 +337,19 @@ class SqlProjectWriter(MdbWriter):
                 raise RuntimeError(
                     "SQL plan-item validation returned an invalid result."
                 )
+            if takeoff_ownership:
+                with connection.cursor() as cursor:
+                    try:
+                        require_plan_takeoff_ownership(
+                            cursor, schema, normalized_takeoffs, takeoff_ownership
+                        )
+                    except MissingBidOwnedUidError as exc:
+                        raise _OptimisticConflict(
+                            takeoffs_resource,
+                            None,
+                            None,
+                            message=str(exc),
+                        ) from exc
 
     def _run_delete_takeoffs(
         self, database_id: str, uids: list[int], chunk_size: int

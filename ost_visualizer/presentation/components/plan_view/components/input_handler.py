@@ -2587,7 +2587,9 @@ class InputHandlerMixin:
     def _context_menu_owner_is_current(self, owner) -> bool:
         bid_ref, page, selected_uids = owner
         return bool(
-            self._current_bid_ref == bid_ref
+            isValid(self)
+            and not self._is_cleaning_up
+            and self._current_bid_ref == bid_ref
             and self._current_page is page
             and frozenset(self._selected_uids) == selected_uids
         )
@@ -2801,8 +2803,8 @@ class InputHandlerMixin:
     def _select_context_annotation_color(self, owner, annotations: dict) -> None:
         if (
             not annotations
-            or not self._plan_item_edit_actions_enabled()
             or not self._context_annotations_are_current(owner, annotations)
+            or not self._plan_item_edit_actions_enabled()
         ):
             return
         first_annotation = next(iter(annotations.values()))
@@ -2810,8 +2812,8 @@ class InputHandlerMixin:
         color = QColorDialog.getColor(QColor(initial_color), self)
         if (
             not isValid(self)
-            or not self._plan_item_edit_actions_enabled()
             or not self._context_annotations_are_current(owner, annotations)
+            or not self._plan_item_edit_actions_enabled()
         ):
             return
         if color.isValid():
@@ -2821,8 +2823,8 @@ class InputHandlerMixin:
         self, owner, annotations: dict, width: float
     ) -> None:
         if (
-            self._plan_item_edit_actions_enabled()
-            and self._context_annotations_are_current(owner, annotations)
+            self._context_annotations_are_current(owner, annotations)
+            and self._plan_item_edit_actions_enabled()
         ):
             self.apply_annotation_style_to_selection(width=width)
 
@@ -2834,7 +2836,7 @@ class InputHandlerMixin:
             uid: self._current_annotations.get(uid)
             for uid in annotation_state.annotation_uids
         }
-        menu = QMenu(self)
+        menu = QMenu(self.window())
         add_control_point_action, subtract_control_point_action = (
             self._add_polygon_control_point_context_action(menu, control_point_target)
         )
@@ -2884,7 +2886,7 @@ class InputHandlerMixin:
         self, event, add_clipboard_actions: Callable[[QMenu], None]
     ) -> None:
         owner = self._context_menu_owner()
-        menu = QMenu(self)
+        menu = QMenu(self.window())
         current_mode, overlay_action, original_action = (
             self._add_common_context_submenus(menu)
         )
@@ -2969,7 +2971,7 @@ class InputHandlerMixin:
         takeoff_owners = {
             uid: self._current_takeoffs.get(uid) for uid in selected_state.takeoff_uids
         }
-        menu = QMenu(self)
+        menu = QMenu(self.window())
         edit_enabled = self._plan_item_edit_actions_enabled()
         assign_action = None
         negative_action = None

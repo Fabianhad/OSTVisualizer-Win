@@ -5,10 +5,47 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     QueuedMutationResult,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
+from ost_visualizer.presentation.services.undo_redo_service import (
+    UndoRedoService,
+    TakeoffHistoryTarget,
+)
 
 
 class UndoRedoServiceTests(unittest.TestCase):
+    def test_restore_rebinds_captured_lifetime_not_later_reused_uid(self):
+        bid_ref = BidRef("database", "7")
+        first = TakeoffHistoryTarget(bid_ref, "20", "10")
+        other_page = TakeoffHistoryTarget(bid_ref, "21", "10")
+        self.service.push_local(
+            lambda: True, lambda: True, takeoff_targets=(first, other_page)
+        )
+        first_deleted = self.service.suspend_deleted_takeoffs(bid_ref, (first,))
+        self.assertTrue(other_page.available)
+        second = TakeoffHistoryTarget(bid_ref, "20", "10")
+        self.service.push_local(lambda: True, lambda: True, takeoff_targets=(second,))
+        second_deleted = self.service.suspend_deleted_takeoffs(bid_ref, (second,))
+        self.assertEqual(len(second_deleted), 1)
+        self.assertIs(second_deleted[0], second)
+        self.service.rebind_restored_takeoffs(
+            bid_ref, {("20", "10"): "50"}, second_deleted
+        )
+        self.assertFalse(first.available)
+        self.assertEqual(first.uid, "10")
+        self.service.rebind_restored_takeoffs(
+            bid_ref, {("20", "10"): "60"}, first_deleted
+        )
+        self.assertEqual((first.uid, second.uid, other_page.uid), ("60", "50", "10"))
+
+    def test_cleared_history_cannot_be_rebound_by_late_restore(self):
+        bid_ref = BidRef("database", "7")
+        target = TakeoffHistoryTarget(bid_ref, "20", "10")
+        self.service.push_local(lambda: True, lambda: True, takeoff_targets=(target,))
+        suspended = self.service.suspend_deleted_takeoffs(bid_ref, (target,))
+        self.service.clear()
+        self.service.rebind_restored_takeoffs(bid_ref, {("20", "10"): "50"}, suspended)
+        self.assertFalse(target.available)
+        self.assertEqual(target.uid, "10")
+
     def setUp(self):
         self.service = UndoRedoService()
         self.service.set_active_bid(BidRef("database", "7"))

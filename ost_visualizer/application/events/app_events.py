@@ -36,6 +36,13 @@ class ConditionsChangedEvent:
 
 
 @dataclass
+class BidAreasDeletedEvent:
+    database_id: str = ""
+    bid_uid: str = ""
+    area_uids: tuple[str, ...] = ()
+
+
+@dataclass
 class RemoteAreasChangedEvent:
     database_id: str = ""
     bid_uid: str = ""
@@ -229,6 +236,7 @@ class AppEvents:
     DATABASE_CAPABILITIES_CHANGED = DatabaseCapabilitiesChangedEvent
     CONDITIONS_CHANGED = ConditionsChangedEvent
     REMOTE_AREAS_CHANGED = RemoteAreasChangedEvent
+    BID_AREAS_DELETED = BidAreasDeletedEvent
     REMOTE_BID_CONTENT_CHANGED = RemoteBidContentChangedEvent
     REMOTE_HIERARCHY_CHANGED = RemoteHierarchyChangedEvent
     REMOTE_MASTER_DATA_CHANGED = RemoteMasterDataChangedEvent

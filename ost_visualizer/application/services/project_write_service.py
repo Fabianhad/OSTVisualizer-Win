@@ -32,6 +32,7 @@ from ..dtos.collaboration_dtos import (
     PlanItemsDeletePayload,
     PlanItemsPastePayload,
     PlanPropertyPayload,
+    PlanTakeoffOwnership,
     ProjectImportPayload,
     ProjectWritePayload,
     QueuedMutationRequest,
@@ -895,6 +896,20 @@ class ProjectWriteService(DatabaseMutationWriteService):
             )
         )
         try:
+            takeoff_ownership = (
+                self._capture_plan_takeoff_ownership(
+                    db_path, bid_uid, reassign_takeoffs.takeoff_uids
+                )
+                if reassign_takeoffs is not None
+                else ()
+            )
+            dependencies = (
+                *dependencies,
+                *(
+                    ResourceRef("takeoff", item.uid, int(bid_uid))
+                    for item in takeoff_ownership
+                ),
+            )
             mutation = self._execute_database_mutation(
                 db_path,
                 tuple(sorted({collection, *takeoff_resources, *dependencies})),
@@ -904,6 +919,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     source_uids,
                     recorder,
                     reassign_takeoffs=reassign_takeoffs,
+                    takeoff_ownership=takeoff_ownership,
                 ),
             )
         except Exception as exc:
@@ -958,6 +974,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         target_changes: Optional[dict] = None,
         reassign_takeoffs: Optional[ConditionTakeoffReassignment] = None,
+        takeoff_ownership: tuple[PlanTakeoffOwnership, ...] = (),
     ) -> tuple[str, ...]:
         takeoff_resources, _dependencies = (
             self._condition_duplicate_reassignment_resources(
@@ -996,9 +1013,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
             fields = self._apply_plan_property_payload(
                 database_id,
                 bid_uid,
-                PlanPropertyPayload.from_updates(
-                    "takeoff_condition",
-                    [(uid, new_uids[0]) for uid in reassign_takeoffs.takeoff_uids],
+                replace(
+                    PlanPropertyPayload.from_updates(
+                        "takeoff_condition",
+                        [(uid, new_uids[0]) for uid in reassign_takeoffs.takeoff_uids],
+                    ),
+                    takeoff_ownership=takeoff_ownership,
                 ),
                 takeoff_resources,
             )
@@ -2381,6 +2401,56 @@ class ProjectWriteService(DatabaseMutationWriteService):
             callback,
         )
 
+    def _capture_plan_takeoff_ownership(
+        self, database_id: str, bid_uid: str, takeoff_uids: tuple[str, ...]
+    ) -> tuple[PlanTakeoffOwnership, ...]:
+        bid_ref = self._project_data.get_current_bid_ref()
+        if (
+            bid_ref is None
+            or normalize_path(bid_ref.file_path) != normalize_path(database_id)
+            or bid_ref.bid_uid != str(bid_uid)
+        ):
+            raise ValueError("The property mutation no longer owns the current Bid.")
+        takeoffs = {
+            str(item.uid): item for item in self._project_data.get_all_takeoffs()
+        }
+        selected = {str(uid) for uid in takeoff_uids}
+        if not selected.issubset(takeoffs):
+            raise ValueError("A property mutation Takeoff is no longer authoritative.")
+        while True:
+            children = {
+                uid
+                for uid, item in takeoffs.items()
+                if str(item.parent_uid) in selected
+            }
+            expanded = selected | children
+            if expanded == selected:
+                break
+            selected = expanded
+        return tuple(
+            PlanTakeoffOwnership(
+                uid,
+                str(takeoffs[uid].page_uid),
+                str(takeoffs[uid].condition_uid),
+                str(takeoffs[uid].area_uid or "0"),
+                str(takeoffs[uid].parent_uid or "0"),
+            )
+            for uid in sorted(selected)
+        )
+
+    def _plan_property_payload(
+        self, database_id: str, bid_uid: str, property_kind: str, updates: list
+    ) -> PlanPropertyPayload:
+        payload = PlanPropertyPayload.from_updates(property_kind, updates)
+        if property_kind.startswith("annotation_"):
+            return payload
+        return replace(
+            payload,
+            takeoff_ownership=self._capture_plan_takeoff_ownership(
+                database_id, bid_uid, tuple(str(update[0]) for update in updates)
+            ),
+        )
+
     def execute_plan_properties_local(
         self,
         database_id: str,
@@ -2395,7 +2465,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if self.uses_sql_collaboration_mutations(database_id):
             raise ValueError("SQL plan properties must use the collaboration queue")
         bid_value = int(bid_uid)
-        payload = PlanPropertyPayload.from_updates(property_kind, updates)
         is_annotation = property_kind.startswith("annotation_")
         resources = tuple(
             sorted(
@@ -2418,23 +2487,30 @@ class ProjectWriteService(DatabaseMutationWriteService):
             *dependency_resources,
             *(ResourceRef("page", uid, bid_value) for uid in page_uids if uid),
         }
-
-        def save(recorder):
-            changed_fields = self._apply_plan_property_payload(
-                database_id,
-                str(bid_uid),
-                payload,
-                resources,
-            )
-            for resource in resources:
-                recorder.record(
-                    resource,
-                    ChangeOperation.UPDATE,
-                    changed_fields=changed_fields,
-                )
-            return True
-
         try:
+            payload = self._plan_property_payload(
+                database_id, bid_uid, property_kind, updates
+            )
+            dependencies.update(
+                ResourceRef("takeoff", item.uid, bid_value)
+                for item in payload.takeoff_ownership
+            )
+
+            def save(recorder):
+                changed_fields = self._apply_plan_property_payload(
+                    database_id,
+                    str(bid_uid),
+                    payload,
+                    resources,
+                )
+                for resource in resources:
+                    recorder.record(
+                        resource,
+                        ChangeOperation.UPDATE,
+                        changed_fields=changed_fields,
+                    )
+                return True
+
             mutation = self._execute_database_mutation(
                 database_id,
                 tuple(sorted({*resources, *dependencies})),
@@ -2512,8 +2588,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
         self._mutation_executor.verify_plan_items_exist(
             database_id,
             bid_uid,
-            takeoff_uids,
+            (
+                tuple(item.uid for item in payload.takeoff_ownership)
+                if payload.takeoff_ownership
+                else takeoff_uids
+            ),
             annotations,
+            takeoff_ownership=payload.takeoff_ownership,
         )
         if property_kind == "takeoff_text":
             success = self._save_takeoff_text_properties.execute(
@@ -2600,7 +2681,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         owning_surface: str = "main-plan",
     ) -> int:
         bid_value = int(bid_uid)
-        payload = PlanPropertyPayload.from_updates(property_kind, updates)
+        payload = self._plan_property_payload(
+            database_id, bid_uid, property_kind, updates
+        )
         is_annotation = property_kind.startswith("annotation_")
         if is_annotation:
             resources = tuple(
@@ -2630,6 +2713,27 @@ class ProjectWriteService(DatabaseMutationWriteService):
             *dependency_resources,
             *(ResourceRef("page", uid, bid_value) for uid in page_uids if uid),
         }
+        dependencies.update(
+            ResourceRef("takeoff", item.uid, bid_value)
+            for item in payload.takeoff_ownership
+        )
+        captured_versions = ()
+        if not is_annotation:
+            guarded_resources = tuple(
+                sorted(
+                    resource
+                    for resource in {*resources, *dependencies}
+                    if not (
+                        resource.resource_type == "area"
+                        and is_unassigned_area_uid(resource.resource_id)
+                    )
+                )
+            )
+            captured_versions = self._concurrency_tokens.expected_versions(
+                database_id, guarded_resources
+            )
+            if {item.resource for item in captured_versions} != set(guarded_resources):
+                raise ValueError("Refresh the Bid before editing Takeoff properties.")
         mutation_type = (
             CollaborationMutationType.ANNOTATION_UPDATE
             if is_annotation
@@ -2670,6 +2774,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 operation_id=request.operation_id,
                 mutation_type=request.mutation_type.value,
                 request_hash=request.request_hash,
+                captured_versions=captured_versions,
                 publish_conflict_event=False,
             )
             return MutationExecutionResult(
@@ -2820,9 +2925,14 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ),
             *(
                 ResourceRef("takeoff", str(spec.parent_uid), bid_value)
-                for spec in payload.takeoff_specs
+                for source_uid, spec in zip(
+                    payload.takeoff_source_uids, payload.takeoff_specs
+                )
                 if str(spec.parent_uid or "0") not in {"", "0", "None"}
-                and str(spec.parent_uid) not in set(payload.takeoff_source_uids)
+                and (
+                    source_uid in payload.takeoff_external_parent_sources
+                    or str(spec.parent_uid) not in set(payload.takeoff_source_uids)
+                )
             ),
             *(
                 ResourceRef("layer", str(spec.layer_uid), bid_value)
@@ -2878,6 +2988,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     for index, spec in enumerate(takeoff_specs)
                     if str(spec.parent_uid or "0") in {"", "0", "None"}
                     or str(spec.parent_uid) not in source_takeoff_uids
+                    or payload.takeoff_source_uids[index]
+                    in payload.takeoff_external_parent_sources
                 )
                 hole_indexes = tuple(
                     index
@@ -3192,10 +3304,14 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
                 for spec in payload.takeoff_specs
             )
+            source_takeoff_uids = set(payload.takeoff_source_uids)
             regular_indexes = tuple(
                 index
                 for index, spec in enumerate(takeoff_specs)
                 if str(spec.parent_uid or "0") in {"", "0", "None"}
+                or str(spec.parent_uid) not in source_takeoff_uids
+                or payload.takeoff_source_uids[index]
+                in payload.takeoff_external_parent_sources
             )
             hole_indexes = tuple(
                 index
@@ -4210,6 +4326,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        changes = replace(
+            changes,
+            new=[replace(area) for area in changes.new],
+            updated=[replace(area) for area in changes.updated],
+            deleted_uids=list(changes.deleted_uids),
+        )
         bid_value = int(bid_uid)
         collection = ResourceRef("areas_collection", bid_uid, bid_value)
         updated_resources = tuple(
@@ -4254,12 +4376,24 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 "created_resources": created_resources,
             }
 
+        def completed(result: QueuedMutationResult) -> None:
+            if result.outcome_status in (
+                MutationOutcomeStatus.COMMITTED,
+                MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            ):
+                self._publish_deleted_bid_areas(
+                    database_id,
+                    bid_uid,
+                    tuple(resource.resource_id for resource in deleted_resources),
+                )
+            callback(result)
+
         return self._queue_project_write(
             database_id,
             bid_uid,
             payload,
             resources or (collection,),
-            callback,
+            completed,
             save,
             lambda value: AuthoritativeMutationResult(
                 created_resource_ids=tuple(
@@ -4978,11 +5112,26 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 bid_uid, source_uids, reassign_takeoffs
             )
         )
+        takeoff_ownership = (
+            self._capture_plan_takeoff_ownership(
+                database_id, bid_uid, reassign_takeoffs.takeoff_uids
+            )
+            if reassign_takeoffs is not None
+            else ()
+        )
+        assignment_dependencies = (
+            *assignment_dependencies,
+            *(
+                ResourceRef("takeoff", item.uid, bid_value)
+                for item in takeoff_ownership
+            ),
+        )
         payload = ProjectWritePayload.from_values(
             "duplicate_conditions",
             {
                 "condition_uids": source_uids,
                 "target_changes": changes,
+                "takeoff_ownership": [asdict(item) for item in takeoff_ownership],
                 "reassign_takeoffs": (
                     asdict(reassign_takeoffs) if reassign_takeoffs else None
                 ),
@@ -5001,7 +5150,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
             dependencies.append(ResourceRef("condition_types_collection", "database"))
         captured_versions = ()
         if reassign_takeoffs is not None:
-            guarded_resources = (*takeoff_resources, *assignment_dependencies)
+            guarded_resources = tuple(
+                sorted({*takeoff_resources, *assignment_dependencies})
+            )
             captured_versions = self._concurrency_tokens.expected_versions(
                 database_id, guarded_resources
             )
@@ -5018,6 +5169,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder,
                 target_changes=changes,
                 reassign_takeoffs=reassign_takeoffs,
+                takeoff_ownership=takeoff_ownership,
             )
 
         return self._queue_project_write(
@@ -6341,6 +6493,15 @@ class ProjectWriteService(DatabaseMutationWriteService):
         result = self.save_bid_areas_result(db_path, bid_uid, changes)
         return result.value if result.success else None
 
+    def _publish_deleted_bid_areas(self, database_id, bid_uid, deleted_uids) -> None:
+        if deleted_uids:
+            self._event_bus.publish(
+                AppEvents.BID_AREAS_DELETED,
+                database_id=database_id,
+                bid_uid=str(bid_uid),
+                area_uids=tuple(str(uid) for uid in deleted_uids),
+            )
+
     def save_bid_areas_result(
         self,
         db_path: str,
@@ -6385,6 +6546,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         )
         if result is None or result is False:
             return WriteReloadResult(None, write_success=False, reload_success=False)
+        self._publish_deleted_bid_areas(db_path, bid_uid, changes.deleted_uids)
         uid_map = result
         missing_new_uids = [area.uid for area in changes.new if area.uid not in uid_map]
         if missing_new_uids:

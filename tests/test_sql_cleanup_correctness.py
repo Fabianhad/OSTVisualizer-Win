@@ -74,6 +74,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ExpectedResourceVersion,
     MutationOutcomeStatus,
     ResourceRef,
+    SynchronizationConflictKind,
 )
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
@@ -1021,13 +1022,16 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             writer.verify_plan_items_exist(
                 descriptor.database_id, "3", ("4",), (("5", "rect"),)
             )
-        access_verify.assert_called_once_with(writer, "example.mdb", "1", ("2",), ())
+        access_verify.assert_called_once_with(
+            writer, "example.mdb", "1", ("2",), (), takeoff_ownership=()
+        )
         sql_verify.assert_called_once_with(
             writer,
             descriptor.database_id,
             "3",
             ("4",),
             (("5", "rect"),),
+            takeoff_ownership=(),
         )
 
     def test_sql_writer_batch_keeps_each_identity_deferred(self):
@@ -1307,6 +1311,132 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertIn("DECLARE @ExpectedBidUID bigint=?", sql)
         self.assertIn("target.[BidUID]<>@ExpectedBidUID", sql)
         self.assertEqual(params[0], 8)
+
+    def test_sql_property_preflight_checks_captured_ownership_after_graph_lock(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            PlanTakeoffOwnership,
+        )
+
+        class Cursor:
+            def __init__(self, rows):
+                self.rows = rows
+                self.statements = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, *params):
+                self.statements.append((sql, params))
+
+            def fetchone(self):
+                return (0,)
+
+            def fetchall(self):
+                return self.rows
+
+        baseline = (
+            PlanTakeoffOwnership("10", "20", "30", "1", "0"),
+            PlanTakeoffOwnership("11", "20", "30", "1", "10"),
+        )
+        for parent_uid in (10, 12):
+            with self.subTest(parent_uid=parent_uid):
+                cursor = Cursor([(10, 20, 30, 1, None), (11, 20, 30, 1, parent_uid)])
+                writer = SqlProjectWriter.__new__(SqlProjectWriter)
+                writer._write_schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+
+                @contextlib.contextmanager
+                def connection(_database_id):
+                    yield SimpleNamespace(cursor=lambda: cursor)
+
+                writer._connection = connection
+                if parent_uid == 10:
+                    writer.verify_plan_items_exist(
+                        "database", "7", ("10", "11"), (), takeoff_ownership=baseline
+                    )
+                else:
+                    with self.assertRaises(SqlInfrastructureError) as caught:
+                        writer.verify_plan_items_exist(
+                            "database",
+                            "7",
+                            ("10", "11"),
+                            (),
+                            takeoff_ownership=baseline,
+                        )
+                    self.assertEqual(
+                        caught.exception.details.code, SqlErrorCode.CONFLICT
+                    )
+                self.assertIn("UPDLOCK, HOLDLOCK", cursor.statements[0][0])
+                self.assertEqual(json.loads(cursor.statements[0][1][1]), [10, 11])
+                self.assertIn(
+                    "[BidPageUID], [BidConditionUID], [BidAreaUID], [ParentUID]",
+                    cursor.statements[1][0],
+                )
+
+    def test_sql_takeoff_snapshot_conflict_does_not_block_database_session(self):
+        from ost_visualizer.application.dtos.collaboration_dtos import (
+            PlanTakeoffOwnership,
+        )
+
+        class Cursor:
+            def __init__(self, status):
+                self.status = status
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, _sql, *_params):
+                pass
+
+            def fetchone(self):
+                return (self.status,)
+
+            def fetchall(self):
+                return [(10, 20, 30, 2, None)]
+
+        for status in (0, 1, 2):
+            with self.subTest(status=status):
+                cursor = Cursor(status)
+                writer = SqlProjectWriter.__new__(SqlProjectWriter)
+                writer._write_schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+
+                @contextlib.contextmanager
+                def connection(_database_id):
+                    yield SimpleNamespace(cursor=lambda: cursor)
+
+                writer._connection = connection
+                writer._execute_mutation_transaction = (
+                    lambda _request, operation: operation(None)
+                )
+                result = writer.execute(
+                    DatabaseMutationRequest(
+                        database_id="database",
+                        session_id="session",
+                        resources=(ResourceRef("takeoff", "10", 7),),
+                    ),
+                    lambda _recorder: writer.verify_plan_items_exist(
+                        "database",
+                        "7",
+                        ("10",),
+                        (),
+                        takeoff_ownership=(
+                            PlanTakeoffOwnership("10", "20", "30", "1", "0"),
+                        ),
+                    ),
+                )
+                self.assertEqual(result.outcome_status, MutationOutcomeStatus.CONFLICT)
+                self.assertEqual(
+                    result.conflict.kind,
+                    SynchronizationConflictKind.OPTIMISTIC_CONCURRENCY,
+                )
+                self.assertEqual(
+                    result.conflict.resource, ResourceRef("takeoffs_collection", "7", 7)
+                )
 
     def test_sql_parse_file_uses_one_snapshot_transaction(self):
         class _Cursor:

@@ -43,9 +43,7 @@ from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.selection_clipboard_service import SelectionClipboardService
-from ..services.selection_commands import (
-    InsertTakeoffsCommand,
-)
+from ..services.undo_redo_service import TakeoffHistoryTarget
 from ..utils.annotation_defaults import build_placed_annotation_spec
 from ..utils.dialog import delete_later_if_valid
 from ..utils.font_catalog import resolve_font_definition
@@ -647,13 +645,8 @@ class PlanViewActionHandler:
             self._plan_view.restore_condition_text_properties(changes)
             return
         if old_updates:
-            self._undo_svc.push_local(
-                lambda: self._execute_local_plan_properties(
-                    bid_ref, "takeoff_text", old_updates
-                ),
-                lambda: self._execute_local_plan_properties(
-                    bid_ref, "takeoff_text", new_updates
-                ),
+            self._push_local_property_history(
+                bid_ref, "takeoff_text", old_updates, new_updates, ()
             )
 
     def _takeoff_uids_only(self, uids: list) -> list:
@@ -1070,7 +1063,9 @@ class PlanViewActionHandler:
                 page_identities,
                 selection_revision=selection_revision,
             )
-            if handler._page_identities_are_current(page_uids, page_identities):
+            if handler._undo_svc.is_forward_mutation_current(
+                history_token
+            ) and handler._page_identities_are_current(page_uids, page_identities):
                 handler._push_sql_geometry_history(
                     bid_ref,
                     takeoff_old,
@@ -1281,9 +1276,10 @@ class PlanViewActionHandler:
                 page_identities,
                 selection_revision=selection_revision,
             )
-            if old_updates and handler._page_identities_are_current(
-                page_uids,
-                page_identities,
+            if (
+                old_updates
+                and handler._undo_svc.is_forward_mutation_current(history_token)
+                and handler._page_identities_are_current(page_uids, page_identities)
             ):
                 history_updates, history_dependencies = (
                     committed_updates(result)
@@ -1325,12 +1321,14 @@ class PlanViewActionHandler:
         page_uids: tuple[str, ...],
         dependency_resources: tuple[ResourceRef, ...],
     ) -> None:
+        targets = self._property_history_targets(bid_ref, property_kind, old_updates)
+
         def submit(done, updates: list) -> None:
             self._write_svc.queue_plan_properties(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 property_kind,
-                updates,
+                self._property_history_updates(updates, targets),
                 lambda result: done(result),
                 page_uids=page_uids,
                 dependency_resources=dependency_resources,
@@ -1340,6 +1338,95 @@ class PlanViewActionHandler:
             bid_ref,
             lambda done: submit(done, old_updates),
             lambda done: submit(done, new_updates),
+            takeoff_targets=tuple(targets.values()),
+        )
+
+    def _property_history_targets(self, bid_ref, property_kind, updates):
+        if property_kind.startswith("annotation_"):
+            return {}
+        targets = {}
+        for uid, *_values in updates:
+            takeoff = self._data_svc.get_takeoff(str(uid))
+            if takeoff is None:
+                raise ValueError(
+                    "The property history Takeoff is no longer authoritative."
+                )
+            targets[str(uid)] = TakeoffHistoryTarget(
+                bid_ref, str(takeoff.page_uid), str(uid)
+            )
+        return targets
+
+    def _property_history_updates(self, updates, targets):
+        if not targets:
+            return updates
+        for target in targets.values():
+            takeoff = self._data_svc.get_takeoff(target.uid)
+            if (
+                not target.available
+                or takeoff is None
+                or str(takeoff.page_uid) != target.page_uid
+            ):
+                raise ValueError(
+                    "The property history Takeoff no longer owns its Page."
+                )
+        return [(targets[str(uid)].uid, *values) for uid, *values in updates]
+
+    def _history_parent_targets(self, bid_ref, source_uids, specs):
+        source_uids = set(source_uids)
+        return self._property_history_targets(
+            bid_ref,
+            "takeoff_parent",
+            [
+                (str(spec.parent_uid),)
+                for spec in specs
+                if str(spec.parent_uid or "0") not in {"", "0", "None"}
+                and str(spec.parent_uid) not in source_uids
+            ],
+        )
+
+    def _specs_with_history_parents(self, specs, parents):
+        self._property_history_updates([(uid,) for uid in parents], parents)
+        return [
+            (
+                replace(spec, parent_uid=parents[str(spec.parent_uid)].uid)
+                if str(spec.parent_uid) in parents
+                else spec
+            )
+            for spec in specs
+        ]
+
+    def _paste_payload_with_history_parents(self, payload, parents):
+        return replace(
+            payload,
+            takeoff_specs=tuple(
+                self._specs_with_history_parents(payload.takeoff_specs, parents)
+            ),
+            takeoff_external_parent_sources=tuple(
+                source_uid
+                for source_uid, spec in zip(
+                    payload.takeoff_source_uids, payload.takeoff_specs
+                )
+                if str(spec.parent_uid) in parents
+            ),
+        )
+
+    def _push_local_property_history(
+        self, bid_ref, property_kind, old_updates, new_updates, dependencies
+    ) -> None:
+        targets = self._property_history_targets(bid_ref, property_kind, old_updates)
+
+        def submit(updates):
+            return self._execute_local_plan_properties(
+                bid_ref,
+                property_kind,
+                self._property_history_updates(updates, targets),
+                dependency_resources=dependencies,
+            )
+
+        self._undo_svc.push_local(
+            lambda: submit(old_updates),
+            lambda: submit(new_updates),
+            takeoff_targets=tuple(targets.values()),
         )
 
     def _page_scale_for_page_uid(self, page_uid: str) -> PageScale:
@@ -1630,19 +1717,8 @@ class PlanViewActionHandler:
         ):
             return
         if old_updates:
-            self._undo_svc.push_local(
-                lambda: self._execute_local_plan_properties(
-                    bid_ref,
-                    "takeoff_area",
-                    old_updates,
-                    dependency_resources=dependencies,
-                ),
-                lambda: self._execute_local_plan_properties(
-                    bid_ref,
-                    "takeoff_area",
-                    new_updates,
-                    dependency_resources=dependencies,
-                ),
+            self._push_local_property_history(
+                bid_ref, "takeoff_area", old_updates, new_updates, dependencies
             )
 
     def on_reassign_condition(self, uids: list, condition_uid: str) -> None:
@@ -1730,19 +1806,8 @@ class PlanViewActionHandler:
             )
         )
         if old_updates:
-            self._undo_svc.push_local(
-                lambda: self._execute_local_plan_properties(
-                    bid_ref,
-                    "takeoff_condition",
-                    old_updates,
-                    dependency_resources=dependencies,
-                ),
-                lambda: self._execute_local_plan_properties(
-                    bid_ref,
-                    "takeoff_condition",
-                    new_updates,
-                    dependency_resources=dependencies,
-                ),
+            self._push_local_property_history(
+                bid_ref, "takeoff_condition", old_updates, new_updates, dependencies
             )
 
     def on_set_negative(self, uids: list, is_negative: bool) -> None:
@@ -1787,13 +1852,8 @@ class PlanViewActionHandler:
         ):
             return
         if old_updates:
-            self._undo_svc.push_local(
-                lambda: self._execute_local_plan_properties(
-                    bid_ref, "takeoff_negative", old_updates
-                ),
-                lambda: self._execute_local_plan_properties(
-                    bid_ref, "takeoff_negative", new_updates
-                ),
+            self._push_local_property_history(
+                bid_ref, "takeoff_negative", old_updates, new_updates, ()
             )
 
     def on_set_curved(self, uids: list, make_curved: bool) -> None:
@@ -1848,13 +1908,8 @@ class PlanViewActionHandler:
             new_updates,
         ):
             return
-        self._undo_svc.push_local(
-            lambda: self._execute_local_plan_properties(
-                bid_ref, "takeoff_curve", old_updates
-            ),
-            lambda: self._execute_local_plan_properties(
-                bid_ref, "takeoff_curve", new_updates
-            ),
+        self._push_local_property_history(
+            bid_ref, "takeoff_curve", old_updates, new_updates, ()
         )
 
     def on_positions_flushed(self, takeoff_changes: list, ann_changes: list) -> None:
@@ -2412,7 +2467,9 @@ class PlanViewActionHandler:
         }
         if selected_uids:
             self._plan_view.set_selected_uids(selected_uids)
-        if retained:
+        if retained and self._undo_svc.is_forward_mutation_current(
+            pending.history_token
+        ):
             self._push_sql_takeoff_placement_history(
                 bid_ref,
                 [spec for _uid, spec in retained],
@@ -2546,16 +2603,29 @@ class PlanViewActionHandler:
         specs: List[InsertTakeoffSpec],
         created_uids: List[str],
     ) -> None:
-        current_uids = list(created_uids)
+        targets = tuple(
+            TakeoffHistoryTarget(bid_ref, str(spec.page_uid), uid)
+            for uid, spec in zip(created_uids, specs)
+        )
+        parents = self._history_parent_targets(bid_ref, created_uids, specs)
+        suspended_targets = ()
         page_uids = tuple(self._takeoff_spec_page_uids(specs))
 
         def undo_submit(done) -> None:
+            def deleted(result):
+                nonlocal suspended_targets
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    suspended_targets = self._undo_svc.suspend_deleted_takeoffs(
+                        bid_ref, targets
+                    )
+                done(result)
+
             self._write_svc.queue_plan_items_delete(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
-                list(current_uids),
+                [target.uid for target in targets],
                 [],
-                lambda result: done(result),
+                deleted,
                 page_uids=page_uids,
             )
 
@@ -2564,18 +2634,30 @@ class PlanViewActionHandler:
 
             def completed(result: QueuedMutationResult) -> None:
                 if result.outcome_status == MutationOutcomeStatus.COMMITTED:
-                    current_uids[:] = list(result.created_resource_ids)
+                    self._undo_svc.rebind_restored_takeoffs(
+                        bid_ref,
+                        {
+                            (target.page_uid, target.uid): uid
+                            for target, uid in zip(targets, result.created_resource_ids)
+                        },
+                        suspended_targets,
+                    )
                 done(result)
 
             self._write_svc.queue_takeoff_placement(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
-                specs,
+                self._specs_with_history_parents(specs, parents),
                 operation_id,
                 completed,
             )
 
-        self._undo_svc.push_for_bid(bid_ref, undo_submit, redo_submit)
+        self._undo_svc.push_for_bid(
+            bid_ref,
+            undo_submit,
+            redo_submit,
+            takeoff_targets=(*targets, *parents.values()),
+        )
 
     def hide_pending_takeoff_placement_previews(self) -> None:
         self._remove_pending_takeoff_placement_previews(
@@ -2898,9 +2980,10 @@ class PlanViewActionHandler:
             )
             if originating_page_is_current and selection_is_current and keys:
                 handler._plan_view.set_selected_uids(keys)
-            if handler._page_identities_are_current(
-                originating_page_uids,
-                page_identities,
+            if handler._undo_svc.is_forward_mutation_current(
+                history_token
+            ) and handler._page_identities_are_current(
+                originating_page_uids, page_identities
             ):
                 handler._push_sql_paste_history(
                     bid_ref,
@@ -3133,45 +3216,45 @@ class PlanViewActionHandler:
             bid_ref,
             tuple(spec.page_uid for spec in specs),
         )
-        if use_fast_refresh:
-            self._push_fast_takeoff_insert_undo(
-                bid_ref,
-                new_uids,
-                specs,
-                selection_owner_is_current,
-            )
-            return True
-        specs_scales = self._capture_takeoff_spec_scales(specs)
-        cmd = InsertTakeoffsCommand(
-            uids=new_uids,
-            bid_ref=bid_ref,
-            specs=specs,
-            write_svc=self._write_svc,
-            plan_view=self._plan_view,
-            prepare_specs_fn=lambda current_specs: (
-                self._takeoff_specs_for_current_scales(
-                    current_specs,
-                    specs_scales,
-                )
-            ),
-            selection_owner_is_current_fn=selection_owner_is_current,
+        self._push_takeoff_insert_history(
+            bid_ref,
+            new_uids,
+            specs,
+            selection_owner_is_current,
+            fast_refresh=use_fast_refresh,
         )
-        self._undo_svc.push_local(cmd.undo, cmd.redo)
         return True
 
-    def _push_fast_takeoff_insert_undo(
+    def _push_takeoff_insert_history(
         self,
         bid_ref,
         new_uids: List[str],
         specs: List[InsertTakeoffSpec],
         selection_owner_is_current: Callable[[], bool],
+        *,
+        fast_refresh: bool = True,
     ) -> None:
-        current_uids = list(new_uids)
         current_specs = specs[: len(new_uids)]
+        targets = tuple(
+            TakeoffHistoryTarget(bid_ref, str(spec.page_uid), uid)
+            for uid, spec in zip(new_uids, current_specs)
+        )
+        parents = self._history_parent_targets(bid_ref, new_uids, current_specs)
+        suspended_targets = ()
         current_specs_scales = self._capture_takeoff_spec_scales(current_specs)
 
         def _undo_insert():
-            success = self._delete_takeoffs_fast(bid_ref.file_path, list(current_uids))
+            nonlocal suspended_targets
+            uids = [target.uid for target in targets]
+            success = (
+                self._delete_takeoffs_fast(bid_ref.file_path, uids)
+                if fast_refresh
+                else self._write_svc.delete_takeoffs(bid_ref.file_path, uids)
+            )
+            if success:
+                suspended_targets = self._undo_svc.suspend_deleted_takeoffs(
+                    bid_ref, targets
+                )
             if success and selection_owner_is_current():
                 self._plan_view.clear_selection()
             return success
@@ -3180,17 +3263,31 @@ class PlanViewActionHandler:
             redone_specs = self._takeoff_specs_for_current_scales(
                 current_specs, current_specs_scales
             )
-            redone_uids = self._insert_takeoffs_fast(bid_ref, redone_specs)
+            redone_specs = self._specs_with_history_parents(redone_specs, parents)
+            redone_uids = (
+                self._insert_takeoffs_fast(bid_ref, redone_specs)
+                if fast_refresh
+                else self._write_svc.insert_takeoffs(
+                    bid_ref.file_path, bid_ref.bid_uid, redone_specs
+                )
+            )
             if len(redone_uids) != len(current_specs):
                 return False
-            for index, uid in enumerate(redone_uids):
-                if index < len(current_uids):
-                    current_uids[index] = uid
+            self._undo_svc.rebind_restored_takeoffs(
+                bid_ref,
+                {
+                    (target.page_uid, target.uid): uid
+                    for target, uid in zip(targets, redone_uids)
+                },
+                suspended_targets,
+            )
             if redone_uids and selection_owner_is_current():
                 self._plan_view.set_selected_uids(set(redone_uids))
             return True
 
-        self._undo_svc.push_local(_undo_insert, _redo_insert)
+        self._undo_svc.push_local(
+            _undo_insert, _redo_insert, takeoff_targets=(*targets, *parents.values())
+        )
 
     def _add_inserted_takeoffs_to_model(
         self,
@@ -3343,7 +3440,14 @@ class PlanViewActionHandler:
             if not self._delete_takeoffs_fast(db_path, takeoff_uids):
                 self._plan_view.set_selected_uids(set(uids))
                 return
-            current_uids = list(takeoff_uids)
+            targets = tuple(
+                TakeoffHistoryTarget(bid_ref, str(item.page_uid), str(item.uid))
+                for item in saved_takeoffs
+            )
+            parents = self._history_parent_targets(bid_ref, takeoff_uids, specs)
+            suspended_targets = self._undo_svc.suspend_deleted_takeoffs(
+                bid_ref, targets
+            )
             selection_owner_is_current = self._history_selection_owner(
                 bid_ref,
                 tuple(spec.page_uid for spec in specs),
@@ -3353,23 +3457,40 @@ class PlanViewActionHandler:
                 restore_specs = self._takeoff_specs_for_current_scales(
                     specs, specs_scales
                 )
+                restore_specs = self._specs_with_history_parents(restore_specs, parents)
                 new_uids = self._insert_takeoffs_fast(bid_ref, restore_specs)
                 if len(new_uids) != len(specs):
                     return False
-                for i, uid in enumerate(new_uids):
-                    if i < len(current_uids):
-                        current_uids[i] = uid
+                self._undo_svc.rebind_restored_takeoffs(
+                    bid_ref,
+                    {
+                        (target.page_uid, target.uid): uid
+                        for target, uid in zip(targets, new_uids)
+                    },
+                    suspended_targets,
+                )
                 if new_uids and selection_owner_is_current():
                     self._plan_view.set_selected_uids(set(new_uids))
                 return True
 
             def _redo_delete():
-                success = self._delete_takeoffs_fast(db_path, list(current_uids))
+                nonlocal suspended_targets
+                success = self._delete_takeoffs_fast(
+                    db_path, [target.uid for target in targets]
+                )
+                if success:
+                    suspended_targets = self._undo_svc.suspend_deleted_takeoffs(
+                        bid_ref, targets
+                    )
                 if success and selection_owner_is_current():
                     self._plan_view.clear_selection()
                 return success
 
-            self._undo_svc.push_local(_undo_delete, _redo_delete)
+            self._undo_svc.push_local(
+                _undo_delete,
+                _redo_delete,
+                takeoff_targets=(*targets, *parents.values()),
+            )
             self._select_skipped_named_views(skipped_selection_keys)
             return
         if saved_annotations and not takeoff_uids:
@@ -3587,7 +3708,9 @@ class PlanViewActionHandler:
                 page_identities,
                 selection_revision=selection_revision,
             )
-            if handler._page_identities_are_current(page_uids, page_identities):
+            if handler._undo_svc.is_forward_mutation_current(
+                history_token
+            ) and handler._page_identities_are_current(page_uids, page_identities):
                 handler._push_sql_delete_history(
                     bid_ref,
                     saved_takeoffs,
@@ -3685,9 +3808,17 @@ class PlanViewActionHandler:
                 for spec in (*payload.takeoff_specs, *payload.annotation_specs)
             )
         )
+        targets = self._takeoff_restore_history_targets(
+            bid_ref, payload, {uid: uid for uid in deleted_takeoff_uids}
+        )
+        parents = self._history_parent_targets(
+            bid_ref, payload.takeoff_source_uids, payload.takeoff_specs
+        )
         current = {
-            "takeoffs": list(deleted_takeoff_uids),
             "annotations": list(deleted_annotations),
+            "suspended_targets": self._undo_svc.suspend_deleted_takeoffs(
+                bid_ref, tuple(targets.values())
+            ),
         }
         takeoff_scales = self._capture_takeoff_spec_scales(list(payload.takeoff_specs))
         annotation_scales = self._capture_annotation_spec_scales(
@@ -3704,6 +3835,9 @@ class PlanViewActionHandler:
                 takeoff_scales,
                 annotation_scales,
             )
+            restore_payload = self._paste_payload_with_history_parents(
+                restore_payload, parents
+            )
             result = self._write_svc.execute_plan_items_paste_local(
                 bid_ref.file_path,
                 restore_payload,
@@ -3719,7 +3853,9 @@ class PlanViewActionHandler:
                 result,
             ):
                 return False
-            current["takeoffs"] = list(takeoff_map.values())
+            self._rebind_restored_takeoff_history(
+                bid_ref, targets, takeoff_map, current["suspended_targets"]
+            )
             current["annotations"] = [
                 (uid, annotation_type_by_source[source_uid])
                 for source_uid, uid in annotation_map.items()
@@ -3738,7 +3874,7 @@ class PlanViewActionHandler:
             result = self._write_svc.execute_plan_items_delete_local(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
-                list(current["takeoffs"]),
+                [target.uid for target in targets.values()],
                 list(current["annotations"]),
                 page_uids=page_uids,
                 dependency_resources=dependency_resources,
@@ -3746,8 +3882,11 @@ class PlanViewActionHandler:
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 return False
+            current["suspended_targets"] = self._undo_svc.suspend_deleted_takeoffs(
+                bid_ref, tuple(targets.values())
+            )
             self._project_mdb_plan_items_deleted(
-                list(current["takeoffs"]),
+                [target.uid for target in targets.values()],
                 list(current["annotations"]),
                 page_uids=page_uids,
                 condition_uids=tuple(
@@ -3758,7 +3897,32 @@ class PlanViewActionHandler:
                 self._plan_view.clear_selection()
             return True
 
-        self._undo_svc.push_local(undo, redo)
+        self._undo_svc.push_local(
+            undo, redo, takeoff_targets=(*targets.values(), *parents.values())
+        )
+
+    @staticmethod
+    def _takeoff_restore_history_targets(bid_ref, payload, uid_map):
+        return {
+            source_uid: TakeoffHistoryTarget(
+                bid_ref, str(spec.page_uid), uid_map[source_uid]
+            )
+            for source_uid, spec in zip(
+                payload.takeoff_source_uids, payload.takeoff_specs
+            )
+        }
+
+    def _rebind_restored_takeoff_history(
+        self, bid_ref, targets_by_source, restored_map, suspended_targets
+    ) -> None:
+        self._undo_svc.rebind_restored_takeoffs(
+            bid_ref,
+            {
+                (target.page_uid, target.uid): restored_map[source_uid]
+                for source_uid, target in targets_by_source.items()
+            },
+            suspended_targets,
+        )
 
     def _push_sql_delete_history(
         self,
@@ -3775,16 +3939,28 @@ class PlanViewActionHandler:
             saved_annotations,
             saved_takeoff_extras,
         )
+        targets = self._takeoff_restore_history_targets(
+            bid_ref,
+            paste_payload,
+            {uid: uid for uid in deleted_takeoff_uids},
+        )
+        parents = self._history_parent_targets(
+            bid_ref, paste_payload.takeoff_source_uids, paste_payload.takeoff_specs
+        )
         current = {
-            "takeoffs": list(deleted_takeoff_uids),
             "annotations": list(deleted_annotations),
+            "suspended_targets": self._undo_svc.suspend_deleted_takeoffs(
+                bid_ref, tuple(targets.values())
+            ),
         }
 
         def undo_submit(done) -> None:
             def completed(result: QueuedMutationResult) -> None:
                 if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                     takeoff_map, annotation_map = self._created_uid_maps(result)
-                    current["takeoffs"] = list(takeoff_map.values())
+                    self._rebind_restored_takeoff_history(
+                        bid_ref, targets, takeoff_map, current["suspended_targets"]
+                    )
                     annotation_type_by_source = {
                         source_uid: spec.annotation_type
                         for source_uid, spec in zip(
@@ -3800,11 +3976,20 @@ class PlanViewActionHandler:
 
             self._write_svc.queue_plan_items_paste(
                 bid_ref.file_path,
-                paste_payload,
+                self._paste_payload_with_history_parents(paste_payload, parents),
                 completed,
             )
 
         def redo_submit(done) -> None:
+            def deleted(result: QueuedMutationResult) -> None:
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    current["suspended_targets"] = (
+                        self._undo_svc.suspend_deleted_takeoffs(
+                            bid_ref, tuple(targets.values())
+                        )
+                    )
+                done(result)
+
             pages = tuple(
                 dict.fromkeys(
                     spec.page_uid
@@ -3817,13 +4002,18 @@ class PlanViewActionHandler:
             self._write_svc.queue_plan_items_delete(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
-                list(current["takeoffs"]),
+                [target.uid for target in targets.values()],
                 list(current["annotations"]),
-                lambda result: done(result),
+                deleted,
                 page_uids=pages,
             )
 
-        self._undo_svc.push_for_bid(bid_ref, undo_submit, redo_submit)
+        self._undo_svc.push_for_bid(
+            bid_ref,
+            undo_submit,
+            redo_submit,
+            takeoff_targets=(*targets.values(), *parents.values()),
+        )
 
     @staticmethod
     def _created_uid_maps(
@@ -4021,8 +4211,9 @@ class PlanViewActionHandler:
                 for spec in (*payload.takeoff_specs, *payload.annotation_specs)
             )
         )
+        targets = self._takeoff_restore_history_targets(bid_ref, payload, takeoff_map)
         current = {
-            "takeoffs": list(takeoff_map.values()),
+            "suspended_targets": (),
             "annotations": [
                 (uid, annotation_type_by_source[source_uid])
                 for source_uid, uid in annotation_map.items()
@@ -4041,15 +4232,18 @@ class PlanViewActionHandler:
             result = self._write_svc.execute_plan_items_delete_local(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
-                list(current["takeoffs"]),
+                [target.uid for target in targets.values()],
                 list(current["annotations"]),
                 page_uids=page_uids,
                 publish_database_refreshed_after_write=False,
             )
             if result.outcome_status != MutationOutcomeStatus.COMMITTED:
                 return False
+            current["suspended_targets"] = self._undo_svc.suspend_deleted_takeoffs(
+                bid_ref, tuple(targets.values())
+            )
             self._project_mdb_plan_items_deleted(
-                list(current["takeoffs"]),
+                [target.uid for target in targets.values()],
                 list(current["annotations"]),
                 page_uids=page_uids,
                 condition_uids=tuple(
@@ -4081,7 +4275,12 @@ class PlanViewActionHandler:
             ):
                 return False
             next_takeoffs, next_annotations = self._created_uid_maps(result)
-            current["takeoffs"] = list(next_takeoffs.values())
+            self._rebind_restored_takeoff_history(
+                bid_ref,
+                targets,
+                next_takeoffs,
+                current["suspended_targets"],
+            )
             current["annotations"] = [
                 (uid, annotation_type_by_source[source_uid])
                 for source_uid, uid in next_annotations.items()
@@ -4096,7 +4295,7 @@ class PlanViewActionHandler:
                 )
             return True
 
-        self._undo_svc.push_local(undo, redo)
+        self._undo_svc.push_local(undo, redo, takeoff_targets=tuple(targets.values()))
 
     def _project_mdb_plan_items_paste(
         self,
@@ -4127,10 +4326,13 @@ class PlanViewActionHandler:
                 [
                     (
                         replace(spec, parent_uid=takeoff_map[str(spec.parent_uid)])
-                        if str(spec.parent_uid or "0") not in {"", "0", "None"}
+                        if str(spec.parent_uid) in takeoff_map
+                        and source_uid not in payload.takeoff_external_parent_sources
                         else spec
                     )
-                    for spec in payload.takeoff_specs
+                    for source_uid, spec in zip(
+                        payload.takeoff_source_uids, payload.takeoff_specs
+                    )
                 ],
             )
             self._publish_takeoffs_changed_for_pages(
@@ -4293,13 +4495,14 @@ class PlanViewActionHandler:
                 and handler._plan_view.selection_revision == selection_revision
             ):
                 handler._plan_view.set_selected_uids(selected)
-            handler._push_sql_paste_history(
-                bid_ref,
-                payload,
-                takeoff_map,
-                annotation_map,
-            )
-            handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
+            if handler._undo_svc.is_forward_mutation_current(history_token):
+                handler._push_sql_paste_history(
+                    bid_ref,
+                    payload,
+                    takeoff_map,
+                    annotation_map,
+                )
+                handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
             handler._mark_sql_completion_applied(result)
             handler._undo_svc.finish_forward_mutation(history_token)
 
@@ -4438,8 +4641,9 @@ class PlanViewActionHandler:
                 payload.annotation_specs,
             )
         }
+        targets = self._takeoff_restore_history_targets(bid_ref, payload, takeoff_map)
         current = {
-            "takeoffs": list(takeoff_map.values()),
+            "suspended_targets": (),
             "annotations": [
                 (uid, annotation_type_by_source[source_uid])
                 for source_uid, uid in annotation_map.items()
@@ -4453,12 +4657,21 @@ class PlanViewActionHandler:
         )
 
         def undo_submit(done) -> None:
+            def deleted(result: QueuedMutationResult) -> None:
+                if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    current["suspended_targets"] = (
+                        self._undo_svc.suspend_deleted_takeoffs(
+                            bid_ref, tuple(targets.values())
+                        )
+                    )
+                done(result)
+
             self._write_svc.queue_plan_items_delete(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
-                list(current["takeoffs"]),
+                [target.uid for target in targets.values()],
                 list(current["annotations"]),
-                lambda result: done(result),
+                deleted,
                 page_uids=page_uids,
             )
 
@@ -4466,7 +4679,12 @@ class PlanViewActionHandler:
             def completed(result: QueuedMutationResult) -> None:
                 if result.outcome_status == MutationOutcomeStatus.COMMITTED:
                     next_takeoffs, next_annotations = self._created_uid_maps(result)
-                    current["takeoffs"] = list(next_takeoffs.values())
+                    self._rebind_restored_takeoff_history(
+                        bid_ref,
+                        targets,
+                        next_takeoffs,
+                        current["suspended_targets"],
+                    )
                     current["annotations"] = [
                         (uid, annotation_type_by_source[source_uid])
                         for source_uid, uid in next_annotations.items()
@@ -4479,7 +4697,9 @@ class PlanViewActionHandler:
                 completed,
             )
 
-        self._undo_svc.push_for_bid(bid_ref, undo_submit, redo_submit)
+        self._undo_svc.push_for_bid(
+            bid_ref, undo_submit, redo_submit, takeoff_targets=tuple(targets.values())
+        )
 
     def _paste_translation(
         self, regulars: list, annotations: list

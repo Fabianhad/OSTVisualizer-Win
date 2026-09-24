@@ -1,5 +1,7 @@
 from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
+from ...application.dtos.collaboration_dtos import PlanTakeoffOwnership
+from .schema_inspector_contract import IDatabaseSchemaInspector
 
 BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE = 50
 
@@ -46,6 +48,43 @@ class CyclicBidOwnedReferenceError(RuntimeError):
 
 class IncoherentBidOwnedScopeError(RuntimeError):
     """A mutation combines bid-owned entities from different authoritative bids."""
+
+
+def require_plan_takeoff_ownership(
+    cursor,
+    schema: IDatabaseSchemaInspector,
+    takeoff_uids: Sequence[int],
+    ownership: Sequence[PlanTakeoffOwnership],
+) -> None:
+    if not ownership:
+        return
+    expected = {
+        int(item.uid): tuple(
+            int(value)
+            for value in (
+                item.page_uid,
+                item.condition_uid,
+                item.area_uid,
+                item.parent_uid,
+            )
+        )
+        for item in ownership
+    }
+    if set(expected) != set(takeoff_uids) or len(expected) != len(ownership):
+        raise ValueError(
+            "The Plan ownership snapshot must cover every validation target exactly once."
+        )
+    columns = ["[UID]", "[BidPageUID]", "[BidConditionUID]"]
+    for column in ("BidAreaUID", "ParentUID"):
+        columns.append(
+            f"[{column}]" if schema.column_exists("BidTakeoffs", column) else "NULL"
+        )
+    rows = _fetch_uid_rows(cursor, "BidTakeoffs", ", ".join(columns), tuple(expected))
+    actual = {int(row[0]): tuple(int(value or 0) for value in row[1:]) for row in rows}
+    if actual != expected or len(rows) != len(expected):
+        raise MissingBidOwnedUidError(
+            "The takeoff ownership changed before the Plan mutation started."
+        )
 
 
 def require_valid_unique_bid_owned_uids(

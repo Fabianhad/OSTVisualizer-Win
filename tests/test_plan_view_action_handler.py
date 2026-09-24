@@ -1008,6 +1008,9 @@ class FakeWriteService:
             index
             for index, spec in enumerate(specs)
             if str(spec.parent_uid or "0") in {"", "0", "None"}
+            or str(spec.parent_uid) not in payload.takeoff_source_uids
+            or payload.takeoff_source_uids[index]
+            in payload.takeoff_external_parent_sources
         )
         hole_indexes = tuple(
             index for index in range(len(specs)) if index not in regular_indexes
@@ -1374,19 +1377,45 @@ class FakeUndoService:
         self.undo = None
         self.redo = None
         self.forward_mutations = []
+        self.takeoff_targets = []
 
-    def push_local(self, undo, redo):
+    def push_local(self, undo, redo, *, takeoff_targets=()):
+        self.takeoff_targets.extend(takeoff_targets)
         self.count += 1
         self.undo = undo
         self.redo = redo
 
-    def push(self, undo_submit, redo_submit):
+    def push(self, undo_submit, redo_submit, *, takeoff_targets=()):
+        self.takeoff_targets.extend(takeoff_targets)
         self.count += 1
         self.undo = lambda: undo_submit(lambda _success: None)
         self.redo = lambda: redo_submit(lambda _success: None)
 
-    def push_for_bid(self, _bid_ref, undo_submit, redo_submit):
-        self.push(undo_submit, redo_submit)
+    def push_for_bid(self, _bid_ref, undo_submit, redo_submit, *, takeoff_targets=()):
+        self.push(undo_submit, redo_submit, takeoff_targets=takeoff_targets)
+
+    def suspend_deleted_takeoffs(self, bid_ref, deleted):
+        identities = {(target.page_uid, target.uid) for target in deleted}
+        result = []
+        for target in (*deleted, *self.takeoff_targets):
+            if (
+                target.available
+                and target.bid_ref == bid_ref
+                and (target.page_uid, target.uid) in identities
+            ):
+                target.available = False
+                result.append(target)
+        return tuple(result)
+
+    def rebind_restored_takeoffs(self, bid_ref, restored, targets):
+        replacements = [
+            (target, restored[(target.page_uid, target.uid)])
+            for target in targets
+            if target.bid_ref == bid_ref
+        ]
+        for target, uid in replacements:
+            target.uid = uid
+            target.available = True
 
     def begin_forward_mutation(self, bid_ref):
         token = object()
@@ -1400,6 +1429,9 @@ class FakeUndoService:
 
     def bind_latest_history_to_forward_mutation(self, _token):
         pass
+
+    def is_forward_mutation_current(self, token):
+        return any(item[0] is token for item in self.forward_mutations)
 
 
 class FakeClipboard:
@@ -4060,6 +4092,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_backout_create_undo_redo_uses_targeted_path(self):
         data = FakeProjectData()
+        data.takeoffs["parent"] = Takeoff(
+            uid="parent", page_uid="p1", condition_uid="c1"
+        )
         write = FakeWriteService()
         write.next_uids = ["hole", "redo-hole"]
         undo = FakeUndoService()
@@ -4092,6 +4127,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_same_bid_paste_backouts_placed_uses_targeted_path(self):
         data = FakeProjectData()
+        data.takeoffs["parent"] = Takeoff(
+            uid="parent", page_uid="p1", condition_uid="c1"
+        )
         write = FakeWriteService()
         write.next_uids = ["pasted-hole", "redo-hole"]
         undo = FakeUndoService()

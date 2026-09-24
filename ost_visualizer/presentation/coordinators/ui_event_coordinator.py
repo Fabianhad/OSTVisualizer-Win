@@ -1628,6 +1628,7 @@ class UIEventCoordinator:
             self._on_conditions_changed,
         )
         self._subscribe(AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed)
+        self._subscribe(AppEvents.BID_AREAS_DELETED, self._on_bid_areas_deleted)
         self._subscribe(
             AppEvents.REMOTE_BID_CONTENT_CHANGED,
             self._invalidate_refreshed_image_sources,
@@ -3510,6 +3511,15 @@ class UIEventCoordinator:
                 self.project_data.get_selected_page_uids()
             )
         self._update_export_menu_state()
+
+    def _on_bid_areas_deleted(self, database_id: str, bid_uid: str, area_uids) -> None:
+        if (
+            area_uids
+            and self._undo_service is not None
+            and self.ui_state_manager.get_selected_bid_ref()
+            == BidRef(database_id, bid_uid)
+        ):
+            self._undo_service.clear()
 
     def _on_remote_areas_changed(
         self,
