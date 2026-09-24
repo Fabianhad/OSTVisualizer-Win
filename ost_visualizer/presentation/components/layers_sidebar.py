@@ -1,5 +1,5 @@
 from typing import Callable, List, Optional, Set
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from ...domain.entities.layer import BidLayer
 from ..config import COMPACT_SPACING, NO_MARGINS
@@ -7,6 +7,19 @@ from ..managers.icon_manager import IconId, IconManager
 from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
+
+
+class _LayerVisibilityCheckBox(QtWidgets.QCheckBox):
+    def initStyleOption(self, option: QtWidgets.QStyleOptionButton) -> None:
+        super().initStyleOption(option)
+        if self.style().objectName().lower() == "fusion":
+            option.palette.setBrush(
+                QtGui.QPalette.ColorGroup.Inactive,
+                QtGui.QPalette.ColorRole.Base,
+                option.palette.brush(
+                    QtGui.QPalette.ColorGroup.Active, QtGui.QPalette.ColorRole.Base
+                ),
+            )
 
 
 class BidLayersSidebar(QtWidgets.QWidget):
@@ -201,7 +214,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
             item.setFlags(flags)
             set_tree_item_row_height(item, self._table.columnCount())
             self._table.addTopLevelItem(item)
-            checkbox = QtWidgets.QCheckBox()
+            checkbox = _LayerVisibilityCheckBox()
             checkbox.setChecked(layer.show)
             checkbox.setEnabled(self._interactive)
             checkbox.clicked.connect(self._make_toggle_handler(row))

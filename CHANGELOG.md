@@ -37,6 +37,12 @@
 
 ### Fixed
 
+- Windows 10 follows system dark mode for application widgets and supported
+  native title bars by using Qt's theme-aware Fusion style. Light-mode changes
+  propagate to existing Main and detached windows; Windows 11 keeps its native
+  default style. Layers visibility indicators retain their color when dialogs
+  take focus, while disabled indicators keep their distinct appearance.
+
 - Detached Annotation and View windows preserve their saved size and window state
   during slow Bid reopening and capture the latest geometry before closing.
   Recent moves, resizes, and window-state changes also survive application exit

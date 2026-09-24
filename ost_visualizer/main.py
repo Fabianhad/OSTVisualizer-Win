@@ -24,6 +24,7 @@ from .infrastructure.logging.logger_factory import LoggerFactory
 from .presentation.components.splash_screen import SplashScreen
 from .presentation.main_window import MainWindow
 from .presentation.utils.qt_log_handler import install_qt_message_handler
+from .presentation.utils.theme import configure_application_style
 
 APP_INSTANCE_NAME = "OSTVisualizer"
 _CRASH_LOG_FILE = "crash.log"
@@ -235,6 +236,7 @@ def main():
     project_file_args = parse_project_file_args(sys.argv[1:])
     logger.info("Application startup")
     app = QtWidgets.QApplication(sys.argv)
+    configure_application_style(app)
     socket = QLocalSocket()
     socket.connectToServer(APP_INSTANCE_NAME)
     if socket.waitForConnected(200):

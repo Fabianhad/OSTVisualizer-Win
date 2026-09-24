@@ -29,6 +29,16 @@ Built for estimators and construction teams who work with OST project files dail
 - **Select Condition Objects** -- In Main's 2D Plan view, right-click a Condition and choose **Select Objects** below **Rename** to replace the selection with that Condition's selectable Takeoffs on the displayed Page *(Commercial)*
 - **Realtime Sync** -- Detects when On-Screen Takeoff is active and picks up changes automatically ([free companion tool](https://fabianhad.com/ost3d/download))
 
+## Windows appearance
+
+OST Visualizer follows the Windows application color scheme. Windows 10 uses
+Qt's Fusion widget style so backgrounds, menus, and application dialogs can
+follow dark and light mode; Windows 11 retains its default Qt Windows 11 style.
+Existing Main and detached windows update when the system theme changes.
+Qt manages native title-bar appearance where the Windows build supports it.
+Native Open/Save dialogs and unsupported native frame effects remain controlled
+by Windows; a dark application palette cannot force those surfaces to be dark.
+
 ## Download
 
 Download the latest installer from the [download page](https://fabianhad.com/ost3d/download):

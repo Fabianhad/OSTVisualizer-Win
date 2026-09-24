@@ -7,6 +7,14 @@ from ..config import (
 )
 
 
+def configure_application_style(app: QtWidgets.QApplication) -> None:
+    if (
+        app.platformName() == "windows"
+        and app.style().objectName().lower() == "windowsvista"
+    ):
+        app.setStyle("Fusion")
+
+
 def _get_window_color_from_palette(widget: QtWidgets.QWidget) -> QtGui.QColor:
     return widget.palette().color(QtGui.QPalette.ColorRole.Window)
 

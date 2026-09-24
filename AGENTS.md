@@ -73,6 +73,15 @@ infrastructure ----------|
 Threading and events:
 
 - UI work must stay on the main Qt thread.
+- Startup replaces the Windows platform's light-only Vista widget style with
+  Fusion before creating any windows; keep the Windows 11 default style intact.
+  Qt owns system theme detection, palettes, runtime palette propagation, and
+  native DWM frame opt-in. Do not freeze a custom application palette or add a
+  second per-window dark-frame controller. Native file dialogs remain OS-owned.
+  Layers visibility checkboxes stabilize only Fusion's inactive indicator Base
+  brush from the current active brush in their paint options. Preserve disabled
+  palettes and interaction state; do not modify global checkbox palettes or
+  cache colors across theme changes.
 - Icon bindings retain the source SVG and either current-palette or explicit tool
   color policy. A later assignment replaces the previous binding for that target
   and tree column. Keep targets weakly owned, refresh existing tree icons without
