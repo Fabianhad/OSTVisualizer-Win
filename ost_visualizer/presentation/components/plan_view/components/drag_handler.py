@@ -38,7 +38,6 @@ from ....visualization.pdf.renderers.annotation_renderer import (
 )
 from .geometry_utils import (
     attachment_fits_area,
-    closed_polygon_path,
     path_intersects_any,
     path_is_inside,
     polygon_is_valid,
@@ -488,7 +487,7 @@ class DragHandlerMixin:
             if is_area_vertex_drag:
                 area_valid = self._polygon_edit_geometry_valid(new_pos, area_pts)
             if area_valid and takeoff.is_hole:
-                area_valid = self._validate_hole_position(takeoff, new_pos, area_pts)
+                area_valid = self._validate_hole_position(takeoff, new_pos)
             if area_valid and not takeoff.is_hole and is_area_vertex_drag:
                 area_valid = self._validate_parent_contains_holes(uid, new_pos)
             if area_valid:
@@ -971,7 +970,9 @@ class DragHandlerMixin:
         return True
 
     def _validate_hole_position(
-        self, takeoff, new_pos: List[float], area_pts: List[Tuple[float, float]]
+        self,
+        takeoff,
+        new_pos: List[float],
     ) -> bool:
         cs = self._scene_builder.get_coordinate_system()
         parent = self._current_takeoffs.get(takeoff.parent_uid)
@@ -981,9 +982,7 @@ class DragHandlerMixin:
         if not parent_pos or len(parent_pos) < 6:
             return False
         parent_path = position_polygon_path(cs, parent_pos)
-        new_hole_path = closed_polygon_path(
-            [coordinate for point in area_pts for coordinate in point]
-        )
+        new_hole_path = position_polygon_path(cs, new_pos)
         if not path_is_inside(new_hole_path, parent_path):
             return False
         position_overrides = {takeoff.uid: new_pos}

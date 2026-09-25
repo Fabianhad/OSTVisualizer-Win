@@ -1029,10 +1029,9 @@ class InputHandlerMixin:
                             snapped_deg,
                             is_area=True,
                         )
-                        if self._check_hole_overlap(
+                        if not self._validate_hole_position(
+                            takeoff,
                             candidate_pos,
-                            parent_uid=takeoff.parent_uid,
-                            exclude_uid=self._rotation_drag_uid,
                         ):
                             event.accept()
                             return
@@ -1799,7 +1798,10 @@ class InputHandlerMixin:
                 condition is not None
                 and condition.is_attachment
                 and not self._attachment_position_valid(
-                    takeoff, position, new_positions.get(takeoff.parent_uid)
+                    takeoff,
+                    position,
+                    new_positions.get(takeoff.parent_uid),
+                    takeoff_positions=new_positions,
                 )
             ):
                 return {uid: list(position) for uid, position in orig_positions.items()}
@@ -2088,10 +2090,9 @@ class InputHandlerMixin:
                 linear_geom=self._linear_geom,
             )
             if takeoff.is_hole and takeoff.parent_uid:
-                if self._check_hole_overlap(
+                if not self._validate_hole_position(
+                    takeoff,
                     new_pos,
-                    parent_uid=takeoff.parent_uid,
-                    exclude_uid=uid,
                 ):
                     for item in self._uid_to_items.get(uid, []):
                         if isinstance(item, QGraphicsPathItem):
@@ -2764,7 +2765,7 @@ class InputHandlerMixin:
         if len(area_pts) < 3 or not polygon_is_valid(area_pts):
             return None
         if takeoff is not None and takeoff.is_hole:
-            if not self._validate_hole_position(takeoff, new_pos, area_pts):
+            if not self._validate_hole_position(takeoff, new_pos):
                 return None
         elif takeoff is not None and self._has_child_holes(uid):
             if not self._validate_parent_contains_holes(uid, new_pos):

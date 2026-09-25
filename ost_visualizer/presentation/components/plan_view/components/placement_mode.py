@@ -59,6 +59,7 @@ from ....visualization.pdf.renderers.annotation_renderer import (
     create_cloud_path_points,
 )
 from .geometry_utils import (
+    attachment_fits_area,
     closed_polygon_path,
     path_intersects_any,
     path_is_inside,
@@ -1476,7 +1477,11 @@ class PlacementModeMixin:
             return
         cond_type = condition.condition_type
         if cond_type == Condition.TYPE_ATTACHMENT:
-            parent_uid = self._find_area_at(ost_x, ost_y)
+            parent_uid = self._find_attachment_parent_at(
+                condition,
+                [ost_x, ost_y],
+                0.0,
+            )
             if not parent_uid:
                 event.accept()
                 return
@@ -1815,10 +1820,6 @@ class PlacementModeMixin:
             self._apply_cursor_mode(CURSOR_MODE_SELECT)
             self.place_exited.emit()
 
-    @staticmethod
-    def _path_from_transformed_polygon(points: list) -> QPainterPath:
-        return closed_polygon_path(points)
-
     def _find_area_at(self, ost_x: float, ost_y: float) -> str:
         cs = self._scene_builder.get_coordinate_system()
         pt_tx = cs.transform_vertices_to_2d([ost_x, ost_y])
@@ -1833,7 +1834,7 @@ class PlacementModeMixin:
             if not t_pos or len(t_pos) < 6:
                 continue
             t_tx = cs.transform_vertices_to_2d(t_pos)
-            path = self._path_from_transformed_polygon(t_tx)
+            path = closed_polygon_path(t_tx)
             if path.contains(pt):
                 return t.uid
         return ""
@@ -1851,7 +1852,7 @@ class PlacementModeMixin:
             if not sib_pos or len(sib_pos) < 6:
                 continue
             sib_tx = cs.transform_vertices_to_2d(sib_pos)
-            sib_path = self._path_from_transformed_polygon(sib_tx)
+            sib_path = closed_polygon_path(sib_tx)
             if sib_path.contains(pt):
                 return True
         return False
@@ -1883,6 +1884,43 @@ class PlacementModeMixin:
             sibling_paths.append(position_polygon_path(cs, sib_pos))
         return path_intersects_any(new_path, sibling_paths)
 
+    def _find_attachment_parent_at(
+        self,
+        condition: Condition,
+        position: list[float],
+        rotation: float = 0.0,
+    ) -> str:
+        cs = self._scene_builder.get_coordinate_system()
+        for parent in self._current_takeoffs.values():
+            if parent.is_hole:
+                continue
+            parent_condition = self._current_conditions.get(parent.condition_uid)
+            if parent_condition is None or not parent_condition.is_area:
+                continue
+            parent_position = cs.parse_position(parent.position)
+            if not parent_position or len(parent_position) < 6:
+                continue
+            backout_positions = (
+                child.position
+                for child in self._current_takeoffs.values()
+                if child.parent_uid == parent.uid
+                and (
+                    child_condition := self._current_conditions.get(child.condition_uid)
+                )
+                is not None
+                and child_condition.is_area
+            )
+            if attachment_fits_area(
+                cs,
+                condition,
+                position,
+                rotation,
+                parent_position,
+                backout_positions,
+            ):
+                return parent.uid
+        return ""
+
     def _update_parent_hole_preview(self, hole_path: QPainterPath) -> None:
         cs = self._scene_builder.get_coordinate_system()
         parent = self._current_takeoffs.get(self._backout_parent_uid)
@@ -1892,7 +1930,7 @@ class PlacementModeMixin:
         if not parent_pos or len(parent_pos) < 6:
             return
         parent_tx = cs.transform_vertices_to_2d(parent_pos)
-        combined = self._path_from_transformed_polygon(parent_tx)
+        combined = closed_polygon_path(parent_tx)
         for child in self._current_takeoffs.values():
             if child.parent_uid != self._backout_parent_uid:
                 continue
@@ -1900,7 +1938,7 @@ class PlacementModeMixin:
             if not child_pos or len(child_pos) < 6:
                 continue
             child_tx = cs.transform_vertices_to_2d(child_pos)
-            child_path = self._path_from_transformed_polygon(child_tx)
+            child_path = closed_polygon_path(child_tx)
             combined = combined.subtracted(child_path)
         combined = combined.subtracted(hole_path)
         parent_items = self._uid_to_items.get(self._backout_parent_uid, [])
@@ -1975,7 +2013,7 @@ class PlacementModeMixin:
             tx = cs.transform_vertices_to_2d(pos)
             if len(tx) < 4:
                 continue
-            path = self._path_from_transformed_polygon(tx)
+            path = closed_polygon_path(tx)
             color = QColor(30, 160, 70) if is_valid else QColor(200, 0, 0)
             self._add_dashed_path_preview(
                 path,
