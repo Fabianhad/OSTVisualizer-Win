@@ -1866,12 +1866,13 @@ class PlacementModeMixin:
         cs = self._scene_builder.get_coordinate_system()
         new_path = position_polygon_path(cs, pos_flat)
         parent = self._current_takeoffs.get(parent_uid)
-        if parent:
-            parent_pos = cs.parse_position(parent.position)
-            if parent_pos and len(parent_pos) >= 6:
-                parent_path = position_polygon_path(cs, parent_pos)
-                if not path_is_inside(new_path, parent_path):
-                    return True
+        if parent is None:
+            return True
+        parent_pos = cs.parse_position(parent.position)
+        if parent_pos and len(parent_pos) >= 6:
+            parent_path = position_polygon_path(cs, parent_pos)
+            if not path_is_inside(new_path, parent_path):
+                return True
         sibling_paths = []
         for sibling in self._current_takeoffs.values():
             if sibling.parent_uid != parent_uid:
@@ -1882,7 +1883,36 @@ class PlacementModeMixin:
             if not sib_pos or len(sib_pos) < 6:
                 continue
             sibling_paths.append(position_polygon_path(cs, sib_pos))
-        return path_intersects_any(new_path, sibling_paths)
+        if path_intersects_any(new_path, sibling_paths):
+            return True
+        backout_positions = [pos_flat]
+        backout_positions.extend(
+            sibling.position
+            for sibling in self._current_takeoffs.values()
+            if sibling.parent_uid == parent_uid
+            and sibling.uid != exclude_uid
+            and (
+                sibling_condition := self._current_conditions.get(sibling.condition_uid)
+            )
+            is not None
+            and sibling_condition.is_area
+        )
+        for attachment in self._current_takeoffs.values():
+            if attachment.parent_uid != parent_uid:
+                continue
+            condition = self._current_conditions.get(attachment.condition_uid)
+            if condition is None or not condition.is_attachment:
+                continue
+            if not attachment_fits_area(
+                cs,
+                condition,
+                attachment.position,
+                attachment.rotation,
+                parent.position,
+                backout_positions,
+            ):
+                return True
+        return False
 
     def _find_attachment_parent_at(
         self,

@@ -3,6 +3,8 @@ from typing import Callable, List, Optional, Set
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
 from shiboken6 import isValid
+from ...application.dtos.write_reload_result import WriteReloadResult
+from ...application.events.app_events import AppEvents
 from ...domain.entities.identity_refs import BidRef
 from ..components.area_combo import AreaComboBox
 from ..components.resizable_combo import ResizableComboBox
@@ -17,7 +19,12 @@ from ..config import (
 from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.button_policy import apply_no_highlight_button_policy
-from ..utils.dialog import delete_later_if_valid
+from ..utils.dialog import (
+    delete_later_if_valid,
+    save_result_mapping,
+    save_result_succeeded,
+)
+from ..utils.messagebox import show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.scales import ALL_SCALES, format_custom_scale
 
@@ -68,6 +75,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         self._interactive: bool = False
         self._bid_areas_in_use: Optional[Set] = None
         self._page_areas_in_use: Optional[Set] = None
+        self._area_projection_revision = 0
         self._current_scale_index: int = -1
         self._setup_ui()
 
@@ -110,6 +118,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         areas_with_takeoff: Optional[Set[str]] = None,
         selected_uid: Optional[str] = None,
     ) -> None:
+        self._area_projection_revision += 1
         self._bid_ref = bid_ref
         self._bid_areas_in_use = (
             set(areas_with_takeoff) if areas_with_takeoff is not None else None
@@ -268,6 +277,9 @@ class PageSettingsBar(QtWidgets.QWidget):
         bid_ref = self._bid_ref
         sync_save_fn = self._save_areas_fn
         async_save_fn = self._save_areas_async_fn
+        refreshed_areas = None
+        refresh_failed = False
+        areas_projected = False
         use_async_save = async_save_fn is not None and (
             self._uses_async_areas_fn is None
             or self._uses_async_areas_fn(bid_ref.file_path)
@@ -285,20 +297,41 @@ class PageSettingsBar(QtWidgets.QWidget):
             logger.exception("Failed to load bid areas for picker")
             return
         prev_area_uid = self.area_combo.get_current_area_uid()
+        area_projection_revision = self._area_projection_revision
         if sync_save_fn is not None:
 
             def _save_fn(changes: dict):
+                nonlocal refreshed_areas, refresh_failed
                 if (
                     not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
                     or self._bid_ref != bid_ref
                 ):
                     return None
-                return sync_save_fn(
+                result = sync_save_fn(
                     bid_ref.file_path,
                     bid_ref.bid_uid,
                     changes,
                     publish_database_refreshed_after_write=False,
                 )
+                if save_result_succeeded(result):
+                    refreshed_areas = self._refresh_areas_fn(
+                        bid_ref.file_path,
+                        bid_ref.bid_uid,
+                        tuple(str(uid) for uid in changes.deleted_uids),
+                    )
+                    refresh_failed = refreshed_areas is None
+                    if refresh_failed:
+                        show_warning(
+                            self,
+                            "Bid Areas",
+                            "The Areas were saved, but could not be refreshed. Reopen the Bid to reload them.",
+                        )
+                        return WriteReloadResult(
+                            save_result_mapping(result),
+                            write_success=True,
+                            reload_success=False,
+                        )
+                return result
 
         else:
             _save_fn = None
@@ -317,13 +350,25 @@ class PageSettingsBar(QtWidgets.QWidget):
             _save_async_fn = None
 
         def _on_saved() -> None:
+            nonlocal areas_projected, area_projection_revision
             if self._bid_ref != bid_ref:
                 return
+            areas_projected = True
+            area_projection_revision = self._area_projection_revision + 1
             self.load_bid_areas(
                 bid_ref,
+                areas=refreshed_areas,
                 areas_with_takeoff=self._bid_areas_in_use,
                 selected_uid=self.area_combo.get_current_area_uid(),
             )
+            if not use_async_save and refreshed_areas is not None:
+                self._event_bus.publish(
+                    AppEvents.REMOTE_AREAS_CHANGED,
+                    database_id=bid_ref.file_path,
+                    bid_uid=bid_ref.bid_uid,
+                    local_completion=True,
+                    page_controls_projected=True,
+                )
 
         dlg = BidAreaPickerDialog(
             icon_provider=self._icon_provider,
@@ -338,7 +383,6 @@ class PageSettingsBar(QtWidgets.QWidget):
             workspace_state_model=self._workspace_state_model,
         )
         selected_uid = None
-        saved_changes = False
         try:
             result = exec_with_ost_blocking(dlg, self._event_bus)
             if (
@@ -353,23 +397,35 @@ class PageSettingsBar(QtWidgets.QWidget):
                 return
             if result == QtWidgets.QDialog.DialogCode.Accepted:
                 selected_uid = dlg.get_selected_uid()
-            saved_changes = dlg.has_saved_changes()
         finally:
             try:
                 dlg.cleanup()
             finally:
                 delete_later_if_valid(dlg)
-        if saved_changes and not use_async_save:
-            self._refresh_areas_fn(bid_ref.file_path)
-        if self._bid_ref != bid_ref or self._page_uid != page_uid:
+        if refresh_failed or self._bid_ref != bid_ref or self._page_uid != page_uid:
             return
-        self.load_bid_areas(bid_ref, areas_with_takeoff=self._bid_areas_in_use)
+        projection_is_current = (
+            self._area_projection_revision == area_projection_revision
+        )
+        if not projection_is_current:
+            return
+        if not areas_projected:
+            self.load_bid_areas(
+                bid_ref,
+                areas_with_takeoff=self._bid_areas_in_use,
+            )
         if self._page_areas_in_use is not None:
             self.update_bold_states(self._page_areas_in_use)
-        target_uid = selected_uid if selected_uid is not None else prev_area_uid
+        current_uid = self.area_combo.get_current_area_uid()
+        target_uid = selected_uid if selected_uid is not None else current_uid
         self.area_combo.set_current_area_uid(target_uid)
         if selected_uid is not None:
+            if self.area_combo.get_current_area_uid() != target_uid:
+                self.area_combo.set_current_area_uid(current_uid)
+                return
             self._on_area_activated(target_uid)
+        elif prev_area_uid and not self.area_combo.get_current_area_uid():
+            self._on_area_activated("")
 
     def _on_scale_activated(self, index: int) -> None:
         if (

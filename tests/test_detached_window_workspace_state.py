@@ -4501,7 +4501,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._saved_window_state_provider = object()
         with self.assertLogs(manager.logger, level="ERROR"):
             manager.shutdown()
-        self.assertEqual(len(event_bus.calls), 11)
+        self.assertEqual(len(event_bus.calls), 12)
         self.assertIn(AppEvents.FILE_UNLOADED, event_bus.calls)
         self.assertIn(("access-clear", "detached-plan:test"), calls)
         self.assertIn("signaler-delete", calls)

@@ -20,6 +20,7 @@ from ...database.bid_owned_identity import (
     CyclicBidOwnedReferenceError,
     require_acyclic_bid_owned_parent_graph,
     require_existing_bid_owned_references,
+    require_existing_unique_bid_owned_uid_matches,
     require_valid_unique_bid_owned_uids,
 )
 from ...database.schema_inspector_contract import IDatabaseSchemaInspector
@@ -42,6 +43,40 @@ BidConditionFolders = Dict[str, BidConditionFolder]
 
 
 class BidDataReaderMixin:
+    def get_condition_family(
+        self, file_path: str, bid_uid: str
+    ) -> Tuple[BidConditions, BidConditionFolders]:
+        with self._connection(file_path) as connection:
+            schema = self._schema(connection)
+            with connection.cursor() as cursor:
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "Bids", (bid_uid,)
+                )
+            conditions = self._parse_bid_conditions_for_bid(
+                connection,
+                bid_uid,
+                self._parse_bid_layers_for_bid(connection, bid_uid),
+                self._parse_cdn_types(connection),
+                schema,
+            )
+            folders = self._parse_bid_condition_folders_for_bid(
+                connection, bid_uid, schema, require_complete=True
+            )
+            return conditions, folders
+
+    def get_area_family(self, file_path: str, bid_uid: str) -> List[BidArea]:
+        with self._connection(file_path) as connection:
+            schema = self._schema(connection)
+            with connection.cursor() as cursor:
+                require_existing_unique_bid_owned_uid_matches(
+                    cursor, "Bids", (bid_uid,)
+                )
+            return list(
+                self._parse_bid_areas_for_bid(
+                    connection, bid_uid, schema, require_complete=True
+                ).values()
+            )
+
     @staticmethod
     def _normalize_display_size(value: Any) -> float:
         if value is None:
@@ -186,6 +221,8 @@ class BidDataReaderMixin:
         connection: "pyodbc.Connection",
         bid_uid: str,
         schema: IDatabaseSchemaInspector,
+        *,
+        require_complete: bool = False,
     ) -> BidAreas:
         areas: BidAreas = {}
         if schema.optional_table_missing("BidAreas"):
@@ -237,7 +274,7 @@ class BidDataReaderMixin:
                     "BidAreas",
                 )
         except pyodbc.Error as exc:
-            if self._record_caught_read_error(exc):
+            if require_complete or self._record_caught_read_error(exc):
                 raise
         return areas
 
@@ -922,6 +959,8 @@ class BidDataReaderMixin:
         connection: "pyodbc.Connection",
         bid_uid: str,
         schema: IDatabaseSchemaInspector,
+        *,
+        require_complete: bool = False,
     ) -> BidConditionFolders:
         folders: BidConditionFolders = {}
         if schema.optional_table_missing("BidConditionFolders"):
@@ -963,7 +1002,7 @@ class BidDataReaderMixin:
                     "BidConditionFolders",
                 )
         except pyodbc.Error as exc:
-            if self._record_caught_read_error(exc):
+            if require_complete or self._record_caught_read_error(exc):
                 raise
         return folders
 

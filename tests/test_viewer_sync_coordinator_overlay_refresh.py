@@ -599,6 +599,7 @@ class FakePlanView:
         changed_takeoff_uids=None,
         changed_annotation_uids=None,
         changed_annotation_types=None,
+        force_overlay_refresh=False,
     ):
         self.overlay_calls += 1
         self.overlay_options.append(
@@ -614,6 +615,7 @@ class FakePlanView:
                 "changed_takeoff_uids": changed_takeoff_uids,
                 "changed_annotation_uids": changed_annotation_uids,
                 "changed_annotation_types": changed_annotation_types,
+                "force_overlay_refresh": force_overlay_refresh,
             }
         )
         return self.overlay_result

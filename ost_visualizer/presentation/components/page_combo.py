@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...domain.entities.bid import Bid
 from ...domain.entities.folder import Folder
@@ -248,6 +248,19 @@ class PageComboBox(TreePopupComboBoxBase):
                         page, self._show_page_index, self._show_sheet_number
                     )
                 )
+        self._update_display_text()
+
+    def refresh_page_labels(self, pages: Iterable[Page]) -> None:
+        with QtCore.QSignalBlocker(self._model):
+            for page in pages:
+                item = self._page_items.get(page.uid)
+                if item is not None:
+                    item.setData(page, _ITEM_ROLE_PAGE)
+                    item.setText(
+                        _format_page_label(
+                            page, self._show_page_index, self._show_sheet_number
+                        )
+                    )
         self._update_display_text()
 
     def _on_item_changed(self, item: QtGui.QStandardItem) -> None:
@@ -557,6 +570,19 @@ class SinglePageComboBox(TreePopupComboBoxBase):
                         page, self._show_page_index, self._show_sheet_number
                     )
                 )
+        self._update_display_text()
+
+    def refresh_page_labels(self, pages: Iterable[Page]) -> None:
+        with QtCore.QSignalBlocker(self._model):
+            for page in pages:
+                item = self._page_items.get(page.uid)
+                if item is not None:
+                    item.setData(page, _ITEM_ROLE_PAGE)
+                    item.setText(
+                        _format_page_label(
+                            page, self._show_page_index, self._show_sheet_number
+                        )
+                    )
         self._update_display_text()
 
     def set_page_has_takeoffs(self, page_uid: str, has_takeoffs: bool = True) -> None:

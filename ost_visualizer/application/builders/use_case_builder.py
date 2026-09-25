@@ -467,6 +467,7 @@ class UseCaseBuilder:
                 event_bus=event_bus,
                 bid_write_guard=bid_write_guard,
                 project_data_service=project_data_service,
+                condition_family_reader=project_read_service.get_condition_family,
                 condition_type_uids_in_use_provider=(
                     project_read_service.get_condition_type_uids_in_use
                 ),

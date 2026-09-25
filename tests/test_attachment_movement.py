@@ -1,3 +1,4 @@
+import math
 import unittest
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.collaboration_dtos import (
@@ -23,6 +24,9 @@ class AttachmentMovementTests(unittest.TestCase):
         view = fixtures.CtrlDragTests()._make_view({"attachment"})
         view._scene_builder = fixtures.FakeSceneBuilder()
         view._scene_builder.cs = fixtures.IdentityCoordinateSystem()
+        view._linear_geom = fixtures.FakeLinearGeom()
+        view._rotation_before_edit = {}
+        view._dirty_rotations = {}
         view._current_conditions = {
             "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
             "attachment": Condition(
@@ -50,6 +54,20 @@ class AttachmentMovementTests(unittest.TestCase):
         view._pt_to_scene = lambda x, y: QPointF(x, y)
         return view
 
+    def add_backout(self, view, position):
+        view._current_takeoffs["backout"] = Takeoff(
+            uid="backout",
+            condition_uid="area",
+            page_uid="page",
+            parent_uid="parent",
+            position=list(position),
+        )
+
+    def set_attachment_dimensions(self, view, width, depth):
+        condition = view._current_conditions["attachment"]
+        condition.width = width
+        condition.depth = depth
+
     def test_keyboard_collides_at_every_edge(self):
         for dx, dy in ((-6, 0), (6, 0), (0, -6), (0, 6)):
             with self.subTest(delta=(dx, dy)):
@@ -67,6 +85,13 @@ class AttachmentMovementTests(unittest.TestCase):
                 view._drag_last_valid_new_pos = [5.0, 5.0]
                 view.update_drag_handle_positions(position, "attachment")
                 self.assertEqual(view._handle_infos[0].item.pos(), QPointF(5.0, 5.0))
+
+    def test_attachment_full_footprint_must_remain_inside_area(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 4.0, 2.0)
+
+        self.assertFalse(view._apply_position_keyboard_move(4.0, 0.0))
+        self.assertEqual(view._current_takeoffs["attachment"].position, [5.0, 5.0])
 
     def test_concave_area_rejects_notch_not_just_bounding_box(self):
         view = self.make_view()
@@ -171,6 +196,188 @@ class AttachmentMovementTests(unittest.TestCase):
             view._validate_parent_contains_holes(
                 "parent", [0.0, 0.0, 8.0, 0.0, 8.0, 8.0, 0.0, 8.0]
             )
+        )
+
+    def test_group_backout_move_cannot_enter_unselected_attachment(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 2.0, 2.0)
+        self.add_backout(view, [1.0, 4.0, 3.0, 4.0, 3.0, 6.0, 1.0, 6.0])
+        view._selected_uids = {"backout"}
+
+        self.assertFalse(view._apply_position_keyboard_move(3.0, 0.0))
+        self.assertEqual(
+            view._current_takeoffs["backout"].position,
+            [1.0, 4.0, 3.0, 4.0, 3.0, 6.0, 1.0, 6.0],
+        )
+        self.assertEqual(view._dirty_positions, {})
+
+    def test_backout_placement_rejects_attachment_footprint(self):
+        state = self.make_view()
+        placement = fixtures.AnnotationPlacementHarness()
+        placement._current_conditions = state._current_conditions
+        placement._current_takeoffs = state._current_takeoffs
+        placement._backout_parent_uid = "parent"
+        placement._scene_builder._cs.parse_position = lambda position: list(position)
+        self.set_attachment_dimensions(state, 2.0, 2.0)
+
+        self.assertTrue(
+            placement._check_hole_overlap([4.0, 4.0, 6.0, 4.0, 6.0, 6.0, 4.0, 6.0])
+        )
+
+    def test_backout_placement_rejects_stale_parent(self):
+        state = self.make_view()
+        placement = fixtures.AnnotationPlacementHarness()
+        placement._current_conditions = state._current_conditions
+        placement._current_takeoffs = state._current_takeoffs
+        placement._scene_builder._cs.parse_position = lambda position: list(position)
+
+        self.assertTrue(
+            placement._check_hole_overlap(
+                [4.0, 4.0, 6.0, 4.0, 6.0, 6.0, 4.0, 6.0],
+                parent_uid="deleted-parent",
+            )
+        )
+
+    def test_single_attachment_rotation_updates_rotation(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 4.0, 2.0)
+        view._rotation_drag_orig_positions = {"attachment": [5.0, 5.0]}
+        view._rotation_drag_orig_rotations = {"attachment": 0.0}
+        flushed = []
+        view._flush_dirty_rotations = lambda: flushed.append(True)
+        view._create_rotate_handle = lambda _uids: True
+
+        view._apply_single_rotation("attachment", 90.0)
+
+        self.assertAlmostEqual(
+            view._current_takeoffs["attachment"].rotation, math.pi / 2.0
+        )
+        self.assertEqual(flushed, [True])
+
+    def test_single_attachment_rotation_rejects_footprint_outside_area(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 4.0, 2.0)
+        attachment = view._current_takeoffs["attachment"]
+        attachment.position = [5.0, 1.0]
+        view._rotation_drag_orig_positions = {"attachment": [5.0, 1.0]}
+        view._rotation_drag_orig_rotations = {"attachment": 0.0}
+        flushed = []
+        view._flush_dirty_rotations = lambda: flushed.append(True)
+        view._create_rotate_handle = lambda _uids: True
+
+        view._apply_single_rotation("attachment", 90.0)
+
+        self.assertEqual(attachment.rotation, 0.0)
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertEqual(flushed, [])
+
+    def test_single_attachment_rotation_rejects_backout_collision(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 4.0, 2.0)
+        attachment = view._current_takeoffs["attachment"]
+        attachment.position = [3.0, 5.0]
+        self.add_backout(view, [2.0, 1.0, 4.0, 1.0, 4.0, 3.9, 2.0, 3.9])
+        view._rotation_drag_orig_positions = {"attachment": [3.0, 5.0]}
+        view._rotation_drag_orig_rotations = {"attachment": 0.0}
+        view._create_rotate_handle = lambda _uids: True
+        flushed = []
+        view._flush_dirty_rotations = lambda: flushed.append(True)
+
+        view._apply_single_rotation("attachment", 90.0)
+
+        self.assertEqual(attachment.rotation, 0.0)
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertEqual(flushed, [])
+
+    def test_toolbar_attachment_rotation_rejects_footprint_outside_area(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 4.0, 2.0)
+        attachment = view._current_takeoffs["attachment"]
+        attachment.position = [5.0, 1.0]
+        view._scene_builder.cs.ost_to_screen_pixels = lambda value: float(value)
+        flushed = []
+        view._flush_rotation_group = lambda: flushed.append(True)
+
+        view.rotate_selected_takeoffs(90.0)
+
+        self.assertEqual(attachment.position, [5.0, 1.0])
+        self.assertEqual(attachment.rotation, 0.0)
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(view._dirty_rotations, {})
+        self.assertEqual(flushed, [])
+
+    def test_area_rotation_rotates_attachment_footprint_with_parent(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 4.0, 2.0)
+        view._selected_uids = {"parent"}
+        view._rotation_drag_orig_positions = {
+            "parent": list(view._current_takeoffs["parent"].position)
+        }
+        view._rotation_drag_orig_rotations = {"parent": 0.0}
+        view._flush_dirty_positions = lambda: None
+        view._flush_rotation_group = lambda: None
+
+        view._apply_single_rotation("parent", 90.0)
+
+        self.assertAlmostEqual(
+            view._current_takeoffs["attachment"].rotation, math.pi / 2.0
+        )
+        self.assertIn("attachment", view._dirty_rotations)
+
+    def test_group_backout_rotation_cannot_enter_unselected_attachment(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 2.0, 2.0)
+        original = [1.0, 4.0, 3.0, 4.0, 3.0, 6.0, 1.0, 6.0]
+        self.add_backout(view, original)
+        view._selected_uids = {"backout"}
+        view._rotation_drag_orig_positions = {"backout": list(original)}
+        view._rotation_drag_orig_rotations = {"backout": 0.0}
+        view._rotate_ost_center = (3.5, 5.0)
+        flushed = []
+        view._flush_rotation_group = lambda: flushed.append(True)
+
+        view._apply_multi_rotation(180.0)
+
+        self.assertEqual(view._current_takeoffs["backout"].position, original)
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(flushed, [])
+
+    def test_toolbar_backout_rotation_cannot_enter_unselected_attachment(self):
+        view = self.make_view()
+        self.set_attachment_dimensions(view, 2.0, 2.0)
+        original = [2.5, 2.0, 3.5, 2.0, 3.5, 8.0, 2.5, 8.0]
+        self.add_backout(view, original)
+        view._selected_uids = {"backout"}
+        view._scene_builder.cs.ost_to_screen_pixels = lambda value: float(value)
+        flushed = []
+        view._flush_rotation_group = lambda: flushed.append(True)
+
+        view.rotate_selected_takeoffs(90.0)
+
+        self.assertEqual(view._current_takeoffs["backout"].position, original)
+        self.assertEqual(view._dirty_positions, {})
+        self.assertEqual(flushed, [])
+
+    def test_overlapping_area_parent_search_skips_area_blocked_by_backout(self):
+        state = self.make_view()
+        self.set_attachment_dimensions(state, 2.0, 2.0)
+        self.add_backout(state, [4.0, 4.0, 6.0, 4.0, 6.0, 6.0, 4.0, 6.0])
+        state._current_takeoffs["second-parent"] = Takeoff(
+            uid="second-parent",
+            condition_uid="area",
+            page_uid="page",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],
+        )
+        placement = fixtures.AnnotationPlacementHarness()
+        placement._scene_builder._cs.parse_position = lambda position: list(position)
+        placement._current_conditions = state._current_conditions
+        placement._current_takeoffs = state._current_takeoffs
+
+        self.assertEqual(
+            placement._find_attachment_parent_at(
+                state._current_conditions["attachment"], [5.0, 5.0]
+            ),
+            "second-parent",
         )
 
     def test_real_main_and_detached_keyboard_collision_and_flush(self):

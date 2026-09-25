@@ -1718,6 +1718,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._annotation_view_manager.refresh_active_view()
         self._view_window_manager.refresh_active_view()
 
+    def refresh_detached_plan_area_selection(self, page_uid: str) -> None:
+        self._annotation_view_manager.refresh_page_area_selection(page_uid)
+        self._view_window_manager.refresh_page_area_selection(page_uid)
+
     def _on_workspace_toolbar_visibility_changed(self, key: str, visible: bool) -> None:
         if self._syncing_toolbar_visibility:
             return

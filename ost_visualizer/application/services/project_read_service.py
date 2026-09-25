@@ -2,6 +2,8 @@ import logging
 from typing import Dict, List, Optional, Tuple
 from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
+from ...domain.entities.condition import Condition
+from ...domain.entities.condition_folder import BidConditionFolder
 from ...domain.entities.cover_sheet import CoverSheetData, JobStatus
 from ...domain.entities.employee import Employee, PayClass
 from ...domain.entities.layer import (
@@ -45,6 +47,11 @@ class ProjectReadService:
             for layer in merge_layers_for_bid(all_layers)
             if not is_comments_layer_name(layer.name)
         ]
+
+    def get_condition_family(
+        self, file_path: str, bid_uid: str
+    ) -> Tuple[Dict[str, Condition], Dict[str, BidConditionFolder]]:
+        return self._reader.get_condition_family(file_path, bid_uid)
 
     def get_default_layers(self, file_path: str) -> List[BidLayer]:
         try:
@@ -123,6 +130,9 @@ class ProjectReadService:
         except Exception:
             self.logger.warning("Failed to load bid areas", exc_info=True)
             return []
+
+    def get_area_family(self, file_path: str, bid_uid: str) -> List[BidArea]:
+        return self._reader.get_area_family(file_path, bid_uid)
 
     def get_settings_defaults(self, file_path: str) -> dict:
         try:

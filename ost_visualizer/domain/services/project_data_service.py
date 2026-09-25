@@ -2,7 +2,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 from ...domain.aggregates.ost_aggregate import OstAggregate
-from ...domain.entities.area import BidArea, is_unassigned_area_uid, normalize_area_uid
+from ...domain.entities.area import (
+    UNASSIGNED_AREA_UID,
+    BidArea,
+    is_unassigned_area_uid,
+    normalize_area_uid,
+)
 from ...domain.entities.bid import Bid
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
@@ -26,6 +31,11 @@ from ..entities.layer import (
     normalize_layer_name,
 )
 from .condition_quantity_service import compute_page_quantities
+from .page_scale_transform import (
+    position_rescale_factor_between_page_scales,
+    rescale_annotation_position_between_page_scales,
+    rescale_position_between_page_scales,
+)
 from .takeoff_domain_service import (
     is_takeoff_relevant_for_area_usage,
     is_takeoff_visible,
@@ -316,6 +326,116 @@ class ProjectDataService:
             return False
         self.model.bid_areas = {str(area.uid): area for area in areas}
         return True
+
+    def replace_bid_areas_after_local_save(
+        self,
+        bid_ref: BidRef,
+        areas: Iterable[BidArea],
+        deleted_uids: Iterable[str],
+    ) -> bool:
+        if not self.replace_bid_areas(bid_ref, areas):
+            return False
+        deleted = {str(uid) for uid in deleted_uids if uid}
+        if not deleted:
+            return True
+        for page_uid, area_uid in tuple(self.model.page_area_selections.items()):
+            if str(area_uid or "") in deleted:
+                self.model.page_area_selections[page_uid] = None
+        for takeoff in self.model.bid_takeoffs:
+            if str(takeoff.area_uid or "") in deleted:
+                takeoff.area_uid = UNASSIGNED_AREA_UID
+        return True
+
+    def apply_page_scales(
+        self,
+        bid_ref: BidRef,
+        pages: Iterable[Page],
+        scale_factor1: float,
+        scale_factor2: float,
+    ) -> tuple[str, ...]:
+        if self.model.current_bid_ref != bid_ref:
+            return ()
+        pages = {str(page.uid): page for page in pages}
+        ordered_uids = tuple(pages)
+        if not pages or any(
+            self.model.get_page(uid) is not page for uid, page in pages.items()
+        ):
+            return ()
+        target_scale = (float(scale_factor1), float(scale_factor2))
+        source_scales = {
+            uid: (page.scale_factor1, page.scale_factor2) for uid, page in pages.items()
+        }
+        takeoff_positions = {
+            id(takeoff): rescale_position_between_page_scales(
+                takeoff.position,
+                source_scales[str(takeoff.page_uid)],
+                target_scale,
+            )
+            for takeoff in self.model.bid_takeoffs
+            if str(takeoff.page_uid) in pages
+        }
+        annotations = self.model.get_all_annotations()
+        annotation_positions = {
+            id(annotation): rescale_annotation_position_between_page_scales(
+                annotation.annotation_type,
+                annotation.position,
+                source_scales[str(annotation.page_uid)],
+                target_scale,
+            )
+            for annotation in annotations
+            if str(annotation.page_uid) in pages
+        }
+        for uid, page in pages.items():
+            factor = position_rescale_factor_between_page_scales(
+                source_scales[uid], target_scale
+            )
+            rect_x, rect_y, rect_w, rect_h = page.overlay_rect
+            if rect_w > 0.0 and rect_h > 0.0:
+                page.overlay_rect = tuple(
+                    float(value) * factor for value in (rect_x, rect_y, rect_w, rect_h)
+                )
+                page.overlay_offset_x = float(page.overlay_offset_x) * factor
+                page.overlay_offset_y = float(page.overlay_offset_y) * factor
+            page.scale_factor1, page.scale_factor2 = target_scale
+        for takeoff in self.model.bid_takeoffs:
+            position = takeoff_positions.get(id(takeoff))
+            if position is not None:
+                takeoff.position = position
+        for annotation in annotations:
+            position = annotation_positions.get(id(annotation))
+            if position is not None:
+                annotation.position = position
+        self._sync_page_metadata(bid_ref, pages)
+        return ordered_uids
+
+    def apply_page_name(self, bid_ref: BidRef, page: Page, name: str) -> bool:
+        if self.model.current_bid_ref != bid_ref or self.get_page(page.uid) is not page:
+            return False
+        page.name = name
+        self._sync_page_metadata(bid_ref, {page.uid: page})
+        return True
+
+    def _sync_page_metadata(self, bid_ref: BidRef, pages: Dict[str, Page]) -> None:
+        containers = [
+            self.model.find_bid_info(bid_ref),
+            self.model.current_bid,
+            self._cover_sheet_by_database_bid.get((bid_ref.file_path, bid_ref.bid_uid)),
+        ]
+        for container in containers:
+            if container is None:
+                continue
+            records = list(container.pages_without_folder)
+            folders = list(container.folders.values())
+            while folders:
+                folder = folders.pop()
+                records.extend(folder.pages)
+                folders.extend(folder.subfolders.values())
+            for record in records:
+                page = pages.get(str(record.uid))
+                if page is not None:
+                    record.name = page.name
+                    record.scale_factor1 = page.scale_factor1
+                    record.scale_factor2 = page.scale_factor2
 
     def replace_remote_bid_families(
         self,

@@ -38,6 +38,7 @@ class _PlanUpdateSnapshot:
     changed_takeoff_uids: tuple[str, ...]
     changed_annotation_uids: tuple[str, ...]
     changed_annotation_types: tuple[str, ...]
+    force_overlay_refresh: bool = False
     remote_identity: Optional[_RemotePlanIdentity] = None
 
 
@@ -108,18 +109,29 @@ class ViewerSyncCoordinator:
         changed_takeoff_uids: Optional[List[str]] = None,
         changed_annotation_uids: Optional[List[str]] = None,
         changed_annotation_types: Optional[List[str]] = None,
+        force_overlay_refresh: bool = False,
     ) -> None:
         snapshot = self._capture_plan_update(
             page_uid,
             changed_takeoff_uids=changed_takeoff_uids,
             changed_annotation_uids=changed_annotation_uids,
             changed_annotation_types=changed_annotation_types,
+            force_overlay_refresh=force_overlay_refresh,
         )
         if snapshot is None:
             self.clear_plan_view()
             return
         self._remote_update_generation += 1
         self._apply_plan_update(self._prepare_plan_update(snapshot))
+
+    def update_page_area_selection(self, page_uid: str) -> bool:
+        return bool(
+            self.plan_view
+            and self.plan_view.current_page_uid == page_uid
+            and self.plan_view.refresh_page_area_selection(
+                self._project_data.get_page_area_selections()
+            )
+        )
 
     def request_remote_plan_update(
         self,
@@ -181,6 +193,7 @@ class ViewerSyncCoordinator:
         changed_takeoff_uids: Optional[List[str]] = None,
         changed_annotation_uids: Optional[List[str]] = None,
         changed_annotation_types: Optional[List[str]] = None,
+        force_overlay_refresh: bool = False,
         remote_identity: Optional[_RemotePlanIdentity] = None,
     ) -> Optional[_PlanUpdateSnapshot]:
         if not self.plan_view or not page_uid:
@@ -226,6 +239,7 @@ class ViewerSyncCoordinator:
             changed_takeoff_uids=tuple(changed_takeoff_uids or ()),
             changed_annotation_uids=tuple(changed_annotation_uids or ()),
             changed_annotation_types=tuple(changed_annotation_types or ()),
+            force_overlay_refresh=force_overlay_refresh,
             remote_identity=remote_identity,
         )
 
@@ -288,6 +302,7 @@ class ViewerSyncCoordinator:
                 changed_takeoff_uids=list(snapshot.changed_takeoff_uids),
                 changed_annotation_uids=list(snapshot.changed_annotation_uids),
                 changed_annotation_types=list(snapshot.changed_annotation_types),
+                force_overlay_refresh=snapshot.force_overlay_refresh,
             )
         ):
             if snapshot.snap_settings:

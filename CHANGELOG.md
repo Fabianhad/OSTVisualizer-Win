@@ -37,6 +37,17 @@
 
 ### Fixed
 
+- Page Scale saves retain the active Takeoff placement tool and avoid rebuilding
+  the unchanged Project Tree. Authoritative scale-dependent Plan overlays and 3D
+  dimensions, displayed quantities, and visible Summary still refresh while
+  cached page-source pixels remain reusable.
+- Page Area assignment and Area-picker saves update only the authoritative Area
+  family and affected Plan overlays instead of reloading the database and page.
+- Page renames update navigation labels without reloading the Plan. Condition
+  edits, renumbering, and folder changes refresh their own data instead of the
+  entire active Bid, preserving valid Takeoff placement across renumbering.
+  Refreshing another database no longer rebuilds the active workspace or clears
+  its 3D scene.
 - Linear Takeoff previews use measurement increments in model space, matching the
   released endpoint across Page scales and zoom levels. Takeoff writes retain
   coordinate precision so angled snapped geometry survives reload and undo/redo.

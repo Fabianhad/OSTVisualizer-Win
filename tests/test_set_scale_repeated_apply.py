@@ -13,6 +13,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
 )
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
@@ -121,7 +122,7 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
         dialog._custom_factor1_edit.setText("1")
         dialog._custom_factor2_edit.setText(str(scale))
 
-    def test_two_applies_use_reloaded_authoritative_page_in_same_dialog(self):
+    def test_two_applies_use_same_authoritative_page_without_reload(self):
         pages_submitted = []
         save = self.coordinator._save_scale_settings
 
@@ -136,11 +137,11 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
             dialog._on_apply()
             replacement = self.model.get_page("42")
             self.assertEqual(len(self.write_calls), 1)
-            self.assertIsNot(replacement, self.original)
+            self.assertIs(replacement, self.original)
             self.assertEqual(replacement.scale_factor2, 96)
             self.assertFalse(dialog._dirty)
             self.assertTrue(dialog.isVisible())
-            self.assertFalse(
+            self.assertTrue(
                 self.coordinator._page_dialog_context_is_current(
                     self.bid_ref, "42", self.original
                 )
@@ -150,7 +151,7 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
             self.assertEqual(len(self.write_calls), 2)
             self.assertIs(pages_submitted[0], self.original)
             self.assertIs(pages_submitted[1], replacement)
-            self.assertIsNot(self.model.get_page("42"), replacement)
+            self.assertIs(self.model.get_page("42"), replacement)
             self.assertEqual(self.model.get_page("42").scale_factor2, 192)
             self.assertEqual(dialog._custom_factor2_edit.text(), "192")
             self.assertFalse(dialog._dirty)
@@ -161,6 +162,44 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
         ) as warning:
             self._open(interact)
         warning.assert_not_called()
+
+    def test_scale_save_projects_only_affected_page_without_database_reload(self):
+        changes = []
+        self.events.subscribe(
+            AppEvents.PAGE_METADATA_CHANGED,
+            lambda **event: changes.append(event),
+        )
+
+        self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1.0, 96.0))
+
+        self.assertEqual(self.reloads, [])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["page_uids"], ("42",))
+
+    def test_scale_save_does_not_project_into_bid_selected_during_write(self):
+        replacement = Page(uid="42", name="Other bid page", scale_factor2=24.0)
+        resources = []
+
+        def execute(_database, requested, operation, **_options):
+            resources.extend(requested)
+            value = operation(Mock())
+            self.model.current_bid_ref = BidRef("test.mdb", "8")
+            self.model.current_bid = Bid("8", "Other bid")
+            self.model.set_pages({"42": replacement})
+            return SimpleNamespace(
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                value=value,
+            )
+
+        reloads = []
+        self.service._execute_database_mutation = execute
+        self.service._reload_database = lambda path: reloads.append(path) or True
+
+        self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1.0, 96.0))
+
+        self.assertEqual(str(resources[0].bid_uid), "7")
+        self.assertEqual(replacement.scale_factor2, 24.0)
+        self.assertEqual(reloads, ["test.mdb"])
 
     def test_unrelated_replacement_deletion_navigation_and_permission_loss_reject(self):
         for saved_first in (False, True):
@@ -248,7 +287,7 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
 
                 self._open(interact)
 
-    def test_failed_reload_does_not_adopt_replacement(self):
+    def test_scale_save_does_not_depend_on_database_reload(self):
         def failed_reload(database):
             self._reload(database)
             return False
@@ -257,18 +296,10 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
 
         def interact(dialog):
             self._change(dialog, 96)
-            with self.assertLogs(
-                "ost_visualizer.presentation.coordinators.ui_event_coordinator",
-                level="WARNING",
-            ), patch(
-                "ost_visualizer.presentation.dialogs.set_scale_dialog.show_warning"
-            ):
-                dialog._on_apply()
-                self.assertIsNot(self.model.get_page("42"), self.original)
-                self.service._reload_database = self._reload
-                self._change(dialog, 192)
-                dialog._on_apply()
-            self.assertEqual(len(self.write_calls), 1)
+            dialog._on_apply()
+            self.assertIs(self.model.get_page("42"), self.original)
+            self.assertEqual(self.model.get_page("42").scale_factor2, 96)
+            self.assertEqual(self.reloads, [])
 
         self._open(interact)
 
@@ -286,7 +317,7 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
             self._change(dialog, 192)
             dialog._on_apply()
             self.assertEqual([call[1] for call in self.write_calls], ["42", "43", "42"])
-            self.assertIsNot(self.model.get_page("42"), replacement)
+            self.assertIs(self.model.get_page("42"), replacement)
             self.assertEqual(self.model.get_page("42").scale_factor2, 192)
             self.assertEqual(self.model.get_page("43").scale_factor2, 96)
 

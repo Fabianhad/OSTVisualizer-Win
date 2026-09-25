@@ -1611,6 +1611,7 @@ class UIEventCoordinator:
             AppEvents.DATABASE_REFRESHED, self._invalidate_refreshed_image_sources
         )
         self._subscribe(AppEvents.DATABASE_REFRESHED, self._on_database_refreshed)
+        self._subscribe(AppEvents.PAGE_METADATA_CHANGED, self._on_page_metadata_changed)
         self._subscribe(
             AppEvents.DATABASE_CAPABILITIES_CHANGED,
             self._on_database_capabilities_changed,
@@ -3093,8 +3094,10 @@ class UIEventCoordinator:
         external_change: bool = False,
         image_sources_unchanged: bool = False,
         mesh_scene_unchanged: bool = False,
+        page_scale_uids: tuple[str, ...] = (),
     ) -> None:
         del image_sources_unchanged
+        page_scale_refresh = bool(page_scale_uids) and not external_change
         if file_path:
             if external_change:
                 self._deferred_persistence.cancel_for_file(file_path)
@@ -3106,6 +3109,16 @@ class UIEventCoordinator:
                         self._sync_selection(self._SOURCE_MODEL, [])
             elif not self._flush_deferred_for_file(file_path):
                 return
+        selected_bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if (
+            file_path
+            and selected_bid_ref is not None
+            and normalize_path(file_path) != normalize_path(selected_bid_ref.file_path)
+        ):
+            self._do_file_refresh()
+            self._restore_project_tree_bid_selection_if_needed()
+            self._update_export_menu_state()
+            return
         if not self._nav.start_refresh(
             self.ui_state_manager,
             self._placement,
@@ -3118,9 +3131,15 @@ class UIEventCoordinator:
             self._clear_mesh_views_for_scene_update()
             self._mark_mesh_scene_dirty(selected_pages)
         try:
-            self._do_file_refresh()
+            if page_scale_refresh:
+                self._do_file_refresh(rebuild_project_tree=False)
+            else:
+                self._do_file_refresh()
         finally:
-            self._finish_refresh()
+            if page_scale_refresh:
+                self._finish_refresh(accept_reconstructed_placement_conditions=True)
+            else:
+                self._finish_refresh()
             self._flush_dirty_mesh_refresh_if_needed()
 
     def _on_database_capabilities_changed(self, file_path: str = "") -> None:
@@ -3131,6 +3150,49 @@ class UIEventCoordinator:
                 self._deferred_persistence.cancel_for_file(selected_file_path)
             self._update_menu_state()
             self._refresh_mesh_window_access()
+
+    def _on_page_metadata_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        page_uids: tuple[str, ...] = (),
+        changed_fields: tuple[str, ...] = (),
+    ) -> None:
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        if selected != BidRef(database_id, bid_uid):
+            return
+        affected = {str(uid) for uid in page_uids if uid}
+        fields = set(changed_fields)
+        if "name" in fields:
+            self.takeoff_sidebar.refresh_page_labels(
+                [
+                    page
+                    for uid in page_uids
+                    if (page := self.project_data.get_page(uid)) is not None
+                ]
+            )
+            self._sync_page_info_status()
+        if affected and self._is_summary_tab_active():
+            self._sidebar.load_condition_summary_from_memory()
+        if fields == {"name"}:
+            return
+        active_page_uid = self.ui_state_manager.active_page_uid
+        if active_page_uid in affected:
+            self._update_page_settings_bar(active_page_uid)
+            self._viewer.update_plan_view(
+                active_page_uid,
+                force_overlay_refresh=True,
+            )
+            self._apply_pending_hotlink_named_view_focus(require_stable=True)
+        selected_affected = [
+            uid for uid in self.project_data.get_selected_page_uids() if uid in affected
+        ]
+        if active_page_uid in affected or selected_affected:
+            self._sidebar.update_conditions_quantities()
+        if selected_affected:
+            self._request_or_defer_mesh_refresh(
+                self.project_data.get_selected_page_uids()
+            )
 
     def _is_summary_tab_active(self) -> bool:
         return bool(
@@ -3476,9 +3538,11 @@ class UIEventCoordinator:
         ):
             self._prepare_plan_for_authoritative_refresh()
         changed_field_set = set(changed_fields or ())
-        accepts_reconstructed_conditions = operations == {
-            ChangeOperation.UPDATE.value
-        } or (
+        accepts_reconstructed_conditions = (
+            bool(operations)
+            and operations
+            <= {ChangeOperation.UPDATE.value, ChangeOperation.REORDER.value}
+        ) or (
             not operations
             and changed_field_set == {CollaborationResourceType.CONDITION_FOLDER.value}
         )
@@ -3528,6 +3592,7 @@ class UIEventCoordinator:
         local_completion: bool = False,
         takeoff_family_pending: bool = False,
         summary_refresh_required: bool = True,
+        page_controls_projected: bool = False,
     ) -> None:
         del area_uids
         selected = self.ui_state_manager.get_selected_bid_ref()
@@ -3541,7 +3606,7 @@ class UIEventCoordinator:
             self._prepare_plan_for_authoritative_refresh()
         if self._undo_service and not local_completion:
             self._undo_service.clear()
-        if self._page_settings_bar:
+        if self._page_settings_bar and not page_controls_projected:
             selected_area_uid = self._page_settings_bar.get_selected_area_uid()
             bid_areas = self.project_data.get_area_uids_with_takeoff()
             self._page_settings_bar.load_bid_areas(
@@ -3944,17 +4009,20 @@ class UIEventCoordinator:
         else:
             self._page_settings_bar.update_area_usage(bid_areas)
 
-    def _do_file_refresh(self) -> None:
+    def _do_file_refresh(self, *, rebuild_project_tree: bool = True) -> None:
         hierarchy = self.project_data.get_hierarchy()
         loaded_files = build_loaded_files(hierarchy)
         self._cache_bid_data(loaded_files)
-        self.main_window.project_view.build_complete_structure(loaded_files)
+        if rebuild_project_tree:
+            self.main_window.project_view.build_complete_structure(loaded_files)
 
     def refresh_hierarchy_projection(self) -> None:
         if not self._is_cleaning_up:
             self._do_file_refresh()
 
-    def _finish_refresh(self) -> None:
+    def _finish_refresh(
+        self, *, accept_reconstructed_placement_conditions: bool = False
+    ) -> None:
         snap = self._nav.refresh_snapshot
         if not snap:
             self._nav.finish_refresh(NavState.FILE_LOADED_NO_BID)
@@ -4008,7 +4076,12 @@ class UIEventCoordinator:
             placement_is_current = True
             if snap.place_condition_uid:
                 placement_is_current = bool(
-                    self._placement.is_active and self._reconcile_active_placement()
+                    self._placement.is_active
+                    and self._reconcile_active_placement(
+                        accept_reconstructed_conditions=(
+                            accept_reconstructed_placement_conditions
+                        )
+                    )
                 )
             can_restore_placement = bool(
                 snap.place_condition_uid
@@ -5820,8 +5893,9 @@ class UIEventCoordinator:
         page_area_selections[page_uid] = area_uid if area_uid else None
         self.ui_state_manager.selected_area_uid = area_uid or ""
         self._update_page_settings_bar(page_uid)
-        self._viewer.update_plan_view(page_uid)
-        self.main_window.refresh_detached_plan_views()
+        if not self._viewer.update_page_area_selection(page_uid):
+            self._viewer.update_plan_view(page_uid)
+        self.main_window.refresh_detached_plan_area_selection(page_uid)
         self._request_or_defer_mesh_refresh(self.project_data.get_selected_page_uids())
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
 

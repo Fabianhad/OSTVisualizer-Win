@@ -1,6 +1,7 @@
 import os
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.entities.bid import Bid
@@ -190,10 +191,12 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
             active_page_uid=original.uid,
         )
         self.addCleanup(page_combo.close)
+        coordinator._selected_takeoff_uids = ("takeoff-1",)
         coordinator._finish_refresh()
         self.assertEqual(projected, [(authoritative.uid, authoritative)])
         self.assertEqual(projected[0][1].scale_factor1, 0.25)
         self.assertEqual(page_combo.get_active_page_uid(), authoritative.uid)
+        self.assertEqual(coordinator._selected_takeoff_uids, ("takeoff-1",))
 
     def test_changed_active_page_projects_once_without_duplicate_reload(self) -> None:
         original = Page(uid="page-1", name="A101")
@@ -243,6 +246,149 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         self.assertEqual(target_position, [480.0, 240.0, 960.0, 480.0])
         self.assertEqual(target_display, source_display)
         self.assertNotEqual(stale_hybrid_display, source_display)
+
+    def test_scale_refresh_skips_project_tree_rebuild_and_preserves_tool_contract(
+        self,
+    ) -> None:
+        calls = []
+        bid_ref = BidRef("scale-sync.mdb", "7")
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._deferred_persistence = SimpleNamespace(
+            cancel_for_file=lambda _path: None
+        )
+        coordinator._flush_deferred_for_file = lambda _path: True
+        coordinator._nav = SimpleNamespace(start_refresh=lambda *_args, **_kwargs: True)
+        coordinator._placement = SimpleNamespace()
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_area_uid="",
+            selected_page_uids=["page-1"],
+            get_selected_bid_ref=lambda: bid_ref,
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["page-1"]
+        )
+        coordinator._clear_mesh_views_for_scene_update = lambda: calls.append(
+            "clear-mesh"
+        )
+        coordinator._mark_mesh_scene_dirty = lambda pages: calls.append(
+            ("dirty-mesh", tuple(pages))
+        )
+        coordinator._do_file_refresh = (
+            lambda *, rebuild_project_tree=True: calls.append(
+                ("refresh", rebuild_project_tree)
+            )
+        )
+        coordinator._finish_refresh = (
+            lambda *, accept_reconstructed_placement_conditions=False: calls.append(
+                ("finish", accept_reconstructed_placement_conditions)
+            )
+        )
+        coordinator._flush_dirty_mesh_refresh_if_needed = lambda: calls.append(
+            "flush-mesh"
+        )
+
+        coordinator._on_database_refreshed(
+            file_path=bid_ref.file_path,
+            image_sources_unchanged=True,
+            page_scale_uids=("page-1",),
+        )
+
+        self.assertIn(("refresh", False), calls)
+        self.assertIn(("finish", True), calls)
+        self.assertIn(("dirty-mesh", ("page-1",)), calls)
+
+    def test_scale_refresh_rebuilds_bid_cache_without_rebuilding_project_tree(
+        self,
+    ) -> None:
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        hierarchy = object()
+        loaded_files = object()
+        cached = []
+        rebuilt = []
+        coordinator.project_data = SimpleNamespace(get_hierarchy=lambda: hierarchy)
+        coordinator._cache_bid_data = cached.append
+        coordinator.main_window = SimpleNamespace(
+            project_view=SimpleNamespace(
+                build_complete_structure=rebuilt.append,
+            )
+        )
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.build_loaded_files",
+            return_value=loaded_files,
+        ):
+            coordinator._do_file_refresh(rebuild_project_tree=False)
+
+        self.assertEqual(cached, [loaded_files])
+        self.assertEqual(rebuilt, [])
+
+    def test_scale_refresh_rebinds_reconstructed_conditions_without_select_reset(
+        self,
+    ) -> None:
+        page = Page(uid="page-1", name="A101", scale_factor1=0.25)
+        coordinator, page_combo, _projected = self._make_refresh_coordinator(
+            initial_pages=[page],
+            refreshed_pages=[page],
+            selected_page_uids=[page.uid],
+            active_page_uid=page.uid,
+        )
+        self.addCleanup(page_combo.close)
+        accepted_reconstruction = []
+        select_resets = []
+        coordinator._nav.refresh_snapshot.place_condition_uid = "condition-1"
+        coordinator._nav.refresh_snapshot.place_condition_uids = ["condition-1"]
+        coordinator.project_data.get_bid_conditions = lambda: {"condition-1": object()}
+        coordinator._is_condition_placeable = lambda uid: uid == "condition-1"
+        coordinator._set_plan_select_mode = lambda: select_resets.append(True)
+        coordinator._tab_widget = None
+
+        class Placement:
+            is_active = True
+
+            @staticmethod
+            def reconcile_authoritative_conditions(
+                *, accept_reconstructed_conditions=False
+            ):
+                accepted_reconstruction.append(accept_reconstructed_conditions)
+                return accept_reconstructed_conditions
+
+        coordinator._placement = Placement()
+
+        coordinator._finish_refresh(accept_reconstructed_placement_conditions=True)
+
+        self.assertEqual(accepted_reconstruction, [True])
+        self.assertEqual(select_resets, [])
+        self.assertEqual(
+            coordinator._pending_takeoff_place_condition_uid,
+            "condition-1",
+        )
+
+    def test_select_mode_remains_select_during_scale_refresh(self) -> None:
+        page = Page(uid="page-1", name="A101", scale_factor1=0.25)
+        coordinator, page_combo, _projected = self._make_refresh_coordinator(
+            initial_pages=[page],
+            refreshed_pages=[page],
+            selected_page_uids=[page.uid],
+            active_page_uid=page.uid,
+        )
+        self.addCleanup(page_combo.close)
+        reconcile_calls = []
+
+        class Placement:
+            is_active = False
+
+            @staticmethod
+            def reconcile_authoritative_conditions(
+                *, accept_reconstructed_conditions=False
+            ):
+                reconcile_calls.append(accept_reconstructed_conditions)
+                return True
+
+        coordinator._placement = Placement()
+        coordinator._finish_refresh(accept_reconstructed_placement_conditions=True)
+
+        self.assertEqual(reconcile_calls, [])
+        self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)
 
 
 if __name__ == "__main__":

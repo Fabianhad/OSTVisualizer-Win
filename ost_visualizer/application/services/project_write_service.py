@@ -6,7 +6,10 @@ from ...domain.entities.annotation import (
     ANNOTATION_TYPE_NAMED_VIEW,
 )
 from ...domain.entities.area import is_unassigned_area_uid
+from ...domain.entities.condition import Condition
+from ...domain.entities.condition_folder import BidConditionFolder
 from ...domain.entities.file_state import normalize_path
+from ...domain.entities.identity_refs import BidRef
 from ...domain.services.elevation import parse_elevation
 from ...domain.services.takeoff_domain_service import (
     expand_takeoff_uids_with_descendants,
@@ -239,6 +242,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
         concurrency_tokens: DatabaseConcurrencyTokenService,
         database_capability_service: DatabaseCapabilityService,
         sql_collaboration_provider: Callable[[], "SqlCollaborationCoordinator"],
+        condition_family_reader: Callable[
+            [str, str], tuple[dict[str, Condition], dict[str, BidConditionFolder]]
+        ],
         connection_manager: Optional[IMdbConnectionManager] = None,
         reload_database=None,
         event_bus=None,
@@ -282,6 +288,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         self._bid_write_guard = bid_write_guard
         self._connection_manager = connection_manager
         self._project_data = project_data_service
+        self._condition_family_reader = condition_family_reader
         self._condition_type_uids_in_use_provider = condition_type_uids_in_use_provider
         self._sql_collaboration_provider = sql_collaboration_provider
         self._delete_bids = delete_bids
@@ -1097,7 +1104,51 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         invalidates_undo: bool = False,
     ) -> bool:
-        if not self.reload_database(file_path):
+        operations = set(change_operations)
+        family_only = bool(operations) and operations <= {
+            ChangeOperation.UPDATE,
+            ChangeOperation.REORDER,
+        }
+        family_only = family_only or (
+            not operations
+            and set(changed_fields)
+            == {CollaborationResourceType.CONDITION_FOLDER.value}
+        )
+        bid_ref = BidRef(file_path, str(bid_uid))
+        projected = False
+        if family_only and self._project_data.get_current_bid_ref() == bid_ref:
+            owner = self._project_data.get_bid(bid_ref)
+            try:
+                conditions, folders = self._condition_family_reader(
+                    file_path, str(bid_uid)
+                )
+            except Exception:
+                self.logger.warning(
+                    "Condition-family refresh failed after save", exc_info=True
+                )
+                return False
+            else:
+                if (
+                    owner is not None
+                    and self._project_data.get_bid(bid_ref) is owner
+                    and all(
+                        str(takeoff.condition_uid) in conditions
+                        for takeoff in self._project_data.get_all_takeoffs()
+                    )
+                ):
+                    projected = self._project_data.replace_condition_family(
+                        bid_ref, conditions, folders
+                    )
+            if not projected:
+                if not self.reload_database(file_path):
+                    return False
+                self._event_bus.publish(
+                    AppEvents.DATABASE_REFRESHED,
+                    file_path=file_path,
+                    external_change=True,
+                )
+                return True
+        if not projected and not self.reload_database(file_path):
             return False
         self._publish_conditions_changed(
             file_path,
@@ -5696,7 +5747,9 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        bid_uid = self._active_bid_uid_for(db_path)
+        page = self._project_data.get_page(page_uid)
+        resource = ResourceRef("page", page_uid, bid_uid)
         success = self._execute_boolean_resource_mutation(
             db_path,
             (resource,),
@@ -5704,12 +5757,32 @@ class ProjectWriteService(DatabaseMutationWriteService):
             lambda: self._save_page_scale.execute(db_path, page_uid, sf1, sf2),
             ("scale",),
         )
-        return success and self.reload_and_notify(db_path, image_sources_unchanged=True)
+        if not success:
+            return False
+        changed = self._project_data.apply_page_scales(
+            BidRef(db_path, str(bid_uid)), (page,) if page is not None else (), sf1, sf2
+        )
+        if not changed:
+            return self.reload_and_notify(
+                db_path,
+                image_sources_unchanged=True,
+                page_scale_uids=(page_uid,),
+            )
+        self._event_bus.publish(
+            AppEvents.PAGE_METADATA_CHANGED,
+            database_id=db_path,
+            bid_uid=str(bid_uid),
+            page_uids=changed,
+            changed_fields=("scale",),
+        )
+        return True
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        bid_uid = self._active_bid_uid_for(db_path)
+        page = self._project_data.get_page(page_uid)
+        resource = ResourceRef("page", page_uid, bid_uid)
         success = self._execute_boolean_resource_mutation(
             db_path,
             (resource,),
@@ -5717,7 +5790,20 @@ class ProjectWriteService(DatabaseMutationWriteService):
             lambda: self._save_page_name.execute(db_path, page_uid, name),
             ("name",),
         )
-        return success and self.reload_and_notify(
+        if not success:
+            return False
+        if page is not None and self._project_data.apply_page_name(
+            BidRef(db_path, str(bid_uid)), page, name
+        ):
+            self._event_bus.publish(
+                AppEvents.PAGE_METADATA_CHANGED,
+                database_id=db_path,
+                bid_uid=str(bid_uid),
+                page_uids=(page_uid,),
+                changed_fields=("name",),
+            )
+            return True
+        return self.reload_and_notify(
             db_path, image_sources_unchanged=True, mesh_scene_unchanged=True
         )
 
@@ -5730,6 +5816,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         if not valid_page_uids:
             return False
         bid_uid = self._active_bid_uid_for(db_path)
+        saved_page_uids = []
+        pages = {uid: self._project_data.get_page(uid) for uid in valid_page_uids}
 
         def save_all(recorder):
             all_saved = True
@@ -5738,6 +5826,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 saved = self._save_page_scale.execute(db_path, page_uid, sf1, sf2)
                 if saved:
                     any_saved = True
+                    saved_page_uids.append(page_uid)
                     recorder.record(
                         ResourceRef("page", page_uid, bid_uid),
                         ChangeOperation.UPDATE,
@@ -5757,10 +5846,29 @@ class ProjectWriteService(DatabaseMutationWriteService):
             and mutation.value
             else (False, False)
         )
-        if any_success and not self.reload_and_notify(
-            db_path, image_sources_unchanged=True
-        ):
-            return False
+        if any_success:
+            saved_pages = [pages[uid] for uid in saved_page_uids]
+            changed = (
+                self._project_data.apply_page_scales(
+                    BidRef(db_path, str(bid_uid)), saved_pages, sf1, sf2
+                )
+                if all(page is not None for page in saved_pages)
+                else ()
+            )
+            if changed:
+                self._event_bus.publish(
+                    AppEvents.PAGE_METADATA_CHANGED,
+                    database_id=db_path,
+                    bid_uid=str(bid_uid),
+                    page_uids=changed,
+                    changed_fields=("scale",),
+                )
+            elif not self.reload_and_notify(
+                db_path,
+                image_sources_unchanged=True,
+                page_scale_uids=tuple(saved_page_uids),
+            ):
+                return False
         return all_success
 
     def save_page_show_mode(

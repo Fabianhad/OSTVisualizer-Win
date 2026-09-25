@@ -39,6 +39,7 @@ class BaseWriteService:
         *,
         image_sources_unchanged: bool = False,
         mesh_scene_unchanged: bool = False,
+        page_scale_uids: tuple[str, ...] = (),
     ) -> bool:
         if not self.reload_database(file_path):
             return False
@@ -46,6 +47,7 @@ class BaseWriteService:
             file_path,
             image_sources_unchanged=image_sources_unchanged,
             mesh_scene_unchanged=mesh_scene_unchanged,
+            page_scale_uids=page_scale_uids,
         )
         return True
 
@@ -62,12 +64,14 @@ class BaseWriteService:
         *,
         image_sources_unchanged: bool = False,
         mesh_scene_unchanged: bool = False,
+        page_scale_uids: tuple[str, ...] = (),
     ) -> None:
         self._event_bus.publish(
             AppEvents.DATABASE_REFRESHED,
             file_path=file_path,
             image_sources_unchanged=image_sources_unchanged,
             mesh_scene_unchanged=mesh_scene_unchanged,
+            page_scale_uids=page_scale_uids,
         )
 
 

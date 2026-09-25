@@ -910,6 +910,7 @@ class DragHandlerMixin:
         position: List[float],
         parent_position=None,
         takeoff_positions=None,
+        rotation=None,
     ) -> bool:
         parent = self._current_takeoffs.get(takeoff.parent_uid)
         if parent is None or parent.page_uid != takeoff.page_uid:
@@ -941,10 +942,49 @@ class DragHandlerMixin:
             cs,
             condition,
             position,
-            takeoff.rotation,
+            takeoff.rotation if rotation is None else rotation,
             parent_pos,
             backout_positions,
         )
+
+    def _attachments_valid_for_geometry_changes(
+        self,
+        position_overrides: dict,
+        rotation_overrides=None,
+    ) -> bool:
+        rotation_overrides = rotation_overrides or {}
+        affected_parent_uids = set()
+        for uid in position_overrides.keys() | rotation_overrides.keys():
+            takeoff = self._current_takeoffs.get(uid)
+            if takeoff is None:
+                continue
+            condition = self._current_conditions.get(takeoff.condition_uid)
+            if condition is None:
+                continue
+            if condition.is_attachment or (condition.is_area and takeoff.is_hole):
+                if takeoff.is_hole:
+                    affected_parent_uids.add(takeoff.parent_uid)
+            elif condition.is_area:
+                affected_parent_uids.add(takeoff.uid)
+        for attachment in self._current_takeoffs.values():
+            if attachment.parent_uid not in affected_parent_uids:
+                continue
+            condition = self._current_conditions.get(attachment.condition_uid)
+            if (
+                condition is None
+                or not condition.is_attachment
+                or not attachment.is_hole
+            ):
+                continue
+            if not self._attachment_position_valid(
+                attachment,
+                position_overrides.get(attachment.uid, attachment.position),
+                position_overrides.get(attachment.parent_uid),
+                takeoff_positions=position_overrides,
+                rotation=rotation_overrides.get(attachment.uid, attachment.rotation),
+            ):
+                return False
+        return True
 
     def _validate_parent_contains_holes(
         self, parent_uid: str, new_parent_pos: List[float]

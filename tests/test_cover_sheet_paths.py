@@ -3727,6 +3727,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 "file_path": "bid.mdb",
                 "image_sources_unchanged": False,
                 "mesh_scene_unchanged": False,
+                "page_scale_uids": (),
             },
         )
         self.assertTrue(

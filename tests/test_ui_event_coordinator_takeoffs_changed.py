@@ -1488,6 +1488,23 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(ui_state.place_condition_uid, "condition-1")
         self.assertEqual(plan_view.cursor_mode, "place")
         self.assertEqual(plan_view.cancel_calls, 0)
+        conditions["condition-1"] = Condition(
+            uid="condition-1",
+            name="After",
+            condition_type=Condition.TYPE_AREA,
+            ref_no=2,
+        )
+        coordinator._on_conditions_changed(
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            condition_uids=["condition-1"],
+            changed_fields=["ref_no"],
+            change_operations=["reorder"],
+            local_completion=True,
+        )
+        self.assertTrue(placement.is_active)
+        self.assertEqual(plan_view.cursor_mode, "place")
+        self.assertEqual(plan_view.cancel_calls, 0)
         # A geometry-setting edit keeps the same placement kind; subsequent
         # takeoffs use the reconstructed Condition's new dimensions.
         conditions["condition-1"] = Condition(
@@ -3326,7 +3343,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(len(detached.scene_refreshes), 1)
         self.assertTrue(coordinator._pending_dirty_mesh_refresh)
 
-    def test_page_name_save_preserves_accepted_scene_without_mesh_generation(self):
+    def test_page_name_fallback_preserves_accepted_scene_without_mesh_generation(self):
         from ost_visualizer.application.services.base_write_service import (
             BaseWriteService,
         )
@@ -3362,6 +3379,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             lambda _path, _resources, _operation, save, _fields: save()
         )
         service._save_page_name = SimpleNamespace(execute=lambda *_args: True)
+        service._project_data = SimpleNamespace(get_page=lambda _uid: None)
         self.assertTrue(service.save_page_name(bid_ref.file_path, "page-a", "Renamed"))
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
         self.assertEqual(embedded.clear_calls, 0)

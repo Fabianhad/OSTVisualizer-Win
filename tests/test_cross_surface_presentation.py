@@ -263,6 +263,9 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.coordinator._status_panel = None
         self.coordinator.main_window = SimpleNamespace(
             refresh_detached_plan_views=self.manager.refresh_active_view,
+            refresh_detached_plan_area_selection=(
+                self.manager.refresh_page_area_selection
+            ),
             project_view=SimpleNamespace(
                 update_bid_content_counts=lambda _bid_ref, **_counts: None
             ),
@@ -3983,6 +3986,13 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                         service._active_bid_uid_for = lambda _path: int(
                             self.bid_ref.bid_uid
                         )
+                        service._project_data = SimpleNamespace(
+                            get_page=lambda _uid: page,
+                            apply_page_name=lambda _ref, _page, _name: True,
+                            apply_page_scales=lambda _bid_ref, page_uids, _sf1, _sf2: tuple(
+                                page_uids
+                            ),
+                        )
                         service._execute_boolean_resource_mutation = (
                             lambda _path, _resources, _operation, save, _fields: save()
                         )
@@ -5316,7 +5326,7 @@ class SceneControlPresentationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
-    def _main_components(self):
+    def _main_components(self, project_read_service=None, project_write_service=None):
         host = QtWidgets.QMainWindow()
         self.addCleanup(host.deleteLater)
         host.icon_provider = FakeWindowIconProvider()
@@ -5342,10 +5352,12 @@ class SceneControlPresentationTests(unittest.TestCase):
                 infrastructure_provider=SimpleNamespace(
                     create_plan_view_renderers=lambda *_args: renderer_services
                 ),
-                project_read_service=SimpleNamespace(
+                project_read_service=project_read_service
+                or SimpleNamespace(
                     get_uom_label=lambda *_args: "", get_bid_areas=lambda *_args: []
                 ),
-                project_write_service=SimpleNamespace(
+                project_write_service=project_write_service
+                or SimpleNamespace(
                     uses_sql_collaboration_mutations=lambda *_args: False,
                     save_bid_areas_result=lambda *_args: None,
                     reload_and_notify=lambda *_args: True,

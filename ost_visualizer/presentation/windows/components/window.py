@@ -30,6 +30,7 @@ from ....domain.entities.annotation_style import AnnotationStyle
 from ....domain.entities.annotation_view import AnnotationView
 from ....domain.entities.bid import Bid
 from ....domain.entities.config import Config
+from ....domain.entities.page import Page
 from ...actions.action_ids import ACTION_COPY, ACTION_PASTE
 from ...adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ...components.page_combo import SinglePageComboBox
@@ -711,6 +712,16 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._pages_with_takeoffs.discard(page_uid)
         self._page_combo.set_page_has_takeoffs(page_uid, has_takeoffs)
 
+    def refresh_page_labels(self, pages: list[Page]) -> None:
+        if self._is_closing:
+            return
+        self._page_combo.refresh_page_labels(pages)
+        names = {page.uid: page.name for page in pages}
+        self._named_views = [
+            (uid, page_uid, names.get(page_uid, name), view_name)
+            for uid, page_uid, name, view_name in self._named_views
+        ]
+
     def _on_named_view_combo_changed(self, index: int) -> None:
         if self._is_closing or not self._on_named_view_selected or index < 0:
             return
@@ -802,6 +813,48 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         else:
             self._reveal_named_view_blank_canvas()
         self._load_page_content()
+
+    def update_page_scale(self, page_data: PageViewDto) -> None:
+        if self._is_closing:
+            return
+        self.page_data = page_data
+        page = page_data.page
+        if (
+            page is None
+            or self.plan_view is None
+            or self.plan_view.current_page_uid != page.uid
+        ):
+            self.update_page(page_data)
+            return
+        self._update_scale_combo(page.scale_factor1, page.scale_factor2)
+        refreshed = self.plan_view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=page_data.takeoffs,
+            conditions=page_data.conditions,
+            color_map=page_data.color_map,
+            bid_ref=page_data.bid_ref,
+            annotations=page_data.annotations,
+            page_area_selections=page_data.page_area_selections,
+            hidden_layer_uids=page_data.hidden_layer_uids,
+            force_overlay_refresh=True,
+        )
+        if not refreshed:
+            self.update_page(page_data)
+
+    def update_page_area_selection(self, page_data: PageViewDto) -> None:
+        if self._is_closing:
+            return
+        self.page_data = page_data
+        page = page_data.page
+        if (
+            page is None
+            or self.plan_view is None
+            or self.plan_view.current_page_uid != page.uid
+            or not self.plan_view.refresh_page_area_selection(
+                page_data.page_area_selections
+            )
+        ):
+            self.update_page(page_data)
 
     def current_area_selection_target(
         self,

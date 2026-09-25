@@ -1787,24 +1787,8 @@ class InputHandlerMixin:
             new_positions[child_uid] = self._translate_position(
                 child_orig, parent_dx, parent_dy
             )
-        for uid, position in new_positions.items():
-            takeoff = self._current_takeoffs.get(uid)
-            condition = (
-                self._current_conditions.get(takeoff.condition_uid)
-                if takeoff is not None
-                else None
-            )
-            if (
-                condition is not None
-                and condition.is_attachment
-                and not self._attachment_position_valid(
-                    takeoff,
-                    position,
-                    new_positions.get(takeoff.parent_uid),
-                    takeoff_positions=new_positions,
-                )
-            ):
-                return {uid: list(position) for uid, position in orig_positions.items()}
+        if not self._attachments_valid_for_geometry_changes(new_positions):
+            return {uid: list(position) for uid, position in orig_positions.items()}
         return new_positions
 
     def _update_snapped_multi_drag_preview(
@@ -2068,15 +2052,22 @@ class InputHandlerMixin:
         takeoff = self._current_takeoffs[uid]
         condition = self._current_conditions.get(takeoff.condition_uid)
         is_count = condition is not None and condition.is_count
+        is_attachment = condition is not None and condition.is_attachment
         is_area = condition is not None and condition.is_area
         is_linear = condition is not None and condition.is_linear
         is_curved = is_linear and takeoff.curve >= 0
         orig_pos = self._rotation_drag_orig_positions[uid]
-        if is_count:
+        if is_count or is_attachment:
             orig_rot = self._rotation_drag_orig_rotations[uid]
+            new_rotation = orig_rot + math.radians(snapped_deg)
+            if is_attachment and not self._attachment_position_valid(
+                takeoff,
+                orig_pos,
+                rotation=new_rotation,
+            ):
+                return
             if uid not in self._rotation_before_edit:
                 self._rotation_before_edit[uid] = orig_rot
-            new_rotation = orig_rot + math.radians(snapped_deg)
             takeoff.rotation = new_rotation
             self._dirty_rotations[uid] = new_rotation
             self._flush_dirty_rotations()
@@ -2107,7 +2098,10 @@ class InputHandlerMixin:
             self._dirty_positions[uid] = new_pos
             if is_area:
                 self._rotate_area_children(uid, orig_pos, snapped_deg)
-            self._flush_dirty_positions()
+            if self._dirty_rotations:
+                self._flush_rotation_group()
+            else:
+                self._flush_dirty_positions()
 
     def _rotate_area_children(
         self,
@@ -2130,9 +2124,58 @@ class InputHandlerMixin:
             child_new = rotate_points_around(child_orig, snapped_deg, pcx, pcy)
             child.position = child_new
             self._dirty_positions[child.uid] = child_new
+            condition = self._current_conditions.get(child.condition_uid)
+            if condition is not None and condition.is_attachment:
+                child_orig_rotation = child.rotation
+                if child.uid not in self._rotation_before_edit:
+                    self._rotation_before_edit[child.uid] = child_orig_rotation
+                child_new_rotation = child_orig_rotation + math.radians(snapped_deg)
+                child.rotation = child_new_rotation
+                self._dirty_rotations[child.uid] = child_new_rotation
 
     def _apply_multi_rotation(self, snapped_deg: float) -> None:
         ost_cx, ost_cy = self._rotate_ost_center
+        position_overrides = {}
+        rotation_overrides = {}
+        selected_takeoff_uids = set()
+        for uid in self._selected_uids:
+            takeoff = self._current_takeoffs.get(uid)
+            orig_pos = self._rotation_drag_orig_positions.get(uid)
+            if takeoff is None or orig_pos is None:
+                continue
+            selected_takeoff_uids.add(uid)
+            position_overrides[uid] = rotate_points_around(
+                orig_pos, snapped_deg, ost_cx, ost_cy
+            )
+            condition = self._current_conditions.get(takeoff.condition_uid)
+            if condition is not None and (
+                condition.is_count or condition.is_attachment
+            ):
+                rotation_overrides[uid] = self._rotation_drag_orig_rotations[
+                    uid
+                ] + math.radians(snapped_deg)
+        for uid in list(selected_takeoff_uids):
+            takeoff = self._current_takeoffs[uid]
+            condition = self._current_conditions.get(takeoff.condition_uid)
+            if condition is None or not condition.is_area or takeoff.is_hole:
+                continue
+            orig_pos = self._rotation_drag_orig_positions[uid]
+            parent_cx, parent_cy = polygon_centroid(orig_pos, len(orig_pos) // 2)
+            for child in self._current_takeoffs.values():
+                if child.parent_uid != uid or child.uid in selected_takeoff_uids:
+                    continue
+                position_overrides[child.uid] = rotate_points_around(
+                    child.position, snapped_deg, parent_cx, parent_cy
+                )
+                child_condition = self._current_conditions.get(child.condition_uid)
+                if child_condition is not None and child_condition.is_attachment:
+                    rotation_overrides[child.uid] = child.rotation + math.radians(
+                        snapped_deg
+                    )
+        if not self._attachments_valid_for_geometry_changes(
+            position_overrides, rotation_overrides
+        ):
+            return
         has_positions = False
         has_rotations = False
         rotated_uids = set()
@@ -2153,16 +2196,16 @@ class InputHandlerMixin:
                 continue
             takeoff = self._current_takeoffs[uid]
             condition = self._current_conditions.get(takeoff.condition_uid)
-            new_pos = rotate_points_around(orig_pos, snapped_deg, ost_cx, ost_cy)
+            new_pos = position_overrides[uid]
             takeoff.position = new_pos
             self._dirty_positions[uid] = new_pos
             rotated_uids.add(uid)
             has_positions = True
-            if condition and condition.is_count:
+            if condition and (condition.is_count or condition.is_attachment):
                 orig_rot = self._rotation_drag_orig_rotations[uid]
                 if uid not in self._rotation_before_edit:
                     self._rotation_before_edit[uid] = orig_rot
-                new_rotation = orig_rot + math.radians(snapped_deg)
+                new_rotation = rotation_overrides[uid]
                 takeoff.rotation = new_rotation
                 self._dirty_rotations[uid] = new_rotation
                 has_rotations = True
@@ -2259,18 +2302,20 @@ class InputHandlerMixin:
             return
         center_x, center_y = center
         affected_uids = self._expanded_takeoff_transform_uids(selected_uids)
-        has_changes = False
+        position_overrides = {}
+        rotation_overrides = {}
         for uid in affected_uids:
             takeoff = self._current_takeoffs.get(uid)
             if not takeoff or not takeoff.position:
                 continue
             condition = self._current_conditions.get(takeoff.condition_uid)
-            orig_pos = list(takeoff.position)
             if transform_kind == "rotate":
-                new_pos = rotate_points_around(orig_pos, degrees, center_x, center_y)
+                position_overrides[uid] = rotate_points_around(
+                    takeoff.position, degrees, center_x, center_y
+                )
             else:
-                new_pos = mirror_position_coords(
-                    orig_pos,
+                position_overrides[uid] = mirror_position_coords(
+                    takeoff.position,
                     center_x,
                     center_y,
                     horizontal,
@@ -2278,6 +2323,25 @@ class InputHandlerMixin:
                         condition and condition.is_linear and takeoff.curve >= 0
                     ),
                 )
+            if condition and (condition.is_count or condition.is_attachment):
+                if transform_kind == "rotate":
+                    rotation_overrides[uid] = takeoff.rotation + math.radians(degrees)
+                else:
+                    rotation_overrides[uid] = mirror_point_takeoff_rotation(
+                        takeoff.rotation, horizontal
+                    )
+        if not self._attachments_valid_for_geometry_changes(
+            position_overrides, rotation_overrides
+        ):
+            return
+        has_changes = False
+        for uid in affected_uids:
+            takeoff = self._current_takeoffs.get(uid)
+            if not takeoff or not takeoff.position:
+                continue
+            condition = self._current_conditions.get(takeoff.condition_uid)
+            orig_pos = list(takeoff.position)
+            new_pos = position_overrides[uid]
             if uid not in self._position_before_edit:
                 self._position_before_edit[uid] = orig_pos
             takeoff.position = new_pos
@@ -2287,13 +2351,7 @@ class InputHandlerMixin:
                 orig_rotation = takeoff.rotation
                 if uid not in self._rotation_before_edit:
                     self._rotation_before_edit[uid] = orig_rotation
-                if transform_kind == "rotate":
-                    new_rotation = orig_rotation + math.radians(degrees)
-                else:
-                    new_rotation = mirror_point_takeoff_rotation(
-                        orig_rotation,
-                        horizontal,
-                    )
+                new_rotation = rotation_overrides[uid]
                 takeoff.rotation = new_rotation
                 self._dirty_rotations[uid] = new_rotation
         if has_changes:

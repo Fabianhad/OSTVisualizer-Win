@@ -151,6 +151,7 @@ class _ProjectData:
         self.annotation_layer_visible = True
         self.conditions = {}
         self.takeoffs = []
+        self.bid = SimpleNamespace(uid="7")
 
     def is_current_bid_locked(self):
         return self.locked
@@ -158,11 +159,21 @@ class _ProjectData:
     def get_current_bid_ref(self):
         return self.bid_ref
 
+    def get_bid(self, bid_ref):
+        return self.bid if bid_ref == self.bid_ref else None
+
     def get_bid_conditions(self):
         return dict(self.conditions)
 
     def get_all_takeoffs(self):
         return list(self.takeoffs)
+
+    def replace_condition_family(self, bid_ref, conditions, folders):
+        if bid_ref != self.bid_ref:
+            return False
+        self.conditions = dict(conditions)
+        self.condition_folders = dict(folders)
+        return True
 
     def is_annotation_layer_visible(self):
         return self.annotation_layer_visible
@@ -654,7 +665,14 @@ def _write_service(
     delete_bids = _UseCase(True)
     duplicate_bid = _UseCase("new-bid")
     update_bid_job_status = _UseCase(True)
+
+    def read_condition_family(_file_path, _bid_uid):
+        if not reload_success:
+            raise OSError("Condition read failed")
+        return project_data.get_bid_conditions(), {}
+
     service = ProjectWriteService(
+        condition_family_reader=read_condition_family,
         delete_bids=delete_bids,
         delete_projects=forbidden,
         create_project=forbidden,
@@ -3615,6 +3633,10 @@ class BidLockPermissionTests(unittest.TestCase):
                 "folder-1": SimpleNamespace(parent_uid=None)
             },
             get_bid_conditions=lambda: {},
+            get_current_bid_ref=project_data.get_current_bid_ref,
+            get_bid=project_data.get_bid,
+            get_all_takeoffs=project_data.get_all_takeoffs,
+            replace_condition_family=project_data.replace_condition_family,
         )
         delete_use_case = _UseCase(True)
         service._delete_condition_folders = delete_use_case

@@ -236,6 +236,22 @@ Threading and events:
   immediate/deferred SQL projection. Preserve accepted native scenes while normal
   label/Plan projection runs; do not infer this flag from unchanged image sources,
   since calibration, visibility, or geometry can still require scene work.
+  Successful local Page name/scale saves use `PAGE_METADATA_CHANGED` after
+  authoritative in-memory projection, retaining Page/Bid identity and synchronizing
+  hierarchy and Cover Sheet metadata. Name-only projection updates navigation
+  labels/status without rebuilding Plan or mesh; scale projection updates affected
+  overlays, displayed quantities, visible Summary, and selected 3D dimensions.
+  Local scale projection captures exact Page objects before persistence and
+  validates the entire saved set before updating any member. Detached scale
+  projection must honor a rejected overlay refresh by using the existing Page
+  load boundary; never leave stale accepted rendering behind updated scale controls.
+  Detached metadata consumers verify the event Bid, window Bid, and active model
+  Bid before reading Page UIDs; a delayed old-Bid event cannot borrow another
+  Bid's same-UID Page.
+  Missing or replaced targets retain the
+  conservative reload fallback. SQL feed hydration and token provenance remain
+  independently authoritative. Refreshing another database updates the global
+  Project Tree without reconciling the active database's workspace or mesh.
   Overlay-only canvases use the shared composite cache with source revision,
   canvas dimensions, effective page dimensions, calibration, placement/rotation,
   and tint identity. Final image effects remain downstream.
@@ -361,7 +377,31 @@ Threading and events:
   keeps the matching accepted scene visible until its generation-guarded
   replacement succeeds. Database-wide refresh remains the fallback only when
   the affected resource is not known.
-  Classified Condition updates and folder-only hierarchy projection may transfer
+  Classified local Condition updates/reorders and folder-only edits read the
+  Condition/folder family through the shared reader, preserving Pages, Takeoffs,
+  and Bid identity. Validate the captured Bid owner and retained Takeoff Condition
+  references before replacing that family. Changed ownership and structural
+  creation/deletion/copy operations retain the full reload boundary. Failed
+  family reads retain the previous model and report refresh failure without
+  publishing success or retrying through legacy optional-table readers.
+  Rejected Condition-family ownership/graph reconciliation announces its full
+  authoritative fallback as an external database refresh, not the original
+  narrow field edit; consumers must invalidate the replaced graph and history.
+  Scoped Area and Condition-folder reads require complete query results on both
+  MDB and SQL; an error is not an empty family. Area-picker projection failure
+  preserves the write-versus-refresh result and cannot assign a Page from stale
+  picker output. Successful local Area projection emits the shared Area event;
+  `page_controls_projected` prevents repeating controls already updated by the
+  originating picker while Summary, mesh and detached consumers still run.
+  Closing the Area picker does not reapply an already-projected saved family over
+  later scoped updates. Cancellation preserves current selection; a selected UID
+  missing from the latest picker projection is rejected without assigning it.
+  Picker completion retains its Area projection revision, advanced only by its
+  own save. A newer projection invalidates stale selection/cancellation even if
+  an Area UID was reused; reentrant updates are not adopted as the save's revision.
+  Targeted detached Page Area updates require an open window and the matching
+  authoritative Bid/Page context, not just a matching Page UID.
+  Classified Condition updates/reorders and folder-only hierarchy projection may transfer
   active placement to reconstructed authoritative Condition objects only after
   the complete ordered placement set still matches type and visibility. Insert,
   delete, unclassified replacement, and same-UID replacement remain strict.

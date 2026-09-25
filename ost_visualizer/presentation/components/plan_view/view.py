@@ -5302,6 +5302,7 @@ class TakeoffPlanView(
         changed_takeoff_uids: Optional[List[str]] = None,
         changed_annotation_uids: Optional[List[str]] = None,
         changed_annotation_types: Optional[List[str]] = None,
+        force_overlay_refresh: bool = False,
     ) -> bool:
         page_area_selections = self._snapshot_page_area_selections(page_area_selections)
         if self._current_bid_page_uid != page.uid:
@@ -5318,45 +5319,57 @@ class TakeoffPlanView(
             next_hidden = {str(uid) for uid in hidden_layer_uids}
             hidden_layers_changed = next_hidden != self._hidden_layer_uids
             self._hidden_layer_uids = next_hidden
-        if not hidden_layers_changed and self._can_skip_unchanged_overlay_refresh(
-            page=page,
-            takeoffs=takeoffs,
-            conditions=conditions,
-            color_map=color_map,
-            annotations=annotations,
-            page_area_selections=page_area_selections,
-            bid_ref=bid_ref,
-            hidden_layer_uids=hidden_layer_uids,
-            changed_takeoff_uids=changed_takeoff_uids,
-            changed_annotation_uids=changed_annotation_uids,
-            changed_annotation_types=changed_annotation_types,
+        if (
+            not force_overlay_refresh
+            and not hidden_layers_changed
+            and self._can_skip_unchanged_overlay_refresh(
+                page=page,
+                takeoffs=takeoffs,
+                conditions=conditions,
+                color_map=color_map,
+                annotations=annotations,
+                page_area_selections=page_area_selections,
+                bid_ref=bid_ref,
+                hidden_layer_uids=hidden_layer_uids,
+                changed_takeoff_uids=changed_takeoff_uids,
+                changed_annotation_uids=changed_annotation_uids,
+                changed_annotation_types=changed_annotation_types,
+            )
         ):
             return True
-        if not hidden_layers_changed and self._try_refresh_changed_annotation_overlays(
-            page=page,
-            takeoffs=takeoffs,
-            conditions=conditions,
-            color_map=color_map,
-            annotations=annotations,
-            page_area_selections=page_area_selections,
-            bid_ref=bid_ref,
-            changed_takeoff_uids=changed_takeoff_uids,
-            changed_annotation_uids=changed_annotation_uids,
-            changed_annotation_types=changed_annotation_types,
+        if (
+            not force_overlay_refresh
+            and not hidden_layers_changed
+            and self._try_refresh_changed_annotation_overlays(
+                page=page,
+                takeoffs=takeoffs,
+                conditions=conditions,
+                color_map=color_map,
+                annotations=annotations,
+                page_area_selections=page_area_selections,
+                bid_ref=bid_ref,
+                changed_takeoff_uids=changed_takeoff_uids,
+                changed_annotation_uids=changed_annotation_uids,
+                changed_annotation_types=changed_annotation_types,
+            )
         ):
             self._sync_page_image_layer_visibility()
             self._update_scene_rect()
             self.viewport().update()
             return True
-        if not hidden_layers_changed and self._try_refresh_changed_takeoff_overlays(
-            page=page,
-            takeoffs=takeoffs,
-            conditions=conditions,
-            color_map=color_map,
-            annotations=annotations,
-            page_area_selections=page_area_selections,
-            bid_ref=bid_ref,
-            changed_takeoff_uids=changed_takeoff_uids,
+        if (
+            not force_overlay_refresh
+            and not hidden_layers_changed
+            and self._try_refresh_changed_takeoff_overlays(
+                page=page,
+                takeoffs=takeoffs,
+                conditions=conditions,
+                color_map=color_map,
+                annotations=annotations,
+                page_area_selections=page_area_selections,
+                bid_ref=bid_ref,
+                changed_takeoff_uids=changed_takeoff_uids,
+            )
         ):
             self._sync_page_image_layer_visibility()
             self._update_scene_rect()
@@ -5375,6 +5388,42 @@ class TakeoffPlanView(
         self._update_scene_rect()
         self.viewport().update()
         return True
+
+    def refresh_page_area_selection(
+        self, page_area_selections: Dict[str, Optional[str]]
+    ) -> bool:
+        page = self._current_page
+        if page is None:
+            return False
+        next_selections = self._snapshot_page_area_selections(page_area_selections)
+        previous_selections = self._current_page_area_selections
+        changed_uids = [
+            uid
+            for uid, takeoff in self._current_takeoffs.items()
+            if self._color_service.is_inactive_area_takeoff(
+                takeoff, previous_selections
+            )
+            != self._color_service.is_inactive_area_takeoff(takeoff, next_selections)
+        ]
+        if not changed_uids:
+            self._current_page_area_selections = next_selections
+            return True
+        refreshed = self._try_refresh_changed_takeoff_overlays(
+            page=page,
+            takeoffs=list(self._current_takeoffs.values()),
+            conditions=self._current_conditions,
+            color_map=self._current_color_map,
+            annotations=list(self._current_annotations.values()),
+            page_area_selections=next_selections,
+            bid_ref=self._current_bid_ref,
+            changed_takeoff_uids=changed_uids,
+            allow_page_area_change=True,
+        )
+        if refreshed:
+            self._sync_page_image_layer_visibility()
+            self._update_scene_rect()
+            self.viewport().update()
+        return refreshed
 
     def _can_skip_unchanged_overlay_refresh(
         self,
@@ -5758,6 +5807,7 @@ class TakeoffPlanView(
         page_area_selections: Optional[Dict[str, Optional[str]]],
         bid_ref: Optional[BidRef],
         changed_takeoff_uids: Optional[List[str]],
+        allow_page_area_change: bool = False,
     ) -> bool:
         if not changed_takeoff_uids:
             return False
@@ -5781,7 +5831,10 @@ class TakeoffPlanView(
             return False
         if color_map != self._current_color_map:
             return False
-        if page_area_selections != self._current_page_area_selections:
+        if (
+            not allow_page_area_change
+            and page_area_selections != self._current_page_area_selections
+        ):
             return False
         annotation_dict, db_uid_map = _build_annotation_dict(
             annotations or [],

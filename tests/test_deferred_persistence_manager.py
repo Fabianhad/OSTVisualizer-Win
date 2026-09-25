@@ -3366,12 +3366,15 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         plan_updates = []
         self._install_hidden_2d_mesh_state(coordinator)
         coordinator._viewer = SimpleNamespace(
+            update_page_area_selection=lambda _page_uid: False,
             update_plan_view=lambda page_uid: plan_updates.append(page_uid),
             update_viewers=lambda _page_uids: None,
         )
         detached_updates = []
         coordinator.main_window = SimpleNamespace(
-            refresh_detached_plan_views=lambda: detached_updates.append("refresh")
+            refresh_detached_plan_area_selection=lambda page_uid: detached_updates.append(
+                page_uid
+            )
         )
         hotlink_updates = []
         coordinator._apply_pending_hotlink_named_view_focus = (
@@ -3388,7 +3391,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("a.mdb", "p1", "2")],
         )
         self.assertEqual(plan_updates, ["p1"])
-        self.assertEqual(detached_updates, ["refresh"])
+        self.assertEqual(detached_updates, ["p1"])
         self.assertEqual(coordinator.mesh_refresh_calls, [])
         self.assertTrue(coordinator._mesh_scene_dirty)
         self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
@@ -3415,11 +3418,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         self._install_hidden_2d_mesh_state(coordinator)
         coordinator._viewer = SimpleNamespace(
+            update_page_area_selection=lambda _page_uid: False,
             update_plan_view=lambda _page_uid: None,
             update_viewers=lambda _page_uids: None,
         )
         coordinator.main_window = SimpleNamespace(
-            refresh_detached_plan_views=lambda: None
+            refresh_detached_plan_area_selection=lambda _page_uid: None
         )
         coordinator._apply_pending_hotlink_named_view_focus = (
             lambda require_stable: None
@@ -3454,9 +3458,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
         )
         coordinator._deferred_persistence = RecordingDeferredPersistence()
-        coordinator._viewer = SimpleNamespace(update_plan_view=lambda _page_uid: None)
+        coordinator._viewer = SimpleNamespace(
+            update_page_area_selection=lambda _page_uid: False,
+            update_plan_view=lambda _page_uid: None,
+        )
         coordinator.main_window = SimpleNamespace(
-            refresh_detached_plan_views=lambda: None
+            refresh_detached_plan_area_selection=lambda _page_uid: None
         )
         coordinator._request_or_defer_mesh_refresh = lambda _page_uids: None
         coordinator._apply_pending_hotlink_named_view_focus = (

@@ -1,5 +1,6 @@
 import os
 import unittest
+from ost_visualizer.application.events.app_events import AppEvents
 import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1187,6 +1188,11 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         save_calls = []
         refresh_calls = []
         workspace_models = []
+        area_events = []
+        event_bus = EventBus()
+        event_bus.subscribe(
+            AppEvents.REMOTE_AREAS_CHANGED, lambda **event: area_events.append(event)
+        )
 
         def load_areas(file_path, bid_uid):
             load_calls.append((file_path, bid_uid))
@@ -1214,8 +1220,9 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             )
             return {"new_0": "area-2"}
 
-        def refresh_areas(file_path):
-            refresh_calls.append(file_path)
+        def refresh_areas(file_path, bid_uid, deleted_uids):
+            refresh_calls.append((file_path, bid_uid, deleted_uids))
+            return [BidArea("area-2", "bid-1", "", "Area 2", 1)]
 
         class CapturingPicker:
             def __init__(
@@ -1252,13 +1259,13 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 pass
 
         def exec_picker(picker, _event_bus):
-            picker._save_fn(object())
+            picker._save_fn(SimpleNamespace(deleted_uids=[]))
             picker._on_saved_fn()
             return QtWidgets.QDialog.DialogCode.Accepted
 
         bar = PageSettingsBar(
             FakeIconProvider(),
-            event_bus=EventBus(),
+            event_bus=event_bus,
             load_areas_fn=load_areas,
             save_areas_fn=save_areas,
             refresh_areas_fn=refresh_areas,
@@ -1289,7 +1296,11 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(
                 save_calls[0][3]["publish_database_refreshed_after_write"], False
             )
-            self.assertEqual(refresh_calls, ["db.mdb"])
+            self.assertEqual(refresh_calls, [("db.mdb", "bid-1", ())])
+            self.assertEqual(len(area_events), 1)
+            self.assertEqual(area_events[0]["database_id"], "db.mdb")
+            self.assertEqual(area_events[0]["bid_uid"], "bid-1")
+            self.assertTrue(area_events[0]["local_completion"])
             self.assertIn(("db.mdb", "bid-1"), load_calls)
             self.assertEqual(workspace_models, [bar._workspace_state_model])
             self.assertEqual(bar.area_combo.get_current_area_uid(), "area-2")

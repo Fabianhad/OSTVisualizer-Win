@@ -1,7 +1,9 @@
+import logging
 from dataclasses import dataclass
 from math import isclose
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
+from ...domain.entities.identity_refs import BidRef
 from ..actions.action_ids import (
     ACTION_COPY,
     ACTION_CUT,
@@ -109,6 +111,8 @@ from ..utils.plan_tool_registry import (
     ZOOM_SELECTOR_ITEM,
 )
 from ..visualization.native_page_plane import NativePageImagePlaneProvider
+
+logger = logging.getLogger(__name__)
 
 
 class _PlanRibbonToolBar(QtWidgets.QToolBar):
@@ -702,6 +706,18 @@ class ComponentBuilder:
                 return project_data_service.get_bid_area_snapshot()
             return project_read_service.get_bid_areas(file_path, bid_uid)
 
+        def refresh_bid_areas(file_path, bid_uid, deleted_uids):
+            try:
+                areas = project_read_service.get_area_family(file_path, bid_uid)
+            except Exception:
+                logger.warning("Area-family refresh failed after save", exc_info=True)
+                return None
+            if not project_data_service.replace_bid_areas_after_local_save(
+                BidRef(file_path, str(bid_uid)), areas, deleted_uids
+            ):
+                return None
+            return areas
+
         page_settings_bar = PageSettingsBar(
             get_page_fn=project_data_service.get_page,
             icon_provider=self.window.icon_provider,
@@ -713,7 +729,7 @@ class ComponentBuilder:
             uses_async_areas_fn=(
                 project_write_service.uses_sql_collaboration_mutations
             ),
-            refresh_areas_fn=project_write_service.reload_and_notify,
+            refresh_areas_fn=refresh_bid_areas,
             parent=viewer_container,
             ui_access_manager=ui_access_manager,
             workspace_state_model=workspace_state_model,

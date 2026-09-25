@@ -1,12 +1,18 @@
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
+from ...domain.entities.condition import Condition
+from ...domain.entities.condition_folder import BidConditionFolder
 from ...domain.entities.cover_sheet import CoverSheetData, JobStatus
 from ...domain.entities.employee import Employee, PayClass
 from ...domain.entities.layer import BidLayer
 
 
 class IMdbReader(Protocol):
+    def get_area_family(self, file_path: str, bid_uid: str) -> List[BidArea]: ...
+    def get_condition_family(
+        self, file_path: str, bid_uid: str
+    ) -> Tuple[Dict[str, Condition], Dict[str, BidConditionFolder]]: ...
     def close_connection(self, db_path: Optional[str] = None) -> None: ...
     def refresh_connection(self, db_path: str) -> None: ...
     def get_cover_sheet_data(

@@ -5,7 +5,7 @@ import unittest
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from ost_visualizer import main as application_main
 from ost_visualizer.application.app_controller import AppController
 from ost_visualizer.application.builders.orchestrator_builder import AppOrchestrators
@@ -92,7 +92,12 @@ class ApplicationStartupFailureTests(unittest.TestCase):
             )
         )
         container = SimpleNamespace(get=lambda name: controller)
-        app = SimpleNamespace(processEvents=lambda: None)
+        app = SimpleNamespace(
+            platformName=lambda: "windows",
+            style=lambda: SimpleNamespace(objectName=lambda: "windowsvista"),
+            setStyle=Mock(),
+            processEvents=lambda: None,
+        )
         socket = SimpleNamespace(
             connectToServer=lambda _name: None,
             waitForConnected=lambda _timeout: False,
@@ -130,6 +135,7 @@ class ApplicationStartupFailureTests(unittest.TestCase):
         ):
             application_main.main()
         self.assertEqual(shutdown_calls, [True])
+        app.setStyle.assert_called_once_with("Fusion")
 
     def test_event_loop_exit_shuts_down_application_without_window_close(self):
         shutdown_calls = []
@@ -140,7 +146,13 @@ class ApplicationStartupFailureTests(unittest.TestCase):
             )
         )
         container = SimpleNamespace(get=lambda _name: controller)
-        app = SimpleNamespace(processEvents=lambda: None, exec=lambda: 7)
+        app = SimpleNamespace(
+            platformName=lambda: "windows",
+            style=lambda: SimpleNamespace(objectName=lambda: "windowsvista"),
+            setStyle=Mock(),
+            processEvents=lambda: None,
+            exec=lambda: 7,
+        )
         socket = SimpleNamespace(
             connectToServer=lambda _name: None,
             waitForConnected=lambda _timeout: False,
@@ -178,6 +190,7 @@ class ApplicationStartupFailureTests(unittest.TestCase):
         ):
             application_main.main()
         self.assertEqual(shutdown_calls, [True])
+        app.setStyle.assert_called_once_with("Fusion")
 
 
 class FakeShutdownParticipant(IShutdownAware):

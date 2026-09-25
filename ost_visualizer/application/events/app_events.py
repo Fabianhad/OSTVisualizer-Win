@@ -16,6 +16,15 @@ class DatabaseRefreshedEvent:
     external_change: bool = False
     image_sources_unchanged: bool = False
     mesh_scene_unchanged: bool = False
+    page_scale_uids: tuple[str, ...] = ()
+
+
+@dataclass
+class PageMetadataChangedEvent:
+    database_id: str = ""
+    bid_uid: str = ""
+    page_uids: tuple[str, ...] = ()
+    changed_fields: tuple[str, ...] = ()
 
 
 @dataclass
@@ -51,6 +60,7 @@ class RemoteAreasChangedEvent:
     local_completion: bool = False
     takeoff_family_pending: bool = False
     summary_refresh_required: bool = True
+    page_controls_projected: bool = False
 
 
 @dataclass
@@ -233,6 +243,7 @@ class OstStatusChangedEvent:
 class AppEvents:
     FILE_OPENED = FileOpenedEvent
     DATABASE_REFRESHED = DatabaseRefreshedEvent
+    PAGE_METADATA_CHANGED = PageMetadataChangedEvent
     DATABASE_CAPABILITIES_CHANGED = DatabaseCapabilitiesChangedEvent
     CONDITIONS_CHANGED = ConditionsChangedEvent
     REMOTE_AREAS_CHANGED = RemoteAreasChangedEvent

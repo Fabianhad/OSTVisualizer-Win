@@ -146,6 +146,7 @@ class DetachedPageViewManager(IShutdownAware):
         )
         subscriptions = (
             (AppEvents.DATABASE_REFRESHED, self._on_database_refreshed),
+            (AppEvents.PAGE_METADATA_CHANGED, self._on_page_metadata_changed),
             (AppEvents.FILE_UNLOADED, self._on_file_unloaded),
             (AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed),
             (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
@@ -212,6 +213,7 @@ class DetachedPageViewManager(IShutdownAware):
         if event_bus is not None:
             subscriptions = (
                 (AppEvents.DATABASE_REFRESHED, self._on_database_refreshed),
+                (AppEvents.PAGE_METADATA_CHANGED, self._on_page_metadata_changed),
                 (AppEvents.FILE_UNLOADED, self._on_file_unloaded),
                 (AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed),
                 (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
@@ -345,8 +347,9 @@ class DetachedPageViewManager(IShutdownAware):
         external_change: bool = False,
         image_sources_unchanged: bool = False,
         mesh_scene_unchanged: bool = False,
+        page_scale_uids: tuple[str, ...] = (),
     ) -> None:
-        del mesh_scene_unchanged
+        del mesh_scene_unchanged, page_scale_uids
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
@@ -362,6 +365,36 @@ class DetachedPageViewManager(IShutdownAware):
             if self._window_undo_service is not None:
                 self._window_undo_service.clear()
         self._refresh_signaler.request()
+
+    def _on_page_metadata_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        page_uids: tuple[str, ...] = (),
+        changed_fields: tuple[str, ...] = (),
+    ) -> None:
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if (
+            view is None
+            or view.bid_ref != BidRef(database_id, bid_uid)
+            or view.bid_ref != self.project_data.get_current_bid_ref()
+        ):
+            return
+        if "name" in changed_fields:
+            self._window.refresh_page_labels(
+                [
+                    page
+                    for uid in page_uids
+                    if (page := self.project_data.get_page(uid)) is not None
+                ]
+            )
+        if set(changed_fields) == {"name"}:
+            return
+        if str(view.target_page_uid) not in {str(uid) for uid in page_uids}:
+            return
+        self._window.update_page_scale(self._get_page_data(view))
 
     def _on_layer_visibility_changed(
         self,
@@ -783,6 +816,18 @@ class DetachedPageViewManager(IShutdownAware):
 
     def refresh_active_view(self) -> None:
         self._refresh_window()
+
+    def refresh_page_area_selection(self, page_uid: str) -> None:
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if (
+            view is None
+            or view.bid_ref != self.project_data.get_current_bid_ref()
+            or str(view.target_page_uid) != str(page_uid)
+        ):
+            return
+        self._window.update_page_area_selection(self._get_page_data(view))
 
     def _apply_window_page(self, view: AnnotationView, page_data: PageViewDto) -> None:
         self._window.set_access_state(self._get_access_state(view, page_data))
