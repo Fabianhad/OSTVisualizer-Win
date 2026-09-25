@@ -1,7 +1,7 @@
 from __future__ import annotations
+import hashlib
 from dataclasses import dataclass
 from enum import Enum
-import hashlib
 from types import MappingProxyType
 from typing import Collection, Iterable, Mapping, Optional
 

@@ -1,15 +1,15 @@
 import logging
 from dataclasses import dataclass
 from typing import Optional
-from ...dtos.collaboration_dtos import ConcurrencyToken, ResourceRef
-from ...dtos.user_workspace_state_dtos import UserBidWorkspaceState
 from ....domain.aggregates.ost_aggregate import OstAggregate
+from ....domain.entities.file_results import BidLoadResult
 from ....domain.entities.identity_refs import BidRef
 from ....domain.entities.layer import normalize_layer_name
 from ....domain.entities.page import build_pages_from_bid_data
 from ....domain.entities.project_factory import build_bid
-from ....domain.entities.file_results import BidLoadResult
 from ....domain.services.file_manager_service import FileManager
+from ...dtos.collaboration_dtos import ConcurrencyToken, ResourceRef
+from ...dtos.user_workspace_state_dtos import UserBidWorkspaceState
 
 
 @dataclass(frozen=True)

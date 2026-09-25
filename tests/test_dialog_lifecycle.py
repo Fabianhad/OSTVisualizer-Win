@@ -5,19 +5,21 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
-from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
 from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseResult,
     ResourceRef,
 )
+from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation import main_window as main_window_module
 from ost_visualizer.presentation.components.progress_dialog import (
     ProgressDialog,
     ProgressReporter,
+)
+from ost_visualizer.presentation.coordinators import (
+    license_ui_coordinator as license_ui_coordinator_module,
 )
 from ost_visualizer.presentation.coordinators.event_coordinator import EventCoordinator
 from ost_visualizer.presentation.coordinators.license_ui_coordinator import (
@@ -26,17 +28,15 @@ from ost_visualizer.presentation.coordinators.license_ui_coordinator import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
-from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.presentation.coordinators import (
-    license_ui_coordinator as license_ui_coordinator_module,
-)
 from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.dialog import BaseListDialog, exec_transient_menu
 from ost_visualizer.presentation.utils.messagebox import confirm_delete_conditions
-from ost_visualizer.presentation.utils.qt_message_notifier import QtMessageNotifier
 from ost_visualizer.presentation.utils.ost_blocking import exec_with_ost_blocking
+from ost_visualizer.presentation.utils.qt_message_notifier import QtMessageNotifier
 from ost_visualizer.presentation.utils.windows import set_fixed_width_auto_height
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 
 
 def _app():

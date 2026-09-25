@@ -14,21 +14,22 @@ from unittest.mock import Mock
 import pyodbc
 
 pyodbc.pooling = False
-from ost_visualizer.infrastructure.mdb import schema_contract
-from ost_visualizer.infrastructure.mdb.bid_settings_contract import (
-    BidSettingsCardinalityError,
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
 )
 from ost_visualizer.infrastructure.database.settings_cardinality import (
     GlobalSettingsCardinalityError,
 )
-from ost_visualizer.infrastructure.database.descriptor_registry import (
-    DatabaseDescriptorRegistry,
-)
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
+from ost_visualizer.infrastructure.mdb import schema_contract
+from ost_visualizer.infrastructure.mdb.bid_settings_contract import (
+    BidSettingsCardinalityError,
+)
 from ost_visualizer.infrastructure.mdb.components.constants import (
     LAYER_REFERENCE_TABLES,
     PAGE_DELETE_CHILD_TABLES,
 )
+from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
 from ost_visualizer.infrastructure.mdb.database_creator import (
     DatabaseCreator,
     get_reference_schema_model,
@@ -37,7 +38,6 @@ from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
-from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
 from ost_visualizer.infrastructure.mdb.raw_bid_integrity import BID_RELATIONSHIPS
 from ost_visualizer.infrastructure.mdb.schema_compatibility import (
     MdbSchemaInspector,

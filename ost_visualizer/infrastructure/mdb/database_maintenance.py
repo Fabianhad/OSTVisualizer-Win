@@ -1,9 +1,9 @@
-import os
 import ctypes
+import os
+import shutil
+import tempfile
 from ctypes import wintypes
 from pathlib import Path
-import tempfile
-import shutil
 import pythoncom
 import win32com.client
 import win32con

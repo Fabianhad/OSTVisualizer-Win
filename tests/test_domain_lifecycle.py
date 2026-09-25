@@ -1,29 +1,29 @@
 import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
-from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
-from ost_visualizer.domain.entities.config import Config
-from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.cdn_type import CdnType
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
+from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyData,
     HierarchyFileEntry,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.employee import Employee, PayClass
-from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.layer import BidLayer
-from ost_visualizer.domain.services.project_data_service import ProjectDataService
-from ost_visualizer.domain.services.takeoff_domain_service import (
-    common_reassign_geometry_type,
-    condition_reassign_geometry_type,
-    takeoffs_can_reassign_to_condition,
-)
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.workspace_state import (
     WORKSPACE_VALID_ACTIVE_VIEWS,
     HeaderLayoutState,
     TakeoffWorkspaceState,
     WorkspaceState,
+)
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.domain.services.takeoff_domain_service import (
+    common_reassign_geometry_type,
+    condition_reassign_geometry_type,
+    takeoffs_can_reassign_to_condition,
 )
 
 

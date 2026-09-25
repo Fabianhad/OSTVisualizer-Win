@@ -7,11 +7,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
 from ost_visualizer.config.di_config import configure_application
 from ost_visualizer.infrastructure.logging.logger_factory import LoggerFactory
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.ui_access_manager import UIAccessManager
+from PySide6 import QtCore, QtWidgets
 
 
 class MainWindowStartupTests(unittest.TestCase):

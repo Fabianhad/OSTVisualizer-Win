@@ -1,11 +1,7 @@
 from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 from ....domain.entities.font_definition import FontDefinition
-from ...config import (
-    COMPACT_SPACING,
-    DIALOG_BUTTON_WIDTH,
-    FONT_DIALOG_WIDTH,
-)
+from ...config import COMPACT_SPACING, DIALOG_BUTTON_WIDTH, FONT_DIALOG_WIDTH
 from ...utils.annotation_style_controls import TEXT_FONT_SIZES
 from ...utils.font_catalog import (
     installed_font_families,

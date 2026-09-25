@@ -4,12 +4,8 @@ from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Callable, Optional
-from ...application.dtos.condition_takeoff_reassignment import (
-    ConditionTakeoffReassignment,
-)
 from PySide6.QtCore import QSignalBlocker
 from shiboken6 import isValid
-from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
     EditLeaseResult,
@@ -17,6 +13,10 @@ from ...application.dtos.collaboration_dtos import (
     QueuedMutationResult,
     ResourceRef,
 )
+from ...application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
+)
+from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ...application.dtos.update_condition_dto import (
     UpdateConditionDto,
     UpdateConditionResultDto,
@@ -27,6 +27,7 @@ from ...domain.entities.pattern import TRANSPARENT as PAT_TRANSPARENT
 from ..dialogs.edit_condition_dialog import TYPE_DEFAULTS, EditConditionDialog
 from ..managers.ui_access_manager import Feature
 from ..services.modal_edit_lease_session import ModalEditLeaseSession
+from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import (
     DB_LOCKED_HINT,
     confirm,
@@ -34,7 +35,6 @@ from ..utils.messagebox import (
     confirm_multi_delete,
     show_warning,
 )
-from ..utils.dialog import delete_later_if_valid
 from ..utils.ost_blocking import exec_with_ost_blocking
 
 logger = logging.getLogger(__name__)

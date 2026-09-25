@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseResult,
@@ -16,14 +15,15 @@ from ost_visualizer.application.dtos.update_condition_dto import (
     UpdateConditionResultDto,
 )
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.presentation.dialogs.areas_dialog import BidAreasDialog
+from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
 from ost_visualizer.presentation.handlers.condition_action_handler import (
     ConditionActionHandler,
 )
-from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
-from ost_visualizer.presentation.dialogs.areas_dialog import BidAreasDialog
+from PySide6 import QtWidgets
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

@@ -247,10 +247,10 @@ class PageScalePositionSerializationTests(unittest.TestCase):
                 )
 
     def test_all_annotation_rotation_fields_survive_scale(self):
+        from ost_visualizer.domain.entities.annotation import BidAnnotation
         from ost_visualizer.infrastructure.database.annotation_storage import (
             ANNOTATION_TYPE_BY_TABLE,
         )
-        from ost_visualizer.domain.entities.annotation import BidAnnotation
 
         for table, kind in ANNOTATION_TYPE_BY_TABLE.items():
             with self.subTest(table=table):

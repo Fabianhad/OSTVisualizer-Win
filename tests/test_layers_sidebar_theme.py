@@ -1,15 +1,15 @@
 import os
-from pathlib import Path
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 
 
 def _check_native_layers(style, dark):
-    from PySide6 import QtCore, QtGui, QtWidgets
-    from shiboken6 import delete
     from ost_visualizer.domain.entities.layer import BidLayer
     from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
+    from PySide6 import QtCore, QtGui, QtWidgets
+    from shiboken6 import delete
 
     app = QtWidgets.QApplication(
         ["layers-theme", "-platform", "windows", "-style", style]

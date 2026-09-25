@@ -28,6 +28,7 @@ from ...domain.entities.shape import (
 )
 from ...domain.services.dimension_format_service import mm_to_inches
 from ...domain.services.elevation import parse_elevation, reassemble_elevation
+from ..components.color_button import ColorButton
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
@@ -36,7 +37,6 @@ from ..config import (
     NO_MARGINS,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
-from ..components.color_button import ColorButton
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import (
     confirm_not_found,

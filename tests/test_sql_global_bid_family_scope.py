@@ -2,8 +2,8 @@ import unittest
 from unittest.mock import MagicMock, Mock
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
-    ResourceRef,
     ConcurrencyToken,
+    ResourceRef,
 )
 from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,

@@ -19,8 +19,6 @@ from .....application.render_quality import (
 )
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.page import Page
-from ....visualization.pdf.page_cache import PageCache
-from ....visualization.pdf.render_priority import RenderPriority
 from ....scene.plan_view_z_order import (
     FOREGROUND_OVERLAY_Z,
     PAGE_IMAGE_Z,
@@ -28,6 +26,8 @@ from ....scene.plan_view_z_order import (
     overlay_visual_z,
 )
 from ....utils.image_show_mode import SHOW_BOTH, SHOW_OVERLAY
+from ....visualization.pdf.page_cache import PageCache
+from ....visualization.pdf.render_priority import RenderPriority
 from .graphics_items import ImageBackgroundItem, TileGraphicsItem
 
 logger = logging.getLogger(__name__)

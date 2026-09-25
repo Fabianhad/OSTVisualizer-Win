@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import pyodbc
 import win32com.client
+from ..database.schema_model import DatabaseSchemaModel, schema_model_from_access_ddl
 from .reference_schema_metadata import (
     EXPLICIT_INDEXES,
     FIELD_DEFAULTS,
@@ -13,10 +14,6 @@ from .reference_schema_metadata import (
     UID_REQUIRED_TABLES,
 )
 from .schema_contract import DEFAULT_LAYER_ROWS
-from ..database.schema_model import (
-    DatabaseSchemaModel,
-    schema_model_from_access_ddl,
-)
 
 _TABLE_DDL = [
     """CREATE TABLE [AccessLevels] (

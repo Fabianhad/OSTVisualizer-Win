@@ -7,10 +7,10 @@ from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
 from ...domain.services.dimension_format_service import inches_to_mm
 from ...domain.services.uom_service import (
+    CALC_ALL_SIDES,
     CALC_AREA,
     CALC_AREA_PERIMETER,
     CALC_AREA_VOLUME,
-    CALC_ALL_SIDES,
     CALC_LINEAR_BOTH_ENDS,
     CALC_LINEAR_BOTH_SIDES,
     CALC_LINEAR_LENGTH,

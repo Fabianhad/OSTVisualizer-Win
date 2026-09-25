@@ -1,5 +1,5 @@
-from copy import deepcopy
 import unittest
+from copy import deepcopy
 from unittest.mock import patch
 from ost_visualizer.application.dtos.collaboration_dtos import (
     CollaborationMutationType,
@@ -12,8 +12,8 @@ from tests import test_navigation_token_overlap
 from tests.test_sql_collaboration_phase4 import (
     _batch,
     _change,
-    _queue_test_mutation,
     _committed_execution,
+    _queue_test_mutation,
 )
 
 

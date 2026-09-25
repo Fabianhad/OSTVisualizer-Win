@@ -4,9 +4,7 @@ from types import SimpleNamespace
 from ost_visualizer.infrastructure.mdb.components.settings_reader import (
     SettingsReaderMixin,
 )
-from ost_visualizer.infrastructure.mdb.schema_compatibility import (
-    MdbSchemaInspector,
-)
+from ost_visualizer.infrastructure.mdb.schema_compatibility import MdbSchemaInspector
 
 
 class _FakeCursor:

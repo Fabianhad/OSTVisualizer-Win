@@ -8,26 +8,21 @@ from typing import Optional
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete
-from tests.single_action import SingleCallRecorder
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.dtos.annotation_caption_dto import (
     ANNOTATION_CAPTION_SPECS,
 )
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.application.render_quality import (
-    INTERACTIVE_PDF_RENDER_SCALE,
-)
+from ost_visualizer.application.render_quality import INTERACTIVE_PDF_RENDER_SCALE
 from ost_visualizer.application.services.config_service import ConfigService
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
-from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
     DEFAULT_ANNOTATION_CAPTION_IDS,
     AnnotationCaptionId,
 )
+from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
@@ -59,6 +54,7 @@ from ost_visualizer.presentation.actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
+from ost_visualizer.presentation.components import color_button as color_button_module
 from ost_visualizer.presentation.components.menu_builder import MenuBuilder
 from ost_visualizer.presentation.components.page_combo import (
     PageComboBox,
@@ -80,7 +76,6 @@ from ost_visualizer.presentation.components.plan_view.components.zoom_handler im
     ZoomHandlerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
-from ost_visualizer.presentation.scene.plan_view_z_order import PAPER_HIGHLIGHT_Z
 from ost_visualizer.presentation.config import (
     COMPACT_SPACING,
     OPTIONS_DIALOG_TITLE,
@@ -89,11 +84,11 @@ from ost_visualizer.presentation.config import (
     OPTIONS_GROUP_PREFERENCES,
     OPTIONS_GROUP_SNAP_ANGLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
+    OPTIONS_TAB_EXPORT,
     OPTIONS_TAB_FONTS_COLORS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_TAB_TAKEOFF_TOOLBAR,
-    OPTIONS_TAB_EXPORT,
     OPTIONS_WINDOW_WIDTH,
     RELAXED_SPACING,
     TAB_INDEX_TAKEOFF,
@@ -105,7 +100,6 @@ from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
-from ost_visualizer.presentation.components import color_button as color_button_module
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.app_config_presentation_manager import (
@@ -117,6 +111,7 @@ from ost_visualizer.presentation.managers.icon_manager import (
     IconManager,
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.scene.plan_view_z_order import PAPER_HIGHLIGHT_Z
 from ost_visualizer.presentation.utils.annotation_defaults import (
     set_annotation_style_for_tool,
 )
@@ -146,6 +141,9 @@ from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer impor
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
+from tests.single_action import SingleCallRecorder
 from tests.workspace_state_test_support import make_workspace_state_model
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

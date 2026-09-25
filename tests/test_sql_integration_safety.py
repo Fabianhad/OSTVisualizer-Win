@@ -5,12 +5,12 @@ from ost_visualizer.domain.entities.database_descriptor import (
     SqlAuthenticationMode,
     SqlServerDatabaseLocation,
 )
+from tests import test_sql_collaboration_integration as collaboration_integration
 from tests.sql_integration_support import (
     DisposableSqlConfiguration,
     DisposableSqlDatabase,
     _require_test_database_name,
 )
-from tests import test_sql_collaboration_integration as collaboration_integration
 
 
 class DisposableSqlConfigurationSafetyTests(unittest.TestCase):

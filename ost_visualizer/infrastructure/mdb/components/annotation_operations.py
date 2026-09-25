@@ -21,8 +21,8 @@ from ...database.bid_owned_identity import (
     require_single_bid_scope_for_uids,
 )
 from .constants import hex_to_color_int
-from .serialization import encode_annotation_text, serialize_position_for_table
 from .identity_allocation import AccessIdentityAllocationMixin
+from .serialization import encode_annotation_text, serialize_position_for_table
 
 
 class AnnotationOperationsMixin(AccessIdentityAllocationMixin):

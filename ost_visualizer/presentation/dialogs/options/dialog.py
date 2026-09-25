@@ -18,9 +18,9 @@ from ...config import (
 from ...utils.messagebox import confirm, show_warning
 from ...utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 from .export_tab import ExportTab
+from .fonts_colors_tab import FontsColorsTab
 from .mcp_setup_tab import McpSetupTab
 from .options_tab import OptionsTab
-from .fonts_colors_tab import FontsColorsTab
 from .takeoff_toolbar_tab import TakeoffToolbarTab
 
 

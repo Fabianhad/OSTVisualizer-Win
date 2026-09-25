@@ -7,11 +7,11 @@ from ost_visualizer.application.services.visualization_service import (
     VisualizationService,
 )
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
 from ost_visualizer.presentation.coordinators.navigation_state_machine import (
     NavigationStateMachine,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
 )
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,

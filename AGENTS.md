@@ -180,6 +180,11 @@ Threading and events:
   Restore payloads explicitly identify Takeoff sources with external parents;
   a retained parent's current UID may overlap a historical source UID without
   becoming an internal batch relationship.
+- Reassign Condition explicitly expands its selected Takeoffs to their descendant
+  Backouts before building updates, resource dependencies, and undo/redo history.
+  Use the shared domain descendant traversal also used by property preflight;
+  preserve each child's original Condition for undo. Other property commands and
+  Duplicate and Reassign keep their own explicit mutation targets.
 - Plan property requests capture Takeoff Page/Condition/Area/parent ownership for
   selected items and their descendant graph before entering the write scope or
   collaboration queue. Validate that complete snapshot once before any property
@@ -910,6 +915,16 @@ State and identity:
   rotation; do not fold rotation into an ellipse's parametric sample angle.
   Curved Linear reflections reverse the stored signed curve offset exactly once;
   rotations preserve it.
+- Linear placement angle/distance snapping runs in OST model inches before
+  transforming preview endpoints to render coordinates. Release uses the same
+  model-space contract. Takeoff position writes preserve floating-point precision
+  through the shared MDB/SQL serializer; do not quantize snapped coordinates again
+  during insertion, geometry save, or curve updates.
+- Attachment movement validates its placement anchor against its owning Area's
+  transformed polygon, using the same containment semantics as placement. Reject
+  an invalid group translation as a whole; do not independently snap children.
+  Mouse preview and release and keyboard movement share this check. Authoritative
+  refresh cancels unflushed gestures before replacing their parent objects.
 - Multi-item movement applies one grid-snapped model-space translation to the
   complete selection. Preview, commit, Access/SQL persistence, and undo/redo
   preserve every item's original offset; do not snap each item independently.

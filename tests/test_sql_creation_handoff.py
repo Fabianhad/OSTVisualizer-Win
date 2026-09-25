@@ -7,10 +7,14 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import pyodbc
-from PySide6 import QtCore, QtWidgets
+from ost_visualizer.application.dtos.collaboration_dtos import SynchronizationState
 from ost_visualizer.application.interfaces.i_sql_database_creator import (
     SqlDatabaseCreationResult,
     SqlDatabaseRuntimeCredentials,
+)
+from ost_visualizer.application.services.sql_collaboration_coordinator import (
+    SqlCollaborationCoordinator,
+    _DatabaseRuntime,
 )
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
@@ -18,6 +22,10 @@ from ost_visualizer.domain.entities.database_descriptor import (
     SqlServerDatabaseLocation,
     validate_sql_database_creation_name,
     validate_sql_database_name,
+)
+from ost_visualizer.domain.entities.file_state import FileEntry
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
 )
 from ost_visualizer.infrastructure.sql.client_permissions import (
     SQL_CLIENT_DIRECT_WRITE_TABLES,
@@ -38,9 +46,6 @@ from ost_visualizer.infrastructure.sql.database_creator import SqlDatabaseCreato
 from ost_visualizer.infrastructure.sql.descriptor_connection import (
     SqlDescriptorConnectionFactory,
 )
-from ost_visualizer.infrastructure.database.descriptor_registry import (
-    DatabaseDescriptorRegistry,
-)
 from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -58,13 +63,8 @@ from ost_visualizer.presentation.dialogs.sql_database_dialog import (
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
+from PySide6 import QtCore, QtWidgets
 from tests.workspace_state_test_support import with_workspace_state
-from ost_visualizer.domain.entities.file_state import FileEntry
-from ost_visualizer.application.dtos.collaboration_dtos import SynchronizationState
-from ost_visualizer.application.services.sql_collaboration_coordinator import (
-    SqlCollaborationCoordinator,
-    _DatabaseRuntime,
-)
 
 _GUID = "00000000-0000-0000-0000-000000000123"
 _CREATOR = SqlServerDatabaseLocation(
@@ -870,8 +870,8 @@ class CreationDialogIdentityTests(unittest.TestCase):
             dialog.deleteLater()
 
     def test_shutdown_cannot_destroy_creation_owner_while_setup_is_pending(self):
-        from PySide6 import QtGui
         from ost_visualizer.presentation.main_window import MainWindow
+        from PySide6 import QtGui
 
         host = SimpleNamespace(
             handlers=SimpleNamespace(

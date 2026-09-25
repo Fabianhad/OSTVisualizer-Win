@@ -1,13 +1,12 @@
 from __future__ import annotations
-import threading
 import os
+import threading
 from pathlib import Path
 from typing import Iterable, Optional
-from ...domain.entities.database_descriptor import DatabaseDescriptor
-from ...domain.entities.database_descriptor import DatabaseBackend
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
+from ...domain.entities.database_descriptor import DatabaseBackend, DatabaseDescriptor
 
 
 class DatabaseDescriptorRegistry:

@@ -4,10 +4,10 @@ import uuid
 from typing import Callable, Optional
 import pyodbc
 from ...application.dtos.collaboration_dtos import (
-    ChangeOperation,
-    ChangeSourceKind,
     COLLABORATION_LOCK_SECONDS,
     COLLABORATION_STALE_SECONDS,
+    ChangeOperation,
+    ChangeSourceKind,
     ConcurrencyToken,
     DatabaseChange,
     DatabaseChangeBatch,
@@ -27,15 +27,11 @@ from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
 from .connection_manager import SqlConnectionManager, begin_snapshot_transaction
+from .database_metadata_contract import DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
-from .database_metadata_contract import (
-    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
-)
-from .schema_lock import (
-    acquire_operation_transaction_lock,
-)
 from .remote_change_reader import SqlRemoteChangeReader
+from .schema_lock import acquire_operation_transaction_lock
 
 _MAX_CHANGE_BATCH = 500
 

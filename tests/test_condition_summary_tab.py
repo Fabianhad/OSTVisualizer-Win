@@ -3,7 +3,6 @@ import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     SUMMARY_GROUP_AREA,
     SUMMARY_GROUP_PAGE,
@@ -55,6 +54,7 @@ from ost_visualizer.presentation.utils.condition_tree_style import (
 from ost_visualizer.presentation.utils.persistent_header import (
     PersistentHeaderController,
 )
+from PySide6 import QtCore, QtWidgets
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

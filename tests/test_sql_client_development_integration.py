@@ -14,8 +14,8 @@ from ost_visualizer.domain.entities.database_descriptor import (
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
-from ost_visualizer.infrastructure.sql.collaboration_store import SqlCollaborationStore
 from ost_visualizer.infrastructure.sql.catalog import SqlDatabaseCatalog
+from ost_visualizer.infrastructure.sql.collaboration_store import SqlCollaborationStore
 from ost_visualizer.infrastructure.sql.connection_manager import (
     SqlConnectionManager,
     SqlConnectionRequest,
@@ -26,10 +26,7 @@ from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionP
 from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
-from tools.manage_sql_development import (
-    DATABASE_MARKER_PROPERTY,
-    read_secrets,
-)
+from tools.manage_sql_development import DATABASE_MARKER_PROPERTY, read_secrets
 
 
 class _RuntimeCredentialStore:

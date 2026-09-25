@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
 )
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.coordinators.remote_plan_update_pipeline import (
     RemotePlanUpdatePipeline,
 )
@@ -13,8 +15,6 @@ from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.page import Page
 
 
 class _QueuedBridge:

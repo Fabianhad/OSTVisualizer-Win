@@ -37,6 +37,16 @@
 
 ### Fixed
 
+- Linear Takeoff previews use measurement increments in model space, matching the
+  released endpoint across Page scales and zoom levels. Takeoff writes retain
+  coordinate precision so angled snapped geometry survives reload and undo/redo.
+- Attachment Takeoff dragging and arrow-key movement stay within the owning Area,
+  including polygonal boundaries and group moves. Area vertex edits cannot leave
+  an attachment outside its parent.
+- Reassign Condition moves selected Area Takeoffs and their Backouts together in
+  one mutation. Undo restores each original Condition; stale descendants still
+  reject the complete operation without partial reassignment.
+
 - Windows 10 follows system dark mode for application widgets and supported
   native title bars by using Qt's theme-aware Fusion style. Light-mode changes
   propagate to existing Main and detached windows; Windows 11 keeps its native

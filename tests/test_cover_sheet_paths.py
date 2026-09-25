@@ -4,22 +4,13 @@ import threading
 import time
 import unittest
 from contextlib import nullcontext
-from types import SimpleNamespace
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 import pyodbc
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete
-from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.application.services.project_write_service import (
-    ProjectWriteService,
-)
-from ost_visualizer.application.services.page_load_strategy_service import (
-    PageLoadStrategyService,
-)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     DatabaseMutationResult,
@@ -28,6 +19,13 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
     ResourceRef,
+)
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.page_load_strategy_service import (
+    PageLoadStrategyService,
+)
+from ost_visualizer.application.services.project_write_service import (
+    ProjectWriteService,
 )
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from ost_visualizer.domain.entities.cover_sheet import (
@@ -43,16 +41,16 @@ from ost_visualizer.domain.entities.workspace_state import (
     HeaderLayoutState,
     WorkspaceState,
 )
-from ost_visualizer.infrastructure.mdb.components.constants import (
-    PAGE_DELETE_CHILD_TABLES,
-)
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
     AccessBulkWriteMixin,
+)
+from ost_visualizer.infrastructure.mdb.components.constants import (
+    PAGE_DELETE_CHILD_TABLES,
 )
 from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
-from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
 )
@@ -63,14 +61,14 @@ from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDia
 from ost_visualizer.presentation.dialogs.cover_sheet.pdf_metadata_loader import (
     PdfMetadataSnapshot,
 )
-from ost_visualizer.presentation.dtos.picker_dialog_result_dto import (
-    PickerDialogResult,
-)
+from ost_visualizer.presentation.dtos.picker_dialog_result_dto import PickerDialogResult
 from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from ost_visualizer.presentation.utils.overlay_context_menu import (
     add_overlay_submenu_with_select,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import (
     make_workspace_state_model,
     with_workspace_state,

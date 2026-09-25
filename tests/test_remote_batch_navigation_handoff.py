@@ -1,6 +1,6 @@
+import unittest
 from copy import deepcopy
 from dataclasses import replace
-import unittest
 from unittest.mock import Mock
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
@@ -9,10 +9,10 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     HydratedDatabaseChangeBatch,
     ResourceRef,
 )
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.conflict_resolution_service import (
     ConflictResolutionService,
 )
-from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.remote_change_reconciliation_service import (
     RemoteChangeReconciliationService,
 )
@@ -23,11 +23,11 @@ from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,
     PreparedBidLoad,
 )
+from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyFileEntry,
 )
-from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from tests import test_page_folder_ownership
 from tests.test_sql_collaboration_phase4 import (

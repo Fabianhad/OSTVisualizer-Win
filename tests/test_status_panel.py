@@ -3,8 +3,8 @@ import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
 from ost_visualizer.presentation.components.status_panel import StatusPanel
+from PySide6 import QtWidgets
 
 
 class _CountingLabel(QtWidgets.QLabel):

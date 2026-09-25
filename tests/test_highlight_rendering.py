@@ -2,16 +2,21 @@ import os
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+    AnnotationItemRenderer,
+    HighlightGraphicsItem,
+)
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QApplication, QGraphicsPathItem, QGraphicsScene, QStyle
-from PySide6.QtWidgets import QStyleOptionGraphicsItem
-from ost_visualizer.domain.entities.annotation import BidAnnotation
-from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
-    HighlightGraphicsItem,
-    AnnotationItemRenderer,
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsPathItem,
+    QGraphicsScene,
+    QStyle,
+    QStyleOptionGraphicsItem,
 )
-from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
 
 
 class _IdentityCoordinateSystem:

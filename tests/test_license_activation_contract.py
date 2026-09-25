@@ -4,7 +4,6 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
-from ost_visualizer.config.license_config import _load_trusted_public_key
 from ost_visualizer.application.dtos.license_activation_identity_dto import (
     LICENSE_ACTIVATION_IDENTITY_VERSION,
     LicenseActivationIdentityDto,
@@ -32,10 +31,13 @@ from ost_visualizer.application.use_cases.license.utils.license_use_case import 
     parse_failure_response,
     parse_signed_success_response,
 )
+from ost_visualizer.config.license_config import _load_trusted_public_key
 from ost_visualizer.domain.aggregates.license_aggregate import LicenseAggregate
 from ost_visualizer.domain.entities.license import License, LicenseStatus
-from ost_visualizer.domain.services.hardware_identity import HWID_VERSION
-from ost_visualizer.domain.services.hardware_identity import HardwareIdentityError
+from ost_visualizer.domain.services.hardware_identity import (
+    HWID_VERSION,
+    HardwareIdentityError,
+)
 from ost_visualizer.infrastructure.external.license_api_client import LicenseApiClient
 
 TEST_HWID = "v1:" + "A" * 64

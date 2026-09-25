@@ -1,11 +1,8 @@
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.entities.identity_refs import BidRef
 import logging
 import unittest
 import uuid
 from dataclasses import replace
 from types import SimpleNamespace
-from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     EditLeaseHandle,
@@ -18,13 +15,13 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     annotation_resource_id,
 )
+from ost_visualizer.application.dtos.create_condition_spec_dto import (
+    CreateConditionSpec,
+)
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
-from ost_visualizer.application.dtos.create_condition_spec_dto import (
-    CreateConditionSpec,
-)
 from ost_visualizer.application.dtos.update_condition_dto import (
     UpdateConditionResultDto,
 )
@@ -32,10 +29,11 @@ from ost_visualizer.application.services.project_write_service import (
     DeleteValidationResult,
     ProjectWriteService,
 )
-from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.domain.entities.cover_sheet import JobStatus
+from ost_visualizer.domain.entities.employee import Employee
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
@@ -46,6 +44,7 @@ from ost_visualizer.presentation.services.selection_commands import (
     InsertTakeoffsCommand,
 )
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
+from PySide6 import QtWidgets
 
 
 class _PageViewWriteService:
@@ -1201,8 +1200,8 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             for uid in ("takeoff-1", "takeoff-2")
         ]
         from ost_visualizer.application.dtos.collaboration_dtos import (
-            ExpectedResourceVersion,
             ConcurrencyToken,
+            ExpectedResourceVersion,
         )
 
         service._concurrency_tokens = SimpleNamespace(

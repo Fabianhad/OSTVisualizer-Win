@@ -2,11 +2,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtWidgets
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.database_descriptor import DatabaseBackend
-from ..config import (
-    COMPACT_MARGINS,
-    COMPACT_SPACING,
-    SELECT_DATABASE_TYPE_DIALOG_WIDTH,
-)
+from ..config import COMPACT_MARGINS, COMPACT_SPACING, SELECT_DATABASE_TYPE_DIALOG_WIDTH
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 
 

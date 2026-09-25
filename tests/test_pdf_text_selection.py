@@ -1,12 +1,12 @@
 import math
 import unittest
 from types import SimpleNamespace
-from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGraphicsScene
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from PySide6 import QtCore, QtWidgets
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QGraphicsScene
 
 
 def _raw_char(text, left, right, bottom, top):

@@ -3,29 +3,29 @@ import contextvars
 import logging
 from contextlib import contextmanager
 from typing import Callable, Optional, Sequence, TypeVar
-from ...application.interfaces.i_credential_store import ICredentialStore
-from ...application.interfaces.i_database_descriptor_registry import (
-    IDatabaseDescriptorRegistry,
-)
-from ...application.interfaces.i_database_session_registry import (
-    IDatabaseSessionRegistry,
-)
-from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationRequest,
     DatabaseMutationResult,
     MutationOutcomeStatus,
-    ResourceRef,
     PlanTakeoffOwnership,
+    ResourceRef,
+)
+from ...application.interfaces.i_credential_store import ICredentialStore
+from ...application.interfaces.i_database_descriptor_registry import (
+    IDatabaseDescriptorRegistry,
+)
+from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
+from ...application.interfaces.i_database_session_registry import (
+    IDatabaseSessionRegistry,
 )
 from ...domain.dtos.raw_bid_data_dto import RawBidData
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..mdb.connection_manager import MdbConnectionManager
 from ..mdb.mdb_writer import MdbWriter
 from ..sql.writer import SqlProjectWriter
-from .descriptor_registry import resolve_database_backend
 from .bid_owned_identity import MissingBidOwnedUidError
+from .descriptor_registry import resolve_database_backend
 from .schema_inspector_contract import IDatabaseSchemaInspector
 
 T = TypeVar("T")

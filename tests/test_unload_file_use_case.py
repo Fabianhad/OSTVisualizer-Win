@@ -1,17 +1,17 @@
 import unittest
 from types import SimpleNamespace
+from ost_visualizer.application.use_cases.project.reload_database_use_case import (
+    ReloadDatabaseUseCase,
+)
 from ost_visualizer.application.use_cases.project.unload_file_use_case import (
     UnloadFileUseCase,
 )
+from ost_visualizer.domain.entities.file_results import FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyData,
     HierarchyFileEntry,
 )
-from ost_visualizer.domain.entities.file_results import FileLoadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.application.use_cases.project.reload_database_use_case import (
-    ReloadDatabaseUseCase,
-)
 
 
 class FakeModel:

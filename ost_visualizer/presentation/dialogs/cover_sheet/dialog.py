@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import isValid
 from PySide6.QtCore import QDate
+from shiboken6 import isValid
 from ....application.events.app_events import AppEvents
 from ....domain.entities.cover_sheet import CoverSheetData
 from ....domain.entities.employee import Employee
@@ -29,12 +29,7 @@ from ...utils.combo_identity import (
     resolve_editable_combo_uid,
 )
 from ...utils.dialog import delete_later_if_valid, save_result_refresh_failed
-from ...utils.image_show_mode import (
-    SHOW_BOTH,
-    SHOW_LABELS,
-    SHOW_ORIGINAL,
-    SHOW_OVERLAY,
-)
+from ...utils.image_show_mode import SHOW_BOTH, SHOW_LABELS, SHOW_ORIGINAL, SHOW_OVERLAY
 from ...utils.messagebox import (
     confirm_delete_page_with_contents,
     confirm_not_found,

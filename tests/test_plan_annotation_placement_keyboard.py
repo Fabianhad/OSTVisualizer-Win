@@ -1,8 +1,5 @@
 import unittest
 from unittest.mock import patch
-from PySide6 import QtCore, QtWidgets
-from PySide6.QtTest import QTest
-from shiboken6 import delete, isValid
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
@@ -13,6 +10,9 @@ from ost_visualizer.presentation.modes.cursor import (
 from ost_visualizer.presentation.utils.annotation_defaults import (
     PLACEABLE_ANNOTATION_TYPES,
 )
+from PySide6 import QtCore, QtWidgets
+from PySide6.QtTest import QTest
+from shiboken6 import delete, isValid
 from tests.test_viewer_sync_coordinator_overlay_refresh import (
     FakeAnnotationRenderer,
     FakeColorService,

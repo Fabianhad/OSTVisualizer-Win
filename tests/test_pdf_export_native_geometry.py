@@ -5,15 +5,13 @@ import unittest
 import zlib
 from itertools import product
 from pathlib import Path
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QTransform
 from ost_visualizer.application.dtos.annotation_caption_dto import (
     AnnotationCaptionSettingsDto,
 )
 from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
 from ost_visualizer.application.dtos.page_export_data_dto import PageExportData
-from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities import shape as shapes
+from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page
@@ -21,16 +19,18 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
+from ost_visualizer.presentation.utils.page_info_builder import build_page_info
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
-from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
-    PageRenderer,
-)
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
     calculate_annotation_geometry,
     canonical_highlight_quads,
 )
-from ost_visualizer.presentation.utils.page_info_builder import build_page_info
+from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
+    PageRenderer,
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QTransform
 
 
 def _write_pdf(

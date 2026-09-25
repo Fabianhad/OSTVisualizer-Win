@@ -1,12 +1,12 @@
 import unittest
 from types import SimpleNamespace
-from ost_visualizer.application.use_cases.project.load_bid_use_case import (
-    LoadBidUseCase,
-    PreparedBidLoad,
-)
 from ost_visualizer.application.dtos.user_workspace_state_dtos import (
     UserBidWorkspaceState,
     UserPageViewState,
+)
+from ost_visualizer.application.use_cases.project.load_bid_use_case import (
+    LoadBidUseCase,
+    PreparedBidLoad,
 )
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef

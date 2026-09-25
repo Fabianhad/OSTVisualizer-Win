@@ -13,9 +13,7 @@ from ...application.interfaces.i_sql_workspace_state_repository import (
     ISqlWorkspaceStateRepository,
 )
 from .connection_manager import SqlConnectionManager
-from .database_metadata_contract import (
-    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
-)
+from .database_metadata_contract import DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
 from .descriptor_connection import SqlDescriptorConnectionFactory
 
 

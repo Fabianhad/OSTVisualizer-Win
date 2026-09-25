@@ -7,6 +7,7 @@ from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
+from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from ..mdb.mdb_reader import MdbReader
 from .connection_manager import (
     SqlConnectionLease,
@@ -19,7 +20,6 @@ from .schema_definition import SQL_SCHEMA_V1
 from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaValidator
 from .write_schema import CurrentSqlWriteSchema
-from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 
 
 class SqlProjectReader(MdbReader):

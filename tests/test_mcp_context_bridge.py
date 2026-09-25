@@ -1,6 +1,6 @@
 import unittest
-from PySide6 import QtWidgets
 from ost_visualizer.presentation.services.mcp_context_bridge import McpContextBridge
+from PySide6 import QtWidgets
 
 
 class _FakePlanView:

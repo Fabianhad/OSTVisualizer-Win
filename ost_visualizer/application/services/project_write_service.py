@@ -1,31 +1,26 @@
-from dataclasses import asdict, dataclass, field, replace
-from ..layer_change_impact import layer_rename_preserves_rendering
 import uuid
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
-from ...domain.entities.file_state import normalize_path
-from ...domain.services.elevation import parse_elevation
-from ...domain.services.takeoff_domain_service import (
-    takeoffs_can_reassign_to_condition,
-)
 from ...domain.entities.annotation import (
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_NAMED_VIEW,
 )
-from ..dtos.create_condition_spec_dto import CreateConditionSpec
-from ..dtos.condition_takeoff_reassignment import ConditionTakeoffReassignment
-from ..dtos.collaboration_resource_catalog import (
-    CollaborationResourceType,
-    annotation_resource_id,
-    parse_annotation_resource_id,
+from ...domain.entities.area import is_unassigned_area_uid
+from ...domain.entities.file_state import normalize_path
+from ...domain.services.elevation import parse_elevation
+from ...domain.services.takeoff_domain_service import (
+    expand_takeoff_uids_with_descendants,
+    takeoffs_can_reassign_to_condition,
 )
 from ..dtos.collaboration_dtos import (
+    AuthoritativeMutationResult,
     ChangeOperation,
     CollaborationMutationType,
-    AuthoritativeMutationResult,
     DatabaseMutationResult,
     EditLeaseHandle,
     EditLeaseResult,
     ExpectedResourceVersion,
+    MutationExecutionResult,
     MutationOutcomeStatus,
     PageSettingsPayload,
     PlanGeometryPayload,
@@ -37,22 +32,28 @@ from ..dtos.collaboration_dtos import (
     ProjectWritePayload,
     QueuedMutationRequest,
     QueuedMutationResult,
-    MutationExecutionResult,
     ResourceRef,
 )
+from ..dtos.collaboration_resource_catalog import (
+    CollaborationResourceType,
+    annotation_resource_id,
+    parse_annotation_resource_id,
+)
+from ..dtos.condition_takeoff_reassignment import ConditionTakeoffReassignment
+from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
 from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
 from ..dtos.write_reload_result import WriteReloadResult
-from ...domain.entities.area import is_unassigned_area_uid
 from ..events.app_events import AppEvents
-from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
 from ..interfaces.i_database_mutation_executor import IDatabaseMutationExecutor
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
+from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
+from ..layer_change_impact import layer_rename_preserves_rendering
 from ..use_cases.project.create_bid_use_case import CreateBidUseCase
 from ..use_cases.project.create_project_use_case import CreateProjectUseCase
-from ..use_cases.project.delete_bids_use_case import DeleteBidsUseCase
 from ..use_cases.project.delete_annotations_use_case import DeleteAnnotationsUseCase
+from ..use_cases.project.delete_bids_use_case import DeleteBidsUseCase
 from ..use_cases.project.delete_condition_folders_use_case import (
     DeleteConditionFoldersUseCase,
 )
@@ -63,11 +64,11 @@ from ..use_cases.project.delete_projects_use_case import DeleteProjectsUseCase
 from ..use_cases.project.delete_takeoffs_use_case import DeleteTakeoffsUseCase
 from ..use_cases.project.duplicate_bid_use_case import DuplicateBidUseCase
 from ..use_cases.project.duplicate_conditions_use_case import DuplicateConditionsUseCase
+from ..use_cases.project.insert_annotations_use_case import InsertAnnotationsUseCase
 from ..use_cases.project.insert_condition_folder_use_case import (
     InsertConditionFolderUseCase,
 )
 from ..use_cases.project.insert_condition_use_case import InsertConditionUseCase
-from ..use_cases.project.insert_annotations_use_case import InsertAnnotationsUseCase
 from ..use_cases.project.insert_layer_use_case import InsertLayerUseCase
 from ..use_cases.project.insert_takeoffs_use_case import InsertTakeoffsUseCase
 from ..use_cases.project.move_bids_use_case import MoveBidsUseCase
@@ -76,6 +77,15 @@ from ..use_cases.project.rename_condition_folder_use_case import (
 )
 from ..use_cases.project.rename_project_use_case import RenameProjectUseCase
 from ..use_cases.project.renumber_conditions_use_case import RenumberConditionsUseCase
+from ..use_cases.project.save_annotation_positions_use_case import (
+    SaveAnnotationPositionsUseCase,
+)
+from ..use_cases.project.save_annotation_styles_use_case import (
+    SaveAnnotationStylesUseCase,
+)
+from ..use_cases.project.save_annotation_text_properties_use_case import (
+    SaveAnnotationTextPropertiesUseCase,
+)
 from ..use_cases.project.save_bid_areas_use_case import SaveBidAreasUseCase
 from ..use_cases.project.save_bid_selected_page_use_case import (
     SaveBidSelectedPageUseCase,
@@ -100,15 +110,6 @@ from ..use_cases.project.save_page_overlay_rect_use_case import (
 from ..use_cases.project.save_page_scale_use_case import SavePageScaleUseCase
 from ..use_cases.project.save_page_show_mode_use_case import SavePageShowModeUseCase
 from ..use_cases.project.save_page_view_state_use_case import SavePageViewStateUseCase
-from ..use_cases.project.save_annotation_positions_use_case import (
-    SaveAnnotationPositionsUseCase,
-)
-from ..use_cases.project.save_annotation_styles_use_case import (
-    SaveAnnotationStylesUseCase,
-)
-from ..use_cases.project.save_annotation_text_properties_use_case import (
-    SaveAnnotationTextPropertiesUseCase,
-)
 from ..use_cases.project.save_pay_classes_use_case import SavePayClassesUseCase
 from ..use_cases.project.save_takeoff_positions_use_case import (
     SaveTakeoffPositionsUseCase,
@@ -137,8 +138,8 @@ from ..use_cases.project.update_layer_name_use_case import UpdateLayerNameUseCas
 from ..use_cases.project.update_layer_show_use_case import UpdateLayerShowUseCase
 from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import DatabaseMutationWriteService
-from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .database_capability_service import DatabaseCapabilityService
+from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 
 if TYPE_CHECKING:
     from .sql_collaboration_coordinator import SqlCollaborationCoordinator
@@ -2417,16 +2418,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         selected = {str(uid) for uid in takeoff_uids}
         if not selected.issubset(takeoffs):
             raise ValueError("A property mutation Takeoff is no longer authoritative.")
-        while True:
-            children = {
-                uid
-                for uid, item in takeoffs.items()
-                if str(item.parent_uid) in selected
-            }
-            expanded = selected | children
-            if expanded == selected:
-                break
-            selected = expanded
+        selected = expand_takeoff_uids_with_descendants(takeoffs.values(), selected)
         return tuple(
             PlanTakeoffOwnership(
                 uid,

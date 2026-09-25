@@ -1,6 +1,6 @@
 from __future__ import annotations
-import itertools
 import contextvars
+import itertools
 import json
 import logging
 import threading
@@ -8,6 +8,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Generator, Optional, Sequence, TypeVar
 import pyodbc
+from ...application.dtos.collaboration_dtos import (
+    COLLABORATION_STALE_SECONDS,
+    ChangeOperation,
+    ConcurrencyToken,
+    DatabaseMutationRequest,
+    DatabaseMutationResult,
+    MutationOutcomeStatus,
+    PlanTakeoffOwnership,
+    ResourceRef,
+    SynchronizationConflict,
+    SynchronizationConflictKind,
+)
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceType,
     annotation_resource_id,
@@ -18,29 +30,11 @@ from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
+from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...application.interfaces.i_database_session_registry import (
     IDatabaseSessionRegistry,
 )
-from ...application.dtos.collaboration_dtos import (
-    COLLABORATION_STALE_SECONDS,
-    ChangeOperation,
-    ConcurrencyToken,
-    DatabaseMutationRequest,
-    DatabaseMutationResult,
-    MutationOutcomeStatus,
-    ResourceRef,
-    PlanTakeoffOwnership,
-    SynchronizationConflict,
-    SynchronizationConflictKind,
-)
-from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...domain.dtos.raw_bid_data_dto import RawBidData
-from ..mdb.components.constants import (
-    BID_TABLES_WRITE_ORDER,
-    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
-    TAKEOFF_REFERENCE_TABLES,
-    TAKEOFF_SELF_REFERENCE_COLUMNS,
-)
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ..database.bid_owned_identity import (
     MissingBidOwnedUidError,
@@ -55,20 +49,24 @@ from ..database.master_data_identity import (
     require_unique_master_data_uids,
     resolve_master_data_candidate,
 )
+from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from ..database.settings_cardinality import (
     fetch_optional_global_settings_row,
     normalize_next_bid_number,
     persist_next_bid_number,
 )
+from ..mdb.components.constants import (
+    BID_TABLES_WRITE_ORDER,
+    TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
+    TAKEOFF_REFERENCE_TABLES,
+    TAKEOFF_SELF_REFERENCE_COLUMNS,
+)
+from ..mdb.mdb_writer import MdbWriter
 from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
-from ..mdb.mdb_writer import MdbWriter
-from ..database.schema_inspector_contract import IDatabaseSchemaInspector
-from .connection_manager import SqlConnectionLease, SqlConnectionManager
-from .database_metadata_contract import (
-    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
-)
 from .client_permissions import require_sql_client_editability
+from .connection_manager import SqlConnectionLease, SqlConnectionManager
+from .database_metadata_contract import DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import (
     SqlErrorCode,
@@ -77,9 +75,7 @@ from .errors import (
     sql_schema_mismatch,
 )
 from .schema_definition import SQL_SCHEMA_V1
-from .schema_lock import (
-    acquire_resource_transaction_locks,
-)
+from .schema_lock import acquire_resource_transaction_locks
 from .write_schema import CurrentSqlWriteSchema
 
 T = TypeVar("T")

@@ -1,8 +1,5 @@
 from typing import Protocol
-from ..dtos.user_workspace_state_dtos import (
-    UserBidWorkspaceState,
-    UserPageViewState,
-)
+from ..dtos.user_workspace_state_dtos import UserBidWorkspaceState, UserPageViewState
 
 
 class ISqlWorkspaceStateRepository(Protocol):

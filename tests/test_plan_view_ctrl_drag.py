@@ -6,20 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QBrush, QColor, QPainterPath, QPen, QTransform
-from PySide6.QtWidgets import (
-    QApplication,
-    QGraphicsItem,
-    QGraphicsPathItem,
-    QGraphicsRectItem,
-    QGraphicsScene,
-    QGraphicsTextItem,
-    QMenu,
-)
-from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
+from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.annotation import (
@@ -78,6 +66,18 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer
 )
 from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
     TakeoffRenderer,
+)
+from PySide6 import QtCore
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QBrush, QColor, QPainterPath, QPen, QTransform
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsItem,
+    QGraphicsPathItem,
+    QGraphicsRectItem,
+    QGraphicsScene,
+    QGraphicsTextItem,
+    QMenu,
 )
 
 

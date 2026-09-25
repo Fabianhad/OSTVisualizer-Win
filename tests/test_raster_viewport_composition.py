@@ -5,8 +5,6 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
-from PySide6.QtCore import QRectF, QSizeF, QMarginsF
-from PySide6.QtGui import QColor, QImage, QPdfWriter, QPageSize, QPainter
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
@@ -18,6 +16,8 @@ from ost_visualizer.presentation.visualization.pdf.services.composite_renderer i
 from ost_visualizer.presentation.visualization.utils.source_signature import (
     invalidate_source_files,
 )
+from PySide6.QtCore import QMarginsF, QRectF, QSizeF
+from PySide6.QtGui import QColor, QImage, QPageSize, QPainter, QPdfWriter
 
 
 class RasterViewportCompositionTests(unittest.TestCase):

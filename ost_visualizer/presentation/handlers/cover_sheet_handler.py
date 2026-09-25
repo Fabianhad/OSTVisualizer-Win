@@ -5,9 +5,7 @@ from ...application.dtos.collaboration_dtos import (
     QueuedMutationResult,
     ResourceRef,
 )
-from ...application.dtos.collaboration_resource_catalog import (
-    CollaborationResourceType,
-)
+from ...application.dtos.collaboration_resource_catalog import CollaborationResourceType
 from ..dialogs.cover_sheet.context import CoverSheetContext
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..managers.ui_access_manager import Feature

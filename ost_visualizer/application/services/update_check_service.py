@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Tuple
-from ..dtos.application_info import APPLICATION_VERSION
 from ...domain.entities.version_info import ChangelogSections, VersionInfo
+from ..dtos.application_info import APPLICATION_VERSION
 
 
 class UpdateCheckService:

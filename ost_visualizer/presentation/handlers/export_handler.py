@@ -4,21 +4,21 @@ from copy import deepcopy
 from typing import Any, Callable, List, Optional
 from PySide6 import QtWidgets
 from shiboken6 import isValid
+from ...application.dtos.annotation_caption_dto import AnnotationCaptionSettingsDto
 from ...application.dtos.export_dto import (
     ExportErrorCode,
     ExportProgressCallback,
     ExportRequestDto,
     ExportResultDto,
 )
-from ...application.dtos.annotation_caption_dto import AnnotationCaptionSettingsDto
 from ...application.dtos.page_export_data_dto import PageExportData
+from ...domain.entities.annotation_caption import AnnotationCaptionId
 from ...domain.entities.file_extensions import (
     CSV_EXTENSION,
     PDF_EXTENSION,
     is_csv_suffix,
     is_pdf_suffix,
 )
-from ...domain.entities.annotation_caption import AnnotationCaptionId
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_critical, show_info, show_warning

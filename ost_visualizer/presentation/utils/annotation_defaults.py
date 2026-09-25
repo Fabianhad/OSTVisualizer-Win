@@ -19,8 +19,8 @@ from ...domain.entities.annotation_style import (
     normalize_text_font_size,
 )
 from ...domain.entities.config import Config
-from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 from .font_catalog import resolve_font_definition
+from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 
 DIMENSION_ANNOTATION_WIDTH = 1.0
 NAMED_VIEW_DEFAULT_COLOR = "#008000"

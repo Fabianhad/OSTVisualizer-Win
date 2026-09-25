@@ -1,6 +1,6 @@
 from PySide6 import QtCore, QtWidgets
-from .toolbar_overflow import ToolbarOverflowWidgetAction, set_widget_action_visible
 from ..utils.plan_tool_registry import TAKEOFF_TOOLBAR_ITEMS
+from .toolbar_overflow import ToolbarOverflowWidgetAction, set_widget_action_visible
 
 
 class TakeoffToolbarVisibilityController(QtCore.QObject):

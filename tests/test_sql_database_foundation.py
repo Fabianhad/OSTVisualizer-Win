@@ -1,5 +1,5 @@
-import json
 import ctypes
+import json
 import os
 import re
 import secrets
@@ -11,20 +11,20 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
-from PySide6.QtTest import QTest
-from shiboken6 import delete
 from ost_visualizer.application.dtos.application_info import APPLICATION_VERSION
 from ost_visualizer.application.dtos.collaboration_dtos import SynchronizationState
-from ost_visualizer.application.services.database_session_registry import (
-    DatabaseSessionRegistry,
-)
 from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
     SqlDatabaseCatalogEntry,
 )
 from ost_visualizer.application.interfaces.i_sql_database_creator import (
     SqlDatabaseCreationResult,
+)
+from ost_visualizer.application.services.database_capability_service import (
+    DatabaseCapabilityService,
+)
+from ost_visualizer.application.services.database_session_registry import (
+    DatabaseSessionRegistry,
 )
 from ost_visualizer.application.use_cases.project.cleanup_deleted_files_use_case import (
     CleanupDeletedFilesUseCase,
@@ -40,10 +40,7 @@ from ost_visualizer.domain.entities.file_state import FileEntry, FileState
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
-from ost_visualizer.presentation.utils.qt_callback_bridge import QtCallbackBridge
-from ost_visualizer.infrastructure.database.schema_model import (
-    render_sql_server_schema,
-)
+from ost_visualizer.infrastructure.database.schema_model import render_sql_server_schema
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.mdb.database_creator import (
     get_reference_schema_model,
@@ -53,13 +50,10 @@ from ost_visualizer.infrastructure.sql.connection_manager import (
     SqlConnectionRequest,
 )
 from ost_visualizer.infrastructure.sql.credential_store import (
-    WindowsCredentialStore,
     _CREDENTIALW,
+    WindowsCredentialStore,
 )
-from ost_visualizer.infrastructure.sql.errors import (
-    SqlErrorCode,
-    classify_pyodbc_error,
-)
+from ost_visualizer.infrastructure.sql.errors import SqlErrorCode, classify_pyodbc_error
 from ost_visualizer.infrastructure.sql.schema_definition import (
     SQL_SCHEMA_V1,
     schema_record_is_canonical,
@@ -74,8 +68,19 @@ from ost_visualizer.infrastructure.sql.schema_validator import (
     _normalize_filter,
 )
 from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
-from ost_visualizer.application.services.database_capability_service import (
-    DatabaseCapabilityService,
+from ost_visualizer.presentation.config import (
+    COMPACT_MARGINS,
+    COMPACT_SPACING,
+    NEW_DATABASE_TYPE_DIALOG_WIDTH,
+    RELAXED_MARGINS,
+    RELAXED_SPACING,
+    SELECT_DATABASE_TYPE_DIALOG_WIDTH,
+    SQL_CONNECTION_DIALOG_WIDTH,
+    SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
+)
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.dialogs.new_database_type_dialog import (
+    NewDatabaseTypeDialog,
 )
 from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
 from ost_visualizer.presentation.dialogs.select_database_type_dialog import (
@@ -90,23 +95,13 @@ from ost_visualizer.presentation.dialogs.sql_database_dialog import (
     SqlDatabasePropertiesMode,
     SqlDatabasePropertiesResult,
 )
-from ost_visualizer.presentation.dialogs.new_database_type_dialog import (
-    NewDatabaseTypeDialog,
-)
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
-from ost_visualizer.presentation.controllers.menu_controller import MenuController
-from ost_visualizer.presentation.config import (
-    COMPACT_MARGINS,
-    COMPACT_SPACING,
-    NEW_DATABASE_TYPE_DIALOG_WIDTH,
-    SELECT_DATABASE_TYPE_DIALOG_WIDTH,
-    SQL_CONNECTION_DIALOG_WIDTH,
-    SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
-    RELAXED_MARGINS,
-    RELAXED_SPACING,
-)
+from ost_visualizer.presentation.utils.qt_callback_bridge import QtCallbackBridge
+from PySide6 import QtCore, QtWidgets
+from PySide6.QtTest import QTest
+from shiboken6 import delete
 from tests.workspace_state_test_support import with_workspace_state
 
 FileOperationHandler = with_workspace_state(FileOperationHandler)

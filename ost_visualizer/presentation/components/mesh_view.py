@@ -18,8 +18,8 @@ from ..actions.action_ids import (
 from ..config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ..managers.context_menu_manager import ContextMenuManager
 from ..modes.cursor import CURSOR_MODE_DEFAULT, CURSOR_MODE_PAN, CURSOR_MODE_ZOOM
-from ..utils.overlay_context_menu import resolve_overlay_menu_action
 from ..utils.dialog import exec_transient_menu
+from ..utils.overlay_context_menu import resolve_overlay_menu_action
 from ..utils.theme import set_palette_background
 from ..utils.view_context_menu import (
     SelectedTakeoffContextState,

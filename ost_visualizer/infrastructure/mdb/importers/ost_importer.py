@@ -1,10 +1,7 @@
 import logging
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
-from ....application.dtos.collaboration_dtos import (
-    ChangeOperation,
-    ResourceRef,
-)
+from ....application.dtos.collaboration_dtos import ChangeOperation, ResourceRef
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ...database.page_area_selection import canonicalize_page_area_settings
 from ..raw_bid_integrity import (
@@ -18,8 +15,8 @@ from ..raw_bid_integrity import (
 from ..schema_contract import (
     BID_SECTIONS,
     BID_TAIL_SECTIONS,
-    OST_XML_TO_DATABASE_COLUMN,
     GLOBAL_SECTIONS,
+    OST_XML_TO_DATABASE_COLUMN,
     PAGE_SECTIONS,
 )
 from ..schema_contract import singular as _singular

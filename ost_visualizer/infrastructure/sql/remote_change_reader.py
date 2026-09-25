@@ -2,24 +2,24 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Optional
 import pyodbc
+from ...application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    DatabaseChange,
+    DatabaseChangeBatch,
+    HydratedDatabaseChangeBatch,
+    ResourceRef,
+)
 from ...application.dtos.collaboration_resource_catalog import (
-    COLLABORATION_RESOURCE_CATALOG,
-    coalesced_resource_type,
     AREA_RESOURCE_TYPES,
+    BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
     BID_CONTENT_RESOURCE_TYPES,
+    COLLABORATION_RESOURCE_CATALOG,
     CONDITION_RESOURCE_TYPES,
     HIERARCHY_RESOURCE_TYPES,
     MASTER_DATA_RESOURCE_TYPES,
-    BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
     CollaborationResourceFamily,
     CollaborationResourceType,
-)
-from ...application.dtos.collaboration_dtos import (
-    DatabaseChangeBatch,
-    DatabaseChange,
-    HydratedDatabaseChangeBatch,
-    ChangeOperation,
-    ResourceRef,
+    coalesced_resource_type,
 )
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (

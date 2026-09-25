@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
-from ...dtos.collaboration_dtos import MutationOutcomeStatus, QueuedMutationResult
 from ....domain.entities.database_descriptor import DatabaseBackend
 from ....domain.entities.file_state import normalize_path
 from ....domain.entities.project_constants import is_deleted_bids_project_uid
@@ -11,6 +10,7 @@ from ....domain.entities.workspace_state import (
     WORKSPACE_NODE_KIND_BID,
     WORKSPACE_NODE_KIND_PROJECT,
 )
+from ...dtos.collaboration_dtos import MutationOutcomeStatus, QueuedMutationResult
 from ...dtos.file_import_args import (
     PROJECT_IMPORT_EXTENSION_OST,
     ParsedProjectFileArg,

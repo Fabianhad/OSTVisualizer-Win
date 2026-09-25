@@ -5,6 +5,44 @@ import unittest
 from dataclasses import dataclass, field
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
+from ost_visualizer.application.dtos.page_view_dto import PageViewDto
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
+from ost_visualizer.domain.entities.annotation_view import AnnotationView
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.handlers import (
+    plan_view_action_handler as action_handler_module,
+)
+from ost_visualizer.presentation.handlers.plan_view_action_handler import (
+    PlanViewActionHandler,
+)
+from ost_visualizer.presentation.managers.deferred_persistence_manager import (
+    DeferredPersistenceManager,
+)
+from ost_visualizer.presentation.managers.detached_page_view_manager import (
+    DetachedPageViewManager,
+)
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
+    PlanSurfaceAccessState,
+)
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_SELECT,
+)
 from PySide6 import QtCore
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
@@ -69,44 +107,6 @@ from test_viewer_sync_coordinator_overlay_refresh import (
     FakeLoadCoordinator,
     FakeRenderingService,
     RecordingPathTakeoffRenderer,
-)
-from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
-from ost_visualizer.application.dtos.page_view_dto import PageViewDto
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.domain.entities.annotation import (
-    ANNOTATION_TYPE_HOTLINK,
-    ANNOTATION_TYPE_NAMED_VIEW,
-    ANNOTATION_TYPE_TEXT,
-    BidAnnotation,
-)
-from ost_visualizer.domain.entities.annotation_view import AnnotationView
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
-from ost_visualizer.presentation.handlers import (
-    plan_view_action_handler as action_handler_module,
-)
-from ost_visualizer.presentation.handlers.plan_view_action_handler import (
-    PlanViewActionHandler,
-)
-from ost_visualizer.presentation.managers.deferred_persistence_manager import (
-    DeferredPersistenceManager,
-)
-from ost_visualizer.presentation.managers.detached_page_view_manager import (
-    DetachedPageViewManager,
-)
-from ost_visualizer.presentation.managers.ui_access_manager import (
-    Feature,
-    PlanSurfaceAccessState,
-)
-from ost_visualizer.presentation.modes.cursor import (
-    CURSOR_MODE_ANNOTATION_PLACE,
-    CURSOR_MODE_SELECT,
 )
 
 DEFAULT_CHAOS_SEEDS = (101, 202, 303, 404, 505)

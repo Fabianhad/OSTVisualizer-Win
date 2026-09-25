@@ -2,14 +2,12 @@ from __future__ import annotations
 from ...application.dtos.collaboration_resource_catalog import (
     COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
 )
+from .database_metadata_contract import DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 from .schema_definition import (
-    SQL_SCHEMA_V1,
     SQL_CHANGE_TRACKING_RETENTION_DAYS,
+    SQL_SCHEMA_V1,
     schema_record_is_canonical,
-)
-from .database_metadata_contract import (
-    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
 )
 
 SQL_CLIENT_DATABASE_ROLES = ("db_datareader", "db_datawriter")

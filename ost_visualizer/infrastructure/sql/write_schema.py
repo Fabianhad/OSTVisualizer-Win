@@ -1,9 +1,6 @@
 from __future__ import annotations
 from typing import Optional
-from ..database.schema_model import (
-    DatabaseSchemaModel,
-    sql_server_type_for_access,
-)
+from ..database.schema_model import DatabaseSchemaModel, sql_server_type_for_access
 from .errors import sql_schema_mismatch
 
 

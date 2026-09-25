@@ -6,8 +6,8 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.services.undo_redo_service import (
-    UndoRedoService,
     TakeoffHistoryTarget,
+    UndoRedoService,
 )
 
 

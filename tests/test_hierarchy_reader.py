@@ -1,5 +1,5 @@
-import unittest
 import sqlite3
+import unittest
 from collections import namedtuple
 from ost_visualizer.infrastructure.mdb.components.hierarchy_reader import (
     HierarchyReaderMixin,

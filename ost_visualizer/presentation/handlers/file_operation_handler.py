@@ -4,6 +4,14 @@ from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
+from ...domain.entities.database_descriptor import (
+    DatabaseBackend,
+    DatabaseDescriptor,
+    SqlAuthenticationMode,
+    credential_target_for,
+)
+from ...domain.entities.file_state import FileEntry
+from ..components.progress_dialog import ProgressDialog
 from ..dialogs.open_files_dialog import OpenFilesDialog
 from ..dialogs.sql_database_dialog import (
     SqlDatabasePropertiesDialog,
@@ -12,14 +20,6 @@ from ..dialogs.sql_database_dialog import (
 from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import confirm, show_info, show_warning
-from ..components.progress_dialog import ProgressDialog
-from ...domain.entities.database_descriptor import (
-    DatabaseBackend,
-    DatabaseDescriptor,
-    SqlAuthenticationMode,
-    credential_target_for,
-)
-from ...domain.entities.file_state import FileEntry
 
 logger = logging.getLogger(__name__)
 

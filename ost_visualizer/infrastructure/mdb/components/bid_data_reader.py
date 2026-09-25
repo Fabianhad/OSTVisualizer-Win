@@ -1,6 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple
 import pyodbc
-from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID, BidArea
 from ....domain.entities.cdn_type import CdnType
@@ -17,16 +16,17 @@ from ....domain.entities.layer import (
 )
 from ....domain.entities.page_info import BidPageInfo
 from ....domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
-from ...parsers.ost_serializer import serialize_row
-from ...parsers.position_parser import extract_z_value_from_name
-from ...parsers.utils.parser import decode_value, parse_float
-from ...database.schema_inspector_contract import IDatabaseSchemaInspector
 from ...database.bid_owned_identity import (
     CyclicBidOwnedReferenceError,
     require_acyclic_bid_owned_parent_graph,
     require_existing_bid_owned_references,
     require_valid_unique_bid_owned_uids,
 )
+from ...database.schema_inspector_contract import IDatabaseSchemaInspector
+from ...parsers.ost_serializer import serialize_row
+from ...parsers.position_parser import extract_z_value_from_name
+from ...parsers.utils.parser import decode_value, parse_float
+from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from .constants import PAGE_DELETE_CONFIRMATION_TABLES
 from .overlay_rect import EMPTY_OVERLAY_RECT, parse_overlay_rect_storage

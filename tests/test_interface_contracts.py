@@ -4,13 +4,14 @@ import unittest
 from typing import TypeVar, get_args, get_origin, get_type_hints
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
 from ost_visualizer.application.interfaces.i_annotation_caption_resolver import (
     IAnnotationCaptionResolver,
 )
-from ost_visualizer.application.interfaces.i_color_service import IColorService
 from ost_visualizer.application.interfaces.i_collaboration_store import (
     ICollaborationStore,
 )
+from ost_visualizer.application.interfaces.i_color_service import IColorService
 from ost_visualizer.application.interfaces.i_coordinate_transformer import (
     ICoordinateTransformer,
 )
@@ -30,6 +31,8 @@ from ost_visualizer.application.interfaces.i_infrastructure_service_provider imp
 )
 from ost_visualizer.application.interfaces.i_mdb_reader import IMdbReader
 from ost_visualizer.application.interfaces.i_mdb_writer import IMdbWriter
+from ost_visualizer.application.interfaces.i_osp_exporter import IOspExporter
+from ost_visualizer.application.interfaces.i_ost_exporter import IOstExporter
 from ost_visualizer.application.interfaces.i_page_load_strategy_service import (
     IPageLoadStrategyService,
 )
@@ -38,18 +41,16 @@ from ost_visualizer.application.interfaces.i_page_rendering_service import (
 )
 from ost_visualizer.application.interfaces.i_page_size_provider import IPageSizeProvider
 from ost_visualizer.application.interfaces.i_pdf_exporter import IPDFExporter
-from ost_visualizer.application.interfaces.i_osp_exporter import IOspExporter
-from ost_visualizer.application.interfaces.i_ost_exporter import IOstExporter
-from ost_visualizer.application.interfaces.i_repository_provider import (
-    IRepositoryProvider,
-)
 from ost_visualizer.application.interfaces.i_remote_change_reader import (
     IRemoteChangeReader,
 )
+from ost_visualizer.application.interfaces.i_repository_provider import (
+    IRepositoryProvider,
+)
+from ost_visualizer.application.interfaces.i_shutdown_aware import IShutdownAware
 from ost_visualizer.application.interfaces.i_sql_database_creator import (
     ISqlDatabaseCreator,
 )
-from ost_visualizer.application.interfaces.i_shutdown_aware import IShutdownAware
 from ost_visualizer.application.interfaces.i_thread_callback_bridge import (
     IThreadCallbackBridge,
 )
@@ -63,23 +64,17 @@ from ost_visualizer.application.services.database_session_registry import (
 from ost_visualizer.application.services.page_load_strategy_service import (
     PageLoadStrategyService,
 )
-from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
 from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
-from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
-from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
-from ost_visualizer.infrastructure.visualization_provider import _HtmlRendererAdapter
 from ost_visualizer.infrastructure.database.entity_version_reader import (
     DatabaseEntityVersionReader,
 )
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
-from ost_visualizer.presentation.interfaces.i_takeoff_renderer import ITakeoffRenderer
-from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
-    TakeoffRenderer,
-)
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
+from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.providers import (
     InfrastructureServiceProvider,
     RepositoryProvider,
@@ -89,12 +84,17 @@ from ost_visualizer.infrastructure.sql.collaboration_store import SqlCollaborati
 from ost_visualizer.infrastructure.sql.database_creator import SqlDatabaseCreator
 from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
+from ost_visualizer.infrastructure.visualization_provider import _HtmlRendererAdapter
+from ost_visualizer.presentation.interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ost_visualizer.presentation.interfaces.i_workspace_shell import IWorkspaceShell
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.qt_callback_bridge import QtCallbackBridge
-from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
+from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
 from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
+    TakeoffRenderer,
+)
 from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
     PDFRenderingService,
 )

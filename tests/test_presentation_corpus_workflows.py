@@ -8,15 +8,6 @@ from typing import Optional
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from test_presentation_chaos_harness import (
-    DeferredPersistenceChaosHarness,
-    DetachedWindowChaosHarness,
-    PlanViewActionHandlerChaosHarness,
-    PresentationChaosHarness,
-    UIEventCoordinatorChaosHarness,
-    _app,
-    action_handler_module,
-)
 from ost_visualizer.application.dtos.export_dto import (
     ExportProgressCallback,
     ExportResultDto,
@@ -37,6 +28,15 @@ from ost_visualizer.presentation.visualization.exporters import (
     osp_exporter as osp_exporter_module,
 )
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
+from test_presentation_chaos_harness import (
+    DeferredPersistenceChaosHarness,
+    DetachedWindowChaosHarness,
+    PlanViewActionHandlerChaosHarness,
+    PresentationChaosHarness,
+    UIEventCoordinatorChaosHarness,
+    _app,
+    action_handler_module,
+)
 
 CORPUS_ENV_VAR = "OSTV_PRESENTATION_CORPUS_DIR"
 DEFAULT_CORPUS_DIR = Path("tests") / "presentation_corpus"

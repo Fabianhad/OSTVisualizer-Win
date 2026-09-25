@@ -3,8 +3,8 @@ from enum import Enum, auto
 from typing import Callable, FrozenSet, List, Optional, Tuple
 from ...application.dtos.collaboration_dtos import ResourceRef
 from ...application.events.app_events import AppEvents
-from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.file_state import normalize_path
+from ...domain.entities.identity_refs import BidRef
 
 MAIN_PLAN_SURFACE_ID = "main-plan"
 

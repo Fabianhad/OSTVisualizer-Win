@@ -1,13 +1,11 @@
 import json
 import logging
-from types import SimpleNamespace
 import sqlite3
 import unittest
 from contextlib import contextmanager
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from PySide6 import QtWidgets
-from shiboken6 import delete
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     ConcurrencyToken,
@@ -31,11 +29,11 @@ from ost_visualizer.application.use_cases.project.save_takeoffs_condition_use_ca
     SaveTakeoffsConditionUseCase,
 )
 from ost_visualizer.domain.entities.annotation import (
-    BidAnnotation,
     ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
 )
-from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.presentation.components import conditions_sidebar as sidebar_module
 from ost_visualizer.presentation.handlers.condition_action_handler import (
@@ -48,6 +46,8 @@ from ost_visualizer.presentation.managers.ui_access_manager import (
     PlanSurfaceAccessState,
 )
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
+from PySide6 import QtWidgets
+from shiboken6 import delete
 from tests import test_condition_object_selection as selection_tests
 from tests.test_infrastructure_lifecycle import _SqliteCursorWrapper, _SqliteSchema
 from tests.test_mdb_sql_behavior_parity import _CapturedQueueProvider
@@ -605,11 +605,11 @@ class ConditionDuplicateTransactionTests(unittest.TestCase):
         from ost_visualizer.application.services.database_concurrency_token_service import (
             DatabaseConcurrencyTokenService,
         )
-        from ost_visualizer.application.services.local_draft_registry import (
-            LocalDraftRegistry,
-        )
         from ost_visualizer.application.services.database_session_registry import (
             DatabaseSessionRegistry,
+        )
+        from ost_visualizer.application.services.local_draft_registry import (
+            LocalDraftRegistry,
         )
 
         self.db = sqlite3.connect(":memory:")

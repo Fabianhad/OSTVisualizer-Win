@@ -1,12 +1,12 @@
 from typing import Dict, List, Optional, Protocol
-from ..dtos.annotation_caption_dto import AnnotationCaptionSettingsDto
-from ..dtos.export_dto import ExportProgressCallback, ExportResultDto
 from ...domain.entities.annotation import BidAnnotation
 from ...domain.entities.config import Config
 from ...domain.entities.elevation_callout import (
     DEFAULT_ELEVATION_CALLOUT_SETTINGS,
     ElevationCalloutSettings,
 )
+from ..dtos.annotation_caption_dto import AnnotationCaptionSettingsDto
+from ..dtos.export_dto import ExportProgressCallback, ExportResultDto
 from ..dtos.page_export_data_dto import PageExportData
 
 

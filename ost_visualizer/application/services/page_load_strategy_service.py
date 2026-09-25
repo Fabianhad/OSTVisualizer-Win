@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict
-from ...application.interfaces.i_page_size_provider import IPageSizeProvider
 from ...application.interfaces.i_page_load_strategy_service import ILoadStrategy
+from ...application.interfaces.i_page_size_provider import IPageSizeProvider
 from ...application.render_quality import baseline_render_scale
 from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.entities.page import Page

@@ -4,6 +4,7 @@ from ....domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
     AnnotationCaptionId,
 )
+from ...components.color_button import ColorButton
 from ...config import (
     COMPACT_SPACING,
     OPTIONS_GROUP_ELEVATION_CALLOUTS,
@@ -19,7 +20,6 @@ from ...config import (
     OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
     RELAXED_SPACING,
 )
-from ...components.color_button import ColorButton
 
 
 class ExportTab(QtWidgets.QWidget):

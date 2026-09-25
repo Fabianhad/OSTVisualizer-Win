@@ -7,11 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.collaboration_dtos import (
-    MutationOutcomeStatus,
     EditLeaseHandle,
     EditLeaseResult,
+    MutationOutcomeStatus,
     QueuedMutationResult,
 )
 from ost_visualizer.application.services.project_write_service import (
@@ -29,6 +28,7 @@ from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
+from PySide6 import QtWidgets
 
 
 class SetScaleRepeatedApplyTests(unittest.TestCase):

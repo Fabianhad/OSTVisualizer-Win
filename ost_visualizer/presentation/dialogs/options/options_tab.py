@@ -1,4 +1,5 @@
 from PySide6 import QtGui, QtWidgets
+from ...components.color_button import ColorButton
 from ...config import (
     COMPACT_SPACING,
     NO_MARGINS,
@@ -48,7 +49,6 @@ from ...config import (
     OPTIONS_SNAP_THRESHOLD_MIN,
     RELAXED_SPACING,
 )
-from ...components.color_button import ColorButton
 from .components import disabled_check
 
 

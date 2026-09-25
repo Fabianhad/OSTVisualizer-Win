@@ -2,8 +2,8 @@ import inspect
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+from PySide6 import QtCore, QtGui, QtWidgets
 
 
 def _app():

@@ -13,22 +13,22 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 import pywintypes
-from ost_visualizer.application.use_cases.license.activate_license_use_case import (
-    ActivateLicenseUseCase,
-)
-from ost_visualizer.application.use_cases.license.validate_license_use_case import (
-    ValidateLicenseUseCase,
-)
-from ost_visualizer.application.use_cases.license.utils.license_use_case import (
-    ERROR_CONTRACT,
-    ERROR_INVALID_HWID,
-)
-from ost_visualizer.application.dtos.license_dto import LicenseOperationStatus
 from ost_visualizer.application.dtos.license_activation_identity_dto import (
     LICENSE_ACTIVATION_IDENTITY_VERSION,
     LicenseActivationIdentityDto,
     LicenseActivationIdentityError,
     WindowsJoinType,
+)
+from ost_visualizer.application.dtos.license_dto import LicenseOperationStatus
+from ost_visualizer.application.use_cases.license.activate_license_use_case import (
+    ActivateLicenseUseCase,
+)
+from ost_visualizer.application.use_cases.license.utils.license_use_case import (
+    ERROR_CONTRACT,
+    ERROR_INVALID_HWID,
+)
+from ost_visualizer.application.use_cases.license.validate_license_use_case import (
+    ValidateLicenseUseCase,
 )
 from ost_visualizer.domain.aggregates.license_aggregate import LicenseAggregate
 from ost_visualizer.domain.entities.license import License, LicenseStatus

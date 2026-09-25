@@ -1,7 +1,5 @@
 import unittest
 from types import SimpleNamespace
-from PySide6 import QtCore, QtGui, QtTest, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.builders.component_builder import (
@@ -21,6 +19,8 @@ from ost_visualizer.presentation.components.toolbar_overflow import (
     add_overflow_widget,
 )
 from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import with_workspace_state
 
 PageSettingsBar = with_workspace_state(PageSettingsBar)

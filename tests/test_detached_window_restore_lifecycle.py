@@ -1,13 +1,11 @@
-import logging
 import json
+import logging
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete, isValid
+from pathlib import Path
 from ost_visualizer.domain.entities.workspace_state import (
     DetachedWindowState,
     WorkspaceState,
@@ -19,6 +17,8 @@ from ost_visualizer.presentation.windows.annotation_view_window import (
     AnnotationViewWindow,
 )
 from ost_visualizer.presentation.windows.view_window import ViewWindow
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete, isValid
 
 
 class DetachedWindowRestoreLifecycleTests(unittest.TestCase):

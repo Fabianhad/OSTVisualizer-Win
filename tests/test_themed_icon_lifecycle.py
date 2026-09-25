@@ -2,8 +2,8 @@ import gc
 import unittest
 import weakref
 import shiboken6
-from PySide6 import QtGui, QtWidgets
 from ost_visualizer.presentation.utils import themed_icon
+from PySide6 import QtGui, QtWidgets
 
 
 class ThemedIconLifecycleTests(unittest.TestCase):

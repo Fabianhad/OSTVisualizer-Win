@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
-from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
+from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.folder import Folder

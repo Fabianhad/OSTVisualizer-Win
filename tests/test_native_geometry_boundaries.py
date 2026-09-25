@@ -1,6 +1,8 @@
 import unittest
-from ost_visualizer.presentation.visualization.core.geometry import ost_earcut
-from ost_visualizer.presentation.visualization.core.geometry import ost_linear_geom
+from ost_visualizer.presentation.visualization.core.geometry import (
+    ost_earcut,
+    ost_linear_geom,
+)
 
 
 class NativeGeometryBoundaryTests(unittest.TestCase):

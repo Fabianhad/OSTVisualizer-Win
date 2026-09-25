@@ -2,14 +2,6 @@ import datetime
 from typing import Any, Callable, Dict, Optional, Set, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
-from ...database.settings_cardinality import (
-    fetch_optional_global_settings_row,
-    normalize_next_bid_number,
-    persist_next_bid_number,
-    require_writable_bid_number_allocator,
-)
-from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
-from ..raw_bid_integrity import BID_RELATIONSHIPS
 from ...database.connection_wrapper import ConnectionWrapper
 from ...database.master_data_identity import (
     MasterDataCandidateIndex,
@@ -20,6 +12,14 @@ from ...database.master_data_identity import (
     require_unique_master_data_uids,
     resolve_master_data_candidate,
 )
+from ...database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+    persist_next_bid_number,
+    require_writable_bid_number_allocator,
+)
+from ..raw_bid_integrity import BID_RELATIONSHIPS
+from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
 from .constants import BID_TABLES_WRITE_ORDER, NUMERIC_TYPE_SUBSTRINGS
 from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import encode_text_blob

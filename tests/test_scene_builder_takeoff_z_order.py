@@ -3,6 +3,24 @@ import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
+from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
+    SelectionManagerMixin,
+)
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    FOREGROUND_OVERLAY_Z,
+    PAGE_IMAGE_Z,
+    PAGE_VISIBLE_FRAME_Z,
+    PAPER_HIGHLIGHT_Z,
+    TAKEOFF_BODY_Z,
+)
+from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+    AnnotationItemRenderer,
+)
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
@@ -11,24 +29,6 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsTextItem,
-)
-from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
-from ost_visualizer.domain.entities.annotation import BidAnnotation
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
-    SelectionManagerMixin,
-)
-from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
-from ost_visualizer.presentation.scene.plan_view_z_order import (
-    FOREGROUND_OVERLAY_Z,
-    PAGE_IMAGE_Z,
-    PAGE_VISIBLE_FRAME_Z,
-    PAPER_HIGHLIGHT_Z,
-    TAKEOFF_BODY_Z,
-)
-from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
-    AnnotationItemRenderer,
 )
 
 

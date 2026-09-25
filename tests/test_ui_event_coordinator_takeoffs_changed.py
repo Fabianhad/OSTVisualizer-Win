@@ -4,8 +4,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
-from shiboken6 import delete
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     CollaborationStatus,
@@ -17,6 +15,13 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ResourceRef,
     SynchronizationState,
 )
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    CollaborationResourceFamily,
+    CollaborationResourceType,
+)
+from ost_visualizer.application.dtos.conflict_resolution_dtos import (
+    ConflictResolutionAction,
+)
 from ost_visualizer.application.dtos.mesh_geometry_dto import (
     MeshGeometry,
     MeshSceneIdentity,
@@ -25,22 +30,16 @@ from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
 )
 from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.application.dtos.collaboration_resource_catalog import (
-    CollaborationResourceFamily,
-    CollaborationResourceType,
-)
-from ost_visualizer.application.dtos.conflict_resolution_dtos import (
-    ConflictResolutionAction,
-)
-from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
 )
+from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_NAMED_VIEW,
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
 )
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
@@ -48,7 +47,6 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -80,6 +78,8 @@ from ost_visualizer.presentation.services.bid_clipboard_service import (
     BidClipboardService,
 )
 from ost_visualizer.presentation.utils.qt_callback_bridge import QtVoidCallback
+from PySide6 import QtWidgets
+from shiboken6 import delete
 
 
 class FakeUiState:
@@ -3768,21 +3768,21 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
         configure_mesh_state(coordinator, view_index=0)
         self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        from ost_visualizer.presentation.components.conditions_sidebar import (
-            ConditionsSidebar,
-        )
-        from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
-            SidebarCoordinator,
-        )
-        from ost_visualizer.domain.entities.bid import Bid
-        from ost_visualizer.domain.services.condition_quantity_service import (
-            compute_page_quantities,
-        )
         from ost_visualizer.application.dtos.condition_summary_dtos import (
             ConditionSummaryGrouping,
         )
         from ost_visualizer.application.use_cases.project.condition_summary_service import (
             ConditionSummaryService,
+        )
+        from ost_visualizer.domain.entities.bid import Bid
+        from ost_visualizer.domain.services.condition_quantity_service import (
+            compute_page_quantities,
+        )
+        from ost_visualizer.presentation.components.conditions_sidebar import (
+            ConditionsSidebar,
+        )
+        from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+            SidebarCoordinator,
         )
 
         widget = ConditionsSidebar(None)
@@ -3971,21 +3971,21 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
         configure_mesh_state(coordinator, view_index=0)
         self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        from ost_visualizer.presentation.components.conditions_sidebar import (
-            ConditionsSidebar,
-        )
-        from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
-            SidebarCoordinator,
-        )
-        from ost_visualizer.domain.entities.bid import Bid
-        from ost_visualizer.domain.services.condition_quantity_service import (
-            compute_page_quantities,
-        )
         from ost_visualizer.application.dtos.condition_summary_dtos import (
             ConditionSummaryGrouping,
         )
         from ost_visualizer.application.use_cases.project.condition_summary_service import (
             ConditionSummaryService,
+        )
+        from ost_visualizer.domain.entities.bid import Bid
+        from ost_visualizer.domain.services.condition_quantity_service import (
+            compute_page_quantities,
+        )
+        from ost_visualizer.presentation.components.conditions_sidebar import (
+            ConditionsSidebar,
+        )
+        from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+            SidebarCoordinator,
         )
 
         widget = ConditionsSidebar(None)
@@ -4303,14 +4303,14 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._pending_hotlink_named_view = None
         coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
         configure_mesh_state(coordinator, view_index=0)
+        from ost_visualizer.domain.services.condition_quantity_service import (
+            compute_page_quantities,
+        )
         from ost_visualizer.presentation.components.conditions_sidebar import (
             ConditionsSidebar,
         )
         from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
             SidebarCoordinator,
-        )
-        from ost_visualizer.domain.services.condition_quantity_service import (
-            compute_page_quantities,
         )
 
         widget = ConditionsSidebar(None)
@@ -4323,8 +4323,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.project_data.selected_page_uids = ["page-1", "page-2"]
         from ost_visualizer.domain.entities.bid import Bid
         from ost_visualizer.presentation.components.page_combo import (
-            PageComboBox,
             _ITEM_ROLE_PRECHECK_ICON,
+            PageComboBox,
         )
 
         pages = PageComboBox()

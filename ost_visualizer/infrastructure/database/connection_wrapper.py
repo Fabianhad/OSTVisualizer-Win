@@ -1,6 +1,6 @@
 from __future__ import annotations
-import pyodbc
 from typing import Protocol
+import pyodbc
 
 
 class ICursorOwner(Protocol):

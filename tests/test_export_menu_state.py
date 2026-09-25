@@ -2,11 +2,11 @@ import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.actions.action_ids import (
     ACTION_SHOW_ORIGINAL_IMAGE,
     ACTION_SHOW_OVERLAY_IMAGE,
 )
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.interfaces.i_workspace_shell import (
     CurrentAreaSelectionContext,
 )

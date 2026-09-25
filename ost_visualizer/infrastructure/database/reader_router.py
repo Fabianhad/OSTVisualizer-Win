@@ -1,6 +1,6 @@
 from __future__ import annotations
-import logging
 import contextvars
+import logging
 from contextlib import contextmanager
 from typing import Optional
 from ...application.interfaces.i_credential_store import ICredentialStore

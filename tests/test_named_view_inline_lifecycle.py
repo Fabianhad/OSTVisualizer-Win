@@ -1,13 +1,13 @@
 import unittest
 from unittest.mock import patch
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete, isValid
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     NAMED_VIEW_LABEL_ITEM_KIND,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete, isValid
 from tests.test_viewer_sync_coordinator_overlay_refresh import (
     FakeAnnotationRenderer,
     FakeColorService,

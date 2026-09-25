@@ -1,6 +1,6 @@
 import unittest
-from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities import shape as shapes
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,

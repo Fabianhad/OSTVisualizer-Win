@@ -7,15 +7,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import ntsecuritycon
 import pyodbc
 import pythoncom
-import win32com.client
-import win32security
 import win32api
+import win32com.client
 import win32con
-import ntsecuritycon
-from PySide6 import QtWidgets
-from shiboken6 import delete
+import win32security
 from ost_visualizer.application.interfaces.i_database_maintenance import (
     DatabaseMaintenanceResult,
 )
@@ -44,6 +42,8 @@ from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialo
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
+from PySide6 import QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

@@ -4,24 +4,24 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 from PySide6 import QtWidgets
 from PySide6.QtCore import QByteArray, Qt
-from ...application.dtos.page_view_dto import PageViewDto
-from ...application.dtos.collaboration_resource_catalog import (
-    CollaborationResourceFamily,
-    resource_families_affect_page,
+from ...application.condition_change_impact import (
+    condition_changes_require_plan_refresh,
 )
 from ...application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
 )
-from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
+from ...application.dtos.collaboration_resource_catalog import (
+    CollaborationResourceFamily,
+    resource_families_affect_page,
+)
+from ...application.dtos.page_view_dto import PageViewDto
 from ...application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
     RemoteProjectionToken,
 )
+from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ...application.events.app_events import AppEvents
-from ...application.condition_change_impact import (
-    condition_changes_require_plan_refresh,
-)
 from ...application.interfaces.i_color_service import IColorService
 from ...application.interfaces.i_coordinate_transformer_factory import (
     ICoordinateTransformerFactory,
@@ -32,24 +32,21 @@ from ...application.interfaces.i_infrastructure_service_provider import (
 from ...application.interfaces.i_shutdown_aware import IShutdownAware
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.annotation_view import AnnotationView
-from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.file_state import normalize_path
+from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.workspace_state import DetachedWindowState
 from ...domain.repositories.i_annotation_view_repository import (
     IAnnotationViewRepository,
 )
 from ...domain.services.project_data_service import ProjectDataService
+from ..coordinators.remote_plan_update_pipeline import RemotePlanUpdatePipeline
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.undo_redo_service import UndoRedoService
-from ..utils.qt_callback_bridge import QtVoidCallback
 from ..utils.dialog import delete_later_if_valid
+from ..utils.qt_callback_bridge import QtVoidCallback
 from ..visualization.utils.source_signature import invalidate_source_files
-from ..coordinators.remote_plan_update_pipeline import RemotePlanUpdatePipeline
-from .ui_access_manager import (
-    PlanSurfaceAccessContext,
-    PlanSurfaceAccessState,
-)
+from .ui_access_manager import PlanSurfaceAccessContext, PlanSurfaceAccessState
 
 
 def _collect_pages_from_bid(bid) -> List[Tuple[str, str]]:

@@ -19,15 +19,15 @@ from ..application.use_cases.project.import_project_files_from_args_use_case imp
     ProjectImportCurrentTarget,
     ProjectImportTarget,
 )
-from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.annotation import (
     ANNOTATION_TYPE_DIMENSION,
     ANNOTATION_TYPE_HIGHLIGHT,
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_TEXT,
 )
-from ..domain.entities.font_definition import FontDefinition
+from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.file_state import normalize_path
+from ..domain.entities.font_definition import FontDefinition
 from ..domain.entities.identity_refs import BidRef
 from ..domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_NAME,
@@ -82,7 +82,6 @@ from .coordinators.event_coordinator import EventCoordinator
 from .coordinators.license_ui_coordinator import LicenseUICoordinator
 from .coordinators.ui_event_coordinator import UIEventCoordinator
 from .coordinators.workspace_state_coordinator import WorkspaceStateCoordinator
-from .utils.persistent_header import PersistentHeaderController
 from .dialogs.create_database_dialog import CreateDatabaseDialog
 from .dialogs.update_dialog import UpdateDialog
 from .handlers.cover_sheet_handler import CoverSheetHandler
@@ -90,12 +89,12 @@ from .handlers.export_handler import ExportHandler
 from .handlers.file_operation_handler import FileOperationHandler
 from .handlers.import_handler import ImportHandler
 from .handlers.project_write_handler import ProjectWriteHandler
+from .interfaces.i_workspace_shell import CurrentAreaSelectionContext
 from .managers.app_config_presentation_manager import AppConfigPresentationManager
 from .managers.deferred_persistence_manager import DeferredPersistenceManager
 from .managers.shortcut_manager import ShortcutManager
 from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
-from .interfaces.i_workspace_shell import CurrentAreaSelectionContext
 from .services.bid_clipboard_service import BidClipboardService
 from .services.mcp_context_bridge import McpContextBridge
 from .utils.annotation_defaults import (
@@ -113,6 +112,7 @@ from .utils.annotation_defaults import (
 from .utils.annotation_style_controls import apply_annotation_tool_icon_color
 from .utils.dialog import delete_later_if_valid
 from .utils.messagebox import show_critical, show_info, show_warning
+from .utils.persistent_header import PersistentHeaderController
 from .utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from .utils.qt_window_icon_provider import QtWindowIconProvider
 from .utils.themed_icon import rebuild_all_icons

@@ -1,10 +1,9 @@
 import math
-from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from xml.etree.ElementTree import Element
-from PySide6.QtCore import QPointF
 from ost_visualizer.domain.entities.overlay import overlay_units_per_sheet_inch
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
@@ -16,13 +15,14 @@ from ost_visualizer.infrastructure.mdb.components.overlay_rect import (
     parse_overlay_rect_storage,
 )
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
+from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
     PageRenderer,
 )
-from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
 )
+from PySide6.QtCore import QPointF
 
 CALIBRATED_64_RECT = (-1.103146, 0.0, 2686.161423, 1919.474692)
 CALIBRATED_96_RECT = (0.0, 0.0, 4031.370174, 2879.550124)

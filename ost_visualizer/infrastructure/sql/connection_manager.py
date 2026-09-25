@@ -7,13 +7,13 @@ from ...domain.entities.database_descriptor import (
     SqlAuthenticationMode,
     SqlServerDatabaseLocation,
 )
+from ..database.connection_wrapper import CursorLease
 from .errors import (
     SqlErrorCode,
     SqlErrorDetails,
     SqlInfrastructureError,
     classify_pyodbc_error,
 )
-from ..database.connection_wrapper import CursorLease
 
 _REQUIRED_DRIVER = "ODBC Driver 18 for SQL Server"
 

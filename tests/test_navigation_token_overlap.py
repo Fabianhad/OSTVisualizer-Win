@@ -1,6 +1,6 @@
-from copy import deepcopy
-import unittest
 import threading
+import unittest
+from copy import deepcopy
 from unittest.mock import Mock
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ConcurrencyToken,

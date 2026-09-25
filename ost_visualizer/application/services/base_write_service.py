@@ -4,8 +4,8 @@ from typing import Callable, Optional
 from ..dtos.collaboration_dtos import (
     CollaborationMutationType,
     DatabaseMutationRequest,
-    ExpectedResourceVersion,
     DatabaseMutationResult,
+    ExpectedResourceVersion,
     MutationOutcomeStatus,
     ResourceRef,
     canonical_mutation_request_hash,
@@ -15,10 +15,10 @@ from ..interfaces.i_database_mutation_executor import (
     IDatabaseMutationExecutor,
     IMutationRecorder,
 )
-from ..interfaces.i_mdb_connection_manager import DatabaseConnectionUnavailableError
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
-from .database_concurrency_token_service import DatabaseConcurrencyTokenService
+from ..interfaces.i_mdb_connection_manager import DatabaseConnectionUnavailableError
 from .database_capability_service import DatabaseCapabilityService
+from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .synchronization_conflict_publisher import publish_synchronization_conflict
 
 

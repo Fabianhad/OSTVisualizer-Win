@@ -1,5 +1,6 @@
 from __future__ import annotations
 import threading
+from ...domain.entities.database_descriptor import DatabaseBackend
 from ..dtos.collaboration_dtos import (
     CollaborationStatus,
     ResourceRef,
@@ -9,7 +10,6 @@ from ..dtos.collaboration_resource_catalog import CollaborationResourceType
 from ..interfaces.i_database_catalog import DatabaseCatalogError
 from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
 from ..interfaces.i_database_permission_probe import IDatabasePermissionProbe
-from ...domain.entities.database_descriptor import DatabaseBackend
 
 
 class DatabaseCapabilityService:

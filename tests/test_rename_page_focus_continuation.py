@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import patch
+from ost_visualizer.presentation.dialogs.rename_page_dialog import (
+    PageRenameTarget,
+    RenamePageDialog,
+)
 from PySide6 import QtGui, QtWidgets
 from shiboken6 import delete
-from ost_visualizer.presentation.dialogs.rename_page_dialog import (
-    RenamePageDialog,
-    PageRenameTarget,
-)
 
 
 class RenamePageFocusContinuationTests(unittest.TestCase):

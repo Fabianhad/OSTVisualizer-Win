@@ -2,8 +2,8 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
-from .page_info import BidPageInfo
 from .overlay import OST_PAGE_COORDINATE_DPI, overlay_units_per_sheet_inch
+from .page_info import BidPageInfo
 from .takeoff import Takeoff
 
 

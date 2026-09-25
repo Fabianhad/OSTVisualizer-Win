@@ -1,10 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-from ost_visualizer.application.dtos.export_dto import (
-    ExportErrorCode,
-    ExportRequestDto,
-)
+from ost_visualizer.application.dtos.export_dto import ExportErrorCode, ExportRequestDto
 from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.services.project_data_service import CollectedTakeoffsResult

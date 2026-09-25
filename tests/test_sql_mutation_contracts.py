@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 from ost_visualizer.application.dtos.collaboration_dtos import (
     CollaborationMutationType,
-    DatabaseMutationResult,
     DatabaseMutationRequest,
+    DatabaseMutationResult,
     DurableOperationResult,
     MutationOutcomeStatus,
     PageSettingsPayload,
@@ -22,11 +22,11 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     QueuedMutationResult,
     ResourceRef,
 )
-from ost_visualizer.application.services.sql_collaboration_coordinator import (
-    SqlCollaborationCoordinator,
-)
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
+)
+from ost_visualizer.application.services.sql_collaboration_coordinator import (
+    SqlCollaborationCoordinator,
 )
 from ost_visualizer.infrastructure.persistence.repositories.json_pending_sql_operation_repository import (
     JsonPendingSqlOperationRepository,

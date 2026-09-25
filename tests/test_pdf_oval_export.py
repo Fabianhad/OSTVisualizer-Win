@@ -7,22 +7,22 @@ import zlib
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication, QGraphicsPathItem
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
-from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
-from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
 from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
     SelectionManagerMixin,
+)
+from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
+from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+    AnnotationItemRenderer,
 )
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
     calculate_annotation_geometry,
 )
-from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
-    AnnotationItemRenderer,
-)
+from PySide6.QtWidgets import QApplication, QGraphicsPathItem
 
 
 class _ColorService:

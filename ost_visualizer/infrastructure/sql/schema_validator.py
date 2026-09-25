@@ -1,14 +1,11 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass
-from ..database.schema_model import (
-    DatabaseSchemaModel,
-    sql_server_type_for_access,
-)
+from ..database.schema_model import DatabaseSchemaModel, sql_server_type_for_access
 from .schema_definition import (
-    SQL_SCHEMA_V1,
     SQL_CHANGE_TRACKING_AUTO_CLEANUP_REQUIREMENT,
     SQL_CHANGE_TRACKING_RETENTION_DAYS,
+    SQL_SCHEMA_V1,
     SQL_SNAPSHOT_ISOLATION_REQUIREMENT,
     SqlColumnDefinition,
     SqlSchemaDefinition,

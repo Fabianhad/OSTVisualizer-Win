@@ -3,6 +3,22 @@ from ..entities.condition import Condition
 from ..entities.takeoff import Takeoff
 
 
+def expand_takeoff_uids_with_descendants(
+    takeoffs: Iterable[Takeoff], selected_uids: Iterable[str]
+) -> set[str]:
+    children: dict[str, list[str]] = {}
+    for takeoff in takeoffs:
+        children.setdefault(str(takeoff.parent_uid), []).append(str(takeoff.uid))
+    expanded = {str(uid) for uid in selected_uids}
+    pending = list(expanded)
+    while pending:
+        for uid in children.get(pending.pop(), ()):
+            if uid not in expanded:
+                expanded.add(uid)
+                pending.append(uid)
+    return expanded
+
+
 def is_takeoff_visible(takeoff: Takeoff, bid_conditions: Dict[str, Condition]) -> bool:
     return takeoff.is_visible(bid_conditions)
 

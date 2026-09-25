@@ -1,8 +1,8 @@
 import unittest
-from PySide6.QtGui import QColor
 from ost_visualizer.presentation.components.plan_view.components.handle_style import (
     handle_colors_for_background,
 )
+from PySide6.QtGui import QColor
 
 
 class PlanViewHandleStyleTests(unittest.TestCase):

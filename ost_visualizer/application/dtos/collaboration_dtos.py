@@ -6,12 +6,6 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from functools import total_ordering
 from typing import Any, Generic, Optional, TypeVar
-from .collaboration_resource_catalog import (
-    parse_annotation_resource_id,
-    resource_definition,
-)
-from .insert_annotation_spec_dto import InsertAnnotationSpec
-from .insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
@@ -21,6 +15,12 @@ from ...domain.entities.employee import Employee, PayClass
 from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.hierarchy_data import HierarchyFileEntry
 from ...domain.entities.layer import BidLayer
+from .collaboration_resource_catalog import (
+    parse_annotation_resource_id,
+    resource_definition,
+)
+from .insert_annotation_spec_dto import InsertAnnotationSpec
+from .insert_takeoff_spec_dto import InsertTakeoffSpec
 
 COLLABORATION_STALE_SECONDS = 45
 COLLABORATION_LOCK_SECONDS = 45

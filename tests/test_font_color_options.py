@@ -1,15 +1,13 @@
-import unittest
 import os
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.font_definition import FontDefinition
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.workspace_state import TakeoffWorkspaceState
 from ost_visualizer.infrastructure.persistence.repositories.json_config_repository import (
     JsonConfigRepository,
@@ -38,6 +36,8 @@ from ost_visualizer.presentation.utils.font_catalog import (
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 
 
 class _ConfigRepository:

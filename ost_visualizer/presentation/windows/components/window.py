@@ -13,13 +13,11 @@ from ....application.dtos.collaboration_dtos import (
     QueuedMutationResult,
     ResourceRef,
 )
-from ....application.dtos.collaboration_resource_catalog import (
-    annotation_resource_id,
-)
-from ....application.events.app_events import AppEvents
+from ....application.dtos.collaboration_resource_catalog import annotation_resource_id
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
+from ....application.events.app_events import AppEvents
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ....domain.entities.annotation import (
@@ -79,7 +77,6 @@ from ...utils.annotation_defaults import (
     get_annotation_style_for_tool,
     set_annotation_style_for_tool,
 )
-from ...utils.dialog import delete_later_if_valid
 from ...utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
     plan_named_view_hotlink_delete,
@@ -93,6 +90,7 @@ from ...utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,
     create_annotation_tool_split_button,
 )
+from ...utils.dialog import delete_later_if_valid
 from ...utils.messagebox import confirm
 from ...utils.named_view_focus import focus_plan_view_on_named_view
 from ...utils.named_view_validation import (

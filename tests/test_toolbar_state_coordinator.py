@@ -1,19 +1,18 @@
 import unittest
-from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.config import (
     TAB_INDEX_PROJECTS,
     TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
 )
-from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
-    ToolbarStateCoordinator,
-)
 from ost_visualizer.presentation.coordinators.placement_coordinator import (
     PlacementCoordinator,
 )
-from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
     PlanSurfaceAccessState,
@@ -23,6 +22,7 @@ from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_PLACE,
     CURSOR_MODE_SELECT,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
 
 
 def _app():

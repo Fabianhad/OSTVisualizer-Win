@@ -1,11 +1,11 @@
 import math
 import unittest
 from types import SimpleNamespace
+from ost_visualizer.domain.entities import shape as shapes
+from ost_visualizer.domain.entities.config import Config
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainterPath
 from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsPathItem
-from ost_visualizer.domain.entities import shape as shapes
-from ost_visualizer.domain.entities.config import Config
 
 SCREEN_PX_PER_OST = 8.0
 
@@ -70,10 +70,10 @@ class FakePDFRenderer:
         pass
 
 
-from ost_visualizer.presentation.components.plan_view.components import placement_mode
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.plan_view.components import placement_mode
 
 _ORIGINAL_SNAP_INDEX = placement_mode.SnapIndex
 _ORIGINAL_PDF_RENDERER = placement_mode.ost_pdf.PDFRenderer

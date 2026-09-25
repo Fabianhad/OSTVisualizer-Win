@@ -1,9 +1,10 @@
 import unittest
-from unittest.mock import MagicMock, Mock, patch
-from types import SimpleNamespace
 from contextlib import nullcontext
-from PySide6 import QtCore
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
 from ost_visualizer.application.services.project_read_service import ProjectReadService
+from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
+from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.infrastructure.mdb.components.settings_reader import (
     SettingsReaderMixin,
@@ -11,19 +12,17 @@ from ost_visualizer.infrastructure.mdb.components.settings_reader import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
-from PySide6 import QtWidgets
-from shiboken6 import delete
-from ost_visualizer.domain.entities.employee import Employee, PayClass
-from ost_visualizer.domain.entities.cover_sheet import JobStatus, CoverSheetData
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
 from ost_visualizer.presentation.dialogs.employee_detail_dialog import (
     EmployeeDetailDialog,
 )
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
+from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
-from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

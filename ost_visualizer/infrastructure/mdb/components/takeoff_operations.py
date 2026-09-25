@@ -214,7 +214,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
         curve: int,
     ) -> bool:
         try:
-            position_bytes = encode_position(position)
+            position_bytes = encode_position(
+                position, preserve_indices=frozenset(range(len(position)))
+            )
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidTakeoffs", ("UID", "Position"))
@@ -250,7 +252,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 for takeoff_uid, position in positions:
                     cursor.execute(
                         "UPDATE [BidTakeoffs] SET [Position]=? WHERE [UID]=?",
-                        encode_position(position),
+                        encode_position(
+                            position, preserve_indices=frozenset(range(len(position)))
+                        ),
                         int(takeoff_uid),
                     )
                 return True
@@ -473,7 +477,10 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                     cursor, schema, "BidTakeoffs", len(takeoff_specs)
                 )
                 for spec, new_uid in zip(takeoff_specs, allocated_uids):
-                    position_bytes = encode_position(spec.position)
+                    position_bytes = encode_position(
+                        spec.position,
+                        preserve_indices=frozenset(range(len(spec.position))),
+                    )
                     area_val = (
                         None
                         if is_unassigned_area_uid(spec.area_uid)

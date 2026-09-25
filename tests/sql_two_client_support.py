@@ -240,7 +240,6 @@ class _PendingOperationJournal:
 
 
 def _construct_independent_application_stack() -> None:
-    from PySide6.QtCore import QCoreApplication
     from ost_visualizer.application.services.conflict_resolution_service import (
         ConflictResolutionService,
     )
@@ -285,14 +284,13 @@ def _construct_independent_application_stack() -> None:
     from ost_visualizer.infrastructure.sql.connection_manager import (
         SqlConnectionManager,
     )
-    from ost_visualizer.infrastructure.sql.permissions import (
-        SqlDatabasePermissionProbe,
-    )
+    from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionProbe
     from ost_visualizer.infrastructure.sql.remote_change_reader import (
         SqlRemoteChangeReader,
     )
     from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
     from ost_visualizer.presentation.utils.qt_callback_bridge import QtCallbackBridge
+    from PySide6.QtCore import QCoreApplication
 
     application = QCoreApplication.instance() or QCoreApplication([])
     credentials = _InMemoryCredentialAdapter()

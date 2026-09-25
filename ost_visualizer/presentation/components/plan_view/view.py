@@ -66,7 +66,6 @@ from ...interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ...interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ...managers.icon_manager import IconId, IconManager
 from ...modes.cursor import (
-    EDITING_CURSOR_MODES,
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_MOVE_OVERLAY,
     CURSOR_MODE_MOVE_OVERLAY_HANDLE,
@@ -76,9 +75,9 @@ from ...modes.cursor import (
     CURSOR_MODE_SELECT,
     CURSOR_MODE_SLOPE_ROTATE,
     CURSOR_MODE_ZOOM,
+    EDITING_CURSOR_MODES,
     PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
 )
-from ...scene.scene_builder import SceneBuilder
 from ...scene.plan_view_z_order import (
     ANNOTATION_BODY_Z,
     NAMED_VIEW_LABEL_BACKGROUND_Z,
@@ -89,6 +88,7 @@ from ...scene.plan_view_z_order import (
     PDF_TEXT_SELECTION_Z,
     overlay_visual_z,
 )
+from ...scene.scene_builder import SceneBuilder
 from ...utils.annotation_defaults import (
     annotation_default_style,
     text_annotation_properties,

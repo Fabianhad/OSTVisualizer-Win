@@ -1,4 +1,4 @@
-from typing import Protocol, ContextManager
+from typing import ContextManager, Protocol
 
 
 class DatabaseConnectionUnavailableError(RuntimeError):

@@ -5,9 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
-from PySide6.QtTest import QTest
-from shiboken6 import delete
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     EditLeaseHandle,
@@ -36,10 +33,10 @@ from ost_visualizer.presentation.config import (
     CDNTYPE_WINDOW_WIDTH,
     EMPLOYEES_WINDOW_HEIGHT,
     EMPLOYEES_WINDOW_WIDTH,
-    LAYERS_WINDOW_HEIGHT,
-    LAYERS_WINDOW_WIDTH,
     JOB_STATUSES_WINDOW_HEIGHT,
     JOB_STATUSES_WINDOW_WIDTH,
+    LAYERS_WINDOW_HEIGHT,
+    LAYERS_WINDOW_WIDTH,
     OPEN_FILE_HEIGHT,
     OPEN_FILE_WIDTH,
     PAYROLL_CLASS_WINDOW_HEIGHT,
@@ -48,15 +45,15 @@ from ost_visualizer.presentation.config import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
-from ost_visualizer.presentation.dialogs.employee_detail_dialog import (
-    EmployeeDetailDialog,
-)
 from ost_visualizer.presentation.dialogs.areas_dialog import (
     BidAreaPickerDialog,
     BidAreasDialog,
 )
 from ost_visualizer.presentation.dialogs.condition_types_dialog import (
     ConditionTypesDialog,
+)
+from ost_visualizer.presentation.dialogs.employee_detail_dialog import (
+    EmployeeDetailDialog,
 )
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
 from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
@@ -74,6 +71,9 @@ from ost_visualizer.presentation.utils.deferred_dialog_save import (
     DeferredDialogSaveController,
 )
 from ost_visualizer.presentation.utils.tree_widget import DEFAULT_TREE_ROW_HEIGHT
+from PySide6 import QtCore, QtWidgets
+from PySide6.QtTest import QTest
+from shiboken6 import delete
 from tests.workspace_state_test_support import (
     make_workspace_state_model,
     with_workspace_state,
@@ -3730,8 +3730,8 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
     def test_layer_delete_confirmation_uses_current_annotation_ownership(self):
         from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
         from ost_visualizer.domain.entities.annotation import (
-            BidAnnotation,
             ANNOTATION_TYPE_TEXT,
+            BidAnnotation,
         )
         from ost_visualizer.domain.services.project_data_service import (
             ProjectDataService,

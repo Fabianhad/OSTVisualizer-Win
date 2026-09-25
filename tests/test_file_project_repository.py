@@ -9,11 +9,11 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyFileEntry,
     HierarchyProjectInfo,
 )
-from ost_visualizer.infrastructure.persistence.repositories import (
-    file_project_repository,
-)
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
     BidDataReaderMixin,
+)
+from ost_visualizer.infrastructure.persistence.repositories import (
+    file_project_repository,
 )
 
 FileProjectRepository = file_project_repository.FileProjectRepository

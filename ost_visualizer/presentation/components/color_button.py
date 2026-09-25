@@ -1,7 +1,7 @@
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
-from ..utils.qt_lifecycle import delete_later_if_valid
 from ..utils.color_swatch import rounded_color_swatch
+from ..utils.qt_lifecycle import delete_later_if_valid
 from ..utils.windows import remove_minimize_maximize
 
 _COLOR_PREVIEW_SIZE = 24

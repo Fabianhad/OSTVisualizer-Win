@@ -1,9 +1,9 @@
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 
 
 def _startup_probe(style, platform):
@@ -11,14 +11,14 @@ def _startup_probe(style, platform):
     import ctypes
     from ctypes import wintypes
     from unittest.mock import Mock, patch
-    from PySide6 import QtCore, QtWidgets
-    from shiboken6 import delete
     from ost_visualizer import main as bootstrap
     from ost_visualizer.presentation.main_window import MainWindow
     from ost_visualizer.presentation.windows.annotation_view_window import (
         AnnotationViewWindow,
     )
     from ost_visualizer.presentation.windows.view_window import ViewWindow
+    from PySide6 import QtCore, QtWidgets
+    from shiboken6 import delete
 
     class ProbeComplete(Exception):
         pass

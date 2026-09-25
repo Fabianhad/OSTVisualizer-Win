@@ -3,18 +3,10 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
-from ...application.dtos.condition_takeoff_reassignment import (
-    ConditionTakeoffReassignment,
-)
 from shiboken6 import isValid
-from ...application.dtos.mesh_geometry_dto import (
-    MeshGeometry,
-    MeshSceneIdentity,
-    normalize_scene_page_uids,
-)
-from ...application.dtos.remote_projection_dtos import (
-    RemoteProjectionBarrier,
-    RemoteProjectionToken,
+from ...application.condition_change_impact import (
+    condition_changes_require_mesh_refresh,
+    condition_changes_require_plan_refresh,
 )
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
@@ -33,12 +25,20 @@ from ...application.dtos.collaboration_resource_catalog import (
     parse_annotation_resource_id,
     resource_families_affect_page,
 )
-from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
-from ...application.events.app_events import AppEvents
-from ...application.condition_change_impact import (
-    condition_changes_require_mesh_refresh,
-    condition_changes_require_plan_refresh,
+from ...application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
 )
+from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
+from ...application.dtos.mesh_geometry_dto import (
+    MeshGeometry,
+    MeshSceneIdentity,
+    normalize_scene_page_uids,
+)
+from ...application.dtos.remote_projection_dtos import (
+    RemoteProjectionBarrier,
+    RemoteProjectionToken,
+)
+from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_database_catalog import DatabaseCatalogError
 from ...domain.entities.bid import Bid
 from ...domain.entities.condition import Condition
@@ -48,9 +48,7 @@ from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.page import Page
 from ...domain.entities.project_factory import build_loaded_files
-from ...domain.services.page_image_plane_transform import (
-    resolve_page_floor_elevations,
-)
+from ...domain.services.page_image_plane_transform import resolve_page_floor_elevations
 from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
 from ..dialogs.adjust_images_dialog import AdjustImagesDialog, ImageAdjustmentSettings
 from ..dialogs.areas_dialog import BidAreasDialog
@@ -65,18 +63,18 @@ from ..dialogs.synchronization_conflict_dialog import SynchronizationConflictDia
 from ..handlers.condition_action_handler import ConditionActionHandler
 from ..managers.app_config_presentation_manager import AppConfigPresentationManager
 from ..managers.ui_access_manager import (
-    Feature,
     MAIN_PLAN_SURFACE_ID,
+    Feature,
     PlanSurfaceAccessContext,
 )
-from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PLACE,
     CURSOR_MODE_SELECT,
 )
-from ..utils.image_show_mode import SHOW_BOTH, SHOW_ORIGINAL, SHOW_OVERLAY
+from ..services.modal_edit_lease_session import ModalEditLeaseSession
 from ..utils.dialog import delete_later_if_valid
+from ..utils.image_show_mode import SHOW_BOTH, SHOW_ORIGINAL, SHOW_OVERLAY
 from ..utils.messagebox import (
     DB_LOCKED_HINT,
     confirm_delete_page_with_contents,
@@ -91,8 +89,8 @@ from ..utils.overlay_context_menu import (
 )
 from ..utils.qt_callback_bridge import QtVoidCallback
 from ..utils.view_context_menu import build_selected_takeoff_context_state
-from ..windows.mesh_view_window import MeshViewWindow
 from ..visualization.utils.source_signature import invalidate_source_files
+from ..windows.mesh_view_window import MeshViewWindow
 from .navigation_state_machine import NavigationStateMachine, NavState
 from .placement_coordinator import PlacementCoordinator
 from .sidebar_coordinator import SidebarCoordinator

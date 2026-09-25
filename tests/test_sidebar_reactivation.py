@@ -1,21 +1,21 @@
 import os
 import unittest
-from unittest.mock import patch
 from types import SimpleNamespace
+from unittest.mock import patch
 from ost_visualizer.domain.entities.bid import Bid
-from ost_visualizer.domain.entities.project import Project
-from ost_visualizer.domain.entities.loaded_file import LoadedFile
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.loaded_file import LoadedFile
+from ost_visualizer.domain.entities.project import Project
 from ost_visualizer.presentation.components.project_tree_view import ProjectView
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
+from ost_visualizer.domain.entities.layer import BidLayer
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import delete
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.layer import BidLayer
-from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
-from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
-from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 
 
 class SidebarReactivationTests(unittest.TestCase):

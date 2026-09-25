@@ -1,16 +1,16 @@
 import unittest
 from unittest.mock import Mock, patch
-from PySide6 import QtWidgets
-from shiboken6 import delete
 from ost_visualizer.domain.entities.employee import Employee, PayClass
+from ost_visualizer.presentation.dialogs.employee_detail_dialog import (
+    EmployeeDetailDialog,
+)
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
-from ost_visualizer.presentation.dialogs.employee_detail_dialog import (
-    EmployeeDetailDialog,
-)
 from ost_visualizer.presentation.dtos.employee_edit_dtos import EmployeeRecord
+from PySide6 import QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

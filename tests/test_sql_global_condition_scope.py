@@ -1,5 +1,5 @@
-from copy import deepcopy
 import unittest
+from copy import deepcopy
 from unittest.mock import MagicMock, Mock
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,

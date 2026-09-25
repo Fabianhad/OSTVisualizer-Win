@@ -1,12 +1,12 @@
 import unittest
 from unittest.mock import Mock, patch
-from PySide6 import QtWidgets
-from shiboken6 import delete
 from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, JobStatus
 from ost_visualizer.domain.entities.employee import Employee, PayClass
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
+from PySide6 import QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

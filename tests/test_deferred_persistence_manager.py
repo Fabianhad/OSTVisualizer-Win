@@ -7,35 +7,35 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    CollaborationShutdownState,
+    DatabaseMutationResult,
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+)
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
     WriteReloadResult,
-)
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    DatabaseMutationResult,
-    MutationOutcomeStatus,
-    QueuedMutationResult,
 )
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
 )
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
-from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
-from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
-    SidebarCoordinator,
-)
 from ost_visualizer.presentation.coordinators.navigation_state_machine import (
     NavigationStateMachine,
     NavState,
+)
+from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+    SidebarCoordinator,
 )
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
@@ -48,9 +48,7 @@ from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.deferred_persistence_manager import (
     DeferredPersistenceManager,
 )
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    CollaborationShutdownState,
-)
+from PySide6 import QtCore, QtWidgets
 from tests.workspace_state_test_support import with_workspace_state
 
 FileOperationHandler = with_workspace_state(FileOperationHandler)

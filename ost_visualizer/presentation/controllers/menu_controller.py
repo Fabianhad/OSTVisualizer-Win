@@ -47,10 +47,10 @@ from ..dialogs.about_dialog import AboutDialog
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..dialogs.new_database_type_dialog import NewDatabaseTypeDialog
 from ..dialogs.options.dialog import OptionsDialog
-from ..managers.ui_access_manager import Feature
 from ..interfaces.i_workspace_shell import CurrentAreaSelectionContext
-from ..utils.image_show_mode import mode_to_flags
+from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
+from ..utils.image_show_mode import mode_to_flags
 from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS

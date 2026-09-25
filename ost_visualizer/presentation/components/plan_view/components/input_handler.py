@@ -42,7 +42,6 @@ from ....actions.action_ids import (
 from ....config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ....managers.context_menu_manager import ContextMenuManager
 from ....modes.cursor import (
-    EDITING_CURSOR_MODES,
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_MOVE_OVERLAY,
     CURSOR_MODE_MOVE_OVERLAY_HANDLE,
@@ -53,9 +52,10 @@ from ....modes.cursor import (
     CURSOR_MODE_SELECT,
     CURSOR_MODE_SLOPE_ROTATE,
     CURSOR_MODE_ZOOM,
+    EDITING_CURSOR_MODES,
 )
-from ....utils.overlay_context_menu import resolve_overlay_menu_action
 from ....utils.dialog import exec_transient_menu
+from ....utils.overlay_context_menu import resolve_overlay_menu_action
 from ....utils.view_context_menu import (
     SelectedTakeoffContextState,
     add_common_context_submenus,
@@ -1402,6 +1402,19 @@ class InputHandlerMixin:
                             self._drag_orig_position,
                             release_new_pos,
                         )
+                    if release_condition and release_condition.is_attachment:
+                        if not self._attachment_position_valid(
+                            release_takeoff, release_new_pos
+                        ):
+                            release_new_pos = (
+                                self._drag_last_valid_new_pos
+                                or self._drag_orig_position
+                            )
+                        commit_tracked_drag = self._attachment_position_valid(
+                            release_takeoff, release_new_pos
+                        ) and self._positions_meaningfully_different(
+                            self._drag_orig_position, release_new_pos
+                        )
                 if not commit_tracked_drag and tracked_drag:
                     self._clear_drag_tracking(restore_preview=True)
                     if resize_release and was_dragged:
@@ -1474,6 +1487,8 @@ class InputHandlerMixin:
                         )
                         for uid, new_pos in new_positions.items():
                             orig_pos = self._drag_multi_orig_positions[uid]
+                            if new_pos == orig_pos:
+                                continue
                             if uid in self._current_takeoffs:
                                 takeoff = self._current_takeoffs.get(uid)
                                 if takeoff:
@@ -1773,6 +1788,21 @@ class InputHandlerMixin:
             new_positions[child_uid] = self._translate_position(
                 child_orig, parent_dx, parent_dy
             )
+        for uid, position in new_positions.items():
+            takeoff = self._current_takeoffs.get(uid)
+            condition = (
+                self._current_conditions.get(takeoff.condition_uid)
+                if takeoff is not None
+                else None
+            )
+            if (
+                condition is not None
+                and condition.is_attachment
+                and not self._attachment_position_valid(
+                    takeoff, position, new_positions.get(takeoff.parent_uid)
+                )
+            ):
+                return {uid: list(position) for uid, position in orig_positions.items()}
         return new_positions
 
     def _update_snapped_multi_drag_preview(
@@ -1839,6 +1869,8 @@ class InputHandlerMixin:
         )
         for uid, new_pos in new_positions.items():
             orig_pos = orig_positions[uid]
+            if new_pos == orig_pos:
+                continue
             takeoff = self._current_takeoffs.get(uid)
             ann = self._current_annotations.get(uid)
             delta = self._snapped_multi_drag_scene_delta(
@@ -2465,7 +2497,15 @@ class InputHandlerMixin:
                 if key == Qt.Key.Key_Up
                 else (step if key == Qt.Key.Key_Down else 0.0)
             )
-            if self._apply_position_keyboard_move(ost_dx, ost_dy):
+            moved = self._apply_position_keyboard_move(ost_dx, ost_dy)
+            attachment_selected = any(
+                (takeoff := self._current_takeoffs.get(uid)) is not None
+                and (condition := self._current_conditions.get(takeoff.condition_uid))
+                is not None
+                and condition.is_attachment
+                for uid in self._selected_uids
+            )
+            if moved or attachment_selected:
                 event.accept()
                 return
         super().keyPressEvent(event)

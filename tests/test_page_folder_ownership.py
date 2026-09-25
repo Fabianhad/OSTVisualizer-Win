@@ -1,41 +1,41 @@
-from copy import deepcopy
 import logging
 import sqlite3
 import unittest
+from copy import deepcopy
 from unittest.mock import Mock
+from ost_visualizer.application.dtos.user_workspace_state_dtos import (
+    UserBidWorkspaceState,
+)
 from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,
     PreparedBidLoad,
-)
-from ost_visualizer.application.dtos.user_workspace_state_dtos import (
-    UserBidWorkspaceState,
 )
 from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
-    HierarchyFolderInfo,
-    HierarchyPageInfo,
     HierarchyData,
     HierarchyFileEntry,
+    HierarchyFolderInfo,
+    HierarchyPageInfo,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.domain.entities.project_factory import build_bid
-from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.domain.services.file_manager_service import FileManager
-from ost_visualizer.infrastructure.persistence.repositories.file_project_repository import (
-    FileProjectRepository,
-)
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
     BidDataReaderMixin,
 )
-from tests.test_bid_data_reader import _LimitedReadConnection
-from tests.test_hierarchy_reader import _SqliteHierarchySchema
 from ost_visualizer.infrastructure.mdb.components.hierarchy_reader import (
     HierarchyReaderMixin,
 )
+from ost_visualizer.infrastructure.persistence.repositories.file_project_repository import (
+    FileProjectRepository,
+)
+from tests.test_bid_data_reader import _LimitedReadConnection
+from tests.test_hierarchy_reader import _SqliteHierarchySchema
 
 
 class PageFolderOwnershipTests(unittest.TestCase):

@@ -1,5 +1,5 @@
-import json
 import hashlib
+import json
 import math
 import secrets
 import statistics
@@ -20,12 +20,13 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     PresenceMode,
     ResourceRef,
 )
-from ost_visualizer.application.services.database_session_registry import (
-    DatabaseSessionRegistry,
-)
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.dtos.user_workspace_state_dtos import UserPageViewState
 from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
+)
+from ost_visualizer.application.services.database_session_registry import (
+    DatabaseSessionRegistry,
 )
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
@@ -34,12 +35,11 @@ from ost_visualizer.domain.entities.database_descriptor import (
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
-from ost_visualizer.infrastructure.sql.collaboration_store import (
-    SqlCollaborationStore,
-)
+from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.sql.client_permissions import (
     apply_sql_client_permissions,
 )
+from ost_visualizer.infrastructure.sql.collaboration_store import SqlCollaborationStore
 from ost_visualizer.infrastructure.sql.connection_manager import (
     SqlConnectionManager,
     SqlConnectionRequest,
@@ -47,14 +47,10 @@ from ost_visualizer.infrastructure.sql.connection_manager import (
 from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
-from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
 from ost_visualizer.infrastructure.sql.workspace_state_repository import (
     SqlWorkspaceStateRepository,
 )
-from ost_visualizer.application.dtos.user_workspace_state_dtos import (
-    UserPageViewState,
-)
-from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
 from tests.sql_integration_support import (
     DisposableSqlConfiguration,
     DisposableSqlDatabase,

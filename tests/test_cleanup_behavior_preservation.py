@@ -8,10 +8,10 @@ from ost_visualizer.domain.services.dimension_format_service import (
     MM_PER_INCH,
     display_to_inches,
     display_to_mm,
-    inches_to_mm,
     inches_to_display,
-    mm_to_inches,
+    inches_to_mm,
     mm_to_display,
+    mm_to_inches,
 )
 from ost_visualizer.domain.services.uom_service import (
     UOM_CUBIC_YARDS,

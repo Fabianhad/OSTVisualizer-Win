@@ -1,11 +1,12 @@
-import logging
 import inspect
+import logging
 import threading
 import unittest
-from unittest.mock import patch
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+from ost_visualizer import main as application_main
 from ost_visualizer.application.app_controller import AppController
 from ost_visualizer.application.builders.orchestrator_builder import AppOrchestrators
 from ost_visualizer.application.builders.service_builder import ServiceBuilder
@@ -13,10 +14,10 @@ from ost_visualizer.application.events.app_events import (
     AppEvents,
     NativeSceneUpdatedEvent,
 )
+from ost_visualizer.application.interfaces.i_shutdown_aware import IShutdownAware
 from ost_visualizer.application.interfaces.i_thread_scene_notifier import (
     IThreadSceneNotifier,
 )
-from ost_visualizer.application.interfaces.i_shutdown_aware import IShutdownAware
 from ost_visualizer.application.orchestrators.license_thread_manager import (
     LicenseThreadManager,
 )
@@ -36,7 +37,6 @@ from ost_visualizer.application.services.visualization_service import (
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
-from ost_visualizer import main as application_main
 from ost_visualizer.presentation.services.qt_scene_notifier import QtSceneNotifier
 
 

@@ -1,7 +1,6 @@
 import tempfile
 import threading
 import unittest
-from PySide6.QtGui import QImage
 from ost_visualizer.application.render_quality import (
     CONSTRAINED_RENDER_SCALE_FLOOR,
     INTERACTIVE_PDF_RENDER_SCALE,
@@ -10,6 +9,7 @@ from ost_visualizer.presentation.visualization.pdf.page_cache import (
     PageCache,
     scoped_pdf_render_cancellation_token,
 )
+from PySide6.QtGui import QImage
 
 
 class _FakeRenderer:

@@ -1,27 +1,27 @@
 import sqlite3
 import unittest
-from unittest.mock import Mock
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from types import SimpleNamespace
-from ost_visualizer.application.dtos.collaboration_dtos import MutationOutcomeStatus
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
-from tests.test_infrastructure_lifecycle import (
-    _SqliteDuplicateOps,
-    _SqliteCursorWrapper,
-)
+from unittest.mock import Mock
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    ConcurrencyToken,
     DatabaseMutationResult,
     ExpectedResourceVersion,
-    ConcurrencyToken,
+    MutationOutcomeStatus,
     ResourceRef,
 )
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.infrastructure.database.bid_owned_identity import (
     MissingBidOwnedUidError,
 )
+from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from tests import test_mdb_sql_behavior_parity as parity
+from tests.test_infrastructure_lifecycle import (
+    _SqliteCursorWrapper,
+    _SqliteDuplicateOps,
+)
 
 
 class PlanPropertyOwnershipTests(unittest.TestCase):

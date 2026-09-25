@@ -2,10 +2,10 @@ from typing import Any, List
 import pyodbc
 from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
 from ....domain.entities.layer import BidLayers
+from ...database.bid_owned_identity import require_valid_unique_bid_owned_uids
+from ...database.schema_inspector_contract import IDatabaseSchemaInspector
 from ...parsers.utils.parser import decode_value
 from ..mappers.annotation_mapper import MdbAnnotationLayerMapper
-from ...database.schema_inspector_contract import IDatabaseSchemaInspector
-from ...database.bid_owned_identity import require_valid_unique_bid_owned_uids
 from .serialization import decode_annotation_text, parse_position_storage
 
 

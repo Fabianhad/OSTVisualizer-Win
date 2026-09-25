@@ -10,10 +10,10 @@ from ...application.render_quality import (
     RASTER_NATIVE_RENDER_SCALE,
 )
 from ...domain.services.page_image_plane_transform import native_page_plane_transform
+from ..utils.image_show_mode import mode_to_flags
 from .pdf.page_cache import PageCache
 from .pdf.services.composite_renderer import CompositeRenderer
 from .utils.image_effects import apply_page_image_effects
-from ..utils.image_show_mode import mode_to_flags
 
 NATIVE_PLAN_TEXTURE_MAX_DIMENSION = 4096
 NATIVE_PLAN_TEXTURE_MAX_PIXELS = min(

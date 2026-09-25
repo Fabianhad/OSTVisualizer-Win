@@ -5,8 +5,6 @@ from dataclasses import dataclass, replace
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtWidgets
 from shiboken6 import isValid
-from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
-from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseLoss,
@@ -22,6 +20,8 @@ from ...application.dtos.collaboration_resource_catalog import (
     annotation_resource_id,
     parse_annotation_resource_id,
 )
+from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
+from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
 from ...domain.entities.annotation import (
@@ -36,8 +36,12 @@ from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.takeoff import Takeoff
 from ...domain.services.page_scale_transform import (
     PageScale,
-    rescale_position_between_page_scales,
     rescale_annotation_position_between_page_scales,
+    rescale_position_between_page_scales,
+)
+from ...domain.services.takeoff_domain_service import (
+    expand_takeoff_uids_with_descendants,
+    takeoffs_can_reassign_to_condition,
 )
 from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
@@ -45,8 +49,6 @@ from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.undo_redo_service import TakeoffHistoryTarget
 from ..utils.annotation_defaults import build_placed_annotation_spec
-from ..utils.dialog import delete_later_if_valid
-from ..utils.font_catalog import resolve_font_definition
 from ..utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
     plan_named_view_hotlink_delete,
@@ -56,13 +58,12 @@ from ..utils.annotation_paste import (
     annotation_paste_anchor,
     translate_annotation_position,
 )
+from ..utils.dialog import delete_later_if_valid
+from ..utils.font_catalog import resolve_font_definition
 from ..utils.messagebox import confirm, show_warning
 from ..utils.named_view_validation import (
     named_view_name_exists,
     show_duplicate_named_view_name,
-)
-from ...domain.services.takeoff_domain_service import (
-    takeoffs_can_reassign_to_condition,
 )
 
 logger = logging.getLogger(__name__)
@@ -1727,12 +1728,20 @@ class PlanViewActionHandler:
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = []
         takeoffs = []
-        for uid in uids:
+        for uid in dict.fromkeys(str(uid) for uid in uids):
             takeoff = self._command_takeoff(uid)
             if takeoff is None:
                 continue
             takeoff_uids.append(uid)
             takeoffs.append(takeoff)
+        all_takeoffs = self._data_svc.get_all_takeoffs()
+        descendants = expand_takeoff_uids_with_descendants(
+            all_takeoffs, takeoff_uids
+        ) - set(takeoff_uids)
+        for takeoff in all_takeoffs:
+            if str(takeoff.uid) in descendants:
+                takeoff_uids.append(str(takeoff.uid))
+                takeoffs.append(takeoff)
         conditions = self._data_svc.get_bid_conditions()
         if (
             not db_path

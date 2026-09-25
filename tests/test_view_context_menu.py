@@ -2,7 +2,6 @@ import os
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -23,6 +22,7 @@ from ost_visualizer.presentation.utils.view_context_menu import (
     build_selected_annotation_style_context_state,
     build_selected_takeoff_context_state,
 )
+from PySide6 import QtWidgets
 
 
 def _app():

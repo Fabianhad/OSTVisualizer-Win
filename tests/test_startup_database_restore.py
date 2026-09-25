@@ -5,12 +5,11 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.application.app_controller import AppController
 from ost_visualizer.application.use_cases.project.load_file_use_case import (
     LoadFileUseCase,
 )
+from ost_visualizer.domain.aggregates.file_state_aggregate import FileStateAggregate
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseBackend,
     DatabaseDescriptor,
@@ -18,12 +17,13 @@ from ost_visualizer.domain.entities.database_descriptor import (
 )
 from ost_visualizer.domain.entities.file_results import FileLoadResult
 from ost_visualizer.domain.entities.file_state import FileEntry, FileState
-from ost_visualizer.domain.aggregates.file_state_aggregate import FileStateAggregate
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
-from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import with_workspace_state
 
 FileOperationHandler = with_workspace_state(FileOperationHandler)

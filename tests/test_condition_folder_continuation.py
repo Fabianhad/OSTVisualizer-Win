@@ -3,10 +3,10 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
-from shiboken6 import delete
 from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from PySide6 import QtWidgets
+from shiboken6 import delete
 
 
 class ConditionFolderContinuationTests(unittest.TestCase):

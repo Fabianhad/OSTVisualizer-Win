@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import patch
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
     PlacementModeMixin,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 
 
 class PreviewSurface(QtWidgets.QGraphicsView, PlacementModeMixin):

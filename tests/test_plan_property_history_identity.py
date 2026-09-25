@@ -1,19 +1,31 @@
+import sqlite3
 import unittest
 import uuid
-import sqlite3
-from itertools import product
 from dataclasses import replace
+from itertools import product
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
 )
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.infrastructure.events.event_bus import EventBus
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
 from ost_visualizer.presentation.handlers.plan_view_action_handler import (
     PlanViewActionHandler,
 )
+from ost_visualizer.presentation.managers.detached_page_view_manager import (
+    DetachedPageViewManager,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
+from tests import test_mdb_sql_behavior_parity as parity
+from tests.test_infrastructure_lifecycle import _SqliteDuplicateOps
 from tests.test_plan_view_action_handler import (
     FakeAccess,
     FakeDeferredPersistence,
@@ -24,18 +36,6 @@ from tests.test_plan_view_action_handler import (
     FakeUiState,
     FakeWriteService,
 )
-from tests.test_infrastructure_lifecycle import _SqliteDuplicateOps
-from tests import test_mdb_sql_behavior_parity as parity
-from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
-from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
-from ost_visualizer.presentation.managers.detached_page_view_manager import (
-    DetachedPageViewManager,
-)
-from ost_visualizer.domain.entities.identity_refs import BidRef
 
 
 class PlanPropertyHistoryIdentityTests(unittest.TestCase):

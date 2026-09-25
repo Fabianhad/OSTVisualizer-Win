@@ -12,19 +12,19 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlInfrastructureError,
 )
 from tests.test_sql_collaboration_phase4 import (
+    SQL_SCHEMA_V1,
     DatabaseCapabilityService,
     DatabaseDescriptor,
     DatabaseDescriptorRegistry,
     DatabaseSessionRegistry,
-    SQL_SCHEMA_V1,
     SqlServerDatabaseLocation,
     _CollaborationStore,
+    _coordinator,
     _Dispatcher,
     _EventBus,
     _PermissionProbe,
     _Reconciliation,
     _RemoteReader,
-    _coordinator,
     _shutdown_coordinator,
     _token_service,
 )

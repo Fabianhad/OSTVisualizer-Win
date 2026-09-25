@@ -4,16 +4,6 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtWidgets
-from shiboken6 import delete
-from ost_visualizer.application.dtos.update_condition_dto import (
-    UpdateConditionDto,
-    UpdateConditionResultDto,
-)
-from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
-from ost_visualizer.application.interfaces.i_mdb_connection_manager import (
-    DatabaseConnectionUnavailableError,
-)
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationResult,
@@ -23,10 +13,18 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     SynchronizationConflict,
     SynchronizationConflictKind,
 )
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.dtos.update_condition_dto import (
+    UpdateConditionDto,
+    UpdateConditionResultDto,
+)
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.interfaces.i_mdb_connection_manager import (
+    DatabaseConnectionUnavailableError,
+)
 from ost_visualizer.application.services.active_bid_write_guard import (
     ActiveBidWriteGuard,
 )
-from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     DeleteValidationResult,
     ProjectWriteService,
@@ -43,6 +41,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.presentation.components.project_tree_view import _BidTreeWidget
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
@@ -58,17 +57,18 @@ from ost_visualizer.presentation.handlers.project_write_handler import (
     ProjectWriteHandler,
 )
 from ost_visualizer.presentation.main_window import MainWindow
-from ost_visualizer.presentation.components.project_tree_view import _BidTreeWidget
 from ost_visualizer.presentation.managers.ui_access_manager import (
-    Feature,
-    MAIN_PLAN_SURFACE_ID,
-    UIAccessManager,
     _DATABASE_EDIT_FEATURES,
+    MAIN_PLAN_SURFACE_ID,
+    Feature,
+    UIAccessManager,
 )
 from ost_visualizer.presentation.managers.ui_state_manager import UIStateManager
 from ost_visualizer.presentation.services.bid_clipboard_service import (
     BidClipboardService,
 )
+from PySide6 import QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

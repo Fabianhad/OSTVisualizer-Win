@@ -1,12 +1,10 @@
 import tempfile
 import unittest
 from dataclasses import replace
-from unittest.mock import patch
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import Optional
-from PySide6 import QtWidgets
-from shiboken6 import delete
+from unittest.mock import patch
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
 )
@@ -29,6 +27,8 @@ from ost_visualizer.presentation.utils.image_show_mode import (
 )
 from ost_visualizer.presentation.visualization.exporters import osp_exporter
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
+from PySide6 import QtWidgets
+from shiboken6 import delete
 
 
 class _FakeProjectData:

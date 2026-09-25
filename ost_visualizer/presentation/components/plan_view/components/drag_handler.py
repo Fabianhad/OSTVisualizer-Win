@@ -435,6 +435,10 @@ class DragHandlerMixin:
                 return
         else:
             condition = None
+        if condition is not None and condition.is_attachment:
+            if not self._attachment_position_valid(takeoff, new_pos):
+                return
+            self._drag_last_valid_new_pos = list(new_pos)
         if is_ann and ann.annotation_type not in ann.LINEAR_TYPES:
             self._update_ann_drag(ann, new_pos, uid, cs, scene_dx, scene_dy)
             return
@@ -630,7 +634,12 @@ class DragHandlerMixin:
                 orig = self._drag_item_orig_positions.get(id(item))
                 if orig is not None:
                     item.setPos(orig + delta)
-            if not is_ann and takeoff.is_hole and self._drag_last_valid_new_pos:
+            if (
+                not is_ann
+                and condition.is_area
+                and takeoff.is_hole
+                and self._drag_last_valid_new_pos
+            ):
                 hole_tx = cs.transform_vertices_to_2d(use_pos)
                 moved_hole_path = QPainterPath()
                 moved_hole_path.moveTo(hole_tx[0], hole_tx[1])
@@ -888,6 +897,35 @@ class DragHandlerMixin:
                 self._refresh_condition_text_labels_for_takeoff(parent_uid)
                 break
 
+    def _attachment_position_valid(
+        self, takeoff, position: List[float], parent_position=None
+    ) -> bool:
+        parent = self._current_takeoffs.get(takeoff.parent_uid)
+        if parent is None or parent.page_uid != takeoff.page_uid:
+            return False
+        condition = self._current_conditions.get(parent.condition_uid)
+        if condition is None or not condition.is_area or parent.is_hole:
+            return False
+        cs = self._scene_builder.get_coordinate_system()
+        parent_pos = cs.parse_position(
+            parent.position if parent_position is None else parent_position
+        )
+        if len(parent_pos) < 6 or len(position) != 2:
+            return False
+        parent_tx = cs.transform_vertices_to_2d(parent_pos)
+        parent_path = QPainterPath()
+        parent_path.addPolygon(
+            QPolygonF(
+                [
+                    QPointF(parent_tx[i], parent_tx[i + 1])
+                    for i in range(0, len(parent_tx) - 1, 2)
+                ]
+            )
+        )
+        parent_path.closeSubpath()
+        point = cs.transform_vertices_to_2d(position)
+        return parent_path.contains(QPointF(point[0], point[1]))
+
     def _validate_parent_contains_holes(
         self, parent_uid: str, new_parent_pos: List[float]
     ) -> bool:
@@ -900,6 +938,13 @@ class DragHandlerMixin:
         parent_path.closeSubpath()
         for child in self._current_takeoffs.values():
             if child.parent_uid != parent_uid:
+                continue
+            condition = self._current_conditions.get(child.condition_uid)
+            if condition is not None and condition.is_attachment:
+                if not self._attachment_position_valid(
+                    child, child.position, new_parent_pos
+                ):
+                    return False
                 continue
             child_pos = cs.parse_position(child.position)
             if not child_pos or len(child_pos) < 6:

@@ -1,21 +1,15 @@
-import os
 import logging
-import unittest
-import uuid
+import os
 import tempfile
 import time
+import unittest
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtTest import QTest
-from ost_visualizer.application.services.page_load_strategy_service import (
-    PageLoadStrategyService,
-)
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
@@ -23,50 +17,72 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
 )
+from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.page_load_strategy_service import (
+    PageLoadStrategyService,
+)
+from ost_visualizer.application.services.project_write_service import (
+    ProjectWriteService,
+)
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.annotation_view import AnnotationView
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.application.services.project_write_service import (
-    ProjectWriteService,
-)
-from tests.test_mdb_sql_behavior_parity import _CapturedQueueProvider
 from ost_visualizer.infrastructure.events.event_bus import EventBus
+from ost_visualizer.presentation.actions.action_ids import (
+    ACTION_RESET_VIEW,
+    ACTION_SHOW_OVERLAY_IMAGE,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
+)
+from ost_visualizer.presentation.builders.component_builder import ComponentBuilder
+from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
 from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.components.popup_tracking_combo import (
     PopupTrackingComboBox,
 )
-from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.components.scene_navigation_controls import (
+    SceneNavigationControls,
+)
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
 )
+from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
 from ost_visualizer.presentation.managers.deferred_persistence_manager import (
     DeferredPersistenceManager,
 )
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
+from ost_visualizer.presentation.utils.dialog import delete_later_if_valid
+from ost_visualizer.presentation.visualization.native_page_plane import (
+    NativePageImagePlaneData,
+    NativePageImagePlaneProvider,
+)
+from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
+    PDFRenderingService,
+)
 from ost_visualizer.presentation.windows.annotation_view_window import (
     AnnotationViewWindow,
 )
-from ost_visualizer.presentation.utils.dialog import delete_later_if_valid
-from ost_visualizer.presentation.actions.action_ids import ACTION_SHOW_OVERLAY_IMAGE
-from ost_visualizer.presentation.actions.action_ids import (
-    ACTION_RESET_VIEW,
-    ACTION_ZOOM_IN,
-    ACTION_ZOOM_OUT,
-)
-from tests.test_export_menu_state import (
-    _controller as export_menu_controller,
-    _UiState as MenuUiState,
-    _ProjectData as MenuProjectData,
+from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtTest import QTest
+from tests.test_cover_sheet_paths import (
+    CoverSheetDialog,
+    _cover_sheet_data,
+    _path_editor,
 )
 from tests.test_deferred_persistence_manager import (
     FakeProjectWriteService,
@@ -76,6 +92,15 @@ from tests.test_detached_window_workspace_state import (
     FakePlanSurfaceAccessManager,
     FakeWindowIconProvider,
     _full_plan_surface_access,
+)
+from tests.test_export_menu_state import _controller as export_menu_controller
+from tests.test_export_menu_state import _ProjectData as MenuProjectData
+from tests.test_export_menu_state import _UiState as MenuUiState
+from tests.test_mdb_sql_behavior_parity import _CapturedQueueProvider
+from tests.test_mesh_view_lifecycle import FakeMeshRenderer, FakeMeshScene
+from tests.test_ui_event_coordinator_takeoffs_changed import (
+    configure_mesh_state,
+    mesh_geometry,
 )
 from tests.test_viewer_sync_coordinator_overlay_refresh import (
     FakeAnnotationRenderer,
@@ -88,33 +113,6 @@ from tests.test_viewer_sync_coordinator_overlay_refresh import (
     FakeUiState,
 )
 from tests.workspace_state_test_support import make_workspace_state_model
-from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
-from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
-from ost_visualizer.presentation.controllers.menu_controller import MenuController
-from tests.test_mesh_view_lifecycle import FakeMeshRenderer, FakeMeshScene
-from tests.test_ui_event_coordinator_takeoffs_changed import (
-    configure_mesh_state,
-    mesh_geometry,
-)
-from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
-from ost_visualizer.presentation.builders.component_builder import ComponentBuilder
-from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
-from tests.test_cover_sheet_paths import (
-    CoverSheetDialog,
-    _cover_sheet_data,
-    _path_editor,
-)
-from ost_visualizer.presentation.components.scene_navigation_controls import (
-    SceneNavigationControls,
-)
-from ost_visualizer.presentation.visualization.native_page_plane import (
-    NativePageImagePlaneData,
-    NativePageImagePlaneProvider,
-)
-from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
-from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
-    PDFRenderingService,
-)
 
 
 class PresentationUiState(FakeUiState):
@@ -590,8 +588,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             RemoteProjectionBarrier,
         )
         from tests.test_remote_plan_update_pipeline import (
-            _QueuedBridge,
             _ManualThreadPool,
+            _QueuedBridge,
         )
 
         page = self.data.page
@@ -682,8 +680,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             RemoteProjectionBarrier,
         )
         from tests.test_remote_plan_update_pipeline import (
-            _QueuedBridge,
             _ManualThreadPool,
+            _QueuedBridge,
         )
 
         active = [self.detached.view]
@@ -963,8 +961,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             InsertAnnotationSpec,
         )
         from tests.test_plan_view_action_handler import (
-            PlanViewActionHandlerTests,
             FakeWriteService,
+            PlanViewActionHandlerTests,
         )
 
         write = FakeWriteService()
@@ -1129,8 +1127,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             InsertAnnotationSpec,
         )
         from tests.test_plan_view_action_handler import (
-            PlanViewActionHandlerTests,
             FakeWriteService,
+            PlanViewActionHandlerTests,
         )
 
         write = FakeWriteService()
@@ -1235,13 +1233,13 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
             InsertAnnotationSpec,
         )
-        from tests.test_plan_view_action_handler import (
-            PlanViewActionHandlerTests,
-            FakeWriteService,
-        )
         from ost_visualizer.domain.entities.condition import Condition
         from ost_visualizer.presentation.services.undo_redo_service import (
             UndoRedoService,
+        )
+        from tests.test_plan_view_action_handler import (
+            FakeWriteService,
+            PlanViewActionHandlerTests,
         )
 
         write = FakeWriteService()
@@ -1445,11 +1443,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                         self.assertEqual(other.get_selected_uids(), ["other-surface"])
 
     def _main_edit_action_projection(self):
+        from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
         from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
             ToolbarStateCoordinator,
         )
-        from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
-        from tests.test_toolbar_state_coordinator import _Access, _UiState, _IndexWidget
+        from tests.test_toolbar_state_coordinator import _Access, _IndexWidget, _UiState
 
         toolbar = ToolbarStateCoordinator(
             _UiState(selected_bid_ref=self.bid_ref, active_page_uid=self.data.page.uid),
@@ -1694,8 +1692,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             UndoRedoService,
         )
         from tests.test_plan_view_action_handler import (
-            PlanViewActionHandlerTests,
             FakeWriteService,
+            PlanViewActionHandlerTests,
         )
 
         write = FakeWriteService()
@@ -1826,8 +1824,8 @@ class CrossSurfacePresentationTests(unittest.TestCase):
             UndoRedoService,
         )
         from tests.test_plan_view_action_handler import (
-            PlanViewActionHandlerTests,
             FakeWriteService,
+            PlanViewActionHandlerTests,
         )
 
         write = FakeWriteService()
@@ -2227,10 +2225,10 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                         coordinator.set_mesh_window_visible(False)
 
     def test_persisted_detached_preference_waits_for_current_page_after_deletion(self):
+        from ost_visualizer.domain.entities.workspace_state import WorkspaceState
         from ost_visualizer.infrastructure.persistence.repositories.json_workspace_state_repository import (
             JsonWorkspaceStateRepository,
         )
-        from ost_visualizer.domain.entities.workspace_state import WorkspaceState
         from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
             WorkspaceStateCoordinator,
         )
@@ -2466,15 +2464,15 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                     page.image_show_mode = mode
                     if texture_only:
                         from tests.test_sql_collaboration_phase4 import (
-                            _ProjectData,
-                            _token_service,
+                            BidLoadResult,
+                            ConflictResolutionService,
+                            HydratedDatabaseChangeBatch,
+                            RemoteChangeReconciliationService,
+                            ResourceRef,
                             _batch,
                             _change,
-                            ResourceRef,
-                            HydratedDatabaseChangeBatch,
-                            BidLoadResult,
-                            RemoteChangeReconciliationService,
-                            ConflictResolutionService,
+                            _ProjectData,
+                            _token_service,
                         )
 
                         data = _ProjectData(self.bid_ref.file_path)
@@ -3619,11 +3617,11 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         from ost_visualizer.application.services.base_write_service import (
             BaseWriteService,
         )
-        from ost_visualizer.application.services.project_write_service import (
-            ProjectWriteService,
-        )
         from ost_visualizer.application.services.page_visualization_metadata_service import (
             PageVisualizationMetadataService,
+        )
+        from ost_visualizer.application.services.project_write_service import (
+            ProjectWriteService,
         )
         from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
             PageRenderer,
@@ -3732,15 +3730,15 @@ class CrossSurfacePresentationTests(unittest.TestCase):
                         self.coordinator._invalidate_refreshed_image_sources,
                     )
                     from tests.test_sql_collaboration_phase4 import (
-                        _ProjectData,
-                        _token_service,
+                        BidLoadResult,
+                        ConflictResolutionService,
+                        HydratedDatabaseChangeBatch,
+                        RemoteChangeReconciliationService,
+                        ResourceRef,
                         _batch,
                         _change,
-                        ResourceRef,
-                        HydratedDatabaseChangeBatch,
-                        BidLoadResult,
-                        RemoteChangeReconciliationService,
-                        ConflictResolutionService,
+                        _ProjectData,
+                        _token_service,
                     )
 
                     projection_data = _ProjectData(self.bid_ref.file_path)
@@ -3871,17 +3869,17 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         from ost_visualizer.application.services.base_write_service import (
             BaseWriteService,
         )
-        from ost_visualizer.application.services.project_write_service import (
-            ProjectWriteService,
-        )
         from ost_visualizer.application.services.page_visualization_metadata_service import (
             PageVisualizationMetadataService,
         )
-        from tests.test_native_page_image_plane import (
-            FakeProjectData as PlaneProjectData,
+        from ost_visualizer.application.services.project_write_service import (
+            ProjectWriteService,
         )
         from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
             PageRenderer,
+        )
+        from tests.test_native_page_image_plane import (
+            FakeProjectData as PlaneProjectData,
         )
 
         with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:

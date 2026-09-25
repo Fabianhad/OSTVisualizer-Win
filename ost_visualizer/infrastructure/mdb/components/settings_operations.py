@@ -1,13 +1,8 @@
 import uuid
 from typing import Any, Dict, Optional
 import pyodbc
-from ..bid_settings_contract import fetch_optional_bid_settings_row
 from ....domain.entities.area import BidAreaChangeset
 from ....domain.services.uom_service import normalize_uom_for_system
-from ...database.master_data_identity import (
-    require_existing_unique_master_data_uid,
-    require_unique_master_data_uids,
-)
 from ...database.bid_owned_identity import (
     DanglingBidOwnedReferenceError,
     MissingBidOwnedUidError,
@@ -18,7 +13,12 @@ from ...database.bid_owned_identity import (
     require_unique_bid_owned_uid_matches,
     require_valid_unique_bid_owned_uids,
 )
+from ...database.master_data_identity import (
+    require_existing_unique_master_data_uid,
+    require_unique_master_data_uids,
+)
 from ...parsers.position_parser import convert_elevation_in_name
+from ..bid_settings_contract import fetch_optional_bid_settings_row
 from .constants import (
     COVER_SHEET_PAGE_SELECTION_TYPE,
     PAGE_DELETE_CHILD_TABLES,

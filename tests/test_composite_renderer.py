@@ -5,7 +5,6 @@ from collections import OrderedDict
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtGui import QColor, QImage, QPainter
 from ost_visualizer.application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     RASTER_NATIVE_RENDER_SCALE,
@@ -15,6 +14,7 @@ from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
 )
+from PySide6.QtGui import QColor, QImage, QPainter
 
 
 def _image(width=20, height=20):

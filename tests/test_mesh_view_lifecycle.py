@@ -1,15 +1,13 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtTest import QTest
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.services.page_image_plane_transform import (
-    resolve_page_floor_elevations,
-)
 from ost_visualizer.application.dtos.mesh_geometry_dto import (
     MeshGeometry,
     MeshSceneIdentity,
+)
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.services.page_image_plane_transform import (
+    resolve_page_floor_elevations,
 )
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer, ost_renderer
 from ost_visualizer.presentation.managers.shortcut_manager import ShortcutManager
@@ -19,6 +17,8 @@ from ost_visualizer.presentation.visualization.native_page_plane import (
 )
 from ost_visualizer.presentation.visualization.utils.mesh import meshes_to_geometries
 from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtTest import QTest
 
 
 class FakeColorService:

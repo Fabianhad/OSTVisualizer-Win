@@ -8,10 +8,10 @@ from ost_visualizer.application.dtos.license_activation_identity_dto import (
     LicenseActivationIdentityError,
     WindowsJoinType,
 )
+from ost_visualizer.infrastructure.external.license_api_client import LicenseApiClient
 from ost_visualizer.infrastructure.windows.license_activation_identity import (
     WindowsLicenseActivationIdentityProvider,
 )
-from ost_visualizer.infrastructure.external.license_api_client import LicenseApiClient
 
 
 class FakeWindowsApi:

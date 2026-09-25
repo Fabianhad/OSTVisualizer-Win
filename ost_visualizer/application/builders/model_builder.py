@@ -7,8 +7,8 @@ from ...domain.aggregates.ost_aggregate import OstAggregate
 from ...domain.aggregates.workspace_state_aggregate import WorkspaceStateAggregate
 from ...domain.services.file_manager_service import FileManager
 from ...domain.services.project_data_service import ProjectDataService
-from ..interfaces.i_repository_provider import IRepositoryProvider
 from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
+from ..interfaces.i_repository_provider import IRepositoryProvider
 from ..service_container import ServiceContainer
 
 

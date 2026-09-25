@@ -6,24 +6,22 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
-from shiboken6 import delete, isValid
-from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
 )
+from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.domain.entities.annotation import (
-    BidAnnotation,
     ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
 )
 from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyBidInfo,
     HierarchyData,
     HierarchyFileEntry,
-    HierarchyBidInfo,
     HierarchyPageInfo,
 )
-from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -38,11 +36,13 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
 )
-from tests.test_remote_plan_update_pipeline import _ManualThreadPool, _QueuedBridge
 from ost_visualizer.presentation.managers.ui_access_manager import (
     MAIN_PLAN_SURFACE_ID,
     PlanSurfaceAccessState,
 )
+from PySide6 import QtWidgets
+from shiboken6 import delete, isValid
+from tests.test_remote_plan_update_pipeline import _ManualThreadPool, _QueuedBridge
 from tests.test_viewer_sync_coordinator_overlay_refresh import (
     FakeAnnotationRenderer,
     FakeColorService,

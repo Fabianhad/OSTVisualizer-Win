@@ -1,4 +1,3 @@
-from ost_visualizer.domain.entities.page_info import BidPageInfo
 import json
 import threading
 import time
@@ -7,25 +6,13 @@ import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
-from ost_visualizer.application.dtos.collaboration_resource_catalog import (
-    COLLABORATION_RESOURCE_CATALOG,
-    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
-    CollaborationResourceFamily,
-    SUPPORTED_REMOTE_RESOURCE_TYPES,
-    coalesced_resource_type,
-)
-from ost_visualizer.application.dtos.conflict_resolution_dtos import (
-    ConflictResolutionAction,
-)
-from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftConflict
-from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftState
 from ost_visualizer.application.dtos.collaboration_dtos import (
-    ChangeOperation,
     AuthoritativeMutationResult,
+    ChangeOperation,
     CollaborationMutationType,
-    CollaborationStatus,
     CollaborationPollingPolicy,
     CollaborationShutdownState,
+    CollaborationStatus,
     ConcurrencyToken,
     DatabaseChange,
     DatabaseChangeBatch,
@@ -38,15 +25,15 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseLoss,
     EditLeaseResult,
     HydratedDatabaseChangeBatch,
+    MutationExecutionResult,
+    MutationOutcomeStatus,
+    PendingMutationState,
+    PendingSqlOperationRecord,
     PresenceMode,
     QueuedMutationRequest,
     QueuedMutationResult,
-    MutationOutcomeStatus,
-    MutationExecutionResult,
     ReconciliationFailureKind,
     ReconciliationResult,
-    PendingMutationState,
-    PendingSqlOperationRecord,
     ResourceLock,
     ResourceRef,
     SynchronizationConflict,
@@ -55,8 +42,28 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     queued_takeoff_preview_uid,
     session_identities_equal,
 )
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    COLLABORATION_RESOURCE_CATALOG,
+    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
+    SUPPORTED_REMOTE_RESOURCE_TYPES,
+    CollaborationResourceFamily,
+    coalesced_resource_type,
+)
+from ost_visualizer.application.dtos.conflict_resolution_dtos import (
+    ConflictResolutionAction,
+)
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.dtos.local_draft_dtos import (
+    LocalDraftConflict,
+    LocalDraftState,
+)
+from ost_visualizer.application.dtos.remote_projection_dtos import (
+    RemoteProjectionBarrier,
+)
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.conflict_resolution_service import (
+    ConflictResolutionService,
+)
 from ost_visualizer.application.services.database_capability_service import (
     DatabaseCapabilityService,
 )
@@ -66,34 +73,29 @@ from ost_visualizer.application.services.database_concurrency_token_service impo
 from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
-from ost_visualizer.application.services.conflict_resolution_service import (
-    ConflictResolutionService,
-)
 from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
 from ost_visualizer.application.services.pending_mutation_registry import (
     PendingMutationRegistry,
 )
-from ost_visualizer.application.services.remote_change_reconciliation_service import (
-    RemoteChangeReconciliationService,
-)
-from ost_visualizer.application.dtos.remote_projection_dtos import (
-    RemoteProjectionBarrier,
-)
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
+)
+from ost_visualizer.application.services.remote_change_reconciliation_service import (
+    RemoteChangeReconciliationService,
 )
 from ost_visualizer.application.services.sql_collaboration_coordinator import (
     SqlCollaborationCoordinator,
     _DatabaseRuntime,
     _QueuedMutation,
 )
-from ost_visualizer.domain.entities.layer import BidLayer
-from ost_visualizer.domain.entities.cover_sheet import JobStatus
-from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
 )
+from ost_visualizer.domain.entities.cover_sheet import JobStatus
+from ost_visualizer.domain.entities.employee import Employee, PayClass
+from ost_visualizer.domain.entities.layer import BidLayer
+from ost_visualizer.domain.entities.page_info import BidPageInfo
 
 _COORDINATOR_TYPE = SqlCollaborationCoordinator
 
@@ -131,6 +133,10 @@ def _coordinator(*args, **kwargs):
     return _COORDINATOR_TYPE(*args, **kwargs)
 
 
+from ost_visualizer.application.interfaces.i_database_catalog import (
+    DatabaseCatalogError,
+)
+from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.condition import Condition
@@ -138,12 +144,11 @@ from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
 )
-from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
@@ -151,12 +156,10 @@ from ost_visualizer.infrastructure.database.descriptor_registry import (
 from ost_visualizer.infrastructure.database.entity_version_reader import (
     DatabaseEntityVersionReader,
 )
-from ost_visualizer.application.interfaces.i_database_catalog import (
-    DatabaseCatalogError,
+from ost_visualizer.infrastructure.sql.collaboration_store import (
+    SqlCollaborationStore,
+    _change_from_row,
 )
-from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
-from ost_visualizer.infrastructure.sql.schema_validator import SqlSchemaValidator
-from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -165,14 +168,13 @@ from ost_visualizer.infrastructure.sql.errors import (
 from ost_visualizer.infrastructure.sql.remote_change_reader import (
     _MAX_HYDRATION_BATCH_PARAMETERS,
     _MAX_HYDRATION_BATCH_QUERIES,
+    SqlRemoteChangeReader,
     _execute_recorded_queries,
     _recorded_query_batches,
-    SqlRemoteChangeReader,
 )
-from ost_visualizer.infrastructure.sql.collaboration_store import (
-    SqlCollaborationStore,
-    _change_from_row,
-)
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from ost_visualizer.infrastructure.sql.schema_validator import SqlSchemaValidator
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 
 
 class _EventBus:
@@ -894,8 +896,8 @@ def _batch(
 
 class SqlCollaborationPhase4Tests(unittest.TestCase):
     def test_layer_rename_impact_matches_local_and_remote_projection(self):
-        from ost_visualizer.domain.entities.layer import BidLayer
         from dataclasses import replace
+        from ost_visualizer.domain.entities.layer import BidLayer
 
         for name, fields, changes, expected in (
             ("Walls", ("name",), {"name": "Partitions"}, True),

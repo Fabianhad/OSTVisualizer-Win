@@ -13,11 +13,6 @@ from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.application.services.page_visualization_metadata_service import (
     PageVisualizationMetadataService,
 )
-from ost_visualizer.infrastructure.visualization_provider import (
-    _ExportStrategyAdapter,
-    _HtmlExportStrategyAdapter,
-    _HtmlRendererAdapter,
-)
 from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
@@ -30,6 +25,11 @@ from ost_visualizer.domain.services.page_image_plane_transform import (
     resolve_page_floor_elevations,
 )
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.infrastructure.visualization_provider import (
+    _ExportStrategyAdapter,
+    _HtmlExportStrategyAdapter,
+    _HtmlRendererAdapter,
+)
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.meshing.mesh_factory import MeshFactory

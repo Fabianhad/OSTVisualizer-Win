@@ -1,15 +1,13 @@
-import unittest
 import threading
+import unittest
 from types import SimpleNamespace
-from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.application.services.page_load_strategy_service import (
-    PageLoadStrategyService,
-)
 from ost_visualizer.application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     RASTER_NATIVE_RENDER_SCALE,
+)
+from ost_visualizer.application.services.page_load_strategy_service import (
+    PageLoadStrategyService,
 )
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.identity_refs import BidRef
@@ -25,6 +23,8 @@ from ost_visualizer.presentation.visualization.pdf.services.page_render_prefetch
 from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
     PDFRenderingService,
 )
+from PySide6.QtGui import QImage
+from PySide6.QtWidgets import QApplication
 
 
 class FakePageSizeProvider:

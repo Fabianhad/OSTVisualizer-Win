@@ -1,15 +1,14 @@
 import gc
 import os
-import weakref
 import unittest
+import weakref
 from collections import Counter
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete
-from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.presentation.components.project_tree_view import ProjectView
+from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from ost_visualizer.presentation.utils import themed_icon
 from ost_visualizer.presentation.utils.annotation_style_controls import (
@@ -18,7 +17,8 @@ from ost_visualizer.presentation.utils.annotation_style_controls import (
 from ost_visualizer.presentation.utils.plan_tool_registry import (
     PLAN_ANNOTATION_TOOL_SPECS,
 )
-from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 
 
 class PaletteWindow(MainWindow):
@@ -211,10 +211,10 @@ class ThemeIconTransitionTests(unittest.TestCase):
         self.assertEqual(dark_again.pixmap(24, 24).toImage(), first_pixels)
 
     def test_actual_main_toolbar_keeps_all_annotation_colors_after_theme_changes(self):
-        from tests.test_cross_surface_presentation import SceneControlPresentationTests
         from ost_visualizer.presentation.utils.annotation_defaults import (
             get_annotation_style_for_tool,
         )
+        from tests.test_cross_surface_presentation import SceneControlPresentationTests
 
         self.transition("#ffffff")
         bundle, _zoom = SceneControlPresentationTests._main_components(self)

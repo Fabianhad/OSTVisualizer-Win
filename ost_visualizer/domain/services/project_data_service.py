@@ -6,10 +6,10 @@ from ...domain.entities.area import BidArea, is_unassigned_area_uid, normalize_a
 from ...domain.entities.bid import Bid
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
+from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 from ...domain.entities.identity_refs import BidRef
-from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.page import Page
 from ...domain.entities.project_factory import build_bid, build_projects
 from ...domain.entities.takeoff import Takeoff

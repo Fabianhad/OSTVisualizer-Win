@@ -2,16 +2,6 @@ import datetime
 import uuid
 from typing import Dict, List, Optional
 import pyodbc
-from ...database.settings_cardinality import (
-    fetch_optional_global_settings_row,
-    normalize_next_bid_number,
-    persist_next_bid_number,
-    require_writable_bid_number_allocator,
-)
-from ...database.page_area_selection import canonicalize_page_area_settings
-from ...database.master_data_identity import (
-    require_optional_existing_unique_master_data_uid,
-)
 from ...database.bid_owned_identity import (
     DanglingBidOwnedReferenceError,
     require_acyclic_bid_owned_parent_graph,
@@ -19,20 +9,30 @@ from ...database.bid_owned_identity import (
     require_unique_bid_owned_uid_matches,
     require_valid_unique_bid_owned_uids,
 )
+from ...database.master_data_identity import (
+    require_optional_existing_unique_master_data_uid,
+)
+from ...database.page_area_selection import canonicalize_page_area_settings
+from ...database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+    persist_next_bid_number,
+    require_writable_bid_number_allocator,
+)
 from ..bid_settings_contract import fetch_optional_bid_settings_row
+from ..raw_bid_integrity import BID_RELATIONSHIPS
 from ..schema_contract import BID_SECTIONS, BID_TAIL_SECTIONS, PAGE_SECTIONS
 from .constants import (
+    ADDITIONAL_BID_TABLES_COPIED_BY_DUPLICATION,
     COVER_SHEET_PAGE_SELECTION_TYPE,
     DERIVED_BID_TOTAL_TABLES,
     HANDLED_SEPARATELY,
-    ADDITIONAL_BID_TABLES_COPIED_BY_DUPLICATION,
     PAGE_DELETE_CHILD_TABLES,
     TAKEOFF_ANNOTATION_REFERENCE_COLUMNS,
     TAKEOFF_REFERENCE_TABLES,
 )
-from ..raw_bid_integrity import BID_RELATIONSHIPS
-from .serialization import coerce_binary_column_value, encode_text_blob
 from .identity_allocation import AccessIdentityAllocationMixin
+from .serialization import coerce_binary_column_value, encode_text_blob
 from .sql_helpers import placeholders
 
 _BID_SCOPED_PRE = (

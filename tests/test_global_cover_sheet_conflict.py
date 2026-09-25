@@ -3,12 +3,12 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     ResourceRef,
 )
-from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
-from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
-from tests.test_sql_collaboration_phase4 import _change
 from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftState
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 from tests import test_sql_global_bid_family_scope
+from tests.test_sql_collaboration_phase4 import _change
 
 
 class GlobalCoverSheetConflictTests(unittest.TestCase):

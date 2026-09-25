@@ -21,6 +21,7 @@ from ...application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
     ConditionSummaryNode,
 )
+from ...application.utils.quantity_display import format_quantity_number
 from ..actions.action_ids import ACTION_COPY, ACTION_DELETE
 from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.icon_manager import IconId, IconManager
@@ -31,7 +32,6 @@ from ..utils.condition_tree_style import (
     set_condition_tree_item_row_height,
 )
 from ..utils.dialog import exec_transient_menu
-from ...application.utils.quantity_display import format_quantity_number
 
 _NODE_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _COL_NUMBER = 0

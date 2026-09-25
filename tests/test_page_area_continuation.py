@@ -1,11 +1,11 @@
 import unittest
-from unittest.mock import Mock, patch
 from types import SimpleNamespace
-from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
+from unittest.mock import Mock, patch
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

@@ -3,7 +3,6 @@ import math
 import os
 import weakref
 from typing import NamedTuple
-from shiboken6 import isValid
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainterPath, QPen
@@ -13,6 +12,7 @@ from PySide6.QtWidgets import (
     QGraphicsPathItem,
     QGraphicsRectItem,
 )
+from shiboken6 import isValid
 from .....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
     ANNOTATION_TYPE_CLOUD,
@@ -1287,9 +1287,13 @@ class PlacementModeMixin:
                 self._add_snap_cursor_marker(cx, cy, snap_kind)
                 self._request_place_preview_repaint()
                 return
-            tx = cs.transform_vertices_to_2d([pts[0][0], pts[0][1]])
-            x1, y1 = tx[0], tx[1]
-            x2, y2 = self._snap_angle_for_placement(x1, y1, cx, cy, snap_kind)
+            start_x, start_y = pts[0]
+            end_x, end_y = self._snap_angle_for_placement(
+                start_x, start_y, ost_x, ost_y, snap_kind
+            )
+            x1, y1, x2, y2 = cs.transform_vertices_to_2d(
+                [start_x, start_y, end_x, end_y]
+            )
             path = self._build_linear_path(cs, condition, x1, y1, x2, y2)
             if path.isEmpty():
                 return

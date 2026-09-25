@@ -4,8 +4,8 @@ from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.dtos.collaboration_dtos import MutationOutcomeStatus
 from ...domain.entities.file_state import normalize_path
-from ..managers.ui_access_manager import Feature
 from ..components.progress_dialog import ProgressDialog
+from ..managers.ui_access_manager import Feature
 from ..utils.dialog import delete_later_if_valid
 from ..utils.messagebox import show_critical, show_info, show_warning
 

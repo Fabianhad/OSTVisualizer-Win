@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     SUMMARY_NODE_GROUP,
     ConditionSummaryGrouping,
@@ -31,9 +30,7 @@ from ost_visualizer.domain.entities.workspace_state import (
 from ost_visualizer.infrastructure.persistence.repositories.json_workspace_state_repository import (
     JsonWorkspaceStateRepository,
 )
-from ost_visualizer.presentation.components.condition_summary import (
-    ConditionSummaryTab,
-)
+from ost_visualizer.presentation.components.condition_summary import ConditionSummaryTab
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.presentation.components.project_tree_view import ProjectView
@@ -42,9 +39,7 @@ from ost_visualizer.presentation.dialogs.condition_types_dialog import (
     ConditionTypesDialog,
 )
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
-from ost_visualizer.presentation.dialogs.job_statuses_dialog import (
-    JobStatusesDialog,
-)
+from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
 from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
@@ -52,6 +47,7 @@ from ost_visualizer.presentation.handlers.file_operation_handler import (
 from ost_visualizer.presentation.utils.persistent_header import (
     PersistentHeaderController,
 )
+from PySide6 import QtCore, QtWidgets
 from tests.workspace_state_test_support import InMemoryWorkspaceStateRepository
 
 

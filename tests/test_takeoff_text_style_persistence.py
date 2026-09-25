@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 import pyodbc
-from PySide6.QtWidgets import QApplication, QGraphicsTextItem
 from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
 from ost_visualizer.application.dtos.create_condition_spec_dto import (
     CreateConditionSpec,
@@ -22,11 +21,11 @@ from ost_visualizer.domain.entities.annotation import (
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.font_definition import FontDefinition
-from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
-from ost_visualizer.infrastructure.mdb.database_creator import DatabaseCreator
 from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
     TakeoffOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
+from ost_visualizer.infrastructure.mdb.database_creator import DatabaseCreator
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
@@ -35,6 +34,7 @@ from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer im
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
+from PySide6.QtWidgets import QApplication, QGraphicsTextItem
 
 try:
     import win32com.client as _win32_client

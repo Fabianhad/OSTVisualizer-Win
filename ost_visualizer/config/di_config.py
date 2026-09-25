@@ -1,54 +1,44 @@
 from pathlib import Path
 from typing import Optional
 from ..application.app_controller import AppControllerBuilder
-from ..application.services.database_capability_service import (
-    DatabaseCapabilityService,
+from ..application.service_container import ServiceContainer
+from ..application.services.conflict_resolution_service import ConflictResolutionService
+from ..application.services.database_capability_service import DatabaseCapabilityService
+from ..application.services.database_concurrency_token_service import (
+    DatabaseConcurrencyTokenService,
 )
 from ..application.services.database_session_registry import DatabaseSessionRegistry
 from ..application.services.local_draft_registry import LocalDraftRegistry
 from ..application.services.pending_mutation_registry import PendingMutationRegistry
-from ..application.services.conflict_resolution_service import (
-    ConflictResolutionService,
-)
-from ..application.services.database_concurrency_token_service import (
-    DatabaseConcurrencyTokenService,
-)
 from ..application.services.remote_change_reconciliation_service import (
     RemoteChangeReconciliationService,
 )
 from ..application.services.sql_collaboration_coordinator import (
     SqlCollaborationCoordinator,
 )
-from ..application.services.sql_workspace_state_service import (
-    SqlWorkspaceStateService,
-)
-from ..application.service_container import ServiceContainer
+from ..application.services.sql_workspace_state_service import SqlWorkspaceStateService
 from ..infrastructure.app_paths import get_app_data_dir
-from ..infrastructure.events.event_bus import EventBus
 from ..infrastructure.database.descriptor_registry import DatabaseDescriptorRegistry
+from ..infrastructure.database.entity_version_reader import DatabaseEntityVersionReader
+from ..infrastructure.events.event_bus import EventBus
 from ..infrastructure.logging.logger_factory import LoggerFactory
-from ..infrastructure.sql.credential_store import WindowsCredentialStore
-from ..infrastructure.sql.collaboration_store import SqlCollaborationStore
-from ..infrastructure.sql.connection_manager import SqlConnectionManager
-from ..infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
-from ..infrastructure.sql.schema_definition import SQL_SCHEMA_V1
-from ..infrastructure.sql.workspace_state_repository import (
-    SqlWorkspaceStateRepository,
-)
-from ..infrastructure.database.entity_version_reader import (
-    DatabaseEntityVersionReader,
+from ..infrastructure.persistence.repositories.json_pending_sql_operation_repository import (
+    JsonPendingSqlOperationRepository,
 )
 from ..infrastructure.persistence.repositories.memory_annotation_view_repository import (
     MemoryAnnotationViewRepository,
-)
-from ..infrastructure.persistence.repositories.json_pending_sql_operation_repository import (
-    JsonPendingSqlOperationRepository,
 )
 from ..infrastructure.providers import (
     ApiClientProvider,
     InfrastructureServiceProvider,
     RepositoryProvider,
 )
+from ..infrastructure.sql.collaboration_store import SqlCollaborationStore
+from ..infrastructure.sql.connection_manager import SqlConnectionManager
+from ..infrastructure.sql.credential_store import WindowsCredentialStore
+from ..infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
+from ..infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from ..infrastructure.sql.workspace_state_repository import SqlWorkspaceStateRepository
 from ..presentation.managers.annotation_view_manager import QtAnnotationViewManager
 from ..presentation.managers.main_hotlink_view_manager import QtMainHotlinkViewManager
 from ..presentation.managers.view_window_manager import QtViewWindowManager

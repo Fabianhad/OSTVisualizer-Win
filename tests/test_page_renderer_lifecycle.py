@@ -2,7 +2,6 @@ import os
 import tempfile
 import unittest
 from unittest.mock import patch
-from PySide6.QtGui import QColor, QImage
 from ost_visualizer.application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     RASTER_NATIVE_RENDER_SCALE,
@@ -10,6 +9,7 @@ from ost_visualizer.application.render_quality import (
 from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
     PageRenderer,
 )
+from PySide6.QtGui import QColor, QImage
 
 
 class _FakePdfRenderer:

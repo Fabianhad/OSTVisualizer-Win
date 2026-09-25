@@ -3,9 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 from ...domain.entities.database_descriptor import SqlServerDatabaseLocation
 from .connection_manager import SqlConnectionManager, SqlConnectionRequest
-from .database_metadata_contract import (
-    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
-)
+from .database_metadata_contract import DATABASE_METADATA_CURRENT_DATABASE_PREDICATE
 
 
 @dataclass(frozen=True)

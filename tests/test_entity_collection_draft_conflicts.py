@@ -3,8 +3,8 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     ResourceRef,
 )
-from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 from tests import test_sql_global_condition_scope

@@ -22,8 +22,8 @@ from ..use_cases.project.save_annotation_text_properties_use_case import (
 )
 from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import DatabaseMutationWriteService
-from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .database_capability_service import DatabaseCapabilityService
+from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 
 
 class AnnotationWriteService(DatabaseMutationWriteService):

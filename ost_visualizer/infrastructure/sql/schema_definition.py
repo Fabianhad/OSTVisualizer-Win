@@ -5,8 +5,8 @@ from ...application.dtos.collaboration_resource_catalog import (
     COLLABORATION_RESOURCE_CATALOG,
     CollaborationResourceType,
 )
-from ..database.schema_model import DatabaseSchemaModel, render_sql_server_schema
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
+from ..database.schema_model import DatabaseSchemaModel, render_sql_server_schema
 from ..mdb.database_creator import get_reference_schema_model
 
 SQL_SNAPSHOT_ISOLATION_REQUIREMENT = "ALLOW_SNAPSHOT_ISOLATION=ON"

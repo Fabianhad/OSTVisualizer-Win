@@ -1,12 +1,12 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtCore, QtWidgets
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
+from PySide6 import QtCore, QtWidgets
 
 
 def _app():

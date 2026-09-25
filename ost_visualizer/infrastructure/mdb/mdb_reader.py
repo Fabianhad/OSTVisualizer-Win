@@ -6,12 +6,12 @@ from ...domain.entities.condition import Condition
 from ...domain.entities.hierarchy_data import HierarchyFileEntry
 from ...domain.entities.page_info import BidPageInfo
 from ...domain.entities.takeoff import Takeoff
-from ..parsers.utils.parser import decode_value
+from ..database.connection_wrapper import ConnectionWrapper
 from ..database.master_data_identity import require_unique_master_data_uids
+from ..database.schema_inspector_contract import IDatabaseSchemaInspector
+from ..parsers.utils.parser import decode_value
 from .components.annotation_reader import AnnotationReaderMixin
 from .components.bid_data_reader import BidDataReaderMixin
-from ..database.connection_wrapper import ConnectionWrapper
-from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from .components.hierarchy_reader import HierarchyReaderMixin
 from .components.settings_reader import SettingsReaderMixin
 from .connection_manager import MdbConnectionManager

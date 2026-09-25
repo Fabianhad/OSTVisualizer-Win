@@ -1,11 +1,11 @@
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional
-from ...application.dtos.remote_projection_dtos import RemoteProjectionBarrier
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
     parse_annotation_resource_id,
 )
+from ...application.dtos.remote_projection_dtos import RemoteProjectionBarrier
 from ...domain.entities.identity_refs import BidRef
 from ..managers.ui_access_manager import Feature
 from .remote_plan_update_pipeline import RemotePlanUpdatePipeline

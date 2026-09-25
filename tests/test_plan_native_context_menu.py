@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
-from shiboken6 import isValid
-from PySide6 import QtCore, QtWidgets
 from ost_visualizer.presentation.components.plan_view.components import input_handler
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import isValid
 
 
 class _PlanMenuHarness(QtWidgets.QWidget):

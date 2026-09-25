@@ -1,15 +1,15 @@
 import unittest
 from unittest.mock import Mock, patch
-from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
-    EditConditionDialog,
-)
 from ost_visualizer.presentation.dialogs.condition_types_dialog import (
     ConditionTypesDialog,
 )
+from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
+    EditConditionDialog,
+)
 from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

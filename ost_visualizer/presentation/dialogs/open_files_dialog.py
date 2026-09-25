@@ -9,8 +9,8 @@ from ...application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
     IDatabaseCatalog,
 )
-from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...application.interfaces.i_sql_database_creator import ISqlDatabaseCreator
+from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.database_descriptor import (
     DatabaseBackend,
     DatabaseDescriptor,

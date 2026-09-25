@@ -1,8 +1,8 @@
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+from ...domain.dtos.page_render_info_dto import PageRenderInfo
 from ...domain.entities.condition import Condition
 from ...domain.entities.config import Config
 from ...domain.entities.takeoff import Takeoff
-from ...domain.dtos.page_render_info_dto import PageRenderInfo
 
 
 class MeshData:

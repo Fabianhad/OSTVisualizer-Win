@@ -2,8 +2,8 @@ import os
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
 from ost_visualizer.presentation.components.menu_builder import MenuBuilder
+from PySide6 import QtWidgets
 
 
 class MenuBuilderTests(unittest.TestCase):

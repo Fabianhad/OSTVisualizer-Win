@@ -6,10 +6,10 @@ from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
 from ..actions.action_ids import (
     ACTION_REDO,
+    ACTION_RESET_VIEW,
     ACTION_UNDO,
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
-    ACTION_RESET_VIEW,
 )
 from ..components.mesh_view import OpenGLViewer
 from ..components.popup_tracking_combo import (
@@ -17,8 +17,8 @@ from ..components.popup_tracking_combo import (
     parse_zoom_percent,
     update_zoom_combo,
 )
-from ..components.viewer_cursors import make_zoom_cursor
 from ..components.scene_navigation_controls import SceneNavigationControls
+from ..components.viewer_cursors import make_zoom_cursor
 from ..config import (
     ACTION_ORBIT_LABEL,
     ACTION_ORBIT_TOOLTIP,

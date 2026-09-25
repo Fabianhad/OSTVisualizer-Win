@@ -1,33 +1,33 @@
 from __future__ import annotations
 from dataclasses import replace
 from ...domain.entities.bid import Bid
-from ..layer_change_impact import layer_rename_preserves_rendering
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
 from ...domain.services.project_data_service import ProjectDataService
 from ..condition_change_impact import condition_changes_require_plan_refresh
-from ..dtos.collaboration_resource_catalog import (
-    AREA_RESOURCE_TYPES,
-    BID_CONTENT_ENTITY_RESOURCE_TYPES,
-    BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
-    CONDITION_RESOURCE_TYPES,
-    HIERARCHY_RESOURCE_TYPES,
-    CollaborationResourceFamily,
-    CollaborationResourceType,
-    MASTER_DATA_RESOURCE_TYPES,
-    SUPPORTED_REMOTE_RESOURCE_TYPES,
-    parse_annotation_resource_id,
-)
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
     HydratedDatabaseChangeBatch,
     ReconciliationFailureKind,
     ReconciliationResult,
 )
-from ..events.app_events import AppEvents
+from ..dtos.collaboration_resource_catalog import (
+    AREA_RESOURCE_TYPES,
+    BID_CONTENT_ENTITY_RESOURCE_TYPES,
+    BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
+    CONDITION_RESOURCE_TYPES,
+    HIERARCHY_RESOURCE_TYPES,
+    MASTER_DATA_RESOURCE_TYPES,
+    SUPPORTED_REMOTE_RESOURCE_TYPES,
+    CollaborationResourceFamily,
+    CollaborationResourceType,
+    parse_annotation_resource_id,
+)
 from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
-from .database_concurrency_token_service import DatabaseConcurrencyTokenService
+from ..events.app_events import AppEvents
+from ..layer_change_impact import layer_rename_preserves_rendering
 from .conflict_resolution_service import ConflictResolutionService
+from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .local_draft_registry import LocalDraftRegistry
 
 

@@ -3,15 +3,15 @@ import threading
 import uuid
 from dataclasses import replace
 from typing import Optional
-from ..dtos.collaboration_resource_catalog import (
-    coalesced_resource_type,
-    resource_definition,
-)
 from ..dtos.collaboration_dtos import (
     ConcurrencyToken,
     DatabaseChange,
     ResourceLock,
     ResourceRef,
+)
+from ..dtos.collaboration_resource_catalog import (
+    coalesced_resource_type,
+    resource_definition,
 )
 from ..dtos.local_draft_dtos import LocalDraft, LocalDraftConflict, LocalDraftState
 

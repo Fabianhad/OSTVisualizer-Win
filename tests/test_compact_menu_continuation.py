@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import patch
-from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.presentation.utils.compact_context_menu import (
     populate_compact_context_menu,
 )
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 
 
 class CompactMenuContinuationTests(unittest.TestCase):

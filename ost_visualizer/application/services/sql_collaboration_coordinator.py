@@ -11,32 +11,28 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 from ...domain.entities.database_descriptor import DatabaseBackend
-from ..dtos.collaboration_resource_catalog import (
-    parse_annotation_resource_id,
-    resource_definition,
-)
 from ..dtos.application_info import APPLICATION_VERSION
 from ..dtos.collaboration_dtos import (
-    AuthoritativeMutationResult,
-    CollaborationMutationType,
-    CollaborationStatus,
-    CollaborationShutdownState,
-    CollaborationMetrics,
-    CollaborationPollingPolicy,
     COLLABORATION_STALE_SECONDS,
+    AuthoritativeMutationResult,
+    CollaborationMetrics,
+    CollaborationMutationType,
+    CollaborationPollingPolicy,
+    CollaborationShutdownState,
+    CollaborationStatus,
     DatabaseSession,
     DurableOperationResult,
     EditLeaseHandle,
     EditLeaseLoss,
     EditLeaseRequest,
     EditLeaseResult,
+    MutationExecutionResult,
     MutationOutcomeStatus,
-    PresenceMode,
     PendingMutationState,
     PendingSqlOperationRecord,
+    PresenceMode,
     QueuedMutationRequest,
     QueuedMutationResult,
-    MutationExecutionResult,
     ReconciliationFailureKind,
     ReconciliationResult,
     ResourceLock,
@@ -44,20 +40,24 @@ from ..dtos.collaboration_dtos import (
     SynchronizationState,
     queued_takeoff_preview_uid,
 )
+from ..dtos.collaboration_resource_catalog import (
+    parse_annotation_resource_id,
+    resource_definition,
+)
+from ..dtos.local_draft_dtos import LocalDraftState
 from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
 from ..events.app_events import AppEvents
 from ..interfaces.i_collaboration_store import ICollaborationStore
 from ..interfaces.i_database_catalog import DatabaseCatalogError
 from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
-from ..interfaces.i_remote_change_reader import IRemoteChangeReader
 from ..interfaces.i_pending_sql_operation_repository import (
     IPendingSqlOperationRepository,
 )
+from ..interfaces.i_remote_change_reader import IRemoteChangeReader
 from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from .database_capability_service import DatabaseCapabilityService
 from .local_draft_registry import LocalDraftRegistry
-from ..dtos.local_draft_dtos import LocalDraftState
 from .pending_mutation_registry import PendingMutationRegistry
 from .remote_change_reconciliation_service import RemoteChangeReconciliationService
 from .synchronization_conflict_publisher import publish_synchronization_conflict

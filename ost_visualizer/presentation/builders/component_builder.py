@@ -7,23 +7,21 @@ from ..actions.action_ids import (
     ACTION_CUT,
     ACTION_DELETE,
     ACTION_DUPLICATE,
+    ACTION_NEXT_PAGE,
     ACTION_OPEN_FILES,
     ACTION_PASTE,
-    ACTION_REDO,
-    ACTION_UNDO,
     ACTION_PREVIOUS_PAGE,
-    ACTION_NEXT_PAGE,
+    ACTION_REDO,
     ACTION_RESET_VIEW,
+    ACTION_UNDO,
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ..components.takeoff_toolbar_visibility import TakeoffToolbarVisibilityController
 from ..adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ..components.condition_summary import ConditionSummaryTab
 from ..components.conditions_sidebar import ConditionsSidebar
 from ..components.layers_sidebar import BidLayersSidebar
 from ..components.mesh_view import OpenGLViewer
-from ..components.scene_navigation_controls import SceneNavigationControls
 from ..components.page_combo import PageComboBox
 from ..components.page_settings_bar import PageSettingsBar
 from ..components.plan_view.view import TakeoffPlanView
@@ -33,7 +31,9 @@ from ..components.popup_tracking_combo import (
     update_zoom_combo,
 )
 from ..components.project_tree_view import ProjectView
+from ..components.scene_navigation_controls import SceneNavigationControls
 from ..components.status_panel import StatusPanel
+from ..components.takeoff_toolbar_visibility import TakeoffToolbarVisibilityController
 from ..components.toolbar_overflow import (
     PageSettingsOverflowWidget,
     SyncedComboOverflowWidget,
@@ -103,10 +103,10 @@ from ..utils.annotation_style_controls import (
 )
 from ..utils.plan_tool_registry import (
     PAGE_SELECTOR_ITEM,
-    ZOOM_SELECTOR_ITEM,
     PAGE_SETTINGS_ITEM,
     PLAN_ANNOTATION_TOOL_SPECS,
     PLAN_TOOL_SPECS,
+    ZOOM_SELECTOR_ITEM,
 )
 from ..visualization.native_page_plane import NativePageImagePlaneProvider
 

@@ -1,13 +1,13 @@
 from __future__ import annotations
 from typing import Callable, Protocol, Sequence, TypeVar
-from ..dtos.condition_takeoff_reassignment import ConditionTakeoffReassignment
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationRequest,
     DatabaseMutationResult,
-    ResourceRef,
     PlanTakeoffOwnership,
+    ResourceRef,
 )
+from ..dtos.condition_takeoff_reassignment import ConditionTakeoffReassignment
 
 T = TypeVar("T")
 

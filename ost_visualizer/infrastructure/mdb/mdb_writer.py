@@ -1,18 +1,12 @@
-from ...application.dtos.collaboration_dtos import PlanTakeoffOwnership
-import logging
-from ...application.dtos.condition_takeoff_reassignment import (
-    ConditionTakeoffReassignment,
-)
 import contextvars
+import logging
 from contextlib import contextmanager
 from typing import Generator, Optional, Sequence
 import pyodbc
-from .components.annotation_operations import AnnotationOperationsMixin
-from .components.bid_operations import BidOperationsMixin
-from .components.bulk_write_helpers import AccessBulkWriteMixin
-from .components.condition_folder_operations import ConditionFolderOperationsMixin
-from .components.condition_operations import ConditionOperationsMixin
-from ..database.connection_wrapper import ConnectionWrapper
+from ...application.dtos.collaboration_dtos import PlanTakeoffOwnership
+from ...application.dtos.condition_takeoff_reassignment import (
+    ConditionTakeoffReassignment,
+)
 from ..database.annotation_storage import ANNOTATION_TABLE_BY_TYPE
 from ..database.bid_owned_identity import (
     MissingBidOwnedUidError,
@@ -20,7 +14,13 @@ from ..database.bid_owned_identity import (
     require_existing_unique_bid_owned_uid_matches,
     require_plan_takeoff_ownership,
 )
+from ..database.connection_wrapper import ConnectionWrapper
 from ..database.schema_inspector_contract import IDatabaseSchemaInspector
+from .components.annotation_operations import AnnotationOperationsMixin
+from .components.bid_operations import BidOperationsMixin
+from .components.bulk_write_helpers import AccessBulkWriteMixin
+from .components.condition_folder_operations import ConditionFolderOperationsMixin
+from .components.condition_operations import ConditionOperationsMixin
 from .components.import_operations import ImportOperationsMixin
 from .components.layer_operations import LayerOperationsMixin
 from .components.page_operations import PageOperationsMixin

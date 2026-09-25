@@ -1,6 +1,5 @@
 import unittest
 from pathlib import Path
-from PySide6 import QtWidgets
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.presentation.components.project_tree_view import ProjectView
 from ost_visualizer.presentation.components.tree_popup_combo import (
@@ -11,6 +10,7 @@ from ost_visualizer.presentation.utils.condition_tree_style import (
     CONDITION_TREE_INDENTATION,
     apply_tree_indentation,
 )
+from PySide6 import QtWidgets
 
 
 def _app():

@@ -4,12 +4,12 @@ import unittest
 from dataclasses import replace
 import pyodbc
 from ost_visualizer.domain.entities.database_descriptor import SqlAuthenticationMode
+from ost_visualizer.infrastructure.sql.client_permissions import (
+    apply_sql_client_permissions,
+)
 from ost_visualizer.infrastructure.sql.connection_manager import (
     SqlConnectionManager,
     SqlConnectionRequest,
-)
-from ost_visualizer.infrastructure.sql.client_permissions import (
-    apply_sql_client_permissions,
 )
 from ost_visualizer.infrastructure.sql.errors import SqlInfrastructureError
 from tests.sql_integration_support import (

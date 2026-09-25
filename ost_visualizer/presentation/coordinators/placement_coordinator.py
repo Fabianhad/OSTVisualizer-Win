@@ -1,6 +1,6 @@
 from enum import Enum, auto
 from typing import Optional
-from ..managers.ui_access_manager import Feature, MAIN_PLAN_SURFACE_ID
+from ..managers.ui_access_manager import MAIN_PLAN_SURFACE_ID, Feature
 from .navigation_state_machine import NavState
 
 

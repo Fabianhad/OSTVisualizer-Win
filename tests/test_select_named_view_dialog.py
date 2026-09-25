@@ -1,9 +1,9 @@
 import unittest
-from PySide6 import QtCore, QtGui, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
     SelectNamedViewDialog,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import delete
 
 
 def _ensure_app():

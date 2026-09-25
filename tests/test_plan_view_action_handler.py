@@ -6,13 +6,6 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtCore, QtGui, QtWidgets
-from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
-    InsertAnnotationSpec,
-)
-from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
-from ost_visualizer.application.dtos.paste_ref_remap_dto import PasteRefRemap
-from ost_visualizer.application.dtos.write_reload_result import WriteReloadResult
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     EditLeaseHandle,
@@ -27,6 +20,12 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     parse_annotation_resource_id,
 )
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
+)
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ost_visualizer.application.dtos.write_reload_result import WriteReloadResult
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_CLOUD,
@@ -36,10 +35,10 @@ from ost_visualizer.domain.entities.annotation import (
     BidAnnotation,
     hex_color_to_int,
 )
-from ost_visualizer.domain.entities.file_state import normalize_path
 from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.file_state import normalize_path
 from ost_visualizer.domain.entities.font_definition import FontDefinition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -54,15 +53,15 @@ from ost_visualizer.presentation.handlers.plan_view_action_handler import (
     PlanViewActionHandler,
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.services.selection_clipboard_service import (
+    SelectionClipboardService,
+)
 from ost_visualizer.presentation.services.selection_commands import (
     DeleteAnnotationsCommand,
     InsertAnnotationsCommand,
     InsertTakeoffsCommand,
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
-)
-from ost_visualizer.presentation.services.selection_clipboard_service import (
-    SelectionClipboardService,
 )
 from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
 from ost_visualizer.presentation.utils.annotation_defaults import (
@@ -72,6 +71,7 @@ from ost_visualizer.presentation.utils.annotation_defaults import (
     set_annotation_styles_by_tool,
 )
 from ost_visualizer.presentation.utils.font_catalog import resolve_font_definition
+from PySide6 import QtCore, QtGui, QtWidgets
 
 
 def _named_view_annotation(uid: str, name: str) -> BidAnnotation:

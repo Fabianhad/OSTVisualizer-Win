@@ -1,5 +1,5 @@
-from dataclasses import replace
 from collections.abc import Sequence
+from dataclasses import replace
 from ..domain.entities.layer import (
     ANNOTATION_LAYER_NAME,
     COMMENTS_LAYER_NAME,

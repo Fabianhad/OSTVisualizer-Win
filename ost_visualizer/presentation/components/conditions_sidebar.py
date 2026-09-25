@@ -4,6 +4,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from shiboken6 import isValid
+from ...application.utils.quantity_display import format_quantity_with_uom
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
@@ -20,7 +21,6 @@ from ..utils.condition_tree_style import (
 )
 from ..utils.dialog import exec_transient_menu
 from ..utils.messagebox import show_warning
-from ...application.utils.quantity_display import format_quantity_with_uom
 
 _ITEM_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1

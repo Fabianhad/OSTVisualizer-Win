@@ -5,6 +5,88 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.application.render_quality import (
+    INTERACTIVE_PDF_RENDER_SCALE,
+    RASTER_NATIVE_RENDER_SCALE,
+)
+from ost_visualizer.application.services.page_load_strategy_service import (
+    LoadStrategy,
+    PageLoadStrategyService,
+)
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
+from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
+    DIMENSION_LABEL_ITEM_KIND,
+    NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
+    NAMED_VIEW_LABEL_ITEM_KIND,
+    ClippedTextGraphicsItem,
+    ImageBackgroundItem,
+    TileGraphicsItem,
+)
+from ost_visualizer.presentation.components.plan_view.components.page_loader import (
+    VISUAL_KIND_COMPOSITE,
+    VISUAL_KIND_OVERLAY,
+    VISUAL_KIND_PAGE,
+)
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
+    ViewerSyncCoordinator,
+)
+from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.managers.ui_access_manager import (
+    Feature,
+    PlanSurfaceAccessState,
+)
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PASTE_BACKOUT,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_SELECT,
+)
+from ost_visualizer.presentation.scene.plan_view_z_order import (
+    PAGE_VISIBLE_FRAME_Z,
+    PAPER_HIGHLIGHT_Z,
+    TAKEOFF_BODY_Z,
+)
+from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
+from ost_visualizer.presentation.utils.image_show_mode import (
+    SHOW_BOTH,
+    SHOW_ORIGINAL,
+    SHOW_OVERLAY,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+    AnnotationItemRenderer,
+    HighlightGraphicsItem,
+)
+from ost_visualizer.presentation.visualization.services.color_service import (
+    ColorService,
+)
+from ost_visualizer.presentation.windows.annotation_view_window import (
+    _ANNOTATION_WINDOW_CONFIG,
+)
+from ost_visualizer.presentation.windows.view_window import _VIEW_WINDOW_CONFIG
 from PySide6 import QtCore, QtTest, QtWidgets
 from PySide6.QtGui import (
     QAction,
@@ -33,88 +115,6 @@ from PySide6.QtWidgets import (
     QStyleOptionGraphicsItem,
 )
 from shiboken6 import delete
-from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.application.render_quality import (
-    INTERACTIVE_PDF_RENDER_SCALE,
-    RASTER_NATIVE_RENDER_SCALE,
-)
-from ost_visualizer.application.services.page_load_strategy_service import (
-    LoadStrategy,
-    PageLoadStrategyService,
-)
-from ost_visualizer.domain.entities.annotation import (
-    ANNOTATION_TYPE_DIMENSION,
-    ANNOTATION_TYPE_HOTLINK,
-    ANNOTATION_TYPE_NAMED_VIEW,
-    ANNOTATION_TYPE_TEXT,
-    BidAnnotation,
-)
-from ost_visualizer.domain.entities.bid import Bid
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.config import Config
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
-from ost_visualizer.presentation.scene.plan_view_z_order import (
-    PAGE_VISIBLE_FRAME_Z,
-    PAPER_HIGHLIGHT_Z,
-    TAKEOFF_BODY_Z,
-)
-from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
-    DIMENSION_LABEL_ITEM_KIND,
-    NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
-    NAMED_VIEW_LABEL_ITEM_KIND,
-    ClippedTextGraphicsItem,
-    ImageBackgroundItem,
-    TileGraphicsItem,
-)
-from ost_visualizer.presentation.components.plan_view.components.page_loader import (
-    VISUAL_KIND_COMPOSITE,
-    VISUAL_KIND_OVERLAY,
-    VISUAL_KIND_PAGE,
-)
-from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
-from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
-from ost_visualizer.presentation.controllers.menu_controller import MenuController
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
-from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
-    ToolbarStateCoordinator,
-)
-from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
-    ViewerSyncCoordinator,
-)
-from ost_visualizer.presentation.managers.ui_access_manager import (
-    Feature,
-    PlanSurfaceAccessState,
-)
-from ost_visualizer.presentation.main_window import MainWindow
-from ost_visualizer.presentation.modes.cursor import (
-    CURSOR_MODE_ANNOTATION_PLACE,
-    CURSOR_MODE_PASTE_BACKOUT,
-    CURSOR_MODE_PLACE,
-    CURSOR_MODE_SELECT,
-)
-from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
-from ost_visualizer.presentation.utils.image_show_mode import (
-    SHOW_BOTH,
-    SHOW_ORIGINAL,
-    SHOW_OVERLAY,
-)
-from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
-    HighlightGraphicsItem,
-    AnnotationItemRenderer,
-)
-from ost_visualizer.presentation.visualization.services.color_service import (
-    ColorService,
-)
-from ost_visualizer.presentation.windows.annotation_view_window import (
-    _ANNOTATION_WINDOW_CONFIG,
-)
-from ost_visualizer.presentation.windows.view_window import _VIEW_WINDOW_CONFIG
 
 
 class FakeUiState:

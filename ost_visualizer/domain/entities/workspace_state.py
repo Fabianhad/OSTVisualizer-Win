@@ -1,13 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar, Dict, List, Optional
-from .annotation_style import AnnotationStyle
 from .annotation import (
     ANNOTATION_TYPE_DIMENSION,
     ANNOTATION_TYPE_HIGHLIGHT,
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_TEXT,
 )
+from .annotation_style import AnnotationStyle
 
 WORKSPACE_ACTIVE_VIEW_2D = "2d"
 WORKSPACE_ACTIVE_VIEW_3D = "3d"

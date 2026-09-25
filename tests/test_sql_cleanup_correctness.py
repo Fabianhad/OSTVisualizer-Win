@@ -11,8 +11,32 @@ from unittest.mock import patch
 import pyodbc
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    CollaborationMutationType,
+    ConcurrencyToken,
+)
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    DatabaseMutationRequest as _DatabaseMutationRequest,
+)
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    ExpectedResourceVersion,
+    MutationOutcomeStatus,
+    ResourceRef,
+    SynchronizationConflictKind,
+)
+from ost_visualizer.application.dtos.create_condition_spec_dto import (
+    CreateConditionSpec,
+)
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
+)
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.database_session_registry import (
+    DatabaseSessionRegistry,
+)
+from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
@@ -20,27 +44,31 @@ from ost_visualizer.domain.entities.database_descriptor import (
 )
 from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
-from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.database.connection_wrapper import ConnectionWrapper
-from ost_visualizer.infrastructure.database.settings_cardinality import (
-    GlobalSettingsCardinalityError,
-)
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
-from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.database.reader_router import DatabaseProjectReader
+from ost_visualizer.infrastructure.database.settings_cardinality import (
+    GlobalSettingsCardinalityError,
+)
+from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
     ACCESS_BULK_CHUNK_SIZE,
 )
-from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
-from ost_visualizer.infrastructure.providers import RepositoryProvider
-from ost_visualizer.infrastructure.sql.reader import SqlProjectReader
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.schema_compatibility import MdbSchemaInspector
-from ost_visualizer.infrastructure.sql.connection_manager import SqlConnectionLease
+from ost_visualizer.infrastructure.providers import RepositoryProvider
+from ost_visualizer.infrastructure.sql.client_permissions import (
+    SQL_CLIENT_DATABASE_ROLES,
+    SQL_CLIENT_DIRECT_WRITE_TABLES,
+    _sql_integer_values_match,
+    apply_sql_client_permissions,
+)
 from ost_visualizer.infrastructure.sql.connection_manager import (
+    SqlConnectionLease,
     SqlConnectionManager,
     SqlConnectionRequest,
 )
@@ -54,45 +82,20 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlInfrastructureError,
 )
 from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionProbe
-from ost_visualizer.infrastructure.sql.client_permissions import (
-    SQL_CLIENT_DIRECT_WRITE_TABLES,
-    SQL_CLIENT_DATABASE_ROLES,
-    _sql_integer_values_match,
-    apply_sql_client_permissions,
-)
+from ost_visualizer.infrastructure.sql.reader import SqlProjectReader
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlSchemaInspector,
     SqlSchemaInventory,
-)
-from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
-from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    ChangeOperation,
-    CollaborationMutationType,
-    ConcurrencyToken,
-    DatabaseMutationRequest as _DatabaseMutationRequest,
-    ExpectedResourceVersion,
-    MutationOutcomeStatus,
-    ResourceRef,
-    SynchronizationConflictKind,
-)
-from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
-    InsertAnnotationSpec,
-)
-from ost_visualizer.application.dtos.create_condition_spec_dto import (
-    CreateConditionSpec,
-)
-from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
-from ost_visualizer.application.services.database_session_registry import (
-    DatabaseSessionRegistry,
 )
 from ost_visualizer.infrastructure.sql.schema_validator import (
     SqlSchemaValidationReport,
     SqlSchemaValidator,
 )
+from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
 from ost_visualizer.infrastructure.sql.writer import (
-    _OptimisticConflict,
     SqlProjectWriter,
+    _OptimisticConflict,
     _RecordedMutation,
     _SqlMutationState,
 )
@@ -102,6 +105,7 @@ from ost_visualizer.presentation.dialogs.sql_connection_dialog import (
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
+from PySide6 import QtWidgets
 from tests.workspace_state_test_support import with_workspace_state
 
 FileOperationHandler = with_workspace_state(FileOperationHandler)

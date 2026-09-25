@@ -8,12 +8,10 @@ from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtGui, QtTest, QtWidgets
-from shiboken6 import delete, isValid
-from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
 )
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.config_service import ConfigService
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.config import Config
@@ -22,31 +20,33 @@ from ost_visualizer.infrastructure.persistence.repositories.json_config_reposito
     JsonConfigRepository,
 )
 from ost_visualizer.presentation.components.toolbar_overflow import add_overflow_widget
-from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
-    ViewerSyncCoordinator,
-)
+from ost_visualizer.presentation.config import RELAXED_SPACING
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
     ToolbarStateCoordinator,
 )
-from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
+    ViewerSyncCoordinator,
+)
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.app_config_presentation_manager import (
     AppConfigPresentationManager,
 )
-from ost_visualizer.presentation.config import RELAXED_SPACING
 from ost_visualizer.presentation.managers.shortcut_manager import ShortcutManager
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.utils.plan_tool_registry import (
-    TAKEOFF_TOOLBAR_ITEMS,
-    PLAN_ANNOTATION_TOOL_SPECS,
     PAGE_SELECTOR_ITEM,
-    ZOOM_SELECTOR_ITEM,
     PAGE_SETTINGS_ITEM,
+    PLAN_ANNOTATION_TOOL_SPECS,
+    TAKEOFF_TOOLBAR_ITEMS,
+    ZOOM_SELECTOR_ITEM,
 )
-from tests import test_cross_surface_presentation as cross_surface
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from shiboken6 import delete, isValid
 from tests import test_component_builder as component_tests
-from tests import test_toolbar_state_coordinator as state_tests
+from tests import test_cross_surface_presentation as cross_surface
 from tests import test_remote_plan_update_pipeline as remote_tests
+from tests import test_toolbar_state_coordinator as state_tests
 
 
 def register_test_fonts():

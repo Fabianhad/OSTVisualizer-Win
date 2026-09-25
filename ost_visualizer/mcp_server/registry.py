@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 from ..application.services.mcp_read_service import McpDatabaseRef
+from ..domain.entities.database_descriptor import DatabaseBackend, DatabaseDescriptor
 from ..domain.entities.workspace_state import (
     WORKSPACE_ACTIVE_VIEW_3D,
     WORKSPACE_KEY_ACTIVE_VIEW,
@@ -18,7 +19,6 @@ from ..domain.entities.workspace_state import (
     WORKSPACE_KEY_TAKEOFF_WORKSPACE,
     WORKSPACE_VALID_ACTIVE_VIEWS,
 )
-from ..domain.entities.database_descriptor import DatabaseBackend, DatabaseDescriptor
 from ..infrastructure.app_paths import get_app_data_dir
 from .output_artifacts import MCP_OUTPUT_DIR_NAME
 

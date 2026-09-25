@@ -1,33 +1,29 @@
-from .database.maintenance_router import DatabaseMaintenanceRouter
-from .mdb.database_maintenance import MdbDatabaseMaintenance
-from .sql.database_maintenance import SqlDatabaseMaintenance
-from ..application.interfaces.i_database_maintenance import IDatabaseMaintenance
 import logging
 from pathlib import Path
 from typing import Callable, Optional
 from ..application.dtos.plan_view_renderers_dto import PlanViewRenderers
-from ..application.interfaces.i_api_client_provider import IApiClientProvider
 from ..application.interfaces.i_annotation_caption_resolver import (
     IAnnotationCaptionResolver,
 )
+from ..application.interfaces.i_api_client_provider import IApiClientProvider
 from ..application.interfaces.i_color_service import IColorService
 from ..application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ..application.interfaces.i_coordinate_transformer_factory import (
     ICoordinateTransformerFactory,
 )
-from ..application.interfaces.i_database_creator import IDatabaseCreator
 from ..application.interfaces.i_credential_store import ICredentialStore
 from ..application.interfaces.i_database_catalog import IDatabaseCatalog
+from ..application.interfaces.i_database_creator import IDatabaseCreator
 from ..application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
+from ..application.interfaces.i_database_maintenance import IDatabaseMaintenance
 from ..application.interfaces.i_database_permission_probe import (
     IDatabasePermissionProbe,
 )
 from ..application.interfaces.i_database_session_registry import (
     IDatabaseSessionRegistry,
 )
-from ..application.interfaces.i_sql_database_creator import ISqlDatabaseCreator
 from ..application.interfaces.i_infrastructure_service_provider import (
     IInfrastructureServiceProvider,
 )
@@ -44,6 +40,7 @@ from ..application.interfaces.i_ost_exporter import IOstExporter
 from ..application.interfaces.i_ost_importer import IOstImporter
 from ..application.interfaces.i_pdf_exporter import IPDFExporter
 from ..application.interfaces.i_repository_provider import IRepositoryProvider
+from ..application.interfaces.i_sql_database_creator import ISqlDatabaseCreator
 from ..application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from ..application.interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from ..application.interfaces.i_transaction_monitor import ITransactionMonitor
@@ -55,9 +52,7 @@ from ..domain.repositories.i_config_repository import IConfigRepository
 from ..domain.repositories.i_file_state_repository import IFileStateRepository
 from ..domain.repositories.i_license_api_client import ILicenseApiClient
 from ..domain.repositories.i_license_repository import ILicenseRepository
-from ..domain.repositories.i_license_signature_verifier import (
-    ILicenseSignatureVerifier,
-)
+from ..domain.repositories.i_license_signature_verifier import ILicenseSignatureVerifier
 from ..domain.repositories.i_project_repository import IProjectRepository
 from ..domain.repositories.i_workspace_state_repository import IWorkspaceStateRepository
 from ..domain.services.takeoff_service_impl import TakeoffDomainService
@@ -83,15 +78,14 @@ from ..presentation.visualization.pdf.services.pdf_rendering_service import (
 from ..presentation.visualization.services.color_service import ColorService
 from .app_paths import get_default_working_dir
 from .database.descriptor_registry import DatabaseDescriptorRegistry
+from .database.maintenance_router import DatabaseMaintenanceRouter
 from .database.reader_router import DatabaseProjectReader
 from .database.writer_router import DatabaseProjectWriter
 from .external.license_api_client import LicenseApiClient
 from .hardware.hwid_generator import HWIDGenerator
-from .windows.license_activation_identity import (
-    WindowsLicenseActivationIdentityProvider,
-)
 from .mdb.connection_manager import MdbConnectionManager
 from .mdb.database_creator import DatabaseCreator
+from .mdb.database_maintenance import MdbDatabaseMaintenance
 from .mdb.exporters.ost_exporter import OstExporter
 from .mdb.importers.osp_importer import OspImporter
 from .mdb.importers.ost_importer import OstImporter
@@ -112,8 +106,12 @@ from .services.license_validation_scheduler import LicenseValidationScheduler
 from .sql.catalog import SqlDatabaseCatalog
 from .sql.credential_store import WindowsCredentialStore
 from .sql.database_creator import SqlDatabaseCreator
+from .sql.database_maintenance import SqlDatabaseMaintenance
 from .sql.permissions import SqlDatabasePermissionProbe
 from .visualization_provider import VisualizationProvider
+from .windows.license_activation_identity import (
+    WindowsLicenseActivationIdentityProvider,
+)
 
 
 class RepositoryProvider(IRepositoryProvider):

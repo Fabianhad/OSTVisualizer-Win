@@ -19,15 +19,15 @@ from ...domain.entities.database_descriptor import (
     SqlServerDatabaseLocation,
     validate_sql_database_creation_name,
 )
+from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..config import (
     COMPACT_SPACING,
     RELAXED_MARGINS,
     RELAXED_SPACING,
     SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
 )
-from ..utils.messagebox import show_warning
 from ..utils.dialog import delete_later_if_valid
-from ..components.progress_dialog import ProgressDialog, ProgressReporter
+from ..utils.messagebox import show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 from .sql_connection_dialog import (
     SqlConnectionDialog,

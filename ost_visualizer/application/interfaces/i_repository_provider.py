@@ -1,5 +1,4 @@
 from typing import Callable, Optional, Protocol
-from .i_mdb_connection_manager import IMdbConnectionManager
 from ...domain.repositories.i_config_repository import IConfigRepository
 from ...domain.repositories.i_file_state_repository import IFileStateRepository
 from ...domain.repositories.i_license_repository import ILicenseRepository
@@ -10,6 +9,7 @@ from ...domain.repositories.i_project_repository import IProjectRepository
 from ...domain.repositories.i_workspace_state_repository import (
     IWorkspaceStateRepository,
 )
+from .i_mdb_connection_manager import IMdbConnectionManager
 
 
 class IRepositoryProvider(Protocol):

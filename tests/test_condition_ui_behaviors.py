@@ -6,13 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainterPath
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
-from shiboken6 import delete
-from single_action import SingleCallRecorder
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     EditLeaseHandle,
@@ -30,8 +23,8 @@ from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
@@ -44,11 +37,13 @@ from ost_visualizer.presentation.components import (
     conditions_sidebar as conditions_sidebar_module,
 )
 from ost_visualizer.presentation.components.area_combo import AreaComboBox
-from ost_visualizer.presentation.components.page_combo import PageComboBox
+from ost_visualizer.presentation.components.color_button import ColorButton
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.components.page_combo import PageComboBox
 from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
     PlacementModeMixin,
 )
+from ost_visualizer.presentation.config import COMPACT_SPACING
 from ost_visualizer.presentation.coordinators.placement_coordinator import (
     PlacementCoordinator,
 )
@@ -58,8 +53,6 @@ from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
-from ost_visualizer.presentation.components.color_button import ColorButton
-from ost_visualizer.presentation.config import COMPACT_SPACING
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
@@ -77,13 +70,20 @@ from ost_visualizer.presentation.utils.compact_context_menu import (
 from ost_visualizer.presentation.utils.view_context_menu import (
     build_selected_takeoff_context_state,
 )
+from ost_visualizer.presentation.visualization.pdf.renderers import pattern_renderer
 from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
     TakeoffRenderer,
 )
-from ost_visualizer.presentation.visualization.pdf.renderers import pattern_renderer
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainterPath
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
+from shiboken6 import delete
+from single_action import SingleCallRecorder
 from tests.workspace_state_test_support import (
     make_workspace_state_model,
     with_workspace_state,
@@ -2743,8 +2743,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             button.deleteLater()
 
     def test_nested_layer_delete_uses_action_time_usage_without_rebuild(self):
-        from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
         from ost_visualizer.domain.entities.layer import BidLayer
+        from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
 
         parent = self._make_dialog(Condition(uid="c1", name="Condition", ref_no=1))
         parent._icon_provider = SimpleNamespace(set_window_icon=lambda widget: None)

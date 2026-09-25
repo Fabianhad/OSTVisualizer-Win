@@ -6,14 +6,9 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Optional
 from ...domain.entities.database_descriptor import DatabaseBackend
-from ..dtos.user_workspace_state_dtos import (
-    UserBidWorkspaceState,
-    UserPageViewState,
-)
+from ..dtos.user_workspace_state_dtos import UserBidWorkspaceState, UserPageViewState
 from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
-from ..interfaces.i_sql_workspace_state_repository import (
-    ISqlWorkspaceStateRepository,
-)
+from ..interfaces.i_sql_workspace_state_repository import ISqlWorkspaceStateRepository
 
 
 @dataclass(frozen=True)

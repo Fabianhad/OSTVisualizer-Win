@@ -1,24 +1,12 @@
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-import threading
 import tempfile
-from pathlib import Path
-from ost_visualizer.infrastructure.mdb.database_maintenance import (
-    MdbDatabaseMaintenance,
-)
-from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
-from ost_visualizer.infrastructure.database.descriptor_registry import (
-    DatabaseDescriptorRegistry,
-)
-from ost_visualizer.infrastructure.database.maintenance_router import (
-    DatabaseMaintenanceRouter,
-)
+import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from PySide6 import QtCore, QtGui, QtTest, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.application.interfaces.i_database_maintenance import (
     DatabaseMaintenanceResult,
 )
@@ -26,12 +14,24 @@ from ost_visualizer.application.services.database_maintenance_service import (
     DatabaseMaintenanceService,
 )
 from ost_visualizer.domain.entities.file_state import FileEntry
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
+)
+from ost_visualizer.infrastructure.database.maintenance_router import (
+    DatabaseMaintenanceRouter,
+)
+from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
+from ost_visualizer.infrastructure.mdb.database_maintenance import (
+    MdbDatabaseMaintenance,
+)
 from ost_visualizer.presentation.components.progress_dialog import ProgressDialog
 from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
 from ost_visualizer.presentation.main_window import MainWindow
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import make_workspace_state_model
 
 

@@ -1,4 +1,3 @@
-from ..services.database_maintenance_service import DatabaseMaintenanceService
 import logging
 from ..events.app_events import AppEvents
 from ..interfaces.i_color_service import IColorService
@@ -7,8 +6,9 @@ from ..interfaces.i_infrastructure_service_provider import (
 )
 from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from ..service_container import ServiceContainer
-from ..services.config_service import ConfigService
 from ..services.annotation_caption_resolver import AnnotationCaptionResolver
+from ..services.config_service import ConfigService
+from ..services.database_maintenance_service import DatabaseMaintenanceService
 from ..services.export_service import ExportService
 from ..services.file_loading_service import FileLoadingService
 from ..services.import_service import ImportService

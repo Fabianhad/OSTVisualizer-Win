@@ -8,23 +8,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import (
-    QApplication,
-    QGraphicsPathItem,
-    QGraphicsScene,
-    QGraphicsTextItem,
+from ost_visualizer.application.dtos.annotation_caption_dto import (
+    AnnotationCaptionSettingsDto,
 )
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
-from ost_visualizer.application.dtos.annotation_caption_dto import (
-    AnnotationCaptionSettingsDto,
-)
 from ost_visualizer.application.services.annotation_caption_resolver import (
     AnnotationCaptionResolver,
 )
-from ost_visualizer.domain.entities.annotation_caption import AnnotationCaptionId
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.annotation_caption import AnnotationCaptionId
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.layer import Layer
@@ -36,11 +30,11 @@ from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
-from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
-    AccessBulkWriteMixin,
-)
 from ost_visualizer.infrastructure.mdb.components.annotation_reader import (
     AnnotationReaderMixin,
+)
+from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
+    AccessBulkWriteMixin,
 )
 from ost_visualizer.infrastructure.mdb.components.serialization import (
     encode_position,
@@ -65,6 +59,12 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer
     calculate_highlight_quad_path,
     create_cloud_path_points,
     format_dimension_distance,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsPathItem,
+    QGraphicsScene,
+    QGraphicsTextItem,
 )
 
 

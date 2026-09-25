@@ -9,6 +9,15 @@ from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import Mock, patch
 import pyodbc
+from ost_visualizer.application.dtos.create_condition_spec_dto import (
+    CreateConditionSpec,
+)
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
+)
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.database.bid_owned_identity import (
     require_single_bid_scope_for_uids,
@@ -56,15 +65,6 @@ from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
 from ost_visualizer.infrastructure.services.license_validation_scheduler import (
     LicenseValidationScheduler,
 )
-from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
-from ost_visualizer.application.dtos.create_condition_spec_dto import (
-    CreateConditionSpec,
-)
-from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
-    InsertAnnotationSpec,
-)
-from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
-from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 
 
 class _SqliteCursorWrapper:

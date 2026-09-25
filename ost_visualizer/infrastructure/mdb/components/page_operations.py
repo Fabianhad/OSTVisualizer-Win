@@ -1,15 +1,15 @@
 import pyodbc
 from ....domain.entities.annotation import annotation_rotation_index
-from ...database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
-from ...database.bid_owned_identity import (
-    require_existing_bid_scoped_uid_match,
-    require_single_bid_scope_for_uids,
-)
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.overlay import overlay_units_per_sheet_inch
 from ....domain.services.page_scale_transform import (
     SCALE_EPSILON,
     rescale_position_values,
+)
+from ...database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
+from ...database.bid_owned_identity import (
+    require_existing_bid_scoped_uid_match,
+    require_single_bid_scope_for_uids,
 )
 from .constants import PAGE_CONTENT_TABLES
 from .legend_position import rescale_legend_position

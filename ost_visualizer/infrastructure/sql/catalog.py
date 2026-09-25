@@ -6,8 +6,8 @@ from ...application.interfaces.i_database_catalog import (
 )
 from ...domain.entities.database_descriptor import SqlServerDatabaseLocation
 from .connection_manager import SqlConnectionManager, SqlConnectionRequest
-from .schema_inspector import SqlSchemaInspector
 from .schema_definition import SQL_SCHEMA_V1
+from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaValidator
 
 

@@ -1,5 +1,4 @@
 import unittest
-from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.presentation.components.splash_screen import SplashScreen
 from ost_visualizer.presentation.components.viewer_cursors import (
     _make_outlined_cursor,
@@ -10,6 +9,7 @@ from ost_visualizer.presentation.visualization.utils.image_effects import (
     bitonal_image,
     tint_image,
 )
+from PySide6 import QtCore, QtGui, QtWidgets
 
 
 def _app():

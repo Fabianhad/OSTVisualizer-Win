@@ -7,24 +7,23 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
-from PySide6 import QtWidgets
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    MutationOutcomeStatus,
+    QueuedMutationResult,
+)
 from ost_visualizer.application.dtos.file_import_args import (
     PROJECT_IMPORT_EXTENSION_OSP,
     PROJECT_IMPORT_EXTENSION_OST,
     parse_project_file_args,
 )
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    MutationOutcomeStatus,
-    QueuedMutationResult,
-)
 from ost_visualizer.application.use_cases.project import (
     import_project_files_from_args_use_case as import_args_use_case,
 )
-from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
 )
+from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
@@ -32,7 +31,6 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_NAME,
     DELETED_BIDS_PROJECT_UID,
@@ -43,6 +41,7 @@ from ost_visualizer.domain.entities.workspace_state import (
     ProjectTreeSelectionState,
     WorkspaceState,
 )
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.windows.file_associations import (
     ASSOCIATIONS,
     FileAssociationRegistrar,
@@ -57,6 +56,7 @@ from ost_visualizer.main import (
 )
 from ost_visualizer.presentation import main_window as main_window_module
 from ost_visualizer.presentation.main_window import MainWindow
+from PySide6 import QtWidgets
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MSI_CREATOR_ROOT = REPO_ROOT.parent / "msicreator-master"

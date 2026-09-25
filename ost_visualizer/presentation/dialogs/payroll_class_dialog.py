@@ -9,8 +9,8 @@ from ..config import (
 )
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.dialog import BasePickerDialog, ItemRecord, authoritative_save_is_current
-from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.persistent_header import PersistentHeaderController
+from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import PersistentDialogWindowState
 
 _DIALOG_WINDOW_STATE_KEY = "payroll_classes"

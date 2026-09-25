@@ -11,10 +11,6 @@ from .....application.dtos.scene_data_dto import SceneData, ScenePageImageLayer
 from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
-from .....domain.services.page_image_plane_transform import (
-    resolve_page_floor_elevations,
-    threejs_page_plane_transform,
-)
 from .....domain.entities.area import BidArea
 from .....domain.entities.condition import Condition
 from .....domain.entities.config import Config
@@ -24,6 +20,10 @@ from .....domain.entities.elevation_callout import (
 )
 from .....domain.entities.layer import BidLayer
 from .....domain.entities.takeoff import Takeoff
+from .....domain.services.page_image_plane_transform import (
+    resolve_page_floor_elevations,
+    threejs_page_plane_transform,
+)
 from ...exporters import ost_pdf_writer
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs

@@ -5,16 +5,14 @@ import tempfile
 import unittest
 import uuid
 import xml.etree.ElementTree as ET
-from types import SimpleNamespace
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtWidgets
-from shiboken6 import delete
-from ost_visualizer.application.services.import_service import ImportService
 from ost_visualizer.application.dtos.collaboration_dtos import (
     MutationOutcomeStatus,
     QueuedMutationResult,
 )
+from ost_visualizer.application.services.import_service import ImportService
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyData,
     HierarchyFileEntry,
@@ -30,6 +28,8 @@ from ost_visualizer.infrastructure.persistence.repositories.file_project_reposit
 )
 from ost_visualizer.presentation.handlers import import_handler as import_handler_module
 from ost_visualizer.presentation.handlers.import_handler import ImportHandler
+from PySide6 import QtWidgets
+from shiboken6 import delete
 
 
 class FakeImporter:

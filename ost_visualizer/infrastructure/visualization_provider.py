@@ -1,7 +1,7 @@
 import math
 from typing import Dict, List, Optional, Sequence, Union
-from ..application.dtos.page_visualization_page_dto import PageVisualizationPageDto
 from ..application.dtos.mesh_geometry_dto import MeshGeometry
+from ..application.dtos.page_visualization_page_dto import PageVisualizationPageDto
 from ..application.dtos.scene_data_dto import ScenePageImageLayer
 from ..application.interfaces.i_color_service import IColorService
 from ..application.interfaces.i_coordinate_transformer_factory import (

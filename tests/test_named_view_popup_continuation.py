@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import patch
-from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
     SelectNamedViewDialog,
 )
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 
 
 class NamedViewPopupContinuationTests(unittest.TestCase):

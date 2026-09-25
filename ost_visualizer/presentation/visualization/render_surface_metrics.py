@@ -1,6 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 
 def _round_physical_extent(value: float) -> int:

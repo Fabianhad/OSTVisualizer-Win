@@ -4,8 +4,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
-from shiboken6 import delete
 from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseHandle,
     EditLeaseLoss,
@@ -16,23 +14,23 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.presentation.dialogs.adjust_images_dialog import (
-    AdjustImagesDialog,
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.dialogs.adjust_images_dialog import AdjustImagesDialog
+from ost_visualizer.presentation.dialogs.rename_page_dialog import (
+    PageRenameTarget,
+    RenamePageDialog,
 )
 from ost_visualizer.presentation.dialogs.set_scale_dialog import (
     ScaleSettings,
     SetScaleDialog,
 )
-from ost_visualizer.presentation.dialogs.rename_page_dialog import (
-    PageRenameTarget,
-    RenamePageDialog,
-)
 from ost_visualizer.presentation.services.modal_edit_lease_session import (
     ModalEditLeaseSession,
 )
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
+from PySide6 import QtWidgets
+from shiboken6 import delete
 
 
 def _app():

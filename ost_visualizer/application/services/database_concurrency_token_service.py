@@ -1,6 +1,6 @@
 from __future__ import annotations
-from contextlib import contextmanager
 import threading
+from contextlib import contextmanager
 from weakref import WeakValueDictionary
 from ..dtos.collaboration_dtos import (
     ConcurrencyToken,

@@ -1,6 +1,6 @@
-import unittest
 import random
 import threading
+import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity

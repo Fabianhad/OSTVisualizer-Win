@@ -7,13 +7,13 @@ from ....domain.entities.hierarchy_data import (
     HierarchyPageInfo,
     HierarchyProjectInfo,
 )
-from ...parsers.utils.parser import decode_value, parse_float, remove_empty_folders
-from ...database.master_data_identity import require_unique_master_data_uids
 from ...database.bid_owned_identity import (
     require_acyclic_bid_owned_parent_graph,
     require_valid_unique_bid_owned_uids,
 )
+from ...database.master_data_identity import require_unique_master_data_uids
 from ...database.schema_inspector_contract import IDatabaseSchemaInspector
+from ...parsers.utils.parser import decode_value, parse_float, remove_empty_folders
 from .serialization import decode_text_blob
 
 

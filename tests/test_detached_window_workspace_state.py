@@ -6,13 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
 from ost_visualizer.application.builders.annotation_view_builder import (
     AnnotationViewBuilder,
-)
-from ost_visualizer.application.dtos.condition_summary_dtos import (
-    ConditionSummaryGrouping,
 )
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
@@ -26,6 +21,9 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
 )
+from ost_visualizer.application.dtos.condition_summary_dtos import (
+    ConditionSummaryGrouping,
+)
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
@@ -33,6 +31,9 @@ from ost_visualizer.application.dtos.remote_projection_dtos import (
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import (
     OpenAnnotationViewUseCase,
+)
+from ost_visualizer.domain.aggregates.workspace_state_aggregate import (
+    WorkspaceStateAggregate,
 )
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_NAMED_VIEW,
@@ -43,9 +44,6 @@ from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.domain.aggregates.workspace_state_aggregate import (
-    WorkspaceStateAggregate,
-)
 from ost_visualizer.domain.entities.workspace_state import (
     HeaderLayoutState,
     WorkspaceState,
@@ -69,10 +67,10 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
     WorkspaceStateCoordinator,
 )
-from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
     SelectNamedViewDialog,
 )
+from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
@@ -98,6 +96,8 @@ from ost_visualizer.presentation.windows.annotation_view_window import (
 )
 from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.windows.view_window import ViewWindow
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
 from tests.workspace_state_test_support import InMemoryWorkspaceStateRepository
 
 

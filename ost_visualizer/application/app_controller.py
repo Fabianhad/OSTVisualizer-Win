@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional
 from ..domain.entities.database_descriptor import DatabaseBackend
 from ..domain.entities.file_state import FileEntry, normalize_path
+from ..domain.repositories.i_annotation_view_repository import IAnnotationViewRepository
 from .builders.annotation_view_builder import AnnotationViewBuilder
 from .builders.model_builder import ModelBuilder
 from .builders.orchestrator_builder import AppOrchestrators, OrchestratorBuilder
@@ -12,21 +13,16 @@ from .events.app_events import AppEvents
 from .interfaces.i_annotation_view_manager import IAnnotationViewManager
 from .interfaces.i_api_client_provider import IApiClientProvider
 from .interfaces.i_event_bus import IEventBus
-from .interfaces.i_infrastructure_service_provider import (
-    IInfrastructureServiceProvider,
-)
+from .interfaces.i_infrastructure_service_provider import IInfrastructureServiceProvider
 from .interfaces.i_mdb_connection_manager import IMdbConnectionManager
 from .interfaces.i_repository_provider import IRepositoryProvider
 from .interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from .service_container import ServiceContainer
-from .services.project_operations_service import ProjectOperationsService
 from .services.navigation_load_service import NavigationLoadService
+from .services.project_operations_service import ProjectOperationsService
 from .services.project_read_service import ProjectReadService
 from .use_cases.project.import_project_files_from_args_use_case import (
     ImportProjectFilesFromArgsUseCase,
-)
-from ..domain.repositories.i_annotation_view_repository import (
-    IAnnotationViewRepository,
 )
 
 

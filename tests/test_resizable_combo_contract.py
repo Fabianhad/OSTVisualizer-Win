@@ -1,7 +1,7 @@
 import unittest
+from ost_visualizer.presentation.components.resizable_combo import ResizableComboBox
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import delete
-from ost_visualizer.presentation.components.resizable_combo import ResizableComboBox
 
 
 class ResizableComboContractTests(unittest.TestCase):

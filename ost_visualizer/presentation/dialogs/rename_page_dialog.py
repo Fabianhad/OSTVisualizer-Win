@@ -2,11 +2,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
-from ..config import (
-    COMPACT_MARGINS,
-    COMPACT_SPACING,
-    RENAME_PAGE_WINDOW_WIDTH,
-)
+from ..config import COMPACT_MARGINS, COMPACT_SPACING, RENAME_PAGE_WINDOW_WIDTH
 from ..utils.messagebox import show_warning
 from ..utils.windows import remove_minimize_maximize, set_fixed_width_auto_height
 

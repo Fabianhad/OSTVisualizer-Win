@@ -1,14 +1,5 @@
 from typing import Dict, List, Optional, Tuple
 import pyodbc
-from ...database.settings_cardinality import (
-    fetch_optional_global_settings_row,
-    normalize_next_bid_number,
-)
-from ...database.master_data_identity import require_unique_master_data_uids
-from ...database.bid_owned_identity import (
-    require_acyclic_bid_owned_parent_graph,
-    require_valid_unique_bid_owned_uids,
-)
 from ....domain.entities.area import BidArea
 from ....domain.entities.cover_sheet import (
     CoverSheetData,
@@ -17,6 +8,15 @@ from ....domain.entities.cover_sheet import (
     JobStatus,
 )
 from ....domain.entities.employee import Employee, PayClass
+from ...database.bid_owned_identity import (
+    require_acyclic_bid_owned_parent_graph,
+    require_valid_unique_bid_owned_uids,
+)
+from ...database.master_data_identity import require_unique_master_data_uids
+from ...database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+)
 from ...parsers.utils.parser import decode_value, parse_float
 from .constants import LAYER_REFERENCE_TABLES
 

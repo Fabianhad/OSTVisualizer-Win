@@ -1,6 +1,5 @@
 import logging
 from typing import Dict, List, Optional, Tuple
-from ..interfaces.i_mdb_reader import IMdbReader
 from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.cover_sheet import CoverSheetData, JobStatus
@@ -23,6 +22,7 @@ from ...domain.services.uom_service import get_uom_label as _get_uom_label
 from ...domain.services.uom_service import (
     get_valid_uoms_for_calc_type as _get_valid_uoms_for_calc_type,
 )
+from ..interfaces.i_mdb_reader import IMdbReader
 
 
 class ProjectReadService:
