@@ -1160,6 +1160,15 @@ class InputHandlerMixin:
                 self.update_drag_handle_positions(
                     new_pos, self._drag_plan_item_uid, sdx, sdy
                 )
+                if (
+                    self._drag_handle_index == -1
+                    and not delta.isNull()
+                    and self._positions_meaningfully_different(
+                        self._drag_orig_position,
+                        self._drag_last_valid_new_pos or new_pos,
+                    )
+                ):
+                    self._select_band_dragged = True
                 event.accept()
                 return
             if self._drag_multi_orig_positions and self._drag_item_orig_positions:
@@ -1168,7 +1177,11 @@ class InputHandlerMixin:
                 sdy = scene_cur.y() - self._select_band_origin.y()
                 ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
                 ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(ost_dx, ost_dy)
-                self._update_snapped_multi_drag_preview(sdx, sdy, ost_dx, ost_dy)
+                preview_changed = self._update_snapped_multi_drag_preview(
+                    sdx, sdy, ost_dx, ost_dy
+                )
+                if preview_changed and not delta.isNull():
+                    self._select_band_dragged = True
                 event.accept()
                 return
         if self._rubber_band is not None and self._rubber_band_origin is not None:
@@ -1396,11 +1409,10 @@ class InputHandlerMixin:
                         and self._drag_last_valid_new_pos
                     ):
                         release_new_pos = self._drag_last_valid_new_pos
-                    if resize_release:
-                        commit_tracked_drag = self._positions_meaningfully_different(
-                            self._drag_orig_position,
-                            release_new_pos,
-                        )
+                    commit_tracked_drag = self._positions_meaningfully_different(
+                        self._drag_orig_position,
+                        release_new_pos,
+                    )
                     if release_condition and release_condition.is_attachment:
                         if not self._attachment_position_valid(
                             release_takeoff, release_new_pos
@@ -1416,7 +1428,7 @@ class InputHandlerMixin:
                         )
                 if not commit_tracked_drag and tracked_drag:
                     self._clear_drag_tracking(restore_preview=True)
-                    if resize_release and was_dragged:
+                    if was_dragged:
                         self.finish_intelligent_paste_placement()
                         self._update_cursor()
                         event.accept()
@@ -1793,7 +1805,7 @@ class InputHandlerMixin:
 
     def _update_snapped_multi_drag_preview(
         self, scene_dx: float, scene_dy: float, ost_dx: float, ost_dy: float
-    ) -> None:
+    ) -> bool:
         group_dx, group_dy = self._snapped_group_translation_delta(ost_dx, ost_dy)
         fallback_sdx, fallback_sdy = self.ost_to_scene_delta(group_dx, group_dy)
         fallback_delta = QtCore.QPointF(fallback_sdx, fallback_sdy)
@@ -1816,6 +1828,12 @@ class InputHandlerMixin:
             if orig is not None:
                 delta = preview_delta_by_uid.get(item.data(0), fallback_delta)
                 item.setPos(orig + delta)
+        return any(
+            self._positions_meaningfully_different(
+                self._drag_multi_orig_positions[uid], position
+            )
+            for uid, position in new_positions.items()
+        )
 
     def _move_selection_items_by_uid_delta(
         self, delta_by_uid: dict, fallback_delta: QtCore.QPointF

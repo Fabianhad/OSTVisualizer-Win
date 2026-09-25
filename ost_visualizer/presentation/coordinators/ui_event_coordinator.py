@@ -1619,6 +1619,10 @@ class UIEventCoordinator:
         self._subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
         self._subscribe(AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed)
         self._subscribe(
+            AppEvents.ANNOTATION_LIFETIMES_DELETED,
+            self._on_annotation_lifetimes_deleted,
+        )
+        self._subscribe(
             AppEvents.PENDING_PLAN_MUTATIONS_CHANGED,
             self._on_pending_plan_mutations_changed,
         )
@@ -3484,6 +3488,10 @@ class UIEventCoordinator:
             )
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_annotation_lifetimes_deleted(self, **event_data) -> None:
+        if self._undo_service is not None:
+            self._undo_service.invalidate_deleted_annotation_lifetimes(**event_data)
 
     def _on_annotations_changed(
         self,

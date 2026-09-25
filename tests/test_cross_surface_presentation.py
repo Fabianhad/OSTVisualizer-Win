@@ -132,6 +132,9 @@ class SharedPageData(FakeProjectData):
     def get_page_annotations(self, _page_uid):
         return self.annotations
 
+    def get_all_annotations(self):
+        return list(self.annotations)
+
     def get_hidden_layer_uids(self):
         return self.hidden_layers
 

@@ -1393,7 +1393,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(highlight_row[:3], (1, 3, 0x00FFFF))
         self.assertEqual(
             highlight_row[3],
-            encode_position([3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0]),
+            serialize_position_for_table(
+                "BidHighlights", [3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0]
+            ),
         )
         dimension_row = conn.execute(
             """
@@ -1421,7 +1423,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(named_view_row[:5], (1, 3, "Lobby", 32768, 0))
         self.assertEqual(
             named_view_row[5],
-            encode_position([13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]),
+            serialize_position_for_table(
+                "BidNamedViews", [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
+            ),
         )
         hotlink_row = conn.execute(
             """
@@ -1430,7 +1434,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             """
         ).fetchone()
         self.assertEqual(hotlink_row[:4], (1, 3, 1, 255))
-        self.assertEqual(hotlink_row[4], encode_position([5.0, 6.0]))
+        self.assertEqual(
+            hotlink_row[4], serialize_position_for_table("BidHotLinks", [5.0, 6.0])
+        )
 
     def test_hotlink_numeric_zero_target_is_persisted_as_null(self):
         captured_values = {}
@@ -1688,7 +1694,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 stored = conn.execute(
                     f"SELECT Position FROM {table} WHERE UID=1"
                 ).fetchone()[0]
-                self.assertEqual(stored, encode_position(positions[annotation_type]))
+                self.assertEqual(
+                    stored,
+                    serialize_position_for_table(table, positions[annotation_type]),
+                )
                 self.assertEqual(
                     parse_position_storage(stored), positions[annotation_type]
                 )

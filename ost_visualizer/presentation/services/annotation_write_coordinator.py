@@ -1,6 +1,13 @@
-from dataclasses import dataclass
+from .annotation_history import AnnotationHistoryBinding, capture_annotation_targets
+from .undo_redo_service import AnnotationHistoryTarget
 from typing import Callable, List, Optional
 from ...application.dtos.annotation_creation_factory import AnnotationCreationFactory
+from ...application.dtos.collaboration_dtos import (
+    MutationExecutionResult,
+    MutationOutcomeStatus,
+    PlanItemsPastePayload,
+)
+from ...application.dtos.collaboration_resource_catalog import annotation_resource_id
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
@@ -13,19 +20,45 @@ from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.named_view import normalize_named_view_position
 
 
-@dataclass(frozen=True)
-class InsertedAnnotationCopies:
-    sources: tuple[BidAnnotation, ...]
-    specs: tuple[InsertAnnotationSpec, ...]
-    uids: tuple[str, ...]
-    ref_remap: PasteRefRemap
-
-
 class AnnotationWriteCoordinator:
     def __init__(self, annotation_write_service, project_data_service, event_bus):
         self._write_svc = annotation_write_service
         self._data_svc = project_data_service
         self._event_bus = event_bus
+
+    def capture_history(self, bid_ref, updates, undo):
+        return AnnotationHistoryBinding(
+            self._data_svc,
+            undo,
+            bid_ref,
+            capture_annotation_targets(self._data_svc, bid_ref, updates),
+        )
+
+    def history_from_specs(self, bid_ref, specs, uids, undo):
+        return AnnotationHistoryBinding(
+            self._data_svc,
+            undo,
+            bid_ref,
+            {
+                (str(uid), spec.annotation_type): AnnotationHistoryTarget(
+                    bid_ref, str(spec.page_uid), spec.annotation_type, str(uid)
+                )
+                for uid, spec in zip(uids, specs)
+            },
+        )
+
+    def history_from_saved(self, bid_ref, annotations, undo):
+        return AnnotationHistoryBinding(
+            self._data_svc,
+            undo,
+            bid_ref,
+            {
+                (str(item.uid), item.annotation_type): AnnotationHistoryTarget(
+                    bid_ref, str(item.page_uid), item.annotation_type, str(item.uid)
+                )
+                for item in annotations
+            },
+        )
 
     def save_positions(self, db_path: str, positions: List[tuple]) -> bool:
         if not positions:
@@ -142,121 +175,49 @@ class AnnotationWriteCoordinator:
         return True
 
     def insert_saved_annotations(
-        self, bid_ref: BidRef, saved_annotations: List[BidAnnotation]
+        self,
+        bid_ref: BidRef,
+        saved_annotations: List[BidAnnotation],
+        *,
+        execute_paste: Callable[..., MutationExecutionResult],
     ) -> List[BidAnnotation]:
         if not saved_annotations:
             return []
-        result = self.insert_annotation_copies(
-            bid_ref,
-            saved_annotations,
-            self.annotation_specs_from_saved(saved_annotations),
+        specs = self.annotation_specs_from_saved(saved_annotations)
+        self.apply_default_annotation_layer(bid_ref, specs)
+        payload = PlanItemsPastePayload(
+            source_bid_uid=bid_ref.bid_uid,
+            destination_bid_uid=bid_ref.bid_uid,
+            annotation_source_uids=tuple(
+                annotation_resource_id(item.annotation_type, item.uid)
+                for item in saved_annotations
+            ),
+            annotation_specs=tuple(specs),
         )
-        return [
-            self.annotation_with_uid(
-                annotation,
-                uid,
-                ref_remap=result.ref_remap,
+        result = execute_paste(
+            bid_ref.file_path, payload, publish_database_refreshed_after_write=False
+        )
+        if result.outcome_status != MutationOutcomeStatus.COMMITTED:
+            return []
+        if result.authoritative_result is None:
+            raise ValueError(
+                "Annotation restore did not return its authoritative identity map."
             )
-            for annotation, uid in zip(result.sources, result.uids)
-        ]
-
-    def insert_annotation_copies(
-        self,
-        bid_ref: BidRef,
-        source_annotations: List[BidAnnotation],
-        specs: List[InsertAnnotationSpec],
-        *,
-        ref_remap: Optional[PasteRefRemap] = None,
-        insert_batch: Optional[
-            Callable[
-                [BidRef, List[InsertAnnotationSpec], Optional[PasteRefRemap]],
-                List[str],
-            ]
-        ] = None,
-    ) -> InsertedAnnotationCopies:
-        if len(source_annotations) != len(specs):
-            raise ValueError("Copied annotation sources and specs must stay aligned")
-        remap = ref_remap or PasteRefRemap()
-        insert = insert_batch or self.insert_annotations
-        indexed_pairs = list(enumerate(zip(source_annotations, specs)))
-        named_pairs = [
-            (index, annotation, spec)
-            for index, (annotation, spec) in indexed_pairs
-            if annotation.is_namedview
-        ]
-        other_pairs = [
-            (index, annotation, spec)
-            for index, (annotation, spec) in indexed_pairs
-            if not annotation.is_namedview
-        ]
-        inserted_by_index: dict[
-            int, tuple[BidAnnotation, InsertAnnotationSpec, str]
-        ] = {}
-        if named_pairs:
-            named_uids = self._require_complete_identity_batch(
-                insert(
-                    bid_ref,
-                    [spec for _index, _annotation, spec in named_pairs],
-                    remap,
-                ),
-                len(named_pairs),
-            )
-            for (index, annotation, spec), new_uid in zip(named_pairs, named_uids):
-                remap.namedview_uids[str(annotation.uid)] = str(new_uid)
-                inserted_by_index[index] = (annotation, spec, str(new_uid))
-        source_named_view_uids = {
-            str(annotation.uid)
-            for annotation in source_annotations
-            if annotation.is_namedview
-        }
-        external_named_view_targets = {
-            str(annotation.properties.get("BidPageViewUID"))
-            for _index, annotation, _spec in other_pairs
-            if annotation.annotation_type == ANNOTATION_TYPE_HOTLINK
-            and annotation.properties.get("BidPageViewUID")
-            and str(annotation.properties["BidPageViewUID"])
-            not in source_named_view_uids
-        }
-        existing_named_view_uids = (
-            {
-                str(annotation.uid)
-                for annotation in self._data_svc.get_all_annotations()
-                if annotation.is_namedview
-                and str(annotation.uid) in external_named_view_targets
+        maps = dict(result.authoritative_result.created_uid_maps)
+        restored = dict(maps["annotations"])
+        uids = [restored[source] for source in payload.annotation_source_uids]
+        remap = PasteRefRemap(
+            namedview_uids={
+                item.uid: uid
+                for item, uid in zip(saved_annotations, uids)
+                if item.is_namedview
             }
-            if external_named_view_targets
-            else set()
         )
-        insertable_others = [
-            (index, annotation, spec)
-            for index, annotation, spec in other_pairs
-            if self._copy_reference_is_valid(
-                annotation,
-                source_named_view_uids,
-                existing_named_view_uids,
-                remap,
-            )
+        self.project_inserted_annotations(uids, specs, ref_remap=remap)
+        return [
+            self.annotation_with_uid(item, uid, ref_remap=remap)
+            for item, uid in zip(saved_annotations, uids)
         ]
-        if insertable_others:
-            other_uids = self._require_complete_identity_batch(
-                insert(
-                    bid_ref,
-                    [spec for _index, _annotation, spec in insertable_others],
-                    remap,
-                ),
-                len(insertable_others),
-            )
-            for (index, annotation, spec), new_uid in zip(
-                insertable_others, other_uids
-            ):
-                inserted_by_index[index] = (annotation, spec, str(new_uid))
-        inserted = [inserted_by_index[index] for index in sorted(inserted_by_index)]
-        return InsertedAnnotationCopies(
-            sources=tuple(annotation for annotation, _spec, _uid in inserted),
-            specs=tuple(spec for _annotation, spec, _uid in inserted),
-            uids=tuple(uid for _annotation, _spec, uid in inserted),
-            ref_remap=remap,
-        )
 
     @staticmethod
     def _require_complete_identity_batch(
@@ -300,6 +261,7 @@ class AnnotationWriteCoordinator:
             (annotation, spec)
             for annotation, spec in zip(source_annotations, specs)
             if annotation.annotation_type != ANNOTATION_TYPE_HOTLINK
+            or annotation.hotlink_target_view_uid is None
             or (
                 str(annotation.properties.get("BidPageViewUID") or "")
                 in source_named_view_uids.union(existing_named_view_uids)
@@ -309,22 +271,6 @@ class AnnotationWriteCoordinator:
             [annotation for annotation, _spec in pairs],
             [spec for _annotation, spec in pairs],
         )
-
-    @staticmethod
-    def _copy_reference_is_valid(
-        annotation: BidAnnotation,
-        source_named_view_uids: set[str],
-        existing_named_view_uids: set[str],
-        ref_remap: PasteRefRemap,
-    ) -> bool:
-        if annotation.annotation_type != ANNOTATION_TYPE_HOTLINK:
-            return True
-        target_uid = str(annotation.properties.get("BidPageViewUID") or "")
-        if not target_uid:
-            return False
-        if target_uid in source_named_view_uids:
-            return target_uid in ref_remap.namedview_uids
-        return target_uid in existing_named_view_uids
 
     def _update_named_view_names(self, updates: list) -> None:
         renames = [

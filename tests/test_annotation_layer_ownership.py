@@ -565,8 +565,12 @@ class AnnotationLayerOwnershipTests(unittest.TestCase):
         self.data.update_layer_visibility("7", False)
         self.assertFalse(annotations[0].visible)
         self.assertTrue(annotations[1].visible)
+        project_writer = FakeWriteService()
+        project_writer.annotation_write_service = self.make_service()
         copies = self.coordinator.insert_saved_annotations(
-            self.model.current_bid_ref, [annotations[1]]
+            self.model.current_bid_ref,
+            [annotations[1]],
+            execute_paste=project_writer.execute_plan_items_paste_local,
         )
         self.assertEqual(copies[0].layer_uid, "17")
 

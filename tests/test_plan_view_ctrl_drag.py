@@ -1678,16 +1678,19 @@ class CtrlDragTests(unittest.TestCase):
         )
         self.assertEqual(view.positions_flushed.emitted, [])
 
-    def test_small_body_drag_still_uses_existing_pixel_threshold(self):
+    def test_small_body_drag_commits_changed_snapped_geometry(self):
         view = self._make_linear_resize_gesture_view(zoom=1.0)
         view._is_handle_info_at_viewport_pos = lambda _info, _pos: False
         drag_latches, _release = self._perform_linear_resize_gesture(view, [(3, 0)])
-        self.assertEqual(drag_latches, [False])
+        self.assertEqual(drag_latches, [True])
         self.assertEqual(
             view._current_takeoffs["t1"].position,
-            [0.0, 0.0, 10.0, 0.0],
+            [1.0, 0.0, 11.0, 0.0],
         )
-        self.assertEqual(view.positions_flushed.emitted, [])
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("t1", [0.0, 0.0, 10.0, 0.0], [1.0, 0.0, 11.0, 0.0])], [])],
+        )
 
     def test_angled_resize_is_consistent_across_page_scale_and_zoom(self):
         configurations = (

@@ -37,6 +37,26 @@
 
 ### Fixed
 
+- Annotation geometry now retains fractional coordinates on reload across all
+  supported tables. Minimum snapped annotation placements commit reliably;
+  body-drag previews follow the current snapped position, and rotated Oval resize
+  previews match the committed geometry.
+- Undo restores Named Views and other annotations atomically, including valid
+  targetless Hotlinks. Queued annotation paste retains its original Page,
+  geometry and style even if the caller changes its draft before execution.
+- Text annotations retain fractional geometry and significant whitespace on reload;
+  unsupported legacy-encoding characters reject the write instead of becoming `?`.
+  Long multiline text now uses Qt wrapping without destructive pre-elision, and
+  rotated resize previews agree with committed geometry.
+- Text annotation history follows accepted restore identities on Main and detached
+  Plans, including scale-aware SQL replay and group rotation. Late completions
+  cannot recreate cleared history, and deletion invalidates matching peer-window
+  history before a reused UID can target a different annotation.
+
+- Small snapped Area and Takeoff drags now persist after release, including
+  one-inch and fractional-increment moves below the viewport drag threshold.
+  Group movement preserves child offsets, and dragging back to the original
+  geometry creates no movement history.
 - Page Scale saves retain the active Takeoff placement tool and avoid rebuilding
   the unchanged Project Tree. Authoritative scale-dependent Plan overlays and 3D
   dimensions, displayed quantities, and visible Summary still refresh while

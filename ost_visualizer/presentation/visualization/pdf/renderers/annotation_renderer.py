@@ -183,35 +183,6 @@ def calculate_cloud_scallop_radius(avg_edge_length: float, intensity: float) -> 
     return base_radius * CLOUD_SCALLOP_SIZE_SCALE
 
 
-def process_text_for_box(
-    text_content: str,
-    box_width: float,
-    box_height: float,
-    font_metrics: Any,
-    ellipsis: str = "...",
-) -> str:
-    if not text_content:
-        return ""
-    ellipsis_width = font_metrics.horizontalAdvance(ellipsis)
-    words = text_content.split(" ")
-    processed_words = []
-    for word in words:
-        word_width = font_metrics.horizontalAdvance(word)
-        if word_width > box_width:
-            available_width = box_width - ellipsis_width
-            low, high = 0, len(word)
-            while low < high:
-                mid = (low + high + 1) // 2
-                if font_metrics.horizontalAdvance(word[:mid]) <= available_width:
-                    low = mid
-                else:
-                    high = mid - 1
-            processed_words.append(word[:low] + ellipsis)
-        else:
-            processed_words.append(word)
-    return " ".join(processed_words)
-
-
 def format_dimension_distance(distance_inches: float) -> str:
     display = inches_to_display(distance_inches, metric=False)
     if not display:

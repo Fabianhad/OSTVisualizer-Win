@@ -1,3 +1,4 @@
+from ost_visualizer.presentation.services.undo_redo_service import UndoRedoService
 import os
 import random
 import traceback
@@ -56,7 +57,6 @@ from test_plan_view_action_handler import (
     FakePlanView,
     FakeProjectData,
     FakeUiState,
-    FakeUndoService,
     FakeWriteService,
 )
 from test_ui_event_coordinator_takeoffs_changed import (
@@ -814,7 +814,9 @@ class PlanViewActionHandlerChaosHarness:
         self.ann_write = HandlerChaosAnnotationWriteService()
         self.ann_write.next_uids = [f"ann-{uid}" for uid in range(1000, 1100)]
         self.write.annotation_write_service = self.ann_write
-        self.undo = FakeUndoService()
+
+        self.undo = UndoRedoService()
+        self.undo.set_active_bid(self.ui_state.get_selected_bid_ref())
         self.event_bus = FakeEventBus()
         self.access = FakeAccess(
             {
@@ -1065,13 +1067,13 @@ class PlanViewActionHandlerChaosHarness:
         return ChaosActionResult("toggle_select_access", f"allowed={not allowed}")
 
     def action_undo(self) -> ChaosActionResult:
-        if self.undo.undo is None:
+        if not self.undo.can_undo():
             return ChaosActionResult("undo", "no-op")
         self.undo.undo()
         return ChaosActionResult("undo")
 
     def action_redo(self) -> ChaosActionResult:
-        if self.undo.redo is None:
+        if not self.undo.can_redo():
             return ChaosActionResult("redo", "no-op")
         self.undo.redo()
         return ChaosActionResult("redo")

@@ -746,7 +746,7 @@ class ComponentBuilder:
             main_toolbar, takeoff_toolbar_items, page_nav_spacer_action
         )
         plan_view.set_selection_enabled(True)
-        _undo_svc = UndoRedoService()
+        _undo_svc = UndoRedoService(event_bus=event_bus)
         if ui_access_manager:
             _undo_svc.set_write_guard(
                 lambda: ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)

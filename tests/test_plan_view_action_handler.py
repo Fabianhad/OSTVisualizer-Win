@@ -94,6 +94,30 @@ def _hotlink_annotation(uid: str, target_named_view_uid: str) -> BidAnnotation:
     )
 
 
+def _command_annotation_history(uids, kind="rect"):
+    from ost_visualizer.presentation.services.annotation_history import (
+        AnnotationHistoryBinding,
+    )
+    from ost_visualizer.presentation.services.undo_redo_service import (
+        AnnotationHistoryTarget,
+        UndoRedoService,
+    )
+
+    data = FakeProjectData()
+    bid_ref = BidRef("bid.mdb", "7")
+    undo = UndoRedoService()
+    undo.set_active_bid(bid_ref)
+    return AnnotationHistoryBinding(
+        data,
+        undo,
+        bid_ref,
+        {
+            (uid, kind): AnnotationHistoryTarget(bid_ref, "p1", kind, uid)
+            for uid in uids
+        },
+    )
+
+
 class SelectionCommandIdentityTests(unittest.TestCase):
     def test_takeoff_clipboard_snapshots_current_typed_font_state(self):
         source = Takeoff(
@@ -158,6 +182,7 @@ class SelectionCommandIdentityTests(unittest.TestCase):
             ),
         )
         command = DeleteAnnotationsCommand(
+            history=_command_annotation_history(["old-1", "old-2"]),
             saved_annotations=saved,
             bid_ref=BidRef("bid.mdb", "7"),
             plan_view=plan_view,
@@ -179,6 +204,7 @@ class SelectionCommandIdentityTests(unittest.TestCase):
             ),
         )
         command = InsertAnnotationsCommand(
+            history=_command_annotation_history(["old-1", "old-2"]),
             uids=["old-1", "old-2"],
             bid_ref=BidRef("bid.mdb", "7"),
             specs=[
@@ -400,6 +426,9 @@ class FakeProjectData:
 
     def get_current_bid_file_path(self):
         return "bid.mdb"
+
+    def get_current_bid_ref(self):
+        return BidRef(file_path="bid.mdb", bid_uid="7")
 
     def get_page(self, page_uid):
         return self.pages.get(page_uid)
@@ -1102,6 +1131,11 @@ class FakeWriteService:
                     False,
                 )
                 by_index.update(dict(zip(other_indexes, other_uids)))
+            if len(by_index) != len(payload.annotation_specs):
+                return MutationExecutionResult(
+                    outcome_status=MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+                    message="Incomplete annotation identity map",
+                )
             annotation_uids = [
                 by_index[index] for index in range(len(payload.annotation_specs))
             ]
@@ -1378,21 +1412,65 @@ class FakeUndoService:
         self.redo = None
         self.forward_mutations = []
         self.takeoff_targets = []
+        self.annotation_targets = []
 
-    def push_local(self, undo, redo, *, takeoff_targets=()):
+    def push_local(self, undo, redo, *, takeoff_targets=(), annotation_targets=()):
         self.takeoff_targets.extend(takeoff_targets)
+        self.annotation_targets.extend(annotation_targets)
         self.count += 1
         self.undo = undo
         self.redo = redo
 
-    def push(self, undo_submit, redo_submit, *, takeoff_targets=()):
+    def push(
+        self, undo_submit, redo_submit, *, takeoff_targets=(), annotation_targets=()
+    ):
         self.takeoff_targets.extend(takeoff_targets)
+        self.annotation_targets.extend(annotation_targets)
         self.count += 1
         self.undo = lambda: undo_submit(lambda _success: None)
         self.redo = lambda: redo_submit(lambda _success: None)
 
-    def push_for_bid(self, _bid_ref, undo_submit, redo_submit, *, takeoff_targets=()):
-        self.push(undo_submit, redo_submit, takeoff_targets=takeoff_targets)
+    def push_for_bid(
+        self,
+        _bid_ref,
+        undo_submit,
+        redo_submit,
+        *,
+        takeoff_targets=(),
+        annotation_targets=(),
+    ):
+        self.push(
+            undo_submit,
+            redo_submit,
+            takeoff_targets=takeoff_targets,
+            annotation_targets=annotation_targets,
+        )
+
+    def notify_annotation_deletion(self, bid_ref, identities):
+        pass
+
+    def suspend_deleted_annotations(self, bid_ref, deleted):
+        identities = {target.identity for target in deleted if target.available}
+        suspended = []
+        for target in (*deleted, *self.annotation_targets):
+            if (
+                target.available
+                and target.bid_ref == bid_ref
+                and target.identity in identities
+            ):
+                target.available = False
+                suspended.append(target)
+        return tuple(suspended)
+
+    def rebind_restored_annotations(self, bid_ref, restored, targets):
+        replacements = [
+            (target, restored[target.identity])
+            for target in targets
+            if target.bid_ref == bid_ref
+        ]
+        for target, uid in replacements:
+            target.uid = uid
+            target.available = True
 
     def suspend_deleted_takeoffs(self, bid_ref, deleted):
         identities = {(target.page_uid, target.uid) for target in deleted}
@@ -2423,6 +2501,13 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             )
         ]
         ann_write = FakeAnnotationWriteService()
+        record_style = ann_write.save_annotation_styles
+
+        def reject_missing(*args, **kwargs):
+            record_style(*args, **kwargs)
+            return False
+
+        ann_write.save_annotation_styles = reject_missing
         event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
@@ -7221,6 +7306,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(set(Feature)),
         )
+        handler._write_svc.annotation_write_service = ann_write
         handler.on_elements_deleted(["rect-item"])
         data.pages["p1"].scale_factor1 = 0.1875
         data.pages["p1"].scale_factor2 = 12.0
@@ -7258,6 +7344,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(set(Feature)),
         )
+        handler._write_svc.annotation_write_service = ann_write
         handler.on_elements_deleted(["rect-item"])
         data.pages["p1"].scale_factor1 = 0.1875
         data.pages["p1"].scale_factor2 = 12.0
@@ -7454,6 +7541,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
+        handler._write_svc.annotation_write_service = ann_write
         handler.on_elements_deleted(["a1"])
         undo.undo()
         undo.redo()
@@ -7654,6 +7742,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
+        handler._write_svc.annotation_write_service = ann_write
         with patch.object(handler_module, "confirm", return_value=True):
             handler.on_elements_deleted(["nv1"])
         with patch.object(
@@ -8709,6 +8798,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             source_bid_uid="7",
         )
         ann_cmd = PasteAnnotationsCommand(
+            history=_command_annotation_history(["initial-ann"], "hotlink"),
             specs=[
                 InsertAnnotationSpec(
                     page_uid="p1",

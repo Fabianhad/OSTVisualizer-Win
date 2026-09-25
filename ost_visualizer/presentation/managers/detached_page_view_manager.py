@@ -152,6 +152,10 @@ class DetachedPageViewManager(IShutdownAware):
             (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
             (AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed),
             (
+                AppEvents.ANNOTATION_LIFETIMES_DELETED,
+                self._on_annotation_lifetimes_deleted,
+            ),
+            (
                 AppEvents.REMOTE_BID_CONTENT_CHANGED,
                 self._on_remote_bid_content_changed,
             ),
@@ -218,6 +222,10 @@ class DetachedPageViewManager(IShutdownAware):
                 (AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed),
                 (AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed),
                 (AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed),
+                (
+                    AppEvents.ANNOTATION_LIFETIMES_DELETED,
+                    self._on_annotation_lifetimes_deleted,
+                ),
                 (
                     AppEvents.REMOTE_BID_CONTENT_CHANGED,
                     self._on_remote_bid_content_changed,
@@ -415,6 +423,12 @@ class DetachedPageViewManager(IShutdownAware):
         if bid_ref and (bid_ref.file_path != file_path or bid_ref.bid_uid != bid_uid):
             return
         self._refresh_signaler.request()
+
+    def _on_annotation_lifetimes_deleted(self, **event_data) -> None:
+        if self._window_undo_service is not None:
+            self._window_undo_service.invalidate_deleted_annotation_lifetimes(
+                **event_data
+            )
 
     def _on_annotations_changed(
         self,
@@ -1127,7 +1141,7 @@ class DetachedPageViewManager(IShutdownAware):
         renderers = self._infrastructure_provider.create_plan_view_renderers(
             coord_system, color_service
         )
-        undo_svc = UndoRedoService()
+        undo_svc = UndoRedoService(event_bus=self.event_bus)
         if bid_ref:
             undo_svc.set_active_bid(bid_ref)
         annotation_write_coordinator = AnnotationWriteCoordinator(

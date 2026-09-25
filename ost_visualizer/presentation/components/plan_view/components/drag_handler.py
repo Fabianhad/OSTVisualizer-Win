@@ -731,17 +731,14 @@ class DragHandlerMixin:
                     items[0].setPos(0.0, 0.0)
                     items[0].setPath(new_path)
         if is_body and self._drag_item_orig_positions:
-            if ann.is_ink:
-                sdx, sdy = scene_dx, scene_dy
+            orig = self._drag_orig_position
+            start = 1 if ann.is_ink and len(new_pos) % 2 == 1 else 0
+            if orig and len(new_pos) >= start + 2 and len(orig) >= start + 2:
+                ost_dx = new_pos[start] - orig[start]
+                ost_dy = new_pos[start + 1] - orig[start + 1]
+                sdx, sdy = self.ost_to_scene_delta(ost_dx, ost_dy)
             else:
-                use_pos = self._drag_last_valid_new_pos or new_pos
-                orig = self._drag_orig_position
-                if orig and len(use_pos) >= 2 and len(orig) >= 2:
-                    ost_dx = use_pos[0] - orig[0]
-                    ost_dy = use_pos[1] - orig[1]
-                    sdx, sdy = self.ost_to_scene_delta(ost_dx, ost_dy)
-                else:
-                    sdx, sdy = scene_dx, scene_dy
+                sdx, sdy = scene_dx, scene_dy
             delta = QPointF(sdx, sdy)
             for item in self._uid_to_items.get(uid, []):
                 orig_p = self._drag_item_orig_positions.get(id(item))
@@ -798,6 +795,7 @@ class DragHandlerMixin:
             else:
                 new_path = QPainterPath()
             if atype == ANNOTATION_TYPE_OVAL:
+                main.setRotation(0.0)
                 new_path.addEllipse(rect)
             elif atype != ANNOTATION_TYPE_HIGHLIGHT:
                 new_path.addRect(rect)
@@ -815,6 +813,8 @@ class DragHandlerMixin:
             return
         if isinstance(main, QGraphicsTextItem):
             main.setPos(rect.topLeft())
+            main.setRotation(0.0)
+            main.setTransformOriginPoint(rect.width() / 2.0, rect.height() / 2.0)
             main.setTextWidth(rect.width())
             if isinstance(main, ClippedTextGraphicsItem):
                 main.set_clip_rect(QRectF(0.0, 0.0, rect.width(), rect.height()))

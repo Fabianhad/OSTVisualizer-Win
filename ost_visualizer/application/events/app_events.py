@@ -166,6 +166,14 @@ class TakeoffsChangedEvent:
 
 
 @dataclass
+class AnnotationLifetimesDeletedEvent:
+    database_id: str
+    bid_uid: str
+    identities: tuple[tuple[str, str, str], ...]
+    history_owner: str
+
+
+@dataclass
 class AnnotationsChangedEvent:
     page_uid: str = ""
     page_uids: list = field(default_factory=list)
@@ -260,6 +268,7 @@ class AppEvents:
     EDIT_LEASE_LOST = EditLeaseLostEvent
     TAKEOFFS_CHANGED = TakeoffsChangedEvent
     ANNOTATIONS_CHANGED = AnnotationsChangedEvent
+    ANNOTATION_LIFETIMES_DELETED = AnnotationLifetimesDeletedEvent
     PENDING_PLAN_MUTATIONS_CHANGED = PendingPlanMutationsChangedEvent
     FILE_UNLOADED = FileUnloadedEvent
     FILE_SELECTED = FileSelectedEvent

@@ -52,7 +52,6 @@ from .annotation_renderer import (
     calculate_dimension_segments,
     canonical_highlight_quads,
     create_cloud_path_points,
-    process_text_for_box,
 )
 
 AnnotationItemResult = Tuple[QGraphicsItem, Optional[HotlinkDto]]
@@ -270,11 +269,9 @@ class AnnotationItemRenderer:
         font.setBold(text_info.get("font_bold", False))
         font.setItalic(text_info.get("font_italic", False))
         font.setUnderline(text_info.get("font_underline", False))
-        metrics = QFontMetrics(font)
-        final_text = process_text_for_box(content, scaled_box_width, 0, metrics)
         scaled_box_height = self._cs.ost_to_screen_pixels(box_height)
         text_item = ClippedTextGraphicsItem(
-            final_text, QRectF(0.0, 0.0, scaled_box_width, scaled_box_height)
+            content, QRectF(0.0, 0.0, scaled_box_width, scaled_box_height)
         )
         text_item.setFont(font)
         text_item.setDefaultTextColor(QColor(color))

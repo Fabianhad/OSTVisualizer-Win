@@ -8,6 +8,7 @@ from ...application.dtos.collaboration_dtos import (
     QueuedMutationResult,
 )
 from ...domain.entities.identity_refs import BidRef
+from ...application.events.app_events import AppEvents
 
 
 class MutationHistoryState(str, Enum):
@@ -27,6 +28,19 @@ class TakeoffHistoryTarget:
 
 
 @dataclass
+class AnnotationHistoryTarget:
+    bid_ref: BidRef
+    page_uid: str
+    annotation_type: str
+    uid: str
+    available: bool = True
+
+    @property
+    def identity(self) -> tuple[str, str, str]:
+        return self.page_uid, self.annotation_type, self.uid
+
+
+@dataclass
 class MutationHistoryEntry:
     bid_ref: BidRef
     undo_action: Callable[[Callable[[QueuedMutationResult], None]], None]
@@ -34,6 +48,7 @@ class MutationHistoryEntry:
     state: MutationHistoryState = MutationHistoryState.READY
     forward_sequence: Optional[int] = None
     takeoff_targets: tuple[TakeoffHistoryTarget, ...] = ()
+    annotation_targets: tuple[AnnotationHistoryTarget, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,8 +61,14 @@ class ForwardMutationToken:
 
 class UndoRedoService:
     def __init__(
-        self, max_size: int = 50, logger: Optional[logging.Logger] = None
+        self,
+        max_size: int = 50,
+        logger: Optional[logging.Logger] = None,
+        *,
+        event_bus=None,
     ) -> None:
+        self._event_bus = event_bus
+        self._annotation_history_owner = str(uuid.uuid4())
         self._undo_stack: list[MutationHistoryEntry] = []
         self._redo_stack: list[MutationHistoryEntry] = []
         self._max_size = max_size
@@ -95,11 +116,14 @@ class UndoRedoService:
         redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         *,
         takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
+        annotation_targets: tuple[AnnotationHistoryTarget, ...] = (),
     ) -> None:
         bid_ref = self._active_bid_ref
         if not bid_ref:
             return
-        self._push_entry(bid_ref, undo_submit, redo_submit, takeoff_targets)
+        self._push_entry(
+            bid_ref, undo_submit, redo_submit, takeoff_targets, annotation_targets
+        )
 
     def push_for_bid(
         self,
@@ -108,10 +132,13 @@ class UndoRedoService:
         redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         *,
         takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
+        annotation_targets: tuple[AnnotationHistoryTarget, ...] = (),
     ) -> None:
         if bid_ref != self._active_bid_ref:
             return
-        self._push_entry(bid_ref, undo_submit, redo_submit, takeoff_targets)
+        self._push_entry(
+            bid_ref, undo_submit, redo_submit, takeoff_targets, annotation_targets
+        )
 
     def _push_entry(
         self,
@@ -119,6 +146,7 @@ class UndoRedoService:
         undo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         redo_submit: Callable[[Callable[[QueuedMutationResult], None]], None],
         takeoff_targets: tuple[TakeoffHistoryTarget, ...],
+        annotation_targets: tuple[AnnotationHistoryTarget, ...],
     ) -> None:
         self._undo_stack.append(
             MutationHistoryEntry(
@@ -126,6 +154,7 @@ class UndoRedoService:
                 undo_submit,
                 redo_submit,
                 takeoff_targets=takeoff_targets,
+                annotation_targets=annotation_targets,
             )
         )
         if len(self._undo_stack) > self._max_size:
@@ -139,6 +168,7 @@ class UndoRedoService:
         redo_action: Callable[[], bool],
         *,
         takeoff_targets: tuple[TakeoffHistoryTarget, ...] = (),
+        annotation_targets: tuple[AnnotationHistoryTarget, ...] = (),
     ) -> None:
         def submit(
             action: Callable[[], bool],
@@ -171,7 +201,94 @@ class UndoRedoService:
             lambda complete: submit(undo_action, complete),
             lambda complete: submit(redo_action, complete),
             takeoff_targets=takeoff_targets,
+            annotation_targets=annotation_targets,
         )
+
+    def suspend_deleted_annotations(
+        self, bid_ref: BidRef, deleted: tuple[AnnotationHistoryTarget, ...]
+    ) -> tuple[AnnotationHistoryTarget, ...]:
+        if bid_ref != self._active_bid_ref:
+            self.notify_annotation_deletion(
+                bid_ref, {target.identity for target in deleted}
+            )
+            return ()
+        identities = {
+            target.identity
+            for target in deleted
+            if target.available and target.bid_ref == bid_ref
+        }
+        candidates = [
+            *deleted,
+            *(
+                target
+                for entry in (*self._undo_stack, *self._redo_stack)
+                if entry.bid_ref == bid_ref
+                for target in entry.annotation_targets
+            ),
+        ]
+        suspended = []
+        for target in candidates:
+            if (
+                target.available
+                and target.bid_ref == bid_ref
+                and target.identity in identities
+            ):
+                target.available = False
+                suspended.append(target)
+        self.notify_annotation_deletion(
+            bid_ref, {target.identity for target in deleted}
+        )
+        return tuple(suspended)
+
+    def notify_annotation_deletion(self, bid_ref, identities) -> None:
+        if identities and self._event_bus is not None:
+            self._event_bus.publish(
+                AppEvents.ANNOTATION_LIFETIMES_DELETED,
+                database_id=bid_ref.file_path,
+                bid_uid=bid_ref.bid_uid,
+                identities=tuple(sorted(identities)),
+                history_owner=self._annotation_history_owner,
+            )
+
+    def invalidate_deleted_annotation_lifetimes(
+        self,
+        database_id,
+        bid_uid,
+        identities,
+        history_owner,
+    ) -> None:
+        if history_owner == self._annotation_history_owner:
+            return
+        bid_ref = BidRef(database_id, bid_uid)
+        wanted = set(identities)
+        for entry in (*self._undo_stack, *self._redo_stack):
+            if entry.bid_ref == bid_ref:
+                for target in entry.annotation_targets:
+                    if target.identity in wanted:
+                        target.available = False
+
+    def rebind_restored_annotations(
+        self,
+        bid_ref: BidRef,
+        restored: dict[tuple[str, str, str], str],
+        targets: tuple[AnnotationHistoryTarget, ...],
+    ) -> None:
+        if bid_ref != self._active_bid_ref:
+            return
+        retained = {
+            id(target)
+            for entry in (*self._undo_stack, *self._redo_stack)
+            if entry.bid_ref == bid_ref
+            for target in entry.annotation_targets
+        }
+        replacements = [
+            (target, restored[target.identity])
+            for target in targets
+            if id(target) in retained and target.bid_ref == bid_ref
+        ]
+        for target, uid in replacements:
+            target.uid = uid
+            target.available = True
 
     def suspend_deleted_takeoffs(
         self, bid_ref: BidRef, deleted: tuple[TakeoffHistoryTarget, ...]
@@ -369,7 +486,7 @@ class UndoRedoService:
             self._undo_stack or self._redo_stack or self._forward_mutations
         )
         for entry in (*self._undo_stack, *self._redo_stack):
-            for target in entry.takeoff_targets:
+            for target in (*entry.takeoff_targets, *entry.annotation_targets):
                 target.available = False
         self._history_generation += 1
         self._undo_stack.clear()

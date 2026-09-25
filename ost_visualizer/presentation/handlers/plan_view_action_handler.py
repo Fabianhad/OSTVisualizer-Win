@@ -1,3 +1,7 @@
+from ..services.annotation_history import (
+    capture_annotation_targets,
+    resolve_annotation_updates,
+)
 import logging
 import uuid
 import weakref
@@ -47,7 +51,7 @@ from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.selection_clipboard_service import SelectionClipboardService
-from ..services.undo_redo_service import TakeoffHistoryTarget
+from ..services.undo_redo_service import AnnotationHistoryTarget, TakeoffHistoryTarget
 from ..utils.annotation_defaults import build_placed_annotation_spec
 from ..utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
@@ -1108,6 +1112,9 @@ class PlanViewActionHandler:
         rotation_new: list,
         page_uids: tuple[str, ...],
     ) -> None:
+        annotation_targets = self._annotation_history_targets(bid_ref, annotation_old)
+        annotation_scales = self._capture_annotation_scales(annotation_old)
+
         def submit(
             done,
             takeoff_positions: list,
@@ -1119,7 +1126,9 @@ class PlanViewActionHandler:
                 bid_ref.bid_uid,
                 lambda result: done(result),
                 takeoff_positions=takeoff_positions,
-                annotation_positions=annotation_positions,
+                annotation_positions=self._annotation_history_positions(
+                    annotation_positions, annotation_targets, annotation_scales
+                ),
                 takeoff_rotations=takeoff_rotations,
                 page_uids=page_uids,
             )
@@ -1138,6 +1147,7 @@ class PlanViewActionHandler:
                 annotation_new,
                 rotation_new,
             ),
+            annotation_targets=tuple(annotation_targets.values()),
         )
 
     def _queue_sql_plan_properties(
@@ -1323,13 +1333,20 @@ class PlanViewActionHandler:
         dependency_resources: tuple[ResourceRef, ...],
     ) -> None:
         targets = self._property_history_targets(bid_ref, property_kind, old_updates)
+        annotation_targets = (
+            self._annotation_history_targets(bid_ref, old_updates)
+            if property_kind.startswith("annotation_")
+            else {}
+        )
 
         def submit(done, updates: list) -> None:
             self._write_svc.queue_plan_properties(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 property_kind,
-                self._property_history_updates(updates, targets),
+                self._annotation_history_updates(
+                    self._property_history_updates(updates, targets), annotation_targets
+                ),
                 lambda result: done(result),
                 page_uids=page_uids,
                 dependency_resources=dependency_resources,
@@ -1340,6 +1357,46 @@ class PlanViewActionHandler:
             lambda done: submit(done, old_updates),
             lambda done: submit(done, new_updates),
             takeoff_targets=tuple(targets.values()),
+            annotation_targets=tuple(annotation_targets.values()),
+        )
+
+    def _annotation_history_targets(self, bid_ref, updates):
+        return capture_annotation_targets(self._data_svc, bid_ref, updates)
+
+    def _annotation_history_updates(self, updates, targets):
+        return resolve_annotation_updates(self._data_svc, updates, targets)
+
+    def _annotation_history_keys(self, targets):
+        by_identity = {
+            (target.uid, target.annotation_type): target for target in targets.values()
+        }
+        return self._annotation_history_updates(list(by_identity), by_identity)
+
+    def _annotation_history_positions(self, positions, targets, scales):
+        return self._positions_for_current_annotation_scales(
+            self._annotation_history_updates(positions, targets),
+            {
+                (target.uid, target.annotation_type): scales[key]
+                for key, target in targets.items()
+            },
+        )
+
+    @staticmethod
+    def _annotation_restore_history_targets(bid_ref, payload, uid_map):
+        return {
+            source: AnnotationHistoryTarget(
+                bid_ref, str(spec.page_uid), spec.annotation_type, uid_map[source]
+            )
+            for source, spec in zip(
+                payload.annotation_source_uids, payload.annotation_specs
+            )
+        }
+
+    def _rebind_restored_annotation_history(self, bid_ref, targets, uid_map, suspended):
+        self._undo_svc.rebind_restored_annotations(
+            bid_ref,
+            {target.identity: uid_map[source] for source, target in targets.items()},
+            suspended,
         )
 
     def _property_history_targets(self, bid_ref, property_kind, updates):
@@ -1962,6 +2019,7 @@ class PlanViewActionHandler:
             return
         if not (t_old or a_old):
             return
+        annotation_targets = self._annotation_history_targets(bid_ref, a_old or a_new)
 
         def _undo_move():
             return self._execute_local_plan_geometry(
@@ -1969,8 +2027,10 @@ class PlanViewActionHandler:
                 takeoff_positions=self._positions_for_current_takeoff_scales(
                     t_old, takeoff_scales
                 ),
-                annotation_positions=self._positions_for_current_annotation_scales(
-                    a_old, annotation_scales
+                annotation_positions=self._annotation_history_positions(
+                    a_old,
+                    annotation_targets,
+                    annotation_scales,
                 ),
             )
 
@@ -1980,12 +2040,18 @@ class PlanViewActionHandler:
                 takeoff_positions=self._positions_for_current_takeoff_scales(
                     t_new, takeoff_scales
                 ),
-                annotation_positions=self._positions_for_current_annotation_scales(
-                    a_new, annotation_scales
+                annotation_positions=self._annotation_history_positions(
+                    a_new,
+                    annotation_targets,
+                    annotation_scales,
                 ),
             )
 
-        self._undo_svc.push_local(_undo_move, _redo_move)
+        self._undo_svc.push_local(
+            _undo_move,
+            _redo_move,
+            annotation_targets=tuple(annotation_targets.values()),
+        )
 
     def on_annotation_text_properties_flushed(self, changes: list) -> None:
         if not self._is_allowed(Feature.EDIT_ANNOTATION_TEXT):
@@ -2048,12 +2114,21 @@ class PlanViewActionHandler:
             return
 
         def _undo_text_properties():
-            return self._save_annotation_text_properties_fast(db_path, old_updates)
+            return self._save_annotation_text_properties_fast(
+                db_path, self._annotation_history_updates(old_updates, targets)
+            )
 
         def _redo_text_properties():
-            return self._save_annotation_text_properties_fast(db_path, new_updates)
+            return self._save_annotation_text_properties_fast(
+                db_path, self._annotation_history_updates(new_updates, targets)
+            )
 
-        self._undo_svc.push_local(_undo_text_properties, _redo_text_properties)
+        targets = self._annotation_history_targets(bid_ref, old_updates)
+        self._undo_svc.push_local(
+            _undo_text_properties,
+            _redo_text_properties,
+            annotation_targets=tuple(targets.values()),
+        )
 
     def on_annotation_styles_flushed(self, changes: list) -> None:
         if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
@@ -2114,12 +2189,19 @@ class PlanViewActionHandler:
             return
 
         def _undo_styles():
-            return self._save_annotation_styles_fast(db_path, old_updates)
+            return self._save_annotation_styles_fast(
+                db_path, self._annotation_history_updates(old_updates, targets)
+            )
 
         def _redo_styles():
-            return self._save_annotation_styles_fast(db_path, new_updates)
+            return self._save_annotation_styles_fast(
+                db_path, self._annotation_history_updates(new_updates, targets)
+            )
 
-        self._undo_svc.push_local(_undo_styles, _redo_styles)
+        targets = self._annotation_history_targets(bid_ref, old_updates)
+        self._undo_svc.push_local(
+            _undo_styles, _redo_styles, annotation_targets=tuple(targets.values())
+        )
 
     def on_rotations_flushed(self, rotation_changes: list) -> None:
         if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
@@ -2211,6 +2293,7 @@ class PlanViewActionHandler:
             self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
             self._plan_view.restore_flushed_rotations(rotation_changes)
             return
+        annotation_targets = self._annotation_history_targets(bid_ref, a_old or a_new)
 
         def _undo_group():
             return self._execute_local_plan_geometry(
@@ -2219,8 +2302,8 @@ class PlanViewActionHandler:
                     t_old, takeoff_scales
                 ),
                 takeoff_rotations=r_old,
-                annotation_positions=self._positions_for_current_annotation_scales(
-                    a_old, annotation_scales
+                annotation_positions=self._annotation_history_positions(
+                    a_old, annotation_targets, annotation_scales
                 ),
             )
 
@@ -2231,13 +2314,17 @@ class PlanViewActionHandler:
                     t_new, takeoff_scales
                 ),
                 takeoff_rotations=r_new,
-                annotation_positions=self._positions_for_current_annotation_scales(
-                    a_new, annotation_scales
+                annotation_positions=self._annotation_history_positions(
+                    a_new, annotation_targets, annotation_scales
                 ),
             )
 
         if t_old or a_old or r_old:
-            self._undo_svc.push_local(_undo_group, _redo_group)
+            self._undo_svc.push_local(
+                _undo_group,
+                _redo_group,
+                annotation_targets=tuple(annotation_targets.values()),
+            )
 
     def on_takeoff_created(
         self, condition_uid: str, position: list, page_uid: str
@@ -3036,7 +3123,11 @@ class PlanViewActionHandler:
         keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
         if keys:
             self._plan_view.set_selected_uids(keys)
-        current_uids = list(new_uids)
+        targets = self._annotation_history_targets(
+            bid_ref,
+            [(uid, spec.annotation_type) for uid, spec in zip(new_uids, current_specs)],
+        )
+        suspended = ()
         current_specs_scales = self._capture_annotation_spec_scales(current_specs)
         selection_owner_is_current = self._history_selection_owner(
             bid_ref,
@@ -3044,11 +3135,18 @@ class PlanViewActionHandler:
         )
 
         def _undo_insert():
+            nonlocal suspended
             success = self._delete_annotations_fast(
-                bid_ref.file_path, list(current_uids), current_specs
+                bid_ref.file_path,
+                [uid for uid, _kind in self._annotation_history_keys(targets)],
+                current_specs,
             )
-            if success and selection_owner_is_current():
-                self._plan_view.clear_selection()
+            if success:
+                suspended = self._undo_svc.suspend_deleted_annotations(
+                    bid_ref, tuple(targets.values())
+                )
+                if selection_owner_is_current():
+                    self._plan_view.clear_selection()
             return success
 
         def _redo_insert():
@@ -3058,7 +3156,14 @@ class PlanViewActionHandler:
             redone_uids = self._insert_annotations_fast(bid_ref, redone_specs)
             if len(redone_uids) != len(current_specs):
                 return False
-            current_uids[:] = list(redone_uids)
+            self._undo_svc.rebind_restored_annotations(
+                bid_ref,
+                {
+                    target.identity: uid
+                    for target, uid in zip(targets.values(), redone_uids)
+                },
+                suspended,
+            )
             if redone_uids and selection_owner_is_current():
                 uid_type_set = {
                     (uid, current_specs[i].annotation_type)
@@ -3068,7 +3173,9 @@ class PlanViewActionHandler:
                 self._plan_view.set_selected_uids(keys)
             return True
 
-        self._undo_svc.push_local(_undo_insert, _redo_insert)
+        self._undo_svc.push_local(
+            _undo_insert, _redo_insert, annotation_targets=tuple(targets.values())
+        )
         return list(new_uids)
 
     def _insert_annotations_fast(
@@ -3113,7 +3220,9 @@ class PlanViewActionHandler:
 
     def _insert_saved_annotations_fast(self, bid_ref, saved_annotations: list) -> list:
         return self._annotation_writes.insert_saved_annotations(
-            bid_ref, saved_annotations
+            bid_ref,
+            saved_annotations,
+            execute_paste=self._write_svc.execute_plan_items_paste_local,
         )
 
     @staticmethod
@@ -3504,12 +3613,19 @@ class PlanViewActionHandler:
             return
         if saved_annotations and not takeoff_uids:
             current_annotations = list(saved_annotations)
+            targets = tuple(
+                AnnotationHistoryTarget(
+                    bid_ref, item.page_uid, item.annotation_type, item.uid
+                )
+                for item in current_annotations
+            )
             current_annotation_scales = self._capture_saved_annotation_scales(
                 current_annotations
             )
             if not self._delete_saved_annotations_fast(db_path, current_annotations):
                 self._plan_view.set_selected_uids(set(uids))
                 return
+            suspended = self._undo_svc.suspend_deleted_annotations(bid_ref, targets)
             selection_owner_is_current = self._history_selection_owner(
                 bid_ref,
                 tuple(annotation.page_uid for annotation in current_annotations),
@@ -3525,6 +3641,14 @@ class PlanViewActionHandler:
                 )
                 if len(restored) != len(restore_annotations):
                     return False
+                self._undo_svc.rebind_restored_annotations(
+                    bid_ref,
+                    {
+                        target.identity: item.uid
+                        for target, item in zip(targets, restored)
+                    },
+                    suspended,
+                )
                 current_annotations = restored
                 current_annotation_scales = self._capture_saved_annotation_scales(
                     current_annotations
@@ -3541,16 +3665,22 @@ class PlanViewActionHandler:
                 return True
 
             def _redo_annotation_delete():
+                nonlocal suspended
                 success = self._delete_saved_annotations_fast(
                     db_path, current_annotations
                 )
-                if success and selection_owner_is_current():
-                    self._plan_view.clear_selection()
+                if success:
+                    suspended = self._undo_svc.suspend_deleted_annotations(
+                        bid_ref, targets
+                    )
+                    if selection_owner_is_current():
+                        self._plan_view.clear_selection()
                 return success
 
             self._undo_svc.push_local(
                 _undo_annotation_delete,
                 _redo_annotation_delete,
+                annotation_targets=targets,
             )
             self._select_skipped_named_views(skipped_selection_keys)
             return
@@ -3729,6 +3859,14 @@ class PlanViewActionHandler:
                     annotations,
                 )
                 handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
+            else:
+                handler._undo_svc.notify_annotation_deletion(
+                    bid_ref,
+                    {
+                        (str(item.page_uid), item.annotation_type, str(item.uid))
+                        for item in saved_annotations
+                    },
+                )
             handler._mark_sql_completion_applied(result)
             handler._undo_svc.finish_forward_mutation(history_token)
 
@@ -3804,13 +3942,6 @@ class PlanViewActionHandler:
             saved_annotations,
             saved_takeoff_extras,
         )
-        annotation_type_by_source = {
-            source_uid: spec.annotation_type
-            for source_uid, spec in zip(
-                payload.annotation_source_uids,
-                payload.annotation_specs,
-            )
-        }
         page_uids = tuple(
             dict.fromkeys(
                 spec.page_uid
@@ -3823,8 +3954,18 @@ class PlanViewActionHandler:
         parents = self._history_parent_targets(
             bid_ref, payload.takeoff_source_uids, payload.takeoff_specs
         )
+        annotation_targets = self._annotation_restore_history_targets(
+            bid_ref,
+            payload,
+            {
+                annotation_resource_id(kind, uid): uid
+                for uid, kind in deleted_annotations
+            },
+        )
         current = {
-            "annotations": list(deleted_annotations),
+            "suspended_annotations": self._undo_svc.suspend_deleted_annotations(
+                bid_ref, tuple(annotation_targets.values())
+            ),
             "suspended_targets": self._undo_svc.suspend_deleted_takeoffs(
                 bid_ref, tuple(targets.values())
             ),
@@ -3865,10 +4006,12 @@ class PlanViewActionHandler:
             self._rebind_restored_takeoff_history(
                 bid_ref, targets, takeoff_map, current["suspended_targets"]
             )
-            current["annotations"] = [
-                (uid, annotation_type_by_source[source_uid])
-                for source_uid, uid in annotation_map.items()
-            ]
+            self._rebind_restored_annotation_history(
+                bid_ref,
+                annotation_targets,
+                annotation_map,
+                current["suspended_annotations"],
+            )
             if selection_owner_is_current():
                 self._plan_view.set_selected_uids(
                     self._selection_keys_for_paste_maps(
@@ -3880,11 +4023,12 @@ class PlanViewActionHandler:
             return True
 
         def redo() -> bool:
+            annotation_keys = self._annotation_history_keys(annotation_targets)
             result = self._write_svc.execute_plan_items_delete_local(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 [target.uid for target in targets.values()],
-                list(current["annotations"]),
+                annotation_keys,
                 page_uids=page_uids,
                 dependency_resources=dependency_resources,
                 publish_database_refreshed_after_write=False,
@@ -3894,9 +4038,14 @@ class PlanViewActionHandler:
             current["suspended_targets"] = self._undo_svc.suspend_deleted_takeoffs(
                 bid_ref, tuple(targets.values())
             )
+            current["suspended_annotations"] = (
+                self._undo_svc.suspend_deleted_annotations(
+                    bid_ref, tuple(annotation_targets.values())
+                )
+            )
             self._project_mdb_plan_items_deleted(
                 [target.uid for target in targets.values()],
-                list(current["annotations"]),
+                annotation_keys,
                 page_uids=page_uids,
                 condition_uids=tuple(
                     dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
@@ -3907,7 +4056,10 @@ class PlanViewActionHandler:
             return True
 
         self._undo_svc.push_local(
-            undo, redo, takeoff_targets=(*targets.values(), *parents.values())
+            undo,
+            redo,
+            takeoff_targets=(*targets.values(), *parents.values()),
+            annotation_targets=tuple(annotation_targets.values()),
         )
 
     @staticmethod
@@ -3956,8 +4108,18 @@ class PlanViewActionHandler:
         parents = self._history_parent_targets(
             bid_ref, paste_payload.takeoff_source_uids, paste_payload.takeoff_specs
         )
+        annotation_targets = self._annotation_restore_history_targets(
+            bid_ref,
+            paste_payload,
+            {
+                annotation_resource_id(kind, uid): uid
+                for uid, kind in deleted_annotations
+            },
+        )
         current = {
-            "annotations": list(deleted_annotations),
+            "suspended_annotations": self._undo_svc.suspend_deleted_annotations(
+                bid_ref, tuple(annotation_targets.values())
+            ),
             "suspended_targets": self._undo_svc.suspend_deleted_takeoffs(
                 bid_ref, tuple(targets.values())
             ),
@@ -3970,17 +4132,12 @@ class PlanViewActionHandler:
                     self._rebind_restored_takeoff_history(
                         bid_ref, targets, takeoff_map, current["suspended_targets"]
                     )
-                    annotation_type_by_source = {
-                        source_uid: spec.annotation_type
-                        for source_uid, spec in zip(
-                            paste_payload.annotation_source_uids,
-                            paste_payload.annotation_specs,
-                        )
-                    }
-                    current["annotations"] = [
-                        (uid, annotation_type_by_source[source_uid])
-                        for source_uid, uid in annotation_map.items()
-                    ]
+                    self._rebind_restored_annotation_history(
+                        bid_ref,
+                        annotation_targets,
+                        annotation_map,
+                        current["suspended_annotations"],
+                    )
                 done(result)
 
             self._write_svc.queue_plan_items_paste(
@@ -3992,6 +4149,11 @@ class PlanViewActionHandler:
         def redo_submit(done) -> None:
             def deleted(result: QueuedMutationResult) -> None:
                 if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    current["suspended_annotations"] = (
+                        self._undo_svc.suspend_deleted_annotations(
+                            bid_ref, tuple(annotation_targets.values())
+                        )
+                    )
                     current["suspended_targets"] = (
                         self._undo_svc.suspend_deleted_takeoffs(
                             bid_ref, tuple(targets.values())
@@ -4012,7 +4174,7 @@ class PlanViewActionHandler:
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 [target.uid for target in targets.values()],
-                list(current["annotations"]),
+                self._annotation_history_keys(annotation_targets),
                 deleted,
                 page_uids=pages,
             )
@@ -4022,6 +4184,7 @@ class PlanViewActionHandler:
             undo_submit,
             redo_submit,
             takeoff_targets=(*targets.values(), *parents.values()),
+            annotation_targets=tuple(annotation_targets.values()),
         )
 
     @staticmethod
@@ -4207,13 +4370,6 @@ class PlanViewActionHandler:
         takeoff_map: dict[str, str],
         annotation_map: dict[str, str],
     ) -> None:
-        annotation_type_by_source = {
-            source_uid: spec.annotation_type
-            for source_uid, spec in zip(
-                payload.annotation_source_uids,
-                payload.annotation_specs,
-            )
-        }
         page_uids = tuple(
             dict.fromkeys(
                 spec.page_uid
@@ -4221,12 +4377,12 @@ class PlanViewActionHandler:
             )
         )
         targets = self._takeoff_restore_history_targets(bid_ref, payload, takeoff_map)
+        annotation_targets = self._annotation_restore_history_targets(
+            bid_ref, payload, annotation_map
+        )
         current = {
             "suspended_targets": (),
-            "annotations": [
-                (uid, annotation_type_by_source[source_uid])
-                for source_uid, uid in annotation_map.items()
-            ],
+            "suspended_annotations": (),
         }
         takeoff_scales = self._capture_takeoff_spec_scales(list(payload.takeoff_specs))
         annotation_scales = self._capture_annotation_spec_scales(
@@ -4238,11 +4394,12 @@ class PlanViewActionHandler:
         )
 
         def undo() -> bool:
+            annotation_keys = self._annotation_history_keys(annotation_targets)
             result = self._write_svc.execute_plan_items_delete_local(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 [target.uid for target in targets.values()],
-                list(current["annotations"]),
+                annotation_keys,
                 page_uids=page_uids,
                 publish_database_refreshed_after_write=False,
             )
@@ -4251,9 +4408,14 @@ class PlanViewActionHandler:
             current["suspended_targets"] = self._undo_svc.suspend_deleted_takeoffs(
                 bid_ref, tuple(targets.values())
             )
+            current["suspended_annotations"] = (
+                self._undo_svc.suspend_deleted_annotations(
+                    bid_ref, tuple(annotation_targets.values())
+                )
+            )
             self._project_mdb_plan_items_deleted(
                 [target.uid for target in targets.values()],
-                list(current["annotations"]),
+                annotation_keys,
                 page_uids=page_uids,
                 condition_uids=tuple(
                     dict.fromkeys(spec.condition_uid for spec in payload.takeoff_specs)
@@ -4290,10 +4452,12 @@ class PlanViewActionHandler:
                 next_takeoffs,
                 current["suspended_targets"],
             )
-            current["annotations"] = [
-                (uid, annotation_type_by_source[source_uid])
-                for source_uid, uid in next_annotations.items()
-            ]
+            self._rebind_restored_annotation_history(
+                bid_ref,
+                annotation_targets,
+                next_annotations,
+                current["suspended_annotations"],
+            )
             if selection_owner_is_current():
                 self._plan_view.set_selected_uids(
                     self._selection_keys_for_paste_maps(
@@ -4304,7 +4468,12 @@ class PlanViewActionHandler:
                 )
             return True
 
-        self._undo_svc.push_local(undo, redo, takeoff_targets=tuple(targets.values()))
+        self._undo_svc.push_local(
+            undo,
+            redo,
+            takeoff_targets=tuple(targets.values()),
+            annotation_targets=tuple(annotation_targets.values()),
+        )
 
     def _project_mdb_plan_items_paste(
         self,
@@ -4643,20 +4812,13 @@ class PlanViewActionHandler:
         takeoff_map: dict[str, str],
         annotation_map: dict[str, str],
     ) -> None:
-        annotation_type_by_source = {
-            source_uid: spec.annotation_type
-            for source_uid, spec in zip(
-                payload.annotation_source_uids,
-                payload.annotation_specs,
-            )
-        }
         targets = self._takeoff_restore_history_targets(bid_ref, payload, takeoff_map)
+        annotation_targets = self._annotation_restore_history_targets(
+            bid_ref, payload, annotation_map
+        )
         current = {
             "suspended_targets": (),
-            "annotations": [
-                (uid, annotation_type_by_source[source_uid])
-                for source_uid, uid in annotation_map.items()
-            ],
+            "suspended_annotations": (),
         }
         page_uids = tuple(
             dict.fromkeys(
@@ -4668,6 +4830,11 @@ class PlanViewActionHandler:
         def undo_submit(done) -> None:
             def deleted(result: QueuedMutationResult) -> None:
                 if result.outcome_status == MutationOutcomeStatus.COMMITTED:
+                    current["suspended_annotations"] = (
+                        self._undo_svc.suspend_deleted_annotations(
+                            bid_ref, tuple(annotation_targets.values())
+                        )
+                    )
                     current["suspended_targets"] = (
                         self._undo_svc.suspend_deleted_takeoffs(
                             bid_ref, tuple(targets.values())
@@ -4679,7 +4846,7 @@ class PlanViewActionHandler:
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 [target.uid for target in targets.values()],
-                list(current["annotations"]),
+                self._annotation_history_keys(annotation_targets),
                 deleted,
                 page_uids=page_uids,
             )
@@ -4694,10 +4861,12 @@ class PlanViewActionHandler:
                         next_takeoffs,
                         current["suspended_targets"],
                     )
-                    current["annotations"] = [
-                        (uid, annotation_type_by_source[source_uid])
-                        for source_uid, uid in next_annotations.items()
-                    ]
+                    self._rebind_restored_annotation_history(
+                        bid_ref,
+                        annotation_targets,
+                        next_annotations,
+                        current["suspended_annotations"],
+                    )
                 done(result)
 
             self._write_svc.queue_plan_items_paste(
@@ -4707,7 +4876,11 @@ class PlanViewActionHandler:
             )
 
         self._undo_svc.push_for_bid(
-            bid_ref, undo_submit, redo_submit, takeoff_targets=tuple(targets.values())
+            bid_ref,
+            undo_submit,
+            redo_submit,
+            takeoff_targets=tuple(targets.values()),
+            annotation_targets=tuple(annotation_targets.values()),
         )
 
     def _paste_translation(

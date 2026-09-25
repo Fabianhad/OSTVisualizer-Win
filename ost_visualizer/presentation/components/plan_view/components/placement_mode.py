@@ -70,6 +70,12 @@ from .geometry_utils import (
 from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 
+
+def _meets_annotation_minimum(length: float, minimum: float) -> bool:
+    # Subtraction at a nonzero origin can round an exact snapped increment down.
+    return length >= minimum or math.isclose(length, minimum)
+
+
 logger = logging.getLogger(__name__)
 PDF_INTELLIGENCE_SOURCE_MAIN = "main"
 PDF_INTELLIGENCE_SOURCE_OVERLAY = "overlay"
@@ -1112,7 +1118,9 @@ class PlacementModeMixin:
                 x1, y1 = self._annotation_place_points[0]
                 min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
                 self._annotation_area_rect_dragging = False
-                if abs(ost_x2 - x1) >= min_len and abs(ost_y2 - y1) >= min_len:
+                if _meets_annotation_minimum(
+                    abs(ost_x2 - x1), min_len
+                ) and _meets_annotation_minimum(abs(ost_y2 - y1), min_len):
                     position = self._rectangle_position_from_corners(
                         x1, y1, ost_x2, ost_y2
                     )
@@ -1185,7 +1193,7 @@ class PlacementModeMixin:
         min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
         if annotation_type in _DRAG_ANNOTATION_TYPES:
             distance = math.hypot(position[2] - position[0], position[3] - position[1])
-            if distance < min_len:
+            if not _meets_annotation_minimum(distance, min_len):
                 return False
             if annotation_type in (
                 ANNOTATION_TYPE_RECT,
@@ -1194,8 +1202,10 @@ class PlacementModeMixin:
                 ANNOTATION_TYPE_HIGHLIGHT,
                 ANNOTATION_TYPE_NAMED_VIEW,
             ) and (
-                abs(position[2] - position[0]) < min_len
-                or abs(position[3] - position[1]) < min_len
+                not _meets_annotation_minimum(abs(position[2] - position[0]), min_len)
+                or not _meets_annotation_minimum(
+                    abs(position[3] - position[1]), min_len
+                )
             ):
                 return False
             if annotation_type == ANNOTATION_TYPE_TEXT:
@@ -1210,7 +1220,7 @@ class PlacementModeMixin:
                 math.hypot(bx - ax, by - ay)
                 for (ax, ay), (bx, by) in zip(points, points[1:])
             )
-            if distance < min_len:
+            if not _meets_annotation_minimum(distance, min_len):
                 return False
         elif annotation_type in _AREA_ANNOTATION_TYPES:
             points = self._points_from_position(position)

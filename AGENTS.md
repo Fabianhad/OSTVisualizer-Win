@@ -180,6 +180,18 @@ Threading and events:
   Restore payloads explicitly identify Takeoff sources with external parents;
   a retained parent's current UID may overlap a historical source UID without
   becoming an internal batch relationship.
+- Annotation geometry serialization preserves model-coordinate and angle precision
+  for every canonical annotation table. Annotation placement compares snapped
+  minimum lengths with floating-point roundoff awareness, not viewport thresholds.
+  Body previews project the current validated candidate, including Ink's leading
+  angle offset; Oval resize clears its prior local graphics rotation under the
+  existing unrotated resize contract. Page transforms remain separate.
+  Main and detached annotation deletion restore through the existing atomic
+  Plan-items paste mutation, then project the complete typed identity map once.
+  Do not split Named Views and dependent annotations into independently committed
+  presentation batches. Null Hotlink targets are valid; dangling targets remain
+  invalid. Paste preparation copies mutable specs before capturing dependencies
+  and request identity so queued execution cannot adopt later caller changes.
 - Reassign Condition explicitly expands its selected Takeoffs to their descendant
   Backouts before building updates, resource dependencies, and undo/redo history.
   Use the shared domain descendant traversal also used by property preflight;
@@ -968,6 +980,9 @@ State and identity:
 - Multi-item movement applies one grid-snapped model-space translation to the
   complete selection. Preview, commit, Access/SQL persistence, and undo/redo
   preserve every item's original offset; do not snap each item independently.
+- Tracked body drags recognize validated snapped model movement even below the
+  viewport selection threshold. Release compares the canonical candidate against
+  original geometry; a drag returning to its origin is a no-op, not a new click.
 
 C++ extensions:
 
@@ -1120,3 +1135,20 @@ Document a recurring false positive only when it is still useful to future clean
 | `ost_snap` | `presentation/components/plan_view/components/` | Placement snap-to-line index |
 | `ost_coord_transform` | `domain/services/` | Coordinate math |
 | `ost_linear_geom` | `presentation/visualization/core/geometry/` | Linear geometry and curves |
+
+
+## Text annotation lifecycle
+
+Text history retains database/Bid/Page/type-scoped lifetime targets. Accepted
+restore mappings rebind retained targets; UID reuse never establishes continuity.
+Successful annotation deletion invalidates matching peer-window history through
+ANNOTATION_LIFETIMES_DELETED without refreshing graphics. The originating history
+retains its own restore mapping. Late SQL deletion completion still notifies peers
+when its local history generation has been invalidated. Detached forward completion
+must check its original history token before recording history. Geometry replay
+uses the shared Page-scale conversion on MDB and SQL, retaining rotation values.
+BidTexts Position preserves float precision, and text decoding preserves significant
+whitespace. Legacy Latin-1 text encoding must fail rather than substitute characters.
+ClippedTextGraphicsItem owns wrapping/clipping; do not destructively pre-elide its
+stored text. Resize follows the established unrotated model contract in both preview
+and commit. See TEXT_ANNOTATION_LIFECYCLE_AUDIT.md for coverage and format limits.

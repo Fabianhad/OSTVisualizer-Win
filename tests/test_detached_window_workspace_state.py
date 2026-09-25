@@ -642,6 +642,15 @@ class FakeAnnotationProjectData:
     def __init__(self, annotations=None):
         self.annotations = list(annotations or [])
         self.named_view_updates = []
+        self.pages = {
+            "p1": Page(uid="p1", name="Page 1", scale_factor1=1, scale_factor2=1)
+        }
+
+    def get_page(self, uid):
+        return self.pages.get(uid)
+
+    def get_current_bid_ref(self):
+        return BidRef("bid.mdb", "7")
 
     def get_annotation_layer_uid(self):
         return "detached-annotation-layer"
@@ -743,18 +752,40 @@ class FakeEventBus:
 
 class FakeUndoService:
     def __init__(self):
+        from ost_visualizer.presentation.services.undo_redo_service import (
+            UndoRedoService,
+        )
+
+        self.history = UndoRedoService()
+        self.history.set_active_bid(BidRef("bid.mdb", "7"))
         self.pushes = []
         self.async_pushes = []
         self.forward_mutations = []
 
-    def push_local(self, undo, redo):
+    def push_local(self, undo, redo, *, annotation_targets=()):
         self.pushes.append((undo, redo))
+        self.history.push_local(undo, redo, annotation_targets=annotation_targets)
 
     def push(self, undo, redo):
         self.async_pushes.append((undo, redo))
 
-    def push_for_bid(self, _bid_ref, undo, redo):
+    def push_for_bid(self, bid_ref, undo, redo, *, annotation_targets=()):
         self.push(undo, redo)
+        self.history.push_for_bid(
+            bid_ref, undo, redo, annotation_targets=annotation_targets
+        )
+
+    def is_forward_mutation_current(self, token):
+        return any(item[0] is token for item in self.forward_mutations)
+
+    def suspend_deleted_annotations(self, bid_ref, deleted):
+        return self.history.suspend_deleted_annotations(bid_ref, deleted)
+
+    def rebind_restored_annotations(self, bid_ref, restored, targets):
+        self.history.rebind_restored_annotations(bid_ref, restored, targets)
+
+    def notify_annotation_deletion(self, bid_ref, identities):
+        self.history.notify_annotation_deletion(bid_ref, identities)
 
     def begin_forward_mutation(self, bid_ref):
         token = object()
@@ -2586,6 +2617,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self, window, write_service, annotations=None
     ):
         project_data = FakeAnnotationProjectData(annotations)
+        from tests.test_plan_view_action_handler import FakeWriteService
+
+        if window._project_write_svc is None:
+            window._project_write_svc = FakeWriteService()
+            window._project_write_svc.annotation_write_service = write_service
         event_bus = FakeEventBus()
         window._annotation_write_coordinator = AnnotationWriteCoordinator(
             write_service,
@@ -2620,6 +2656,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             )
         )
         self.assertEqual(plan_view.activate_calls, [])
+        window._on_annotation_created("line", [1.0, 2.0, 3.0, 4.0], "p1")
+        args, _kwargs = queued_write.paste_calls[-1]
+        source_uid = args[1].annotation_source_uids[0]
+        callback = args[2]
         result = QueuedMutationResult(
             database_id="bid.mdb",
             runtime_generation=1,
@@ -4501,7 +4541,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._saved_window_state_provider = object()
         with self.assertLogs(manager.logger, level="ERROR"):
             manager.shutdown()
-        self.assertEqual(len(event_bus.calls), 12)
+        self.assertEqual(len(event_bus.calls), 13)
         self.assertIn(AppEvents.FILE_UNLOADED, event_bus.calls)
         self.assertIn(("access-clear", "detached-plan:test"), calls)
         self.assertIn("signaler-delete", calls)

@@ -1,4 +1,5 @@
 import uuid
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 from ...domain.entities.annotation import (
@@ -2857,6 +2858,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
     def _prepare_plan_items_paste_payload(
         payload: PlanItemsPastePayload,
     ) -> PlanItemsPastePayload:
+        payload = deepcopy(payload)
         if payload.source_bid_uid == payload.destination_bid_uid:
             return payload
         copied_named_view_uids = {
