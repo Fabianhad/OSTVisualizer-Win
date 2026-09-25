@@ -68,7 +68,6 @@ class LoadBidUseCase:
             if not self._concurrency_tokens.bid_versions_are_current(
                 bid_ref.file_path, bid_ref.bid_uid, prepared.resource_versions
             ):
-                self.logger.info("Discarding navigation superseded by resource changes")
                 return False
             return self._apply_prepared(bid_ref, prepared)
 

@@ -58,7 +58,14 @@ from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_geometry,
     create_cloud_path_points,
 )
-from .geometry_utils import polygon_is_valid, polyline_self_intersects
+from .geometry_utils import (
+    closed_polygon_path,
+    path_intersects_any,
+    path_is_inside,
+    polygon_is_valid,
+    polyline_self_intersects,
+    position_polygon_path,
+)
 from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 
@@ -1810,12 +1817,7 @@ class PlacementModeMixin:
 
     @staticmethod
     def _path_from_transformed_polygon(points: list) -> QPainterPath:
-        path = QPainterPath()
-        path.moveTo(points[0], points[1])
-        for i in range(2, len(points) - 1, 2):
-            path.lineTo(points[i], points[i + 1])
-        path.closeSubpath()
-        return path
+        return closed_polygon_path(points)
 
     def _find_area_at(self, ost_x: float, ost_y: float) -> str:
         cs = self._scene_builder.get_coordinate_system()
@@ -1861,16 +1863,15 @@ class PlacementModeMixin:
         if not parent_uid:
             return False
         cs = self._scene_builder.get_coordinate_system()
-        new_tx = cs.transform_vertices_to_2d(pos_flat)
-        new_path = self._path_from_transformed_polygon(new_tx)
+        new_path = position_polygon_path(cs, pos_flat)
         parent = self._current_takeoffs.get(parent_uid)
         if parent:
             parent_pos = cs.parse_position(parent.position)
             if parent_pos and len(parent_pos) >= 6:
-                parent_tx = cs.transform_vertices_to_2d(parent_pos)
-                parent_path = self._path_from_transformed_polygon(parent_tx)
-                if not new_path.subtracted(parent_path).isEmpty():
+                parent_path = position_polygon_path(cs, parent_pos)
+                if not path_is_inside(new_path, parent_path):
                     return True
+        sibling_paths = []
         for sibling in self._current_takeoffs.values():
             if sibling.parent_uid != parent_uid:
                 continue
@@ -1879,11 +1880,8 @@ class PlacementModeMixin:
             sib_pos = cs.parse_position(sibling.position)
             if not sib_pos or len(sib_pos) < 6:
                 continue
-            sib_tx = cs.transform_vertices_to_2d(sib_pos)
-            sib_path = self._path_from_transformed_polygon(sib_tx)
-            if new_path.intersects(sib_path):
-                return True
-        return False
+            sibling_paths.append(position_polygon_path(cs, sib_pos))
+        return path_intersects_any(new_path, sibling_paths)
 
     def _update_parent_hole_preview(self, hole_path: QPainterPath) -> None:
         cs = self._scene_builder.get_coordinate_system()

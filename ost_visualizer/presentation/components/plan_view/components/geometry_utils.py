@@ -1,8 +1,15 @@
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QPainterPath, QPolygonF
 from PySide6.QtWidgets import QGraphicsRectItem
 from .....application.interfaces.i_linear_geometry import ILinearGeometry
+from .....domain.entities.condition import Condition
+from ....visualization.core.geometry.takeoff_geometry import (
+    compute_count_vertices,
+    resolve_point_takeoff_shape,
+)
 from . import ost_geom_utils as _native
 
 segments_intersect = _native.segments_intersect
@@ -10,6 +17,101 @@ polygon_is_valid = _native.polygon_is_valid
 polyline_self_intersects = _native.polyline_self_intersects
 point_to_segment_distance = _native.point_to_segment_distance
 signed_area = _native.signed_area
+
+
+def _attachment_footprint_path(
+    coordinate_system,
+    condition: Condition,
+    position: list[float],
+    rotation: float,
+) -> QPainterPath:
+    if not condition.is_attachment or len(position) != 2:
+        return QPainterPath()
+    shape_id, width, depth = resolve_point_takeoff_shape(condition)
+    vertices = compute_count_vertices(
+        position[0],
+        position[1],
+        shape_id,
+        width,
+        depth,
+        rotation,
+    )
+    flattened = [coordinate for vertex in vertices for coordinate in vertex]
+    return position_polygon_path(coordinate_system, flattened)
+
+
+def attachment_fits_area(
+    coordinate_system,
+    condition: Condition,
+    position: list[float],
+    rotation: float,
+    parent_position: list[float],
+    backout_positions: Iterable[list[float]],
+) -> bool:
+    footprint = _attachment_footprint_path(
+        coordinate_system,
+        condition,
+        position,
+        rotation,
+    )
+    parent = position_polygon_path(coordinate_system, parent_position)
+    exclusions = (
+        position_polygon_path(coordinate_system, backout_position)
+        for backout_position in backout_positions
+    )
+    return path_fits_inside_excluding(footprint, parent, exclusions)
+
+
+def closed_polygon_path(points: list[float]) -> QPainterPath:
+    if len(points) < 6 or len(points) % 2:
+        return QPainterPath()
+    path = QPainterPath()
+    path.addPolygon(
+        QPolygonF(
+            [
+                QPointF(points[index], points[index + 1])
+                for index in range(0, len(points), 2)
+            ]
+        )
+    )
+    path.closeSubpath()
+    return path
+
+
+def position_polygon_path(coordinate_system, position: list[float]) -> QPainterPath:
+    if len(position) < 6 or len(position) % 2:
+        return QPainterPath()
+    transformed = coordinate_system.transform_vertices_to_2d(position)
+    return closed_polygon_path(transformed)
+
+
+def path_is_inside(candidate: QPainterPath, parent: QPainterPath) -> bool:
+    return (
+        not candidate.isEmpty()
+        and not parent.isEmpty()
+        and candidate.subtracted(parent).isEmpty()
+    )
+
+
+def path_intersects_any(
+    candidate: QPainterPath, exclusions: Iterable[QPainterPath]
+) -> bool:
+    if candidate.isEmpty():
+        return False
+    return any(
+        not exclusion.isEmpty() and candidate.intersects(exclusion)
+        for exclusion in exclusions
+    )
+
+
+def path_fits_inside_excluding(
+    candidate: QPainterPath,
+    parent: QPainterPath,
+    exclusions: Iterable[QPainterPath],
+) -> bool:
+    return path_is_inside(candidate, parent) and not path_intersects_any(
+        candidate, exclusions
+    )
 
 
 @dataclass
