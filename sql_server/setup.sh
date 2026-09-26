@@ -7,6 +7,14 @@ require_root
 require_ubuntu_amd64
 umask 077
 
+# These scheduled validation units were retired. Removing them here makes
+# an in-place rebuild converge with a fresh installation as well.
+systemctl disable --now ostv-sql-maintenance.timer \
+    ostv-sql-maintenance.service >/dev/null 2>&1 || true
+unlink /etc/systemd/system/ostv-sql-maintenance.timer 2>/dev/null || true
+unlink /etc/systemd/system/ostv-sql-maintenance.service 2>/dev/null || true
+systemctl daemon-reload
+
 migration_backup=""
 source_marker=""
 expected_fingerprint=""
@@ -107,16 +115,10 @@ run_admin validate
 run_admin lifecycle-test
 
 firewall_unit=/etc/systemd/system/ostv-sql-firewall.service
-maintenance_service=/etc/systemd/system/ostv-sql-maintenance.service
 docker_dropin=/etc/systemd/system/docker.service.d/ostv-sql-firewall.conf
 install -d -m 0755 /etc/systemd/system/docker.service.d
 install -m 0644 "$SCRIPT_ROOT/systemd/ostv-sql-firewall.service" "$firewall_unit"
 install -m 0644 "$SCRIPT_ROOT/systemd/docker-ostv-firewall.conf" "$docker_dropin"
-install -m 0644 "$SCRIPT_ROOT/systemd/ostv-sql-maintenance.service" "$maintenance_service"
-install -m 0644 "$SCRIPT_ROOT/systemd/ostv-sql-maintenance.timer" /etc/systemd/system/ostv-sql-maintenance.timer
-sed -i "s|@@SQLSERVER_ROOT@@|$SCRIPT_ROOT|g; s|@@WG_INTERFACE@@|$(env_value OSTV_WG_INTERFACE)|g" "$firewall_unit"
-sed -i "s|@@SQLSERVER_ROOT@@|$SCRIPT_ROOT|g" "$docker_dropin"
-sed -i "s|@@SQLSERVER_ROOT@@|$SCRIPT_ROOT|g" "$maintenance_service"
 systemctl daemon-reload
-systemctl enable --now ostv-sql-firewall.service ostv-sql-maintenance.timer >/dev/null
-echo "Container deployment is healthy with a single-source public allowlist; native SQL was not changed."
+systemctl enable --now ostv-sql-firewall.service >/dev/null
+echo "Container deployment is healthy with the configured public allowlist; native SQL was not changed."

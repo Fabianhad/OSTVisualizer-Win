@@ -1,12 +1,33 @@
 [Unit]
 Description=OST Visualizer SQL source-IP and Docker firewall containment
-After=docker.service network-online.target wg-quick@@@WG_INTERFACE@@.service
+After=docker.service network-online.target
+Requires=docker.service
 Wants=network-online.target
+PartOf=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=@@SQLSERVER_ROOT@@/configure_firewall.sh
+ExecStart=/usr/local/sbin/configure-ostv-sql-firewall
 RemainAfterExit=yes
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectClock=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

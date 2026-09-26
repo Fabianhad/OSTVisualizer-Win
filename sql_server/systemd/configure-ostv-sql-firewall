@@ -1,0 +1,87 @@
+#!/bin/sh
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+config_file=/etc/default/ostv-sql-firewall
+chain=OSTV-SQL
+staging_chain=OSTV-SQL-STAGING
+iptables=/usr/sbin/iptables
+
+if [ ! -r "$config_file" ]; then
+    echo "Missing firewall configuration: $config_file" >&2
+    exit 1
+fi
+
+# This root-owned file contains only validated, non-secret network settings.
+# shellcheck disable=SC1091
+. "$config_file"
+
+: "${OSTV_PUBLIC_INTERFACE:?OSTV_PUBLIC_INTERFACE is required}"
+: "${OSTV_SQL_PUBLIC_BIND_ADDRESS:?OSTV_SQL_PUBLIC_BIND_ADDRESS is required}"
+: "${OSTV_SQL_PUBLIC_PORT:?OSTV_SQL_PUBLIC_PORT is required}"
+: "${OSTV_SQL_ALLOWED_SOURCE_CIDRS:?OSTV_SQL_ALLOWED_SOURCE_CIDRS is required}"
+
+case "$OSTV_SQL_PUBLIC_PORT" in
+    *[!0-9]*|'')
+        echo "OSTV_SQL_PUBLIC_PORT must be numeric" >&2
+        exit 1
+        ;;
+esac
+if [ "$OSTV_SQL_PUBLIC_PORT" -lt 1 ] || [ "$OSTV_SQL_PUBLIC_PORT" -gt 65535 ]; then
+    echo "OSTV_SQL_PUBLIC_PORT must be between 1 and 65535" >&2
+    exit 1
+fi
+
+case "$OSTV_PUBLIC_INTERFACE" in
+    *[!A-Za-z0-9_.:-]*|'')
+        echo "OSTV_PUBLIC_INTERFACE contains invalid characters" >&2
+        exit 1
+        ;;
+esac
+
+if ! ip link show dev "$OSTV_PUBLIC_INTERFACE" >/dev/null 2>&1; then
+    echo "Network interface does not exist: $OSTV_PUBLIC_INTERFACE" >&2
+    exit 1
+fi
+
+if ! "$iptables" -w 5 -S DOCKER-USER >/dev/null 2>&1; then
+    echo "Docker's DOCKER-USER chain is unavailable" >&2
+    exit 1
+fi
+
+# Build and validate the replacement before changing the live jump.
+if "$iptables" -w 5 -S "$staging_chain" >/dev/null 2>&1; then
+    while "$iptables" -w 5 -C DOCKER-USER -j "$staging_chain" >/dev/null 2>&1; do
+        "$iptables" -w 5 -D DOCKER-USER -j "$staging_chain"
+    done
+    "$iptables" -w 5 -F "$staging_chain"
+    "$iptables" -w 5 -X "$staging_chain"
+fi
+
+"$iptables" -w 5 -N "$staging_chain"
+for source_cidr in $OSTV_SQL_ALLOWED_SOURCE_CIDRS; do
+    "$iptables" -w 5 -A "$staging_chain" \
+        -i "$OSTV_PUBLIC_INTERFACE" -p tcp -s "$source_cidr" \
+        -m conntrack --ctorigdst "$OSTV_SQL_PUBLIC_BIND_ADDRESS" \
+        --ctorigdstport "$OSTV_SQL_PUBLIC_PORT" \
+        -m comment --comment "ostv-sql-public-allow" -j ACCEPT
+done
+"$iptables" -w 5 -A "$staging_chain" \
+    -i "$OSTV_PUBLIC_INTERFACE" -p tcp \
+    -m conntrack --ctorigdst "$OSTV_SQL_PUBLIC_BIND_ADDRESS" \
+    --ctorigdstport "$OSTV_SQL_PUBLIC_PORT" \
+    -m comment --comment "ostv-sql-public-default-deny" -j DROP
+"$iptables" -w 5 -A "$staging_chain" -j RETURN
+
+# Insert the fully populated chain first, then retire the previous generation.
+"$iptables" -w 5 -I DOCKER-USER 1 -j "$staging_chain"
+if "$iptables" -w 5 -S "$chain" >/dev/null 2>&1; then
+    while "$iptables" -w 5 -C DOCKER-USER -j "$chain" >/dev/null 2>&1; do
+        "$iptables" -w 5 -D DOCKER-USER -j "$chain"
+    done
+    "$iptables" -w 5 -F "$chain"
+    "$iptables" -w 5 -X "$chain"
+fi
+"$iptables" -w 5 -E "$staging_chain" "$chain"

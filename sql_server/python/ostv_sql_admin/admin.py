@@ -528,6 +528,42 @@ def validate_environment(
     }
 
 
+def validate_tls_connectivity(config: DeploymentConfig) -> dict[str, object]:
+    """Validate a renewed certificate without coupling renewal to schema state."""
+    admin = read_secret(_secret_path(config, "admin"))
+    verify_secret_matches(admin, config, role="admin")
+    with connect(
+        replace(admin, database="master"),
+        database="master",
+        app="OSTV SQL TLS Validator",
+    ) as connection:
+        _require_owned_server(connection, admin, config)
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT CONVERT(nvarchar(128), SERVERPROPERTY('ProductVersion')), "
+                "CONVERT(int, SERVERPROPERTY('ProductMajorVersion')), "
+                "c.encrypt_option FROM sys.dm_exec_connections c "
+                "WHERE c.session_id=@@SPID"
+            )
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+    if int(row[1]) != 17:
+        raise RuntimeError(
+            "This deployment requires supported SQL Server 2025 (major version 17)."
+        )
+    if str(row[2]).casefold() != "true":
+        raise RuntimeError("The validated administrator connection is not encrypted.")
+    return {
+        "status": "tls-connectivity-valid",
+        "server_version": str(row[0]),
+        "connection_encrypted": True,
+        "certificate_validated": True,
+        "container_ownership_validated": True,
+    }
+
+
 def _permission_inventory(cursor) -> dict[str, object]:
     cursor.execute(
         "SELECT r.name FROM sys.server_role_members rm JOIN sys.server_principals r "
@@ -734,6 +770,7 @@ def restore_verify(config: DeploymentConfig, path: Path) -> dict[str, object]:
             require_marker(
                 database_marker(connection), admin.ownership_marker, "restored database"
             )
+            _adopt_restored_database_identity(connection)
         inventory = SqlSchemaInspector().inspect(
             _location(admin, target), admin.password
         )
@@ -990,6 +1027,62 @@ def _fingerprint_value(value: object) -> bytes:
     return b"S" + str(value).encode("utf-8")
 
 
+def _adopt_restored_database_identity(connection: pyodbc.Connection) -> bool:
+    """Re-key canonical collaboration rows to a restored database incarnation."""
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT CONVERT(nvarchar(36), m.[DatabaseGuid]), "
+            "CONVERT(nvarchar(36), r.database_guid), "
+            "(SELECT COUNT_BIG(*) FROM [ostv].[DatabaseMetadata] counted "
+            "WHERE counted.[Product]=N'OST Visualizer') "
+            "FROM [ostv].[DatabaseMetadata] m "
+            "CROSS JOIN sys.database_recovery_status r "
+            "WHERE m.[Product]=N'OST Visualizer' AND r.database_id=DB_ID()"
+        )
+        row = cursor.fetchone()
+        if row is None or int(row[2]) != 1:
+            raise RuntimeError(
+                "The restored database does not have one OST Visualizer metadata row."
+            )
+        old_guid, current_guid = str(row[0]), str(row[1])
+        if old_guid.casefold() == current_guid.casefold():
+            return False
+        cursor.execute(
+            "SET XACT_ABORT ON; "
+            "BEGIN TRY "
+            "BEGIN TRANSACTION; "
+            "DECLARE @old uniqueidentifier=?, @current uniqueidentifier=?; "
+            "IF EXISTS (SELECT 1 FROM [ostv].[DatabaseMetadata] WHERE [DatabaseGuid]=@current) "
+            "THROW 51000, 'The restored database identity is already present.', 1; "
+            "INSERT INTO [ostv].[DatabaseMetadata] "
+            "([DatabaseGuid],[Product],[SchemaVersion],[CreatedAt],[CreatedBy],"
+            "[LastMigratedAt],[LastMigratedBy],[WriterMode]) "
+            "SELECT @current,[Product],[SchemaVersion],[CreatedAt],[CreatedBy],"
+            "[LastMigratedAt],[LastMigratedBy],[WriterMode] "
+            "FROM [ostv].[DatabaseMetadata] WHERE [DatabaseGuid]=@old; "
+            "IF @@ROWCOUNT<>1 THROW 51000, 'The source database identity disappeared.', 1; "
+            "UPDATE [ostv].[Sessions] SET [DatabaseGuid]=@current WHERE [DatabaseGuid]=@old; "
+            "UPDATE [ostv].[UserBidWorkspaceState] SET [DatabaseGuid]=@current WHERE [DatabaseGuid]=@old; "
+            "UPDATE [ostv].[UserPageWorkspaceState] SET [DatabaseGuid]=@current WHERE [DatabaseGuid]=@old; "
+            "UPDATE [ostv].[ChangeLog] SET [DatabaseGuid]=@current WHERE [DatabaseGuid]=@old; "
+            "UPDATE [ostv].[ChangeTransactions] SET [DatabaseGuid]=@current WHERE [DatabaseGuid]=@old; "
+            "DELETE FROM [ostv].[DatabaseMetadata] WHERE [DatabaseGuid]=@old; "
+            "IF @@ROWCOUNT<>1 THROW 51000, 'The old database identity was not removed.', 1; "
+            "COMMIT TRANSACTION; "
+            "END TRY "
+            "BEGIN CATCH "
+            "IF @@TRANCOUNT>0 ROLLBACK TRANSACTION; "
+            "THROW; "
+            "END CATCH",
+            old_guid,
+            current_guid,
+        )
+        return True
+    finally:
+        cursor.close()
+
+
 def restore_migration(
     config: DeploymentConfig,
     path: Path,
@@ -1072,18 +1165,20 @@ def restore_migration(
             require_marker(
                 database_marker(connection), source_marker, "source database"
             )
+            actual_fingerprint = _fingerprint_connection(config.database, connection)
+            if actual_fingerprint != expected_fingerprint:
+                raise RuntimeError(
+                    "The restored database fingerprint does not match the native source."
+                )
+            _adopt_restored_database_identity(connection)
             inventory = SqlSchemaInspector().inspect(
                 _location(admin, staging), admin.password
             )
             report = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema).validate(inventory)
             if not report.is_valid:
                 raise RuntimeError(
-                    "The migration backup is not canonical: " + report.user_message
-                )
-            actual_fingerprint = _fingerprint_connection(config.database, connection)
-            if actual_fingerprint != expected_fingerprint:
-                raise RuntimeError(
-                    "The restored database fingerprint does not match the native source."
+                    "The adopted migration database is not canonical: "
+                    + report.user_message
                 )
             cursor = connection.cursor()
             try:
@@ -1438,6 +1533,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("provision")
     validate_parser = sub.add_parser("validate")
     validate_parser.add_argument("--with-backup-restore", action="store_true")
+    sub.add_parser("validate-tls-connectivity")
     sub.add_parser("backup")
     restore_parser = sub.add_parser("restore-verify")
     restore_parser.add_argument("path")
@@ -1464,6 +1560,8 @@ def main(argv: list[str] | None = None) -> int:
             result = provision_database(config)
         elif args.command == "validate":
             result = validate_environment(config, run_backup=args.with_backup_restore)
+        elif args.command == "validate-tls-connectivity":
+            result = validate_tls_connectivity(config)
         elif args.command == "backup":
             result = {"status": "backup-complete", "path": str(backup_database(config))}
         elif args.command == "restore-verify":

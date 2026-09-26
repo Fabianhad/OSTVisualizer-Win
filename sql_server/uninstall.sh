@@ -16,5 +16,5 @@ fi
 require_container_identity
 run_admin uninstall-database
 compose down
-systemctl disable --now ostv-sql-maintenance.timer ostv-sql-firewall.service >/dev/null 2>&1 || true
+systemctl disable --now ostv-sql-firewall.service >/dev/null 2>&1 || true
 echo "The owned database/login and container were removed after a recovery backup. Private bind-mounted data, backups, keys, configuration, and the native rollback service were retained."

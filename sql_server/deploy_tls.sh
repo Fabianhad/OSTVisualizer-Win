@@ -167,7 +167,8 @@ if [[ $mode == renewal ]]; then
         sleep 2
     done
     validation_error="$temporary_directory/validation-error.log"
-    if [[ $healthy != true ]] || ! run_admin validate >/dev/null 2>"$validation_error"; then
+    if [[ $healthy != true ]] \
+        || ! run_admin validate-tls-connectivity >/dev/null 2>"$validation_error"; then
         if [[ ! -f $temporary_directory/previous.pem || ! -f $temporary_directory/previous.key ]]; then
             echo "Public certificate deployment failed and no previous pair is available." >&2
             exit 1

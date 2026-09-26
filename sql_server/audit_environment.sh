@@ -11,7 +11,7 @@ free -h
 echo "[packages]"
 dpkg-query -W -f='${Package}\t${Version}\t${Status}\n' 2>/dev/null | rg '^(mssql|msodbcsql|unixodbc|wireguard)' || true
 echo "[services]"
-systemctl is-active mssql-server docker "wg-quick@$(env_value OSTV_WG_INTERFACE)" ostv-sql-maintenance.timer 2>/dev/null || true
+systemctl is-active mssql-server docker "wg-quick@$(env_value OSTV_WG_INTERFACE)" ostv-sql-firewall.service 2>/dev/null || true
 echo "[listeners]"
 vpn_port="$(env_value OSTV_SQL_VPN_PORT)"
 public_port="$(env_value OSTV_SQL_PUBLIC_PORT)"
@@ -27,6 +27,14 @@ if [[ -f $OSTV_SQL_STATE_ROOT/.env && -f $OSTV_SQL_COMPOSE_FILE ]]; then
     find "$OSTV_SQL_STATE_ROOT" -maxdepth 2 -printf '%m %u:%g %p\n' | sort
 fi
 if [[ -f $OSTV_SQL_STATE_ROOT/.env ]]; then
+    echo "[tls]"
+    certificate_name="$(env_value OSTV_SQL_CERTIFICATE_NAME)"
+    lineage="/etc/letsencrypt/live/$certificate_name"
+    cmp -s "$lineage/fullchain.pem" "$OSTV_SQL_STATE_ROOT/tls/server/server.pem"
+    cmp -s "$lineage/privkey.pem" "$OSTV_SQL_STATE_ROOT/tls/server/server.key"
+    openssl x509 -in "$OSTV_SQL_STATE_ROOT/tls/server/server.pem" \
+        -noout -subject -issuer -dates
+    run_admin validate-tls-connectivity
     echo "[database-validation]"
     run_admin validate
 fi

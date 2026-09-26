@@ -144,7 +144,8 @@ The private deployment uses the official non-root Microsoft SQL Server 2025
 Ubuntu container, pinned to a specific cumulative-update image digest. It binds
 SQL to loopback, the dedicated WireGuard address, and one explicit public IPv4
 address. The public endpoint, including standard TCP port 1433 when selected,
-is admitted only from one configured global IPv4 `/32`. Docker ownership labels, SQL extended
+is admitted only from one or more configured global IPv4 `/32` addresses.
+Docker ownership labels, SQL extended
 properties, and private marker files are all required before destructive
 actions.
 
@@ -272,9 +273,11 @@ sudo sql_server/setup.sh \
 ```
 
 Migration refuses an existing target database, verifies backup checksums,
-requires the exact source marker, validates the restored canonical schema, and
-compares deterministic row counts and SHA-256 fingerprints for every canonical
-table before adopting the database into the container ownership identity.
+requires the exact source marker, and compares deterministic row counts and
+SHA-256 fingerprints for every canonical table before changing restored state.
+It then transactionally re-keys the five GUID-linked collaboration tables to
+the restored SQL database incarnation, validates the canonical schema, and
+adopts the database into the container ownership identity.
 
 After server validation, test the temporary container from Windows through the
 selected allowlisted or WireGuard path. Only after the full Windows checklist
@@ -330,9 +333,12 @@ ports can bypass ordinary UFW input handling. The chain returns without acting
 on every unrelated Docker flow.
 
 `configure_firewall.sh` installs a temporary destination-scoped drop before
-rebuilding its managed rules, so a partial update fails closed. Its systemd
-service and Docker drop-in reapply the policy after restarts. Never add an
-unrestricted public SQL rule, including for standard port 1433.
+rebuilding its managed rules, so a partial update fails closed. It also installs
+the standalone `/usr/local/sbin/configure-ostv-sql-firewall` helper and writes
+its validated non-secret settings to `/etc/default/ostv-sql-firewall`. The
+systemd service and Docker drop-in use that stable host path to reapply the
+policy after restarts. Never add an unrestricted public SQL rule, including for
+standard port 1433.
 
 Each allowlisted address must be a client's outward-facing IPv4 address. Every
 device behind an allowlisted NAT address passes the network boundary and still
@@ -352,7 +358,8 @@ bundle combines the image-compatible Ubuntu root set with only those public
 lineage intermediates and is mounted over the container's default CA bundle.
 The renewal hook
 ignores every other Certbot lineage, verifies exact container ownership,
-restarts only the OSTV SQL service, validates encrypted SQL connectivity, and
+restarts only the OSTV SQL service, validates hostname-trusted encrypted SQL
+connectivity independently of application schema state, and
 restores the previous certificate, key, and issuer path if validation fails.
 Private key material is never printed.
 
@@ -394,13 +401,12 @@ Windows acceptance requires all of the following:
 6. Application close leaves zero active sessions, presence rows, and locks.
 7. A client from any other public source address cannot reach SQL.
 
-## Validation, backup, and maintenance
+## Validation and backup
 
 ```bash
 sudo sql_server/validate.sh
 sudo sql_server/validate.sh --with-backup-restore
 sudo sql_server/audit_environment.sh
-sudo systemctl status ostv-sql-maintenance.timer
 ```
 
 Validation verifies the exact public listener and both firewall layers against
@@ -412,7 +418,8 @@ versions, and the exact least-privilege client contract.
 
 Backups are copy-only full backups with `CHECKSUM`, followed by `RESTORE
 VERIFYONLY`. Validation restore uses a unique marked database, validates its
-schema, and removes only that exact database:
+schema after transactionally adopting the disposable restored incarnation, and
+removes only that exact database:
 
 ```bash
 sudo sql_server/backup.sh
@@ -420,8 +427,13 @@ sudo sql_server/restore.sh /home/SQLServer/backups/<BACKUP>.bak
 ```
 
 No backup is deleted automatically. Copy verified backups to protected off-host
-storage before defining retention. The daily systemd timer writes a redacted
-mode-0600 result to `/home/SQLServer/logs/last-validation.json`.
+storage before defining retention. Validation is an explicit operator action;
+the deployment does not install a daily validation timer.
+
+`audit_environment.sh` additionally requires the deployed certificate and key
+to match the configured Certbot lineage. The Certbot deploy hook intentionally
+executes this checkout's `deploy_tls.sh --renewal`; keep the repository at its
+documented absolute path while this deployment is installed.
 
 ## Permissions, credentials, and recovery
 
@@ -470,6 +482,10 @@ sudo OSTV_CONFIRM_DESTRUCTIVE=uninstall-<DATABASE> \
 
 Deleting `/home/SQLServer`, removing the native package, or deleting backups is
 a separate destructive decision and is never performed by this script.
+The firewall unit is disabled, but its installed unit, Docker drop-in, stable
+helper/default file, WireGuard configuration, Certbot hook, and existing
+firewall rules are retained as rebuild infrastructure. Removing those host
+assets is a separate full-decommission operation.
 
 ## Troubleshooting and limitations
 
@@ -478,8 +494,8 @@ a separate destructive decision and is never performed by this script.
   certificate trust bypass.
 - A schema or ownership mismatch fails closed. Do not edit the ledger or marker.
 - Docker and the configured host addresses must be restored before the
-  container can bind its endpoints after reboot; the installed systemd units
-  enforce firewall containment and daily validation.
+  container can bind its endpoints after reboot; the installed systemd service
+  enforces firewall containment.
 - Source-IP admission identifies a public NAT address, not a person or device.
   Use WireGuard instead when per-device revocation is required.
 - Retired private-CA material is retained only under protected private state for

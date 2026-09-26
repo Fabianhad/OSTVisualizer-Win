@@ -4,6 +4,7 @@ SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_ROOT/lib/common.sh"
 require_root
+umask 077
 
 mode=apply
 if [[ $# -eq 1 && $1 == --check ]]; then
@@ -122,6 +123,24 @@ remove_managed_ufw_rules() {
     done
 }
 
+install_persistence_assets() {
+    local config_temporary
+    install -m 0755 \
+        "$SCRIPT_ROOT/systemd/configure-ostv-sql-firewall" \
+        /usr/local/sbin/configure-ostv-sql-firewall
+    config_temporary="$(mktemp /etc/default/.ostv-sql-firewall.XXXXXX)"
+    trap 'rm -f "$config_temporary"' EXIT
+    {
+        printf 'OSTV_PUBLIC_INTERFACE=%q\n' "$public_interface"
+        printf 'OSTV_SQL_PUBLIC_BIND_ADDRESS=%q\n' "$public_bind_address"
+        printf 'OSTV_SQL_PUBLIC_PORT=%q\n' "$public_port"
+        printf 'OSTV_SQL_ALLOWED_SOURCE_CIDRS=%q\n' "${allowed_sources[*]}"
+    } >"$config_temporary"
+    chmod 0600 "$config_temporary"
+    mv -f "$config_temporary" /etc/default/ostv-sql-firewall
+    trap - EXIT
+}
+
 if [[ $mode == check ]]; then
     verify_firewall
     echo "SQL public listener and source-IP allowlist policy are valid."
@@ -172,4 +191,5 @@ ufw allow in on "$wg_interface" proto tcp to any port "$vpn_port" \
     comment 'OSTV SQL over WireGuard' >/dev/null
 
 verify_firewall
+install_persistence_assets
 echo "SQL public access is restricted to the configured IPv4 /32 allowlist and exact destination."
