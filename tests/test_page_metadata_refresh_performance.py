@@ -1,7 +1,6 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-
 from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
@@ -54,9 +53,7 @@ class PageScaleProjectionTests(unittest.TestCase):
 
     def test_committed_scale_projects_only_scale_dependent_model_state(self):
         data, bid_ref, page, takeoff, annotation = self._data()
-
         changed = data.apply_page_scales(bid_ref, [page], 1.0, 20.0)
-
         self.assertEqual(changed, (page.uid,))
         self.assertEqual((page.scale_factor1, page.scale_factor2), (1.0, 20.0))
         self.assertEqual(takeoff.position, [40.0, 80.0])
@@ -66,9 +63,7 @@ class PageScaleProjectionTests(unittest.TestCase):
 
     def test_scale_projection_rejects_another_bid_without_mutation(self):
         data, _bid_ref, page, takeoff, annotation = self._data()
-
         changed = data.apply_page_scales(BidRef("scale.mdb", "8"), [page], 1.0, 20.0)
-
         self.assertEqual(changed, ())
         self.assertEqual(page.scale_factor2, 10.0)
         self.assertEqual(takeoff.position, [20.0, 40.0])
@@ -97,9 +92,7 @@ class PageScaleProjectionTests(unittest.TestCase):
         )
         coordinator._sidebar = Mock()
         coordinator._is_summary_tab_active = lambda: False
-
         coordinator._on_page_metadata_changed("scale.mdb", "7", ("42",), ("scale",))
-
         self.assertEqual(calls[0], ("bar", "42"))
         self.assertEqual(calls[1], ("plan", "42", {"force_overlay_refresh": True}))
         self.assertIn(("mesh", ("42", "43")), calls)
@@ -117,7 +110,6 @@ class PageAreaProjectionTests(unittest.TestCase):
             current_page_uid="42",
             refresh_page_area_selection=lambda value: calls.append(value) or True,
         )
-
         self.assertTrue(viewer.update_page_area_selection("42"))
         self.assertEqual(calls, [selections])
 
@@ -132,10 +124,8 @@ class PageAreaProjectionTests(unittest.TestCase):
             update_page_area_selection=lambda data: calls.append(data)
         )
         manager._get_page_data = lambda current: ("page-data", current)
-
         manager.refresh_page_area_selection("41")
         manager.refresh_page_area_selection("42")
-
         self.assertEqual(calls, [("page-data", view)])
 
     def test_local_area_refresh_clears_only_deleted_area_references(self):
@@ -150,13 +140,11 @@ class PageAreaProjectionTests(unittest.TestCase):
         model.page_area_selections = {"42": "20", "43": "21"}
         model.set_pages({page.uid: page})
         data = ProjectDataService(model)
-
         applied = data.replace_bid_areas_after_local_save(
             bid_ref,
             [BidArea("21", "7", "", "Retained", 1)],
             ["20"],
         )
-
         self.assertTrue(applied)
         self.assertIsNone(model.page_area_selections["42"])
         self.assertEqual(model.page_area_selections["43"], "21")

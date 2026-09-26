@@ -1,3 +1,4 @@
+from ..dtos.plan_items_paste import prepare_plan_items_paste_payload
 import uuid
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
@@ -1680,6 +1681,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> int:
         if not takeoff_specs:
             raise ValueError("A queued takeoff placement requires at least one takeoff")
+        takeoff_specs = deepcopy(takeoff_specs)
         bid_value = int(bid_uid)
         collection = ResourceRef("takeoffs_collection", bid_uid, bid_value)
         dependencies = tuple(
@@ -2855,38 +2857,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
         )
 
     @staticmethod
-    def _prepare_plan_items_paste_payload(
-        payload: PlanItemsPastePayload,
-    ) -> PlanItemsPastePayload:
-        payload = deepcopy(payload)
-        if payload.source_bid_uid == payload.destination_bid_uid:
-            return payload
-        copied_named_view_uids = {
-            parse_annotation_resource_id(source_uid)[1]
-            for source_uid in payload.annotation_source_uids
-            if parse_annotation_resource_id(source_uid)[0] == ANNOTATION_TYPE_NAMED_VIEW
-        }
-        normalized_specs = []
-        changed = False
-        for spec in payload.annotation_specs:
-            target_uid = spec.properties.get("BidPageViewUID")
-            if (
-                spec.annotation_type == ANNOTATION_TYPE_HOTLINK
-                and target_uid not in (None, "", 0, "0")
-                and str(target_uid) not in copied_named_view_uids
-            ):
-                properties = dict(spec.properties)
-                properties["BidPageViewUID"] = None
-                spec = replace(spec, properties=properties)
-                changed = True
-            normalized_specs.append(spec)
-        return (
-            replace(payload, annotation_specs=tuple(normalized_specs))
-            if changed
-            else payload
-        )
-
-    @staticmethod
     def _plan_paste_named_view_dependencies(
         payload: PlanItemsPastePayload,
         bid_uid: int,
@@ -2909,6 +2879,58 @@ class ProjectWriteService(DatabaseMutationWriteService):
             and str(target_uid) not in copied_named_view_uids
         }
 
+    def _insert_pasted_takeoff_hierarchy(
+        self, database_id, payload, takeoff_specs
+    ) -> dict[str, str]:
+        source_uids = payload.takeoff_source_uids
+        if len(source_uids) != len(takeoff_specs) or len(set(source_uids)) != len(
+            source_uids
+        ):
+            raise ValueError("The paste requires one unique source UID per Takeoff.")
+        source_set = set(source_uids)
+        internal_parents = {
+            index: str(spec.parent_uid)
+            for index, spec in enumerate(takeoff_specs)
+            if str(spec.parent_uid or "0") not in {"", "0", "None"}
+            and str(spec.parent_uid) in source_set
+            and source_uids[index] not in payload.takeoff_external_parent_sources
+        }
+        remaining = list(range(len(takeoff_specs)))
+        resolved = set()
+        batches = []
+        while remaining:
+            batch = [
+                i
+                for i in remaining
+                if i not in internal_parents or internal_parents[i] in resolved
+            ]
+            if not batch:
+                raise ValueError("The paste contains a Takeoff parent cycle.")
+            batches.append(batch)
+            resolved.update(source_uids[i] for i in batch)
+            remaining = [i for i in remaining if i not in batch]
+        takeoff_map = {}
+        for batch in batches:
+            specs = [
+                (
+                    replace(
+                        takeoff_specs[i], parent_uid=takeoff_map[internal_parents[i]]
+                    )
+                    if i in internal_parents
+                    else takeoff_specs[i]
+                )
+                for i in batch
+            ]
+            uids = self._insert_takeoffs.execute(
+                database_id, payload.destination_bid_uid, specs
+            )
+            if len(uids) != len(specs):
+                raise RuntimeError("The paste returned an incomplete Takeoff UID map.")
+            takeoff_map.update(
+                (source_uids[i], str(uid)) for i, uid in zip(batch, uids)
+            )
+        return takeoff_map
+
     def queue_plan_items_paste(
         self,
         database_id: str,
@@ -2918,7 +2940,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         dependency_resources: tuple[ResourceRef, ...] = (),
         owning_surface: str = "main-plan",
     ) -> int:
-        payload = self._prepare_plan_items_paste_payload(payload)
+        payload = prepare_plan_items_paste_payload(payload)
         bid_value = int(payload.destination_bid_uid)
         families = tuple(
             family
@@ -3027,65 +3049,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                     )
                     for spec in payload.takeoff_specs
                 )
-                source_takeoff_uids = set(payload.takeoff_source_uids)
-                regular_indexes = tuple(
-                    index
-                    for index, spec in enumerate(takeoff_specs)
-                    if str(spec.parent_uid or "0") in {"", "0", "None"}
-                    or str(spec.parent_uid) not in source_takeoff_uids
-                    or payload.takeoff_source_uids[index]
-                    in payload.takeoff_external_parent_sources
-                )
-                hole_indexes = tuple(
-                    index
-                    for index in range(len(takeoff_specs))
-                    if index not in regular_indexes
-                )
-                regular_specs = [takeoff_specs[index] for index in regular_indexes]
-                regular_uids = (
-                    self._insert_takeoffs.execute(
-                        database_id,
-                        payload.destination_bid_uid,
-                        regular_specs,
-                    )
-                    if regular_specs
-                    else []
-                )
-                if len(regular_uids) != len(regular_specs):
-                    raise RuntimeError(
-                        "The paste returned an incomplete parent takeoff UID map."
-                    )
-                takeoff_map = {
-                    payload.takeoff_source_uids[index]: str(uid)
-                    for index, uid in zip(regular_indexes, regular_uids)
-                }
-                hole_specs = []
-                for index in hole_indexes:
-                    spec = takeoff_specs[index]
-                    parent_uid = takeoff_map.get(str(spec.parent_uid))
-                    if parent_uid is None:
-                        raise RuntimeError(
-                            "The paste contains a hole without its authoritative parent."
-                        )
-                    hole_specs.append(replace(spec, parent_uid=parent_uid))
-                hole_uids = (
-                    self._insert_takeoffs.execute(
-                        database_id,
-                        payload.destination_bid_uid,
-                        hole_specs,
-                    )
-                    if hole_specs
-                    else []
-                )
-                if len(hole_uids) != len(hole_specs):
-                    raise RuntimeError(
-                        "The paste returned an incomplete hole takeoff UID map."
-                    )
-                takeoff_map.update(
-                    {
-                        payload.takeoff_source_uids[index]: str(uid)
-                        for index, uid in zip(hole_indexes, hole_uids)
-                    }
+                takeoff_map = self._insert_pasted_takeoff_hierarchy(
+                    database_id, payload, takeoff_specs
                 )
                 annotation_map = {}
                 if payload.annotation_specs:
@@ -3264,7 +3229,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> MutationExecutionResult:
         if self.uses_sql_collaboration_mutations(database_id):
             raise ValueError("SQL paste must use the collaboration queue")
-        payload = self._prepare_plan_items_paste_payload(payload)
+        payload = prepare_plan_items_paste_payload(payload)
         bid_value = int(payload.destination_bid_uid)
         families = tuple(
             family
@@ -3349,65 +3314,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
                 for spec in payload.takeoff_specs
             )
-            source_takeoff_uids = set(payload.takeoff_source_uids)
-            regular_indexes = tuple(
-                index
-                for index, spec in enumerate(takeoff_specs)
-                if str(spec.parent_uid or "0") in {"", "0", "None"}
-                or str(spec.parent_uid) not in source_takeoff_uids
-                or payload.takeoff_source_uids[index]
-                in payload.takeoff_external_parent_sources
-            )
-            hole_indexes = tuple(
-                index
-                for index in range(len(takeoff_specs))
-                if index not in regular_indexes
-            )
-            regular_specs = [takeoff_specs[index] for index in regular_indexes]
-            regular_uids = (
-                self._insert_takeoffs.execute(
-                    database_id,
-                    payload.destination_bid_uid,
-                    regular_specs,
-                )
-                if regular_specs
-                else []
-            )
-            if len(regular_uids) != len(regular_specs):
-                raise RuntimeError(
-                    "The paste returned an incomplete parent takeoff UID map."
-                )
-            takeoff_map = {
-                payload.takeoff_source_uids[index]: str(uid)
-                for index, uid in zip(regular_indexes, regular_uids)
-            }
-            hole_specs = []
-            for index in hole_indexes:
-                spec = takeoff_specs[index]
-                parent_uid = takeoff_map.get(str(spec.parent_uid))
-                if parent_uid is None:
-                    raise RuntimeError(
-                        "The paste contains a hole without its authoritative parent."
-                    )
-                hole_specs.append(replace(spec, parent_uid=parent_uid))
-            hole_uids = (
-                self._insert_takeoffs.execute(
-                    database_id,
-                    payload.destination_bid_uid,
-                    hole_specs,
-                )
-                if hole_specs
-                else []
-            )
-            if len(hole_uids) != len(hole_specs):
-                raise RuntimeError(
-                    "The paste returned an incomplete hole takeoff UID map."
-                )
-            takeoff_map.update(
-                {
-                    payload.takeoff_source_uids[index]: str(uid)
-                    for index, uid in zip(hole_indexes, hole_uids)
-                }
+            takeoff_map = self._insert_pasted_takeoff_hierarchy(
+                database_id, payload, takeoff_specs
             )
             annotation_map = {}
             if payload.annotation_specs:

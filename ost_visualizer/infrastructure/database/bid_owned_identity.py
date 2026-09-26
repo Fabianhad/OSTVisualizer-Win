@@ -50,6 +50,21 @@ class IncoherentBidOwnedScopeError(RuntimeError):
     """A mutation combines bid-owned entities from different authoritative bids."""
 
 
+def require_takeoff_parent_pages(cursor, parent_page_pairs) -> None:
+    pairs = [(int(parent), int(page)) for parent, page in parent_page_pairs]
+    rows = _fetch_uid_rows(
+        cursor,
+        "BidTakeoffs",
+        "[UID], [BidPageUID]",
+        tuple(dict.fromkeys(parent for parent, _page in pairs)),
+    )
+    pages = {int(row[0]): int(row[1]) for row in rows}
+    if any(pages.get(parent) != page for parent, page in pairs):
+        raise IncoherentBidOwnedScopeError(
+            "A Takeoff and its parent must belong to the same Page."
+        )
+
+
 def require_plan_takeoff_ownership(
     cursor,
     schema: IDatabaseSchemaInspector,

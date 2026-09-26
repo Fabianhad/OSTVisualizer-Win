@@ -1,4 +1,5 @@
 #include "geom_utils.hpp"
+#include <algorithm>
 #include <cmath>
 namespace ost_geom
 {
@@ -45,6 +46,29 @@ namespace ost_geom
         size_t n = pts.size();
         if (n < 3)
             return false;
+        double area = 0.0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const Vec2 &previous = pts[(i + n - 1) % n];
+            const Vec2 &point = pts[i];
+            const Vec2 &next = pts[(i + 1) % n];
+            if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || point == next)
+                return false;
+            if (cross_2d(previous, point, next) == 0.0 &&
+                (point[0] - previous[0]) * (next[0] - point[0]) +
+                        (point[1] - previous[1]) * (next[1] - point[1]) <=
+                    0.0)
+                return false;
+            area += cross_2d(pts[0], point, next);
+        }
+        if (!std::isfinite(area) || area == 0.0)
+            return false;
+        const auto on_segment = [](const Vec2 &point, const Vec2 &a, const Vec2 &b)
+        {
+            return cross_2d(a, b, point) == 0.0 &&
+                   point[0] >= std::min(a[0], b[0]) && point[0] <= std::max(a[0], b[0]) &&
+                   point[1] >= std::min(a[1], b[1]) && point[1] <= std::max(a[1], b[1]);
+        };
         for (size_t i = 0; i < n; ++i)
         {
             const Vec2 &p1 = pts[i];
@@ -55,7 +79,9 @@ namespace ost_geom
                     continue;
                 const Vec2 &p3 = pts[j];
                 const Vec2 &p4 = pts[(j + 1) % n];
-                if (segments_intersect(p1, p2, p3, p4))
+                if (segments_intersect(p1, p2, p3, p4) ||
+                    on_segment(p1, p3, p4) || on_segment(p2, p3, p4) ||
+                    on_segment(p3, p1, p2) || on_segment(p4, p1, p2))
                     return false;
             }
         }
@@ -85,8 +111,8 @@ namespace ost_geom
         for (size_t i = 0; i < n; ++i)
         {
             size_t j = (i + 1) % n;
-            area += pos[i * 2] * pos[j * 2 + 1];
-            area -= pos[j * 2] * pos[i * 2 + 1];
+            area += (pos[i * 2] - pos[0]) * (pos[j * 2 + 1] - pos[1]);
+            area -= (pos[j * 2] - pos[0]) * (pos[i * 2 + 1] - pos[1]);
         }
         return area;
     }

@@ -488,7 +488,7 @@ class DragHandlerMixin:
                 area_valid = self._polygon_edit_geometry_valid(new_pos, area_pts)
             if area_valid and takeoff.is_hole:
                 area_valid = self._validate_hole_position(takeoff, new_pos)
-            if area_valid and not takeoff.is_hole and is_area_vertex_drag:
+            if area_valid and is_area_vertex_drag:
                 area_valid = self._validate_parent_contains_holes(uid, new_pos)
             if area_valid:
                 n = len(area_pts)
@@ -947,7 +947,7 @@ class DragHandlerMixin:
             backout_positions,
         )
 
-    def _attachments_valid_for_geometry_changes(
+    def _takeoff_children_valid_for_geometry_changes(
         self,
         position_overrides: dict,
         rotation_overrides=None,
@@ -964,24 +964,47 @@ class DragHandlerMixin:
             if condition.is_attachment or (condition.is_area and takeoff.is_hole):
                 if takeoff.is_hole:
                     affected_parent_uids.add(takeoff.parent_uid)
-            elif condition.is_area:
+            if condition.is_area:
                 affected_parent_uids.add(takeoff.uid)
-        for attachment in self._current_takeoffs.values():
-            if attachment.parent_uid not in affected_parent_uids:
+        if not affected_parent_uids:
+            return True
+        cs = self._scene_builder.get_coordinate_system()
+        sibling_paths: dict[str, list] = {}
+        for child in self._current_takeoffs.values():
+            if child.parent_uid not in affected_parent_uids:
                 continue
-            condition = self._current_conditions.get(attachment.condition_uid)
+            condition = self._current_conditions.get(child.condition_uid)
+            if condition is None:
+                return False
+            parent = self._current_takeoffs.get(child.parent_uid)
+            parent_condition = (
+                self._current_conditions.get(parent.condition_uid) if parent else None
+            )
             if (
-                condition is None
-                or not condition.is_attachment
-                or not attachment.is_hole
+                parent is None
+                or parent.page_uid != child.page_uid
+                or (parent_condition is None or not parent_condition.is_area)
             ):
+                return False
+            if condition.is_area:
+                position = position_overrides.get(child.uid, child.position)
+                child_path = position_polygon_path(cs, position)
+                parent_path = position_polygon_path(
+                    cs, position_overrides.get(parent.uid, parent.position)
+                )
+                siblings = sibling_paths.setdefault(parent.uid, [])
+                if not path_is_inside(child_path, parent_path) or path_intersects_any(
+                    child_path, siblings
+                ):
+                    return False
+                siblings.append(child_path)
                 continue
-            if not self._attachment_position_valid(
-                attachment,
-                position_overrides.get(attachment.uid, attachment.position),
-                position_overrides.get(attachment.parent_uid),
+            if condition.is_attachment and not self._attachment_position_valid(
+                child,
+                position_overrides.get(child.uid, child.position),
+                position_overrides.get(child.parent_uid),
                 takeoff_positions=position_overrides,
-                rotation=rotation_overrides.get(attachment.uid, attachment.rotation),
+                rotation=rotation_overrides.get(child.uid, child.rotation),
             ):
                 return False
         return True
@@ -1000,6 +1023,8 @@ class DragHandlerMixin:
                     child, child.position, new_parent_pos
                 ):
                     return False
+                continue
+            if condition is None or not condition.is_area:
                 continue
             child_pos = cs.parse_position(child.position)
             if not child_pos or len(child_pos) < 6:
@@ -1044,6 +1069,9 @@ class DragHandlerMixin:
             if sibling.parent_uid != takeoff.parent_uid:
                 continue
             if sibling.uid == takeoff.uid:
+                continue
+            sibling_condition = self._current_conditions.get(sibling.condition_uid)
+            if sibling_condition is None or not sibling_condition.is_area:
                 continue
             sib_pos = cs.parse_position(sibling.position)
             if not sib_pos or len(sib_pos) < 6:

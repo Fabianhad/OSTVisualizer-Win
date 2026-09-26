@@ -4,6 +4,7 @@ import os
 import uuid
 import weakref
 from dataclasses import replace
+from copy import deepcopy
 from typing import Callable, Collection, Dict, List, Optional, Set, Tuple, cast
 from PySide6 import QtCore, QtSvg
 from PySide6.QtCore import Qt, Signal
@@ -6231,13 +6232,35 @@ class TakeoffPlanView(
         takeoffs: list,
         extras_by_uid: Dict[str, Dict],
         source_bid_uid: Optional[str],
+        *,
+        conditions=None,
     ) -> bool:
         if not self._editing_enabled:
             return False
+        conditions = self._current_conditions if conditions is None else conditions
         valid_takeoffs = [
-            t for t in takeoffs if t and t.position and len(t.position) >= 6
+            t
+            for t in takeoffs
+            if t
+            and t.position
+            and (
+                len(t.position) >= 6
+                or (
+                    len(t.position) >= 4
+                    and t.condition_uid in conditions
+                    and conditions[t.condition_uid].is_linear
+                )
+                or (
+                    len(t.position) == 2
+                    and t.condition_uid in conditions
+                    and (
+                        conditions[t.condition_uid].is_attachment
+                        or conditions[t.condition_uid].is_count
+                    )
+                )
+            )
         ]
-        if not valid_takeoffs:
+        if not valid_takeoffs or len(valid_takeoffs) != len(takeoffs):
             return False
         has_host = any(
             not t.is_hole
@@ -6265,6 +6288,10 @@ class TakeoffPlanView(
             sources.append(
                 {
                     "condition_uid": t.condition_uid,
+                    "condition": deepcopy(conditions.get(t.condition_uid)),
+                    "uid": str(t.uid),
+                    "parent_uid": str(t.parent_uid),
+                    "curve": t.curve,
                     "position": pos,
                     "rotation": t.rotation,
                     "is_negative": t.is_negative,

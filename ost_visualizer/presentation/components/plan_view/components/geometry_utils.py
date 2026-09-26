@@ -152,17 +152,18 @@ def polygon_centroid(pos: list, n: int) -> tuple:
     area = 0.0
     cx_sum = 0.0
     cy_sum = 0.0
+    origin_x, origin_y = pos[:2]
     for i in range(n):
         j = (i + 1) % n
-        x_i, y_i = pos[i * 2], pos[i * 2 + 1]
-        x_j, y_j = pos[j * 2], pos[j * 2 + 1]
+        x_i, y_i = pos[i * 2] - origin_x, pos[i * 2 + 1] - origin_y
+        x_j, y_j = pos[j * 2] - origin_x, pos[j * 2 + 1] - origin_y
         cross = x_i * y_j - x_j * y_i
         area += cross
         cx_sum += (x_i + x_j) * cross
         cy_sum += (y_i + y_j) * cross
     area *= 0.5
-    if abs(area) > 1e-9:
-        return cx_sum / (6.0 * area), cy_sum / (6.0 * area)
+    if area != 0.0:
+        return origin_x + cx_sum / (6.0 * area), origin_y + cy_sum / (6.0 * area)
     return (
         sum(pos[i * 2] for i in range(n)) / n,
         sum(pos[i * 2 + 1] for i in range(n)) / n,

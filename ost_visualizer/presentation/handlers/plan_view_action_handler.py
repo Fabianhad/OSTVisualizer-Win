@@ -1,3 +1,4 @@
+from ...application.dtos.plan_items_paste import prepare_plan_items_paste_payload
 from ..services.annotation_history import (
     capture_annotation_targets,
     resolve_annotation_updates,
@@ -287,6 +288,10 @@ class PlanViewActionHandler:
         page_uids: tuple[str, ...],
         page_identities: Optional[tuple[tuple[str, object], ...]] = None,
     ) -> bool:
+        if not isValid(self._plan_view) or getattr(
+            self._plan_view, "_is_cleaning_up", False
+        ):
+            return False
         if self._ui_state.get_selected_bid_ref() != bid_ref:
             return False
         if page_identities is not None and not self._page_identities_are_current(
@@ -963,6 +968,7 @@ class PlanViewActionHandler:
             if old is not None
         ]
         rotation_new = [(str(uid), float(new)) for uid, _old, new in rotation_changes]
+        takeoff_scales = self._capture_takeoff_scales(takeoff_old or takeoff_new)
         takeoff_uids = {uid for uid, _position in takeoff_new}.union(
             uid for uid, _rotation in rotation_new
         )
@@ -1080,6 +1086,7 @@ class PlanViewActionHandler:
                     rotation_old,
                     rotation_new,
                     page_uids,
+                    takeoff_scales=takeoff_scales,
                 )
                 handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
             handler._mark_sql_completion_applied(result)
@@ -1111,7 +1118,14 @@ class PlanViewActionHandler:
         rotation_old: list,
         rotation_new: list,
         page_uids: tuple[str, ...],
+        *,
+        takeoff_scales=None,
     ) -> None:
+        takeoff_targets = self._property_history_targets(
+            bid_ref, "takeoff_geometry", takeoff_old + rotation_old
+        )
+        if takeoff_scales is None:
+            takeoff_scales = self._capture_takeoff_scales(takeoff_old)
         annotation_targets = self._annotation_history_targets(bid_ref, annotation_old)
         annotation_scales = self._capture_annotation_scales(annotation_old)
 
@@ -1125,11 +1139,15 @@ class PlanViewActionHandler:
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 lambda result: done(result),
-                takeoff_positions=takeoff_positions,
+                takeoff_positions=self._takeoff_history_positions(
+                    takeoff_positions, takeoff_targets, takeoff_scales
+                ),
                 annotation_positions=self._annotation_history_positions(
                     annotation_positions, annotation_targets, annotation_scales
                 ),
-                takeoff_rotations=takeoff_rotations,
+                takeoff_rotations=self._property_history_updates(
+                    takeoff_rotations, takeoff_targets
+                ),
                 page_uids=page_uids,
             )
 
@@ -1147,6 +1165,7 @@ class PlanViewActionHandler:
                 annotation_new,
                 rotation_new,
             ),
+            takeoff_targets=tuple(takeoff_targets.values()),
             annotation_targets=tuple(annotation_targets.values()),
         )
 
@@ -1429,16 +1448,22 @@ class PlanViewActionHandler:
                 )
         return [(targets[str(uid)].uid, *values) for uid, *values in updates]
 
-    def _history_parent_targets(self, bid_ref, source_uids, specs):
-        source_uids = set(source_uids)
+    def _history_parent_targets(
+        self, bid_ref, source_uids, specs, *, external_parent_sources=()
+    ):
+        sources = tuple(source_uids)
+        source_uids = set(sources)
         return self._property_history_targets(
             bid_ref,
             "takeoff_parent",
             [
                 (str(spec.parent_uid),)
-                for spec in specs
+                for source_uid, spec in zip(sources, specs)
                 if str(spec.parent_uid or "0") not in {"", "0", "None"}
-                and str(spec.parent_uid) not in source_uids
+                and (
+                    str(spec.parent_uid) not in source_uids
+                    or source_uid in external_parent_sources
+                )
             ],
         )
 
@@ -1454,17 +1479,24 @@ class PlanViewActionHandler:
         ]
 
     def _paste_payload_with_history_parents(self, payload, parents):
+        self._property_history_updates([(uid,) for uid in parents], parents)
+        external = set(payload.takeoff_external_parent_sources)
+        specs = []
+        for source_uid, spec in zip(payload.takeoff_source_uids, payload.takeoff_specs):
+            parent_uid = str(spec.parent_uid)
+            if parent_uid in parents and (
+                parent_uid not in payload.takeoff_source_uids or source_uid in external
+            ):
+                spec = replace(spec, parent_uid=parents[parent_uid].uid)
+                external.add(source_uid)
+            specs.append(spec)
         return replace(
             payload,
-            takeoff_specs=tuple(
-                self._specs_with_history_parents(payload.takeoff_specs, parents)
-            ),
+            takeoff_specs=tuple(specs),
             takeoff_external_parent_sources=tuple(
                 source_uid
-                for source_uid, spec in zip(
-                    payload.takeoff_source_uids, payload.takeoff_specs
-                )
-                if str(spec.parent_uid) in parents
+                for source_uid in payload.takeoff_source_uids
+                if source_uid in external
             ),
         )
 
@@ -1564,6 +1596,16 @@ class PlanViewActionHandler:
                 )
             )
         return scaled
+
+    def _takeoff_history_positions(self, positions, targets, scales):
+        return self._positions_for_current_takeoff_scales(
+            self._property_history_updates(positions, targets),
+            {
+                target.uid: scales[key]
+                for key, target in targets.items()
+                if key in scales
+            },
+        )
 
     def _positions_for_current_annotation_scales(
         self,
@@ -1792,14 +1834,20 @@ class PlanViewActionHandler:
             takeoff_uids.append(uid)
             takeoffs.append(takeoff)
         all_takeoffs = self._data_svc.get_all_takeoffs()
+        conditions = self._data_svc.get_bid_conditions()
         descendants = expand_takeoff_uids_with_descendants(
-            all_takeoffs, takeoff_uids
+            (
+                takeoff
+                for takeoff in all_takeoffs
+                if (condition := conditions.get(takeoff.condition_uid)) is not None
+                and condition.is_area
+            ),
+            takeoff_uids,
         ) - set(takeoff_uids)
         for takeoff in all_takeoffs:
             if str(takeoff.uid) in descendants:
                 takeoff_uids.append(str(takeoff.uid))
                 takeoffs.append(takeoff)
-        conditions = self._data_svc.get_bid_conditions()
         if (
             not db_path
             or not takeoff_uids
@@ -2020,12 +2068,15 @@ class PlanViewActionHandler:
         if not (t_old or a_old):
             return
         annotation_targets = self._annotation_history_targets(bid_ref, a_old or a_new)
+        takeoff_targets = self._property_history_targets(
+            bid_ref, "takeoff_geometry", t_old
+        )
 
         def _undo_move():
             return self._execute_local_plan_geometry(
                 bid_ref,
-                takeoff_positions=self._positions_for_current_takeoff_scales(
-                    t_old, takeoff_scales
+                takeoff_positions=self._takeoff_history_positions(
+                    t_old, takeoff_targets, takeoff_scales
                 ),
                 annotation_positions=self._annotation_history_positions(
                     a_old,
@@ -2037,8 +2088,8 @@ class PlanViewActionHandler:
         def _redo_move():
             return self._execute_local_plan_geometry(
                 bid_ref,
-                takeoff_positions=self._positions_for_current_takeoff_scales(
-                    t_new, takeoff_scales
+                takeoff_positions=self._takeoff_history_positions(
+                    t_new, takeoff_targets, takeoff_scales
                 ),
                 annotation_positions=self._annotation_history_positions(
                     a_new,
@@ -2050,6 +2101,7 @@ class PlanViewActionHandler:
         self._undo_svc.push_local(
             _undo_move,
             _redo_move,
+            takeoff_targets=tuple(takeoff_targets.values()),
             annotation_targets=tuple(annotation_targets.values()),
         )
 
@@ -2232,14 +2284,23 @@ class PlanViewActionHandler:
         r_new = [(uid, new) for uid, _, new in rotation_changes]
         if not r_old:
             return
+        takeoff_targets = self._property_history_targets(
+            bid_ref, "takeoff_rotation", r_old
+        )
 
         def _undo_rotate():
-            return self._save_takeoff_rotations_fast(db_path, r_old)
+            return self._save_takeoff_rotations_fast(
+                db_path, self._property_history_updates(r_old, takeoff_targets)
+            )
 
         def _redo_rotate():
-            return self._save_takeoff_rotations_fast(db_path, r_new)
+            return self._save_takeoff_rotations_fast(
+                db_path, self._property_history_updates(r_new, takeoff_targets)
+            )
 
-        self._undo_svc.push_local(_undo_rotate, _redo_rotate)
+        self._undo_svc.push_local(
+            _undo_rotate, _redo_rotate, takeoff_targets=tuple(takeoff_targets.values())
+        )
 
     def on_group_rotation_flushed(
         self, takeoff_changes: list, ann_changes: list, rotation_changes: list
@@ -2294,14 +2355,19 @@ class PlanViewActionHandler:
             self._plan_view.restore_flushed_rotations(rotation_changes)
             return
         annotation_targets = self._annotation_history_targets(bid_ref, a_old or a_new)
+        takeoff_targets = self._property_history_targets(
+            bid_ref, "takeoff_geometry", t_old + r_old
+        )
 
         def _undo_group():
             return self._execute_local_plan_geometry(
                 bid_ref,
-                takeoff_positions=self._positions_for_current_takeoff_scales(
-                    t_old, takeoff_scales
+                takeoff_positions=self._takeoff_history_positions(
+                    t_old, takeoff_targets, takeoff_scales
                 ),
-                takeoff_rotations=r_old,
+                takeoff_rotations=self._property_history_updates(
+                    r_old, takeoff_targets
+                ),
                 annotation_positions=self._annotation_history_positions(
                     a_old, annotation_targets, annotation_scales
                 ),
@@ -2310,10 +2376,12 @@ class PlanViewActionHandler:
         def _redo_group():
             return self._execute_local_plan_geometry(
                 bid_ref,
-                takeoff_positions=self._positions_for_current_takeoff_scales(
-                    t_new, takeoff_scales
+                takeoff_positions=self._takeoff_history_positions(
+                    t_new, takeoff_targets, takeoff_scales
                 ),
-                takeoff_rotations=r_new,
+                takeoff_rotations=self._property_history_updates(
+                    r_new, takeoff_targets
+                ),
                 annotation_positions=self._annotation_history_positions(
                     a_new, annotation_targets, annotation_scales
                 ),
@@ -2323,6 +2391,7 @@ class PlanViewActionHandler:
             self._undo_svc.push_local(
                 _undo_group,
                 _redo_group,
+                takeoff_targets=tuple(takeoff_targets.values()),
                 annotation_targets=tuple(annotation_targets.values()),
             )
 
@@ -3242,23 +3311,15 @@ class PlanViewActionHandler:
         if not bid_ref or not placements:
             return
         uses_sql_queue = self._uses_sql_mutation_queue(bid_ref.file_path)
-        condition_uid_map = {}
-        if not uses_sql_queue:
-            condition_uid_map = self._condition_uid_map_for_paste(
-                bid_ref, [p["condition_uid"] for p in placements]
-            )
-            if condition_uid_map is None:
-                return
         area_uid = self._page_settings_bar.get_current_area_uid()
         specs = [
             InsertTakeoffSpec(
-                condition_uid=condition_uid_map.get(
-                    str(p["condition_uid"]), p["condition_uid"]
-                ),
+                condition_uid=str(p["condition_uid"]),
                 page_uid=p["page_uid"],
                 area_uid=area_uid,
                 position=p["position"],
                 parent_uid=p["parent_uid"],
+                curve=p.get("curve", -1),
                 rotation=p["rotation"],
                 is_negative=p["is_negative"],
                 raw_extras=dict(p["extras"]),
@@ -3266,41 +3327,43 @@ class PlanViewActionHandler:
             )
             for p in placements
         ]
-        same_bid_paste = (
-            source_bid_uid == bid_ref.bid_uid
-            and self._clipboard_svc.source_matches_database(bid_ref.file_path)
+        source_bid_key = str(source_bid_uid or bid_ref.bid_uid)
+        payload = PlanItemsPastePayload(
+            source_bid_uid=source_bid_key,
+            destination_bid_uid=str(bid_ref.bid_uid),
+            takeoff_source_uids=tuple(
+                str(p.get("source_uid") or uuid.uuid4()) for p in placements
+            ),
+            takeoff_specs=tuple(specs),
+            takeoff_external_parent_sources=tuple(
+                str(p["source_uid"])
+                for p in placements
+                if p.get("source_uid") and not p.get("parent_is_internal", False)
+            ),
         )
-        if uses_sql_queue:
-            source_bid_key = str(source_bid_uid or bid_ref.bid_uid)
-            payload = PlanItemsPastePayload(
-                source_bid_uid=source_bid_key,
-                destination_bid_uid=str(bid_ref.bid_uid),
-                takeoff_source_uids=tuple(
-                    str(uuid.uuid4()) for _placement in placements
-                ),
-                takeoff_specs=tuple(specs),
+        dependencies = tuple(
+            sorted(
+                {
+                    ResourceRef(
+                        "condition",
+                        str(spec.condition_uid),
+                        int(source_bid_key),
+                    )
+                    for spec in specs
+                    if source_bid_key != str(bid_ref.bid_uid)
+                }
             )
-            dependencies = tuple(
-                sorted(
-                    {
-                        ResourceRef(
-                            "condition",
-                            str(spec.condition_uid),
-                            int(source_bid_key),
-                        )
-                        for spec in specs
-                        if source_bid_key != str(bid_ref.bid_uid)
-                    }
-                )
-            )
-            self._queue_sql_plan_items_paste_payload(
-                bid_ref,
-                str(placements[0]["page_uid"]),
-                payload,
-                dependencies,
-            )
+        )
+        if not uses_sql_queue:
+            self._execute_mdb_plan_items_paste_payload(bid_ref, payload, dependencies)
             return
-        self._insert_takeoffs_with_undo(bid_ref, specs, fast_refresh=same_bid_paste)
+        self._queue_sql_plan_items_paste_payload(
+            bid_ref,
+            str(placements[0]["page_uid"]),
+            payload,
+            dependencies,
+        )
+        return
 
     def _insert_takeoffs_with_undo(
         self, bid_ref, specs: List[InsertTakeoffSpec], fast_refresh: bool = False
@@ -3491,12 +3554,15 @@ class PlanViewActionHandler:
                 annotation_selection_keys[(str(a.uid), str(a.annotation_type))] = uid
         takeoff_uids = set(t.uid for t in saved_takeoffs)
         all_takeoffs = self._data_svc.get_all_takeoffs()
-        for t in list(saved_takeoffs):
-            if t.parent_uid in ("0", "", None):
-                for child in all_takeoffs:
-                    if child.parent_uid == t.uid and child.uid not in takeoff_uids:
-                        takeoff_uids.add(child.uid)
-                        saved_takeoffs.append(child)
+        descendant_uids = expand_takeoff_uids_with_descendants(
+            all_takeoffs, takeoff_uids
+        )
+        saved_takeoffs.extend(
+            item
+            for item in all_takeoffs
+            if item.uid in descendant_uids and item.uid not in takeoff_uids
+        )
+        takeoff_uids = descendant_uids
         skipped_namedview_uids: set[str] = set()
         if any(a.is_namedview for a in saved_annotations):
             delete_plan = plan_named_view_hotlink_delete(
@@ -3952,7 +4018,10 @@ class PlanViewActionHandler:
             bid_ref, payload, {uid: uid for uid in deleted_takeoff_uids}
         )
         parents = self._history_parent_targets(
-            bid_ref, payload.takeoff_source_uids, payload.takeoff_specs
+            bid_ref,
+            payload.takeoff_source_uids,
+            payload.takeoff_specs,
+            external_parent_sources=payload.takeoff_external_parent_sources,
         )
         annotation_targets = self._annotation_restore_history_targets(
             bid_ref,
@@ -4214,6 +4283,17 @@ class PlanViewActionHandler:
             a = self._plan_view.get_annotation(uid)
             if a and a.is_interactive and not a.is_namedview:
                 annotations.append(a)
+        copied_uids = {takeoff.uid for takeoff in takeoffs}
+        descendants = (
+            expand_takeoff_uids_with_descendants(
+                self._data_svc.get_all_takeoffs(), copied_uids
+            )
+            - copied_uids
+        )
+        for uid in sorted(descendants):
+            takeoff = self._current_plan_takeoff(uid)
+            if takeoff is not None:
+                takeoffs.append(takeoff)
         if takeoffs or annotations:
             bid_ref = self._ui_state.get_selected_bid_ref()
             takeoff_extras = {
@@ -4225,48 +4305,9 @@ class PlanViewActionHandler:
                 source_bid_uid=bid_ref.bid_uid if bid_ref else None,
                 source_file_path=bid_ref.file_path if bid_ref else None,
                 takeoff_extras=takeoff_extras,
+                conditions=self._data_svc.get_bid_conditions(),
             )
             self._plan_view.clipboard_changed.emit()
-
-    def _condition_uid_map_for_paste(
-        self, bid_ref, condition_uids: List[str]
-    ) -> Optional[Dict[str, str]]:
-        source_bid_uid = self._clipboard_svc.source_bid_uid
-        source_file_path = self._clipboard_svc.source_file_path
-        if (
-            source_bid_uid == bid_ref.bid_uid
-            and self._clipboard_svc.source_matches_database(bid_ref.file_path)
-        ):
-            return {}
-        if not source_bid_uid:
-            return None
-        if not self._clipboard_svc.source_matches_database(bid_ref.file_path):
-            logger.warning(
-                "Cannot paste takeoffs across database files: source=%s destination=%s",
-                source_file_path,
-                bid_ref.file_path,
-            )
-            return None
-        source_condition_uids = list(
-            dict.fromkeys(str(uid) for uid in condition_uids if uid)
-        )
-        if not source_condition_uids:
-            return {}
-        uid_map = self._write_svc.duplicate_conditions_to_bid(
-            bid_ref.file_path,
-            source_bid_uid,
-            bid_ref.bid_uid,
-            source_condition_uids,
-            publish_database_refreshed_after_write=False,
-        )
-        if len(uid_map) != len(source_condition_uids):
-            logger.warning(
-                "Failed to duplicate all conditions for cross-bid paste: %s -> %s",
-                source_bid_uid,
-                bid_ref.bid_uid,
-            )
-            return None
-        return uid_map
 
     def on_paste_requested(self) -> None:
         bid_ref = self._ui_state.get_selected_bid_ref()
@@ -4288,7 +4329,16 @@ class PlanViewActionHandler:
             extras_by_uid = {
                 h.uid: dict(self._clipboard_svc.get_extras(h.uid)) for h in holes
             }
-            self._plan_view.begin_paste_backout(holes, extras_by_uid, source_bid_uid)
+            self._plan_view.begin_paste_backout(
+                holes,
+                extras_by_uid,
+                source_bid_uid,
+                conditions=(
+                    self._data_svc.get_bid_conditions()
+                    if source_bid_uid == bid_ref.bid_uid
+                    else self._clipboard_svc.conditions
+                ),
+            )
             holes = []
         if self._uses_sql_mutation_queue(bid_ref.file_path):
             self._queue_sql_plan_items_paste(
@@ -4330,6 +4380,13 @@ class PlanViewActionHandler:
         if prepared is None:
             return
         payload, dependencies, source_anchor = prepared
+        self._execute_mdb_plan_items_paste_payload(
+            bid_ref, payload, dependencies, source_anchor
+        )
+
+    def _execute_mdb_plan_items_paste_payload(
+        self, bid_ref, payload, dependencies, source_anchor=None
+    ):
         result = self._write_svc.execute_plan_items_paste_local(
             bid_ref.file_path,
             payload,
@@ -4356,10 +4413,33 @@ class PlanViewActionHandler:
             )
         self._push_mdb_paste_history(
             bid_ref,
-            payload,
-            dependencies,
+            self._committed_paste_history_payload(payload, result),
+            tuple(
+                resource
+                for resource in dependencies
+                if resource.bid_uid == int(bid_ref.bid_uid)
+            ),
             takeoff_map,
             annotation_map,
+        )
+
+    @staticmethod
+    def _committed_paste_history_payload(payload, result):
+        payload = prepare_plan_items_paste_payload(payload)
+        maps = dict(result.authoritative_result.created_uid_maps)
+        conditions = dict(maps.get("conditions", ()))
+        return replace(
+            payload,
+            source_bid_uid=payload.destination_bid_uid,
+            takeoff_specs=tuple(
+                replace(
+                    spec,
+                    condition_uid=conditions.get(
+                        str(spec.condition_uid), str(spec.condition_uid)
+                    ),
+                )
+                for spec in payload.takeoff_specs
+            ),
         )
 
     def _push_mdb_paste_history(
@@ -4377,6 +4457,12 @@ class PlanViewActionHandler:
             )
         )
         targets = self._takeoff_restore_history_targets(bid_ref, payload, takeoff_map)
+        parents = self._history_parent_targets(
+            bid_ref,
+            payload.takeoff_source_uids,
+            payload.takeoff_specs,
+            external_parent_sources=payload.takeoff_external_parent_sources,
+        )
         annotation_targets = self._annotation_restore_history_targets(
             bid_ref, payload, annotation_map
         )
@@ -4431,6 +4517,9 @@ class PlanViewActionHandler:
                 takeoff_scales,
                 annotation_scales,
             )
+            redo_payload = self._paste_payload_with_history_parents(
+                redo_payload, parents
+            )
             result = self._write_svc.execute_plan_items_paste_local(
                 bid_ref.file_path,
                 redo_payload,
@@ -4471,7 +4560,7 @@ class PlanViewActionHandler:
         self._undo_svc.push_local(
             undo,
             redo,
-            takeoff_targets=tuple(targets.values()),
+            takeoff_targets=(*targets.values(), *parents.values()),
             annotation_targets=tuple(annotation_targets.values()),
         )
 
@@ -4622,6 +4711,7 @@ class PlanViewActionHandler:
         payload: PlanItemsPastePayload,
         dependencies: tuple[ResourceRef, ...],
     ) -> None:
+        page_identities = self._capture_page_identities((page_uid,))
         history_token = self._undo_svc.begin_forward_mutation(bid_ref)
         previous_selection = set(self._plan_view.get_selected_uids())
         previous_takeoff_selection, previous_annotation_selection = (
@@ -4645,7 +4735,9 @@ class PlanViewActionHandler:
                     active_bid = handler._ui_state.get_selected_bid_ref()
                     if (
                         active_bid == bid_ref
-                        and handler._plan_view.current_page_uid == page_uid
+                        and handler._plan_context_is_current(
+                            bid_ref, (page_uid,), page_identities
+                        )
                         and handler._plan_view.selection_revision == selection_revision
                     ):
                         handler._plan_view.set_selected_uids(
@@ -4669,14 +4761,18 @@ class PlanViewActionHandler:
             active_bid = handler._ui_state.get_selected_bid_ref()
             if (
                 active_bid == bid_ref
-                and handler._plan_view.current_page_uid == page_uid
+                and handler._plan_context_is_current(
+                    bid_ref, (page_uid,), page_identities
+                )
                 and handler._plan_view.selection_revision == selection_revision
             ):
                 handler._plan_view.set_selected_uids(selected)
-            if handler._undo_svc.is_forward_mutation_current(history_token):
+            if handler._undo_svc.is_forward_mutation_current(
+                history_token
+            ) and handler._page_identities_are_current((page_uid,), page_identities):
                 handler._push_sql_paste_history(
                     bid_ref,
-                    payload,
+                    handler._committed_paste_history_payload(payload, result),
                     takeoff_map,
                     annotation_map,
                 )
@@ -4725,6 +4821,36 @@ class PlanViewActionHandler:
             )
             for item in source_takeoffs
         )
+        source_uids = {str(item.uid) for item in source_takeoffs}
+        external_indexes = [
+            index
+            for index, item in enumerate(source_takeoffs)
+            if item.is_hole and str(item.parent_uid) not in source_uids
+        ]
+        if external_indexes:
+            conditions = (
+                self._data_svc.get_bid_conditions()
+                if source_bid_uid == str(bid_ref.bid_uid)
+                else self._clipboard_svc.conditions
+            )
+            parents, valid = self._plan_view.resolve_pasted_child_parents(
+                [source_takeoffs[index] for index in external_indexes],
+                [takeoff_specs[index].position for index in external_indexes],
+                conditions,
+            )
+            if not valid:
+                return None
+            replacement_parents = dict(
+                zip(external_indexes, (uid for uid, _valid in parents))
+            )
+            takeoff_specs = tuple(
+                (
+                    replace(spec, parent_uid=replacement_parents[index])
+                    if index in replacement_parents
+                    else spec
+                )
+                for index, spec in enumerate(takeoff_specs)
+            )
         annotation_specs = [
             InsertAnnotationSpec(
                 page_uid=page_uid,
@@ -4753,6 +4879,9 @@ class PlanViewActionHandler:
             destination_bid_uid=str(bid_ref.bid_uid),
             takeoff_source_uids=tuple(str(item.uid) for item in source_takeoffs),
             takeoff_specs=takeoff_specs,
+            takeoff_external_parent_sources=tuple(
+                str(source_takeoffs[index].uid) for index in external_indexes
+            ),
             annotation_source_uids=tuple(
                 annotation_resource_id(item.annotation_type, item.uid)
                 for item in annotations
@@ -4813,6 +4942,12 @@ class PlanViewActionHandler:
         annotation_map: dict[str, str],
     ) -> None:
         targets = self._takeoff_restore_history_targets(bid_ref, payload, takeoff_map)
+        parents = self._history_parent_targets(
+            bid_ref,
+            payload.takeoff_source_uids,
+            payload.takeoff_specs,
+            external_parent_sources=payload.takeoff_external_parent_sources,
+        )
         annotation_targets = self._annotation_restore_history_targets(
             bid_ref, payload, annotation_map
         )
@@ -4825,6 +4960,10 @@ class PlanViewActionHandler:
                 spec.page_uid
                 for spec in (*payload.takeoff_specs, *payload.annotation_specs)
             )
+        )
+        takeoff_scales = self._capture_takeoff_spec_scales(list(payload.takeoff_specs))
+        annotation_scales = self._capture_annotation_spec_scales(
+            list(payload.annotation_specs)
         )
 
         def undo_submit(done) -> None:
@@ -4869,9 +5008,15 @@ class PlanViewActionHandler:
                     )
                 done(result)
 
+            redo_payload = self._paste_payload_for_current_scales(
+                payload, takeoff_scales, annotation_scales
+            )
+            redo_payload = self._paste_payload_with_history_parents(
+                redo_payload, parents
+            )
             self._write_svc.queue_plan_items_paste(
                 bid_ref.file_path,
-                payload,
+                redo_payload,
                 completed,
             )
 
@@ -4879,7 +5024,7 @@ class PlanViewActionHandler:
             bid_ref,
             undo_submit,
             redo_submit,
-            takeoff_targets=tuple(targets.values()),
+            takeoff_targets=(*targets.values(), *parents.values()),
             annotation_targets=tuple(annotation_targets.values()),
         )
 

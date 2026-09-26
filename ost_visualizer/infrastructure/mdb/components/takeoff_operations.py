@@ -6,6 +6,7 @@ from ...database.bid_owned_identity import (
     require_existing_bid_scoped_uid_matches,
     require_existing_unique_bid_owned_uid_matches,
     require_single_bid_scope_for_uids,
+    require_takeoff_parent_pages,
 )
 from .bulk_write_helpers import ACCESS_BULK_CHUNK_SIZE
 from .constants import (
@@ -219,7 +220,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
             )
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
-                self._require_write_columns(schema, "BidTakeoffs", ("UID", "Position"))
+                self._require_write_columns(
+                    schema, "BidTakeoffs", ("UID", "Position", "Curve")
+                )
                 cursor = conn.cursor()
                 require_single_bid_scope_for_uids(cursor, "BidTakeoffs", (takeoff_uid,))
                 self._execute_update_values(
@@ -433,6 +436,23 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 )
                 cursor = conn.cursor()
                 bid_uid_int = int(bid_uid)
+                for spec in takeoff_specs:
+                    required_state = {
+                        "ParentUID": spec.parent_uid not in (None, "", 0, "0"),
+                        "Rotation": spec.rotation != 0.0,
+                        "Curve": spec.curve >= 0,
+                        "IsNegativeQuantity": spec.is_negative,
+                        "BidAreaUID": not is_unassigned_area_uid(spec.area_uid),
+                    }
+                    self._require_write_columns(
+                        schema,
+                        "BidTakeoffs",
+                        tuple(
+                            column
+                            for column, needed in required_state.items()
+                            if needed
+                        ),
+                    )
                 require_existing_unique_bid_owned_uid_matches(
                     cursor, "Bids", (bid_uid_int,)
                 )
@@ -471,6 +491,14 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                         bid_uid_int,
                     )
                 table_cols = sorted(schema.get_columns("BidTakeoffs"))
+                require_takeoff_parent_pages(
+                    cursor,
+                    (
+                        (spec.parent_uid, spec.page_uid)
+                        for spec in takeoff_specs
+                        if spec.parent_uid not in (None, "", 0, "0")
+                    ),
+                )
                 table_col_set = set(table_cols)
                 new_uids = []
                 allocated_uids = self._next_uids_preserving_references(

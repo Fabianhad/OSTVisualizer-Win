@@ -15,9 +15,14 @@ from ....domain.entities.layer import (
     is_layer_visible,
 )
 from ....domain.entities.page_info import BidPageInfo
-from ....domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
+from ....domain.entities.takeoff import (
+    Takeoff,
+    find_takeoff_parent_cycle_uids,
+    find_takeoff_parent_page_mismatches,
+)
 from ...database.bid_owned_identity import (
     CyclicBidOwnedReferenceError,
+    IncoherentBidOwnedScopeError,
     require_acyclic_bid_owned_parent_graph,
     require_existing_bid_owned_references,
     require_existing_unique_bid_owned_uid_matches,
@@ -153,6 +158,14 @@ class BidDataReaderMixin:
                 child_column="ParentUID",
                 parent_table="BidTakeoffs",
             )
+            page_mismatches = find_takeoff_parent_page_mismatches(
+                {t.uid: t.parent_uid for t in bid_takeoffs},
+                {t.uid: t.page_uid for t in bid_takeoffs},
+            )
+            if page_mismatches:
+                raise IncoherentBidOwnedScopeError(
+                    "A Takeoff and its parent must belong to the same Page."
+                )
             parent_cycles = find_takeoff_parent_cycle_uids(
                 {
                     takeoff.uid: takeoff.parent_uid
@@ -1145,8 +1158,6 @@ class BidDataReaderMixin:
                     bid_takeoffs.append(takeoff)
                     takeoff_extras[uid] = {c: row_data[c] for c in extra_cols}
         except pyodbc.Error as exc:
-            if self._record_caught_read_error(exc):
-                raise
-            if "HY109" not in str(exc) and "Record is deleted" not in str(exc):
-                raise
+            self._record_caught_read_error(exc)
+            raise
         return bid_takeoffs, takeoff_extras

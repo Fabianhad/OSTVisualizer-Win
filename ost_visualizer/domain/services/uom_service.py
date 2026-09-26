@@ -233,9 +233,12 @@ def calculate_polygon_area(vertices: List[Tuple[float, float]]) -> float:
     if n < 3:
         return 0.0
     area = 0.0
+    origin_x, origin_y = vertices[0]
     for i in range(n):
         j = (i + 1) % n
-        area += vertices[i][0] * vertices[j][1] - vertices[j][0] * vertices[i][1]
+        area += (vertices[i][0] - origin_x) * (vertices[j][1] - origin_y) - (
+            vertices[j][0] - origin_x
+        ) * (vertices[i][1] - origin_y)
     return abs(area) / 2.0
 
 

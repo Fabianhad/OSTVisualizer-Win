@@ -29,6 +29,7 @@ from .....domain.entities.annotation import (
     BidAnnotation,
 )
 from .....domain.entities.condition import Condition
+from .....domain.entities.takeoff import Takeoff
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.named_view import named_view_position_from_bounds
 from ....modes.cursor import CURSOR_MODE_ANNOTATION_PLACE, CURSOR_MODE_SELECT
@@ -41,6 +42,7 @@ from ....utils.image_show_mode import mode_to_flags
 from ....visualization.core.geometry.takeoff_geometry import (
     MINIMUM_RENDERED_LINEAR_THICKNESS,
     compute_count_vertices,
+    compute_takeoff_footprint_vertices,
     compute_line_angle,
     resolve_point_takeoff_shape,
 )
@@ -71,8 +73,7 @@ from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 
 
-def _meets_annotation_minimum(length: float, minimum: float) -> bool:
-    # Subtraction at a nonzero origin can round an exact snapped increment down.
+def _meets_placement_minimum(length: float, minimum: float) -> bool:
     return length >= minimum or math.isclose(length, minimum)
 
 
@@ -1118,9 +1119,9 @@ class PlacementModeMixin:
                 x1, y1 = self._annotation_place_points[0]
                 min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
                 self._annotation_area_rect_dragging = False
-                if _meets_annotation_minimum(
+                if _meets_placement_minimum(
                     abs(ost_x2 - x1), min_len
-                ) and _meets_annotation_minimum(abs(ost_y2 - y1), min_len):
+                ) and _meets_placement_minimum(abs(ost_y2 - y1), min_len):
                     position = self._rectangle_position_from_corners(
                         x1, y1, ost_x2, ost_y2
                     )
@@ -1193,7 +1194,7 @@ class PlacementModeMixin:
         min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
         if annotation_type in _DRAG_ANNOTATION_TYPES:
             distance = math.hypot(position[2] - position[0], position[3] - position[1])
-            if not _meets_annotation_minimum(distance, min_len):
+            if not _meets_placement_minimum(distance, min_len):
                 return False
             if annotation_type in (
                 ANNOTATION_TYPE_RECT,
@@ -1202,10 +1203,8 @@ class PlacementModeMixin:
                 ANNOTATION_TYPE_HIGHLIGHT,
                 ANNOTATION_TYPE_NAMED_VIEW,
             ) and (
-                not _meets_annotation_minimum(abs(position[2] - position[0]), min_len)
-                or not _meets_annotation_minimum(
-                    abs(position[3] - position[1]), min_len
-                )
+                not _meets_placement_minimum(abs(position[2] - position[0]), min_len)
+                or not _meets_placement_minimum(abs(position[3] - position[1]), min_len)
             ):
                 return False
             if annotation_type == ANNOTATION_TYPE_TEXT:
@@ -1220,7 +1219,7 @@ class PlacementModeMixin:
                 math.hypot(bx - ax, by - ay)
                 for (ax, ay), (bx, by) in zip(points, points[1:])
             )
-            if not _meets_annotation_minimum(distance, min_len):
+            if not _meets_placement_minimum(distance, min_len):
                 return False
         elif annotation_type in _AREA_ANNOTATION_TYPES:
             points = self._points_from_position(position)
@@ -1357,7 +1356,15 @@ class PlacementModeMixin:
                     all_inside = all(
                         self.is_inside_parent(px, py) for px, py in corners
                     )
-                    if all_inside and not self._check_hole_overlap(pos_flat):
+                    minimum = (
+                        self._snap_increments if self._snap_increments > 0 else 1e-6
+                    )
+                    if (
+                        all_inside
+                        and _meets_placement_minimum(abs(ost_x2 - x1), minimum)
+                        and _meets_placement_minimum(abs(ost_y2 - y1), minimum)
+                        and not self._check_hole_overlap(pos_flat)
+                    ):
                         self._backout_last_valid_ost = (ost_x2, ost_y2)
                     if self._backout_last_valid_ost:
                         valid_tx = cs.transform_vertices_to_2d(
@@ -1602,7 +1609,10 @@ class PlacementModeMixin:
         min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
         self._place_area_rect_dragging = False
         if self._backout_parent_uid:
-            use_valid = abs(ost_x2 - x1) < min_len or abs(ost_y2 - y1) < min_len
+            use_valid = not (
+                _meets_placement_minimum(abs(ost_x2 - x1), min_len)
+                and _meets_placement_minimum(abs(ost_y2 - y1), min_len)
+            )
             if not use_valid:
                 corners = [(x1, y1), (ost_x2, y1), (ost_x2, ost_y2), (x1, ost_y2)]
                 pos = self._rectangle_position_from_corners(x1, y1, ost_x2, ost_y2)
@@ -1630,7 +1640,9 @@ class PlacementModeMixin:
                 self._current_bid_page_uid or "",
                 self._backout_parent_uid,
             )
-        elif abs(ost_x2 - x1) >= min_len and abs(ost_y2 - y1) >= min_len:
+        elif _meets_placement_minimum(
+            abs(ost_x2 - x1), min_len
+        ) and _meets_placement_minimum(abs(ost_y2 - y1), min_len):
             pos = self._rectangle_position_from_corners(x1, y1, ost_x2, ost_y2)
             self._finish_area_placement_preview_state()
             self.takeoff_created.emit(
@@ -1665,7 +1677,7 @@ class PlacementModeMixin:
         self._place_linear_dragging = False
         self._place_points = []
         self.clear_place_preview()
-        if dist_ost >= min_len:
+        if _meets_placement_minimum(dist_ost, min_len):
             if condition.is_curved_segment:
                 mx = (x1 + ost_x2) / 2.0
                 my = (y1 + ost_y2) / 2.0
@@ -1830,25 +1842,6 @@ class PlacementModeMixin:
             self._apply_cursor_mode(CURSOR_MODE_SELECT)
             self.place_exited.emit()
 
-    def _find_area_at(self, ost_x: float, ost_y: float) -> str:
-        cs = self._scene_builder.get_coordinate_system()
-        pt_tx = cs.transform_vertices_to_2d([ost_x, ost_y])
-        pt = QtCore.QPointF(pt_tx[0], pt_tx[1])
-        for t in self._current_takeoffs.values():
-            if t.is_hole:
-                continue
-            cond = self._current_conditions.get(t.condition_uid)
-            if not cond or not cond.is_area:
-                continue
-            t_pos = cs.parse_position(t.position)
-            if not t_pos or len(t_pos) < 6:
-                continue
-            t_tx = cs.transform_vertices_to_2d(t_pos)
-            path = closed_polygon_path(t_tx)
-            if path.contains(pt):
-                return t.uid
-        return ""
-
     def _point_in_sibling_hole(self, ost_x: float, ost_y: float) -> bool:
         if not self._backout_parent_uid:
             return False
@@ -1888,6 +1881,9 @@ class PlacementModeMixin:
             if sibling.parent_uid != parent_uid:
                 continue
             if exclude_uid and sibling.uid == exclude_uid:
+                continue
+            sibling_condition = self._current_conditions.get(sibling.condition_uid)
+            if sibling_condition is None or not sibling_condition.is_area:
                 continue
             sib_pos = cs.parse_position(sibling.position)
             if not sib_pos or len(sib_pos) < 6:
@@ -2007,27 +2003,144 @@ class PlacementModeMixin:
         for src in sources:
             pos = src["position"]
             n = len(pos) // 2
-            new_pos = []
+            new_pos = list(pos)
             for i in range(n):
-                new_pos.append(pos[i * 2] + dx)
-                new_pos.append(pos[i * 2 + 1] + dy)
+                new_pos[i * 2] = pos[i * 2] + dx
+                new_pos[i * 2 + 1] = pos[i * 2 + 1] + dy
             translated.append(new_pos)
         return translated
 
-    def _paste_backout_validate_all(self, translated_list: list) -> tuple:
-        results = []
-        for pos in translated_list:
-            n = len(pos) // 2
-            cx = sum(pos[i * 2] for i in range(n)) / n
-            cy = sum(pos[i * 2 + 1] for i in range(n)) / n
-            parent_uid = self._find_area_at(cx, cy)
-            if not parent_uid:
-                results.append(("", False))
-                continue
-            if self._check_hole_overlap(pos, parent_uid=parent_uid):
-                results.append((parent_uid, False))
-                continue
-            results.append((parent_uid, True))
+    def resolve_pasted_child_parents(self, takeoffs, positions, conditions):
+        sources = [
+            {
+                "condition": conditions.get(t.condition_uid),
+                "rotation": t.rotation,
+                "curve": t.curve,
+            }
+            for t in takeoffs
+        ]
+        return self._paste_backout_validate_all(positions, sources=sources)
+
+    def _pasted_child_polygon(self, source, position):
+        condition = source.get("condition")
+        if condition is None or condition.is_area:
+            return position
+        takeoff = Takeoff(
+            uid=str(source.get("uid", "")),
+            condition_uid=condition.uid,
+            position=list(position),
+            rotation=source.get("rotation", 0.0),
+            curve=source.get("curve", -1),
+        )
+        vertices = compute_takeoff_footprint_vertices(
+            takeoff, condition, self._linear_geom, 0.0, 0.0
+        )
+        return [value for point in vertices for value in point]
+
+    def _paste_backout_validate_all(
+        self, translated_list: list, *, sources=None
+    ) -> tuple:
+        sources = self._paste_backout_sources if sources is None else sources
+        results = [("", False)] * len(translated_list)
+        source_indexes = {
+            source["uid"]: index
+            for index, source in enumerate(sources)
+            if source.get("uid")
+        }
+        remaining = list(range(len(translated_list)))
+        ordered = []
+        while remaining:
+            batch = [
+                index
+                for index in remaining
+                if index >= len(sources)
+                or sources[index].get("parent_uid") not in source_indexes
+                or source_indexes[sources[index]["parent_uid"]] in ordered
+            ]
+            if not batch:
+                return results, False
+            ordered.extend(batch)
+            remaining = [index for index in remaining if index not in batch]
+        cs = self._scene_builder.get_coordinate_system()
+        pending_paths = {}
+        accepted_paths = {}
+        for index in ordered:
+            pos = translated_list[index]
+            source = sources[index] if index < len(sources) else {}
+            condition = source.get("condition")
+            is_attachment = condition is not None and condition.is_attachment
+            is_symbol = condition is not None and not condition.is_area
+            parent_uid = ""
+            polygon = self._pasted_child_polygon(source, pos)
+            candidate = position_polygon_path(cs, polygon)
+            geometry_valid = len(polygon) % 2 == 0 and polygon_is_valid(
+                self._points_from_position(polygon)
+            )
+            if geometry_valid:
+                internal_parent = source.get("parent_uid")
+                if internal_parent in source_indexes:
+                    parent_path = accepted_paths.get(internal_parent)
+                    key = ("new", internal_parent)
+                    if (
+                        not is_attachment
+                        and parent_path is not None
+                        and path_is_inside(candidate, parent_path)
+                        and not path_intersects_any(
+                            candidate,
+                            [path for path, _attachment in pending_paths.get(key, ())],
+                        )
+                    ):
+                        results[index] = (internal_parent, True)
+                        accepted_paths[source["uid"]] = candidate
+                        pending_paths.setdefault(key, []).append((candidate, is_symbol))
+                    continue
+                for parent in self._current_takeoffs.values():
+                    parent_condition = self._current_conditions.get(
+                        parent.condition_uid
+                    )
+                    if (
+                        parent.is_hole
+                        or parent_condition is None
+                        or not parent_condition.is_area
+                    ):
+                        continue
+                    if is_symbol:
+                        holes = [
+                            child.position
+                            for child in self._current_takeoffs.values()
+                            if child.parent_uid == parent.uid
+                            and (
+                                child_condition := self._current_conditions.get(
+                                    child.condition_uid
+                                )
+                            )
+                            is not None
+                            and child_condition.is_area
+                        ]
+                        if not path_is_inside(
+                            candidate, position_polygon_path(cs, parent.position)
+                        ) or path_intersects_any(
+                            candidate,
+                            [position_polygon_path(cs, hole) for hole in holes],
+                        ):
+                            continue
+                    elif self._check_hole_overlap(pos, parent_uid=parent.uid):
+                        continue
+                    exclusions = [
+                        path
+                        for path, attachment in pending_paths.get(parent.uid, ())
+                        if not is_symbol or not attachment
+                    ]
+                    if path_intersects_any(candidate, exclusions):
+                        continue
+                    parent_uid = parent.uid
+                    pending_paths.setdefault(parent_uid, []).append(
+                        (candidate, is_symbol)
+                    )
+                    break
+            results[index] = (parent_uid, bool(parent_uid))
+            if parent_uid and source.get("uid"):
+                accepted_paths[source["uid"]] = candidate
         all_valid = bool(results) and all(r[1] for r in results)
         return results, all_valid
 
@@ -2049,7 +2162,10 @@ class PlacementModeMixin:
         results, _ = self._paste_backout_validate_all(translated_list)
         cs = self._scene_builder.get_coordinate_system()
         page_transform = self._current_page_transform()
-        for pos, (_, is_valid) in zip(translated_list, results):
+        for source, pos, (_, is_valid) in zip(
+            self._paste_backout_sources, translated_list, results
+        ):
+            pos = self._pasted_child_polygon(source, pos)
             tx = cs.transform_vertices_to_2d(pos)
             if len(tx) < 4:
                 continue
@@ -2080,12 +2196,16 @@ class PlacementModeMixin:
             return True
         page_uid = self._current_bid_page_uid or ""
         placements = []
+        source_uids = {source["uid"] for source in self._paste_backout_sources}
         for src, pos, (parent_uid, _) in zip(
             self._paste_backout_sources, translated_list, results
         ):
             placements.append(
                 {
                     "condition_uid": src["condition_uid"],
+                    "source_uid": src["uid"],
+                    "parent_is_internal": src["parent_uid"] in source_uids,
+                    "curve": src["curve"],
                     "position": pos,
                     "page_uid": page_uid,
                     "parent_uid": parent_uid,

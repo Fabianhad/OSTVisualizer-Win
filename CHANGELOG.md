@@ -37,6 +37,13 @@
 
 ### Fixed
 
+- Legacy Takeoff writes reject unsupported nondefault fields instead of silently
+  losing parent, rotation, curve, negative quantity, or Bid Area state. Nested
+  Backout vertex edits preserve their children. Parented Count/Linear paste and
+  rotation use their own geometry, and MCP totals include Attachment counts.
+  Single Area rotation also rotates legacy Count child orientation.
+  Delayed Takeoff completions cannot project selection into a destroyed or
+  cleaned-up Plan.
 - Annotation geometry now retains fractional coordinates on reload across all
   supported tables. Minimum snapped annotation placements commit reliably;
   body-drag previews follow the current snapped position, and rotated Oval resize
@@ -57,6 +64,8 @@
   one-inch and fractional-increment moves below the viewport drag threshold.
   Group movement preserves child offsets, and dragging back to the original
   geometry creates no movement history.
+  Minimum fractional placements also survive floating-point roundoff; incomplete
+  Backout previews and degenerate/self-touching polygons cannot be committed.
 - Page Scale saves retain the active Takeoff placement tool and avoid rebuilding
   the unchanged Project Tree. Authoritative scale-dependent Plan overlays and 3D
   dimensions, displayed quantities, and visible Summary still refresh while
@@ -74,9 +83,26 @@
 - Attachment Takeoff dragging and arrow-key movement stay within the owning Area,
   including polygonal boundaries and group moves. Area vertex edits cannot leave
   an attachment outside its parent.
+  Full footprints also govern rotation and child-only paste. Group Backout moves
+  reject containment/collision failures atomically, and descendant movement and
+  rotation retain one shared transform through legacy nested hierarchies.
 - Reassign Condition moves selected Area Takeoffs and their Backouts together in
   one mutation. Undo restores each original Condition; stale descendants still
   reject the complete operation without partial reassignment.
+  Attachment descendants retain their own Condition.
+- Takeoff geometry history follows restored identities after deletion and Page
+  scale changes on MDB and SQL. Child-paste redo follows restored parents, and
+  cross-Bid redo reuses the Conditions created by the original paste. Late paste
+  results cannot select into a replacement Page.
+- Copy, delete and restore preserve complete Takeoff descendant chains. Child-only
+  and mixed paste validate destination geometry, including Attachments, overlapping
+  candidate Areas and pending siblings; MDB child paste is one atomic mutation.
+- Takeoff readers and writers reject cross-Page parent relationships. Failed family
+  reads retain the prior model instead of reporting an empty successful reload.
+- Attachment quantities, Bid Area usage and scoped Area totals now include their
+  proper dependencies. Fractional Area quantities and rotation pivots remain stable
+  far from the origin. OST export honors negative quantities and PDF export retains
+  legacy parented Count and Linear Takeoffs.
 
 - Windows 10 follows system dark mode for application widgets and supported
   native title bars by using Qt's theme-aware Fusion style. Light-mode changes

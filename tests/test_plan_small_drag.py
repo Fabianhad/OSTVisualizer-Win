@@ -1,9 +1,7 @@
 import unittest
-
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent, QPainterPath, QTransform
 from PySide6.QtWidgets import QApplication, QGraphicsPathItem
-
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.application.dtos.collaboration_dtos import (

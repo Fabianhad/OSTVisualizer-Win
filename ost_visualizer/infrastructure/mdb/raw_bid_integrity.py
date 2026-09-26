@@ -2,7 +2,10 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Set, Tuple
 from ...domain.dtos.raw_bid_data_dto import RawBidData, RawTable
-from ...domain.entities.takeoff import find_takeoff_parent_cycle_uids
+from ...domain.entities.takeoff import (
+    find_takeoff_parent_cycle_uids,
+    find_takeoff_parent_page_mismatches,
+)
 from .reference_validation import is_present_uid
 from .schema_contract import (
     BID_SECTIONS,
@@ -70,6 +73,15 @@ class RawBidParentCycle:
 
 
 @dataclass(frozen=True)
+class RawBidTakeoffPageMismatch:
+    table: str
+    uid: str
+
+    def format(self) -> str:
+        return f"{self.table}.UID={self.uid} has a parent on another Page"
+
+
+@dataclass(frozen=True)
 class RawBidCardinalityIssue:
     table: str
     owner_table: str
@@ -86,7 +98,11 @@ class RawBidCardinalityIssue:
 
 
 RawBidGraphIssue = (
-    RawBidDuplicateUid | RawBidMalformedUid | RawBidParentCycle | RawBidCardinalityIssue
+    RawBidDuplicateUid
+    | RawBidMalformedUid
+    | RawBidParentCycle
+    | RawBidCardinalityIssue
+    | RawBidTakeoffPageMismatch
 )
 RawBidFormattedIssue = RawBidIntegrityIssue | RawBidGraphIssue
 
@@ -396,6 +412,22 @@ def validate_raw_bid_integrity(
             RawBidParentCycle(table, uid)
             for uid in sorted(find_takeoff_parent_cycle_uids(parent_by_uid))
         )
+    takeoff_rows = rows_by_table.get("BidTakeoffs", [])
+    issues.extend(
+        RawBidTakeoffPageMismatch("BidTakeoffs", uid)
+        for uid in sorted(
+            find_takeoff_parent_page_mismatches(
+                {
+                    str(row.get("UID", "")): str(row.get("ParentUID", ""))
+                    for row in takeoff_rows
+                },
+                {
+                    str(row.get("UID", "")): str(row.get("BidPageUID", ""))
+                    for row in takeoff_rows
+                },
+            )
+        )
+    )
     settings_counts = Counter(
         str(row.get("BidUID", ""))
         for row in rows_by_table.get("BidSettings", [])

@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from copy import deepcopy
 from ...domain.entities.annotation import BidAnnotation
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.takeoff import Takeoff
@@ -11,6 +12,7 @@ class SelectionClipboardService:
         self._annotations: List[BidAnnotation] = []
         self._source_bid_uid: Optional[str] = None
         self._source_file_path: Optional[str] = None
+        self._conditions = {}
 
     def copy(
         self,
@@ -19,9 +21,11 @@ class SelectionClipboardService:
         source_bid_uid: Optional[str] = None,
         source_file_path: Optional[str] = None,
         takeoff_extras: Optional[Dict[str, Dict[str, Any]]] = None,
+        conditions=None,
     ) -> None:
         self._source_bid_uid = source_bid_uid
         self._source_file_path = source_file_path
+        self._conditions = deepcopy(conditions or {})
         self._takeoffs = [
             Takeoff(
                 uid=t.uid,
@@ -112,3 +116,7 @@ class SelectionClipboardService:
 
     def get_extras(self, takeoff_uid: str) -> Dict[str, Any]:
         return self._takeoff_extras.get(str(takeoff_uid), {})
+
+    @property
+    def conditions(self) -> dict:
+        return deepcopy(self._conditions)

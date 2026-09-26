@@ -707,8 +707,6 @@ class PDFExporter:
             cond_type = condition.condition_type if condition.condition_type else 0
             if cond_type == Condition.TYPE_AREA:
                 continue
-            if takeoff.is_hole and cond_type != Condition.TYPE_ATTACHMENT:
-                continue
             position = self._coord_system.parse_position(takeoff.position)
             if not position or len(position) < 2:
                 continue

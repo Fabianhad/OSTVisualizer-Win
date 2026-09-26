@@ -332,7 +332,9 @@ class FakePlanView:
     def set_named_view_name_validator(self, validator):
         self.named_view_name_validator = validator
 
-    def begin_paste_backout(self, holes, extras_by_uid, source_bid_uid):
+    def begin_paste_backout(
+        self, holes, extras_by_uid, source_bid_uid, *, conditions=None
+    ):
         self.paste_backout_calls.append((holes, extras_by_uid, source_bid_uid))
 
     def current_mouse_ost_position(self):
@@ -1513,6 +1515,8 @@ class FakeUndoService:
 
 
 class FakeClipboard:
+    conditions = {}
+
     def __init__(
         self,
         items,

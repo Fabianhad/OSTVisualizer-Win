@@ -108,10 +108,13 @@ class ConditionSummaryService:
         contexts: List[_SummaryTakeoffContext] = []
         for takeoff in takeoffs:
             parent_uid = str(takeoff.parent_uid or "")
-            if parent_uid not in _PRIMARY_PARENT_VALUES:
-                continue
             condition_uid = str(takeoff.condition_uid or "")
             if condition_uid not in conditions:
+                continue
+            if (
+                parent_uid not in _PRIMARY_PARENT_VALUES
+                and conditions[condition_uid].is_area
+            ):
                 continue
             page_uid = str(takeoff.page_uid or "") or _NO_PAGE_UID
             area_uid = normalize_area_uid(takeoff.area_uid)

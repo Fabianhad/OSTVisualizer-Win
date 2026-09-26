@@ -818,11 +818,11 @@ class OstExporter:
                         att_perimeter = 0.0
                         for child in children:
                             child_cdn_uid = child.get("BidConditionUID", "")
-                            if child_cdn_uid == cdn_uid:
+                            child_props = condition_props.get(child_cdn_uid, {})
+                            if child_props.get("type") == Condition.TYPE_AREA:
                                 child_pos = parse_position(child.get("Position", ""))
                                 if child_pos:
                                     hole_positions.append(child_pos)
-                            child_props = condition_props.get(child_cdn_uid, {})
                             if child_props.get("type") == Condition.TYPE_ATTACHMENT:
                                 w = child_props.get("width", 0.0)
                                 d = child_props.get("depth", 0.0)
@@ -852,10 +852,16 @@ class OstExporter:
                             round_quantity=False,
                             round_up=0.0,
                         )
+                        sign = (
+                            -1.0
+                            if str(takeoff.get("IsNegativeQuantity", "0")).lower()
+                            in {"1", "-1", "true"}
+                            else 1.0
+                        )
                         _accumulate_raw_quantities(
                             area_totals,
                             area_key,
-                            (q1, q2, q3),
+                            (q1 * sign, q2 * sign, q3 * sign),
                         )
                 else:
                     for takeoff in condition_takeoffs:
@@ -888,10 +894,16 @@ class OstExporter:
                             round_quantity=False,
                             round_up=0.0,
                         )
+                        sign = (
+                            -1.0
+                            if str(takeoff.get("IsNegativeQuantity", "0")).lower()
+                            in {"1", "-1", "true"}
+                            else 1.0
+                        )
                         _accumulate_raw_quantities(
                             area_totals,
                             area_key,
-                            (q1, q2, q3),
+                            (q1 * sign, q2 * sign, q3 * sign),
                         )
             if not area_totals:
                 area_totals[("0", "0")] = [0.0, 0.0, 0.0]

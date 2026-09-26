@@ -847,6 +847,7 @@ class CtrlDragTests(unittest.TestCase):
 
     def _make_view(self, selected_uids=None):
         view = InputHandlerHarness()
+        view._scene_builder = FakeSceneBuilder()
         view._current_bid_ref = None
         view._current_page = None
         view._cursor_mode = "select"

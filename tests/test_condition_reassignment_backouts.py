@@ -2,6 +2,7 @@ import unittest
 from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.application.dtos.collaboration_dtos import MutationOutcomeStatus
 from ost_visualizer.domain.services.takeoff_domain_service import (
     expand_takeoff_uids_with_descendants,
@@ -21,6 +22,39 @@ from tests import test_plan_property_ownership as ownership
 
 
 class ConditionReassignmentBackoutTests(unittest.TestCase):
+    def test_area_with_attachment_reassigns_backouts_without_retyping_attachment(self):
+        fixture = history.PlanPropertyHistoryIdentityTests()
+        for queued in (False, True):
+            with self.subTest(queued=queued):
+                handler, data, write, undo = fixture.make_handler()
+                data.conditions["attachment"] = Condition(
+                    uid="attachment", condition_type=Condition.TYPE_ATTACHMENT
+                )
+                data.takeoffs["attachment"] = replace(
+                    data.takeoffs["child"],
+                    uid="attachment",
+                    condition_uid="attachment",
+                    position=[2, 2],
+                )
+                write.sql_collaboration_mutations = queued
+                handler.on_reassign_condition(["parent"], "42")
+                if queued:
+                    self.assertTrue(write.queued_properties)
+                    fixture.complete_property(data, write)
+                self.assertEqual(data.takeoffs["parent"].condition_uid, "42")
+                self.assertEqual(data.takeoffs["child"].condition_uid, "42")
+                self.assertEqual(
+                    data.takeoffs["attachment"].condition_uid, "attachment"
+                )
+                undo.undo()
+                if queued:
+                    fixture.complete_property(data, write)
+                self.assertEqual(data.takeoffs["parent"].condition_uid, "c1")
+                self.assertEqual(data.takeoffs["child"].condition_uid, "c1")
+                self.assertEqual(
+                    data.takeoffs["attachment"].condition_uid, "attachment"
+                )
+
     def persistence_fixture(self):
         fixture = ownership.PlanPropertyOwnershipTests()
         self.addCleanup(fixture.doCleanups)

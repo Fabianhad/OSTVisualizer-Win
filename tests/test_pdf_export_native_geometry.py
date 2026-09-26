@@ -291,6 +291,41 @@ class NativePdfExportGeometryTests(unittest.TestCase):
             max(y for _x, y in vertices) - min(y for _x, y in vertices), 20.0
         )
 
+    def test_parented_non_area_takeoffs_are_not_lost_from_pdf_export(self):
+        for family, position in (
+            (Condition.TYPE_COUNT, [100, 200]),
+            (Condition.TYPE_LINEAR, [100, 200, 120, 200]),
+        ):
+            with self.subTest(family=family):
+                takeoff = Takeoff(
+                    uid="child",
+                    condition_uid="condition",
+                    page_uid="page",
+                    parent_uid="parent",
+                    position=position,
+                )
+                condition = Condition(
+                    uid="condition", condition_type=family, width=5, depth=5
+                )
+                polygons, _callouts = self._exporter()._collect_takeoffs(
+                    [takeoff],
+                    {condition.uid: condition},
+                    {
+                        "scale_factor1": 1,
+                        "scale_factor2": 72,
+                        "rotation": 0,
+                        "flip_x": False,
+                        "flip_y": False,
+                        "width": 612,
+                        "height": 792,
+                        "view_scale": 1,
+                    },
+                    inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+                    caption_settings=AnnotationCaptionSettingsDto(False, ()),
+                    elevation_callouts_enabled=False,
+                )
+                self.assertEqual(len(polygons), 1)
+
     def test_mismatched_metadata_uses_native_geometry_for_every_export_overlay(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "native-36x24.pdf"

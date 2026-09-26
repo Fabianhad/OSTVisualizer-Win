@@ -16,6 +16,18 @@ def _is_finite_number(value: object) -> bool:
         return False
 
 
+def find_takeoff_parent_page_mismatches(
+    parent_by_uid: Mapping[str, str], page_by_uid: Mapping[str, str]
+) -> set[str]:
+    return {
+        uid
+        for uid, parent in parent_by_uid.items()
+        if parent not in _ROOT_TAKEOFF_PARENT_UIDS
+        and parent in page_by_uid
+        and page_by_uid.get(uid) != page_by_uid[parent]
+    }
+
+
 def find_takeoff_parent_cycle_uids(
     parent_uid_by_takeoff_uid: Mapping[str, str],
 ) -> set[str]:

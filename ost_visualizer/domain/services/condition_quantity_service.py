@@ -56,8 +56,7 @@ def compute_page_quantities(
     holes_by_parent: Dict[str, List[Takeoff]] = defaultdict(list)
     for t in takeoffs:
         if t.parent_uid and t.parent_uid not in ("0", "None"):
-            if not only_condition_uids or t.condition_uid in only_condition_uids:
-                holes_by_parent[t.parent_uid].append(t)
+            holes_by_parent[t.parent_uid].append(t)
     result: Dict[str, Tuple[float, float, float]] = {}
     if only_condition_uids:
         for cond_uid in only_condition_uids:
@@ -73,13 +72,27 @@ def compute_page_quantities(
         primaries = [
             t
             for t in cond_takeoffs
-            if not t.parent_uid or t.parent_uid in ("0", "None")
+            if not condition.is_area
+            or not t.parent_uid
+            or t.parent_uid in ("0", "None")
         ]
         for t in primaries:
             hole_positions = None
+            attachment_footprint = 0.0
+            attachment_perimeter = 0.0
             children = holes_by_parent.get(t.uid)
             if children:
-                hole_positions = [c.position for c in children if c.position]
+                hole_positions = []
+                for child in children:
+                    child_condition = conditions.get(child.condition_uid)
+                    if child_condition is None or child.page_uid != t.page_uid:
+                        continue
+                    if child_condition.is_area and child.position:
+                        hole_positions.append(child.position)
+                    elif child_condition.is_attachment:
+                        width, depth = child_condition.width, child_condition.depth
+                        attachment_footprint += width * depth
+                        attachment_perimeter += 2.0 * (width + depth)
             sign = -1.0 if t.is_negative else 1.0
             q1, q2, q3 = calculate_condition_quantities(
                 condition_type=condition.condition_type,
@@ -95,6 +108,8 @@ def compute_page_quantities(
                 thickness=condition.thickness,
                 position=t.position,
                 hole_positions=hole_positions,
+                attachment_footprint=attachment_footprint,
+                attachment_perimeter=attachment_perimeter,
                 rise=condition.rise,
                 run=condition.run,
                 grid_size1=condition.grid_size1,

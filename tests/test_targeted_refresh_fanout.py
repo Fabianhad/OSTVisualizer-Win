@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import logging
 from contextlib import nullcontext
 import pyodbc
-
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_read_service import ProjectReadService
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
@@ -74,7 +73,6 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
         fixture.events.subscribe(AppEvents.PAGE_METADATA_CHANGED, metadata)
         fixture.events.subscribe(AppEvents.CONDITIONS_CHANGED, conditions)
         fixture.events.subscribe(AppEvents.DATABASE_REFRESHED, broad)
-
         self.assertTrue(fixture.service.save_page_scale("test.mdb", "42", 1, 24))
         self.assertTrue(fixture.service.save_page_name("test.mdb", "42", "Renamed"))
         self.assertTrue(
@@ -82,7 +80,6 @@ class TargetedRefreshOwnershipTests(unittest.TestCase):
                 "test.mdb", "7", ["12"], ["notes"], [ChangeOperation.UPDATE]
             )
         )
-
         self.assertIs(fixture.data.get_page("42"), page)
         self.assertIs(fixture.model.current_bid, bid)
         self.assertEqual((page.name, page.scale_factor2), ("Renamed", 24))

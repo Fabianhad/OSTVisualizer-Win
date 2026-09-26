@@ -163,6 +163,11 @@ Threading and events:
   Plan surface; another Page or a same-UID Page replacement retains its own
   selection.
   Takeoff property, placement, and paste/delete history retains Page-scoped lifetime targets.
+  Geometry and rotation history uses the same lifetime targets, including mixed
+  transforms. MDB and queued SQL replay adapts stored positions to the current
+  Page scale. Child-paste history retains external parent targets; redo reuses
+  Conditions created by the original cross-Bid paste. Paste completions validate
+  exact Page ownership before projecting selection or registering history.
   Committed deletion suspends exactly those live targets; only its accepted
   restore map can reactivate them with new UIDs. A later entity reusing a deleted
   UID is a different history lifetime. Separately deleted Backouts retain their
@@ -855,7 +860,13 @@ Database backends:
   ambiguous mutation. A bid move/create must resolve its requested Project, and
   loaded takeoffs must resolve their required Page, Condition, and non-root
   Takeoff parent owners and must form an acyclic parent graph. Duplicate Bid
-  rejects copied bid-internal references that are missing or belong to another
+  and all shared Takeoff read/write/import paths require each child and parent
+  to own the same Page. Failed Takeoff family reads, including deleted-record
+  errors, must propagate instead of projecting an empty successful family.
+  Copy, deletion, transforms, and atomic restore retain complete legacy descendant
+  chains. Paste inserts those chains in topological order on both backends and
+  preserves explicit external-parent markers even when UIDs overlap source IDs.
+  Duplicate Bid rejects copied bid-internal references that are missing or belong to another
   bid before allocating destination identities, so a dangling source UID cannot
   bind to an unrelated regenerated row. Null optional references remain valid.
   Legacy UID-less `BidPageSettings` rows and intentionally orphaned hierarchy
@@ -972,11 +983,32 @@ State and identity:
   model-space contract. Takeoff position writes preserve floating-point precision
   through the shared MDB/SQL serializer; do not quantize snapped coordinates again
   during insertion, geometry save, or curve updates.
-- Attachment movement validates its placement anchor against its owning Area's
-  transformed polygon, using the same containment semantics as placement. Reject
-  an invalid group translation as a whole; do not independently snap children.
-  Mouse preview and release and keyboard movement share this check. Authoritative
-  refresh cancels unflushed gestures before replacing their parent objects.
+  Legacy schemas may omit default-valued optional Takeoff fields, but a requested
+  parent, rotation, curve, negative flag, or Bid Area assignment requires its
+  persistence column. Curve changes require both Position and Curve.
+- Attachment placement, paste, movement and rotation validate the full rotated
+  Condition footprint against its owning Area and Backouts. Never substitute a
+  center-point test. Backouts validate containment, sibling overlap and Attachment
+  collision. Group preview and commit use complete candidate child geometry and
+  reject invalid transforms atomically; all descendants use the same group pivot.
+  Child-only paste tries every eligible Area and validates pending siblings together;
+  its MDB and SQL writes use the atomic Plan-items mutation. Authoritative refresh
+  cancels unflushed gestures before replacing parent objects.
+  Nested Area vertex edits retain containment of their own children. Parented
+  Count/Linear records remain their Condition's geometry family; they are not
+  polygon cutouts. Child paste reuses shared footprints and preserves a curved
+  Linear's trailing scalar offset during translation. Every Area rotation path
+  rotates both Count and Attachment child orientation together with position.
+- Minimum snapped Takeoff placement tolerates floating-point subtraction roundoff;
+  subminimum previews cannot become last-valid commits. Polygon validation rejects
+  degenerate, self-touching and nonfinite geometry. Area and centroid calculations
+  use a local origin to avoid cancellation for translated fractional polygons.
+- Attachment quantities and Bid Area usage remain independent of Area Backout
+  subtraction. Scoped Area totals retain child dependencies on other Conditions.
+  OST exported totals honor negative quantities; PDF export treats only Area
+  children as cutouts and retains parented Count/Linear geometry. MCP Takeoff
+  counts likewise exclude only Area Backouts. Delayed selection and history
+  projection require a live Plan Qt owner that has not entered cleanup.
 - Multi-item movement applies one grid-snapped model-space translation to the
   complete selection. Preview, commit, Access/SQL persistence, and undo/redo
   preserve every item's original offset; do not snap each item independently.

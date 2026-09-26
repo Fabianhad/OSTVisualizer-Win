@@ -3,10 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-
 from PySide6.QtWidgets import QApplication
 from shiboken6 import delete, isValid
-
 from ost_visualizer.infrastructure.mdb.components.serialization import (
     decode_annotation_text,
     encode_annotation_text,

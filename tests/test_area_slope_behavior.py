@@ -11,7 +11,7 @@ from ost_visualizer.presentation.visualization.core.geometry.area import (
 
 
 class AreaSlopeBehaviorTests(unittest.TestCase):
-    def test_area_quantity_matches_native_cross_product_accumulation(self):
+    def test_area_quantity_retains_fractional_origin_precision(self):
         q1, _q2, _q3 = calculate_condition_quantities(
             Condition.TYPE_AREA,
             11,
@@ -39,7 +39,7 @@ class AreaSlopeBehaviorTests(unittest.TestCase):
                 702.397,
             ],
         )
-        self.assertEqual(q1, 792.2152777777782)
+        self.assertAlmostEqual(q1, 792.2152777777782, places=10)
 
     def test_area_quantity_uses_absolute_slope_magnitude(self):
         q1, _q2, _q3 = calculate_condition_quantities(

@@ -78,6 +78,232 @@ class AttachmentMovementTests(unittest.TestCase):
                 )
                 self.assertEqual(view._dirty_positions, {})
 
+    def test_backout_group_moves_reject_parent_escape_and_sibling_collision_atomically(
+        self,
+    ):
+        for delta in ((-6, 0), (6, 0), (0, -6), (0, 6), (2, 0)):
+            with self.subTest(delta=delta):
+                view = self.make_view()
+                del view._current_takeoffs["attachment"]
+                self.add_backout(view, [2, 2, 5, 2, 5, 5, 2, 5])
+                view._current_takeoffs["sibling"] = Takeoff(
+                    uid="sibling",
+                    condition_uid="area",
+                    page_uid="page",
+                    parent_uid="parent",
+                    position=[6, 1, 9, 1, 9, 9, 6, 9],
+                )
+                view._current_conditions["count"] = Condition(
+                    uid="count", condition_type=Condition.TYPE_COUNT
+                )
+                view._current_takeoffs["count"] = Takeoff(
+                    uid="count",
+                    condition_uid="count",
+                    page_uid="page",
+                    position=[20, 20],
+                )
+                view._selected_uids = {"backout", "count"}
+                before = {
+                    uid: list(item.position)
+                    for uid, item in view._current_takeoffs.items()
+                }
+                self.assertFalse(view._apply_position_keyboard_move(*delta))
+                self.assertEqual(
+                    {
+                        uid: item.position
+                        for uid, item in view._current_takeoffs.items()
+                    },
+                    before,
+                )
+                self.assertEqual(view._dirty_positions, {})
+
+    def test_toolbar_backout_rotation_cannot_escape_parent_without_attachments(self):
+        view = self.make_view()
+        view._scene_builder.cs.ost_to_screen_pixels = lambda value: float(value)
+        del view._current_takeoffs["attachment"]
+        self.add_backout(view, [1, 1, 9, 1, 9, 2, 1, 2])
+        view._selected_uids = {"backout"}
+        flushed = []
+        view._flush_rotation_group = lambda: flushed.append(True)
+        original = list(view._current_takeoffs["backout"].position)
+        view._transform_selected_takeoffs("rotate", degrees=90)
+        self.assertEqual(view._current_takeoffs["backout"].position, original)
+        self.assertEqual(flushed, [])
+
+    def test_multi_rotation_moves_unselected_children_around_group_pivot(self):
+        view = self.make_view()
+        self.add_backout(view, [1, 1, 2, 1, 2, 2, 1, 2])
+        view._current_conditions["count"] = Condition(
+            uid="count", condition_type=Condition.TYPE_COUNT
+        )
+        view._current_takeoffs["count"] = Takeoff(
+            uid="count", condition_uid="count", page_uid="page", position=[20, 20]
+        )
+        view._selected_uids = {"parent", "count"}
+        view._rotation_drag_orig_positions = {
+            uid: list(view._current_takeoffs[uid].position)
+            for uid in view._selected_uids
+        }
+        view._rotation_drag_orig_rotations = {uid: 0 for uid in view._selected_uids}
+        view._rotate_ost_center = (0, 0)
+        view._flush_rotation_group = lambda: None
+        view._apply_multi_rotation(90)
+        self.assertAlmostEqual(view._current_takeoffs["parent"].position[2], 0)
+        self.assertEqual(view._current_takeoffs["attachment"].position, [-5, 5])
+        for actual, expected in zip(
+            view._current_takeoffs["backout"].position, [-1, 1, -1, 2, -2, 2, -2, 1]
+        ):
+            self.assertAlmostEqual(actual, expected)
+
+    def test_nested_children_follow_ancestor_move_and_rotation_once(self):
+        for operation in ("nudge", "multi_rotation", "toolbar_rotation"):
+            with self.subTest(operation=operation):
+                view = self.make_view()
+                view._scene_builder.cs.ost_to_screen_pixels = float
+                self.add_backout(view, [1, 1, 4, 1, 4, 4, 1, 4])
+                attachment = view._current_takeoffs["attachment"]
+                attachment.condition_uid = "area"
+                attachment.parent_uid = "backout"
+                attachment.position = [2, 2, 3, 2, 3, 3, 2, 3]
+                # Reverse insertion order exercises graph traversal, not list order.
+                view._current_takeoffs = dict(
+                    reversed(list(view._current_takeoffs.items()))
+                )
+                view._selected_uids = {"parent"}
+                view._rotation_drag_orig_positions = {
+                    "parent": list(view._current_takeoffs["parent"].position)
+                }
+                view._rotation_drag_orig_rotations = {"parent": 0}
+                view._rotate_ost_center = (5, 5)
+                view._flush_rotation_group = lambda: None
+                if operation == "nudge":
+                    self.assertTrue(view._apply_position_keyboard_move(1, 0))
+                    expected = [3, 2, 4, 2, 4, 3, 3, 3]
+                else:
+                    if operation == "multi_rotation":
+                        view._apply_multi_rotation(90)
+                    else:
+                        view._transform_selected_takeoffs("rotate", degrees=90)
+                    expected = [8, 2, 8, 3, 7, 3, 7, 2]
+                for actual, wanted in zip(attachment.position, expected):
+                    self.assertAlmostEqual(actual, wanted)
+
+    def test_single_area_rotation_rotates_legacy_count_child_orientation(self):
+        view = self.make_view()
+        condition = view._current_conditions["attachment"]
+        condition.condition_type = Condition.TYPE_COUNT
+        condition.shape = 3
+        condition.width, condition.depth = 4, 2
+        child = view._current_takeoffs["attachment"]
+        child.rotation = 0.25
+        child.position = [6, 5]
+        view._rotation_drag_orig_positions = {
+            "parent": list(view._current_takeoffs["parent"].position)
+        }
+        view._rotation_drag_orig_rotations = {"parent": 0}
+        view._flush_rotation_group = lambda: None
+        view._flush_dirty_positions = lambda: None
+        view._apply_single_rotation("parent", 90)
+        self.assertEqual(child.position, [5, 6])
+        self.assertAlmostEqual(child.rotation, 0.25 + math.pi / 2)
+
+    def test_interactive_attachment_rotation_preview_accepts_valid_footprint(self):
+        view = self.make_view()
+        view._cursor_mode = "rotate"
+        view._rotation_drag_active = True
+        view._rotation_drag_uid = "attachment"
+        view._rotation_drag_orig_positions = {"attachment": [5, 5]}
+        view._rotation_drag_orig_rotations = {"attachment": 0}
+        view._rotation_drag_preview_items = []
+        view._rotation_drag_handle_origins = []
+        view._rotation_drag_last_angle = 0
+        view._rotation_drag_accumulated_deg = 0
+        view._rotation_drag_snapped_deg = 0
+        view._rotate_center_scene = QPointF(5, 5)
+        view._update_rotation_handle_preview = lambda _angle: None
+        view.mapToScene = lambda point: QPointF(point)
+        view.mouseMoveEvent(fixtures.FakeMouseEvent(x=5, y=10))
+        self.assertEqual(view._rotation_drag_snapped_deg, 90)
+
+    def test_legacy_parented_count_rotation_does_not_use_polygon_validation(self):
+        view = self.make_view()
+        view._current_conditions["attachment"].condition_type = Condition.TYPE_COUNT
+        view._cursor_mode = "rotate"
+        view._rotation_drag_active = True
+        view._rotation_drag_uid = "attachment"
+        view._rotation_drag_orig_positions = {"attachment": [5, 5]}
+        view._rotation_drag_orig_rotations = {"attachment": 0}
+        view._rotation_drag_preview_items = []
+        view._rotation_drag_handle_origins = []
+        view._rotation_drag_last_angle = 0
+        view._rotation_drag_accumulated_deg = 0
+        view._rotation_drag_snapped_deg = 0
+        view._rotate_center_scene = QPointF(5, 5)
+        view._update_rotation_handle_preview = lambda _angle: None
+        view.mapToScene = lambda point: QPointF(point)
+        view.mouseMoveEvent(fixtures.FakeMouseEvent(x=5, y=10))
+        self.assertEqual(view._rotation_drag_snapped_deg, 90)
+
+    def test_nested_backout_vertex_edit_cannot_exclude_its_child(self):
+        view = self.make_view()
+        del view._current_takeoffs["attachment"]
+        self.add_backout(view, [1, 1, 9, 1, 9, 9, 1, 9])
+        view._current_takeoffs["nested"] = Takeoff(
+            uid="nested",
+            condition_uid="area",
+            page_uid="page",
+            parent_uid="backout",
+            position=[7, 7, 8, 7, 8, 8, 7, 8],
+        )
+        original = list(view._current_takeoffs["backout"].position)
+        view._drag_last_valid_new_pos = original
+        view._drag_handle_index = 2
+        view._uid_to_items = {}
+        view._handle_infos = [SimpleNamespace(item=fixtures.FakeItem())]
+        view.update_drag_handle_positions([1, 1, 9, 1, 5, 5, 1, 9], "backout")
+        self.assertEqual(view._drag_last_valid_new_pos, original)
+
+    def test_legacy_curved_linear_sibling_is_not_a_polygon_backout(self):
+        view = self.make_view()
+        del view._current_takeoffs["attachment"]
+        self.add_backout(view, [5, 5, 6, 5, 6, 6, 5, 6])
+        view._current_conditions["linear"] = Condition(
+            uid="linear", condition_type=Condition.TYPE_LINEAR
+        )
+        view._current_takeoffs["linear"] = Takeoff(
+            uid="linear",
+            condition_uid="linear",
+            parent_uid="parent",
+            position=[3, 3, 9, 3, 6, 9],
+            curve=0,
+        )
+        backout = view._current_takeoffs["backout"]
+        self.assertTrue(view._validate_hole_position(backout, backout.position))
+        from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
+            PlacementModeMixin,
+        )
+
+        self.assertFalse(
+            PlacementModeMixin._check_hole_overlap(
+                view, backout.position, "parent", "backout"
+            )
+        )
+
+    def test_legacy_parented_linear_rotation_commits_without_area_cutout_validation(
+        self,
+    ):
+        view = self.make_view()
+        view._current_conditions["attachment"].condition_type = Condition.TYPE_LINEAR
+        item = view._current_takeoffs["attachment"]
+        item.position = [2, 5, 8, 5]
+        view._rotation_drag_orig_positions = {item.uid: list(item.position)}
+        view._rotation_drag_orig_rotations = {item.uid: 0}
+        view._flush_dirty_positions = lambda: None
+        view._create_rotate_handle = lambda _uid: None
+        view._apply_single_rotation(item.uid, 90)
+        for actual, expected in zip(item.position, [5, 2, 5, 8]):
+            self.assertAlmostEqual(actual, expected)
+
     def test_mouse_preview_collides_at_every_edge(self):
         for position in ([-1.0, 5.0], [11.0, 5.0], [5.0, -1.0], [5.0, 11.0]):
             with self.subTest(position=position):
@@ -89,7 +315,6 @@ class AttachmentMovementTests(unittest.TestCase):
     def test_attachment_full_footprint_must_remain_inside_area(self):
         view = self.make_view()
         self.set_attachment_dimensions(view, 4.0, 2.0)
-
         self.assertFalse(view._apply_position_keyboard_move(4.0, 0.0))
         self.assertEqual(view._current_takeoffs["attachment"].position, [5.0, 5.0])
 
@@ -203,7 +428,6 @@ class AttachmentMovementTests(unittest.TestCase):
         self.set_attachment_dimensions(view, 2.0, 2.0)
         self.add_backout(view, [1.0, 4.0, 3.0, 4.0, 3.0, 6.0, 1.0, 6.0])
         view._selected_uids = {"backout"}
-
         self.assertFalse(view._apply_position_keyboard_move(3.0, 0.0))
         self.assertEqual(
             view._current_takeoffs["backout"].position,
@@ -219,7 +443,6 @@ class AttachmentMovementTests(unittest.TestCase):
         placement._backout_parent_uid = "parent"
         placement._scene_builder._cs.parse_position = lambda position: list(position)
         self.set_attachment_dimensions(state, 2.0, 2.0)
-
         self.assertTrue(
             placement._check_hole_overlap([4.0, 4.0, 6.0, 4.0, 6.0, 6.0, 4.0, 6.0])
         )
@@ -230,7 +453,6 @@ class AttachmentMovementTests(unittest.TestCase):
         placement._current_conditions = state._current_conditions
         placement._current_takeoffs = state._current_takeoffs
         placement._scene_builder._cs.parse_position = lambda position: list(position)
-
         self.assertTrue(
             placement._check_hole_overlap(
                 [4.0, 4.0, 6.0, 4.0, 6.0, 6.0, 4.0, 6.0],
@@ -246,9 +468,7 @@ class AttachmentMovementTests(unittest.TestCase):
         flushed = []
         view._flush_dirty_rotations = lambda: flushed.append(True)
         view._create_rotate_handle = lambda _uids: True
-
         view._apply_single_rotation("attachment", 90.0)
-
         self.assertAlmostEqual(
             view._current_takeoffs["attachment"].rotation, math.pi / 2.0
         )
@@ -264,9 +484,7 @@ class AttachmentMovementTests(unittest.TestCase):
         flushed = []
         view._flush_dirty_rotations = lambda: flushed.append(True)
         view._create_rotate_handle = lambda _uids: True
-
         view._apply_single_rotation("attachment", 90.0)
-
         self.assertEqual(attachment.rotation, 0.0)
         self.assertEqual(view._dirty_rotations, {})
         self.assertEqual(flushed, [])
@@ -282,9 +500,7 @@ class AttachmentMovementTests(unittest.TestCase):
         view._create_rotate_handle = lambda _uids: True
         flushed = []
         view._flush_dirty_rotations = lambda: flushed.append(True)
-
         view._apply_single_rotation("attachment", 90.0)
-
         self.assertEqual(attachment.rotation, 0.0)
         self.assertEqual(view._dirty_rotations, {})
         self.assertEqual(flushed, [])
@@ -297,9 +513,7 @@ class AttachmentMovementTests(unittest.TestCase):
         view._scene_builder.cs.ost_to_screen_pixels = lambda value: float(value)
         flushed = []
         view._flush_rotation_group = lambda: flushed.append(True)
-
         view.rotate_selected_takeoffs(90.0)
-
         self.assertEqual(attachment.position, [5.0, 1.0])
         self.assertEqual(attachment.rotation, 0.0)
         self.assertEqual(view._dirty_positions, {})
@@ -316,9 +530,7 @@ class AttachmentMovementTests(unittest.TestCase):
         view._rotation_drag_orig_rotations = {"parent": 0.0}
         view._flush_dirty_positions = lambda: None
         view._flush_rotation_group = lambda: None
-
         view._apply_single_rotation("parent", 90.0)
-
         self.assertAlmostEqual(
             view._current_takeoffs["attachment"].rotation, math.pi / 2.0
         )
@@ -335,9 +547,7 @@ class AttachmentMovementTests(unittest.TestCase):
         view._rotate_ost_center = (3.5, 5.0)
         flushed = []
         view._flush_rotation_group = lambda: flushed.append(True)
-
         view._apply_multi_rotation(180.0)
-
         self.assertEqual(view._current_takeoffs["backout"].position, original)
         self.assertEqual(view._dirty_positions, {})
         self.assertEqual(flushed, [])
@@ -351,9 +561,7 @@ class AttachmentMovementTests(unittest.TestCase):
         view._scene_builder.cs.ost_to_screen_pixels = lambda value: float(value)
         flushed = []
         view._flush_rotation_group = lambda: flushed.append(True)
-
         view.rotate_selected_takeoffs(90.0)
-
         self.assertEqual(view._current_takeoffs["backout"].position, original)
         self.assertEqual(view._dirty_positions, {})
         self.assertEqual(flushed, [])
@@ -372,7 +580,6 @@ class AttachmentMovementTests(unittest.TestCase):
         placement._scene_builder._cs.parse_position = lambda position: list(position)
         placement._current_conditions = state._current_conditions
         placement._current_takeoffs = state._current_takeoffs
-
         self.assertEqual(
             placement._find_attachment_parent_at(
                 state._current_conditions["attachment"], [5.0, 5.0]

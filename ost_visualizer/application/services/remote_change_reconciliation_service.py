@@ -2,7 +2,11 @@ from __future__ import annotations
 from dataclasses import replace
 from ...domain.entities.bid import Bid
 from ...domain.entities.identity_refs import BidRef
-from ...domain.entities.takeoff import Takeoff, find_takeoff_parent_cycle_uids
+from ...domain.entities.takeoff import (
+    Takeoff,
+    find_takeoff_parent_cycle_uids,
+    find_takeoff_parent_page_mismatches,
+)
 from ...domain.services.project_data_service import ProjectDataService
 from ..condition_change_impact import condition_changes_require_plan_refresh
 from ..dtos.collaboration_dtos import (
@@ -685,5 +689,10 @@ class RemoteChangeReconciliationService:
                     return False
                 parent_uid_by_takeoff_uid[takeoff.uid] = takeoff.parent_uid
             if find_takeoff_parent_cycle_uids(parent_uid_by_takeoff_uid):
+                return False
+            if find_takeoff_parent_page_mismatches(
+                parent_uid_by_takeoff_uid,
+                {t.uid: t.page_uid for t in bid_data.bid_takeoffs},
+            ):
                 return False
         return True

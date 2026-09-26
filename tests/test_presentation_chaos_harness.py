@@ -814,7 +814,6 @@ class PlanViewActionHandlerChaosHarness:
         self.ann_write = HandlerChaosAnnotationWriteService()
         self.ann_write.next_uids = [f"ann-{uid}" for uid in range(1000, 1100)]
         self.write.annotation_write_service = self.ann_write
-
         self.undo = UndoRedoService()
         self.undo.set_active_bid(self.ui_state.get_selected_bid_ref())
         self.event_bus = FakeEventBus()

@@ -1,5 +1,7 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
+import pyodbc
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import (
@@ -106,6 +108,20 @@ def _hydrate(reader):
 
 
 class TakeoffHydrationContractTests(unittest.TestCase):
+    def test_deleted_record_read_error_never_becomes_empty_takeoff_family(self):
+        for reader in (
+            BidDataReaderMixin(),
+            SqlProjectReader.__new__(SqlProjectReader),
+        ):
+            for message in ("HY109", "Record is deleted"):
+                with self.subTest(reader=type(reader).__name__, message=message):
+                    reader._record_caught_read_error = lambda _error: False
+                    with patch.object(
+                        _Cursor, "fetchall", side_effect=pyodbc.Error(message)
+                    ):
+                        with self.assertRaises(pyodbc.Error):
+                            _hydrate(reader)
+
     def test_access_reader_builds_complete_takeoff_contract(self):
         takeoff = _hydrate(BidDataReaderMixin())
         self.assertTrue(takeoff.has_valid_contract())

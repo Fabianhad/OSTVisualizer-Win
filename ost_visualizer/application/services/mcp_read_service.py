@@ -2086,7 +2086,8 @@ class McpReadService:
     ) -> List[McpQuantityDto]:
         counts: Dict[str, int] = {}
         for takeoff in takeoffs:
-            if takeoff.is_hole:
+            condition = conditions.get(takeoff.condition_uid)
+            if takeoff.is_hole and condition is not None and condition.is_area:
                 continue
             counts[takeoff.condition_uid] = counts.get(takeoff.condition_uid, 0) + 1
         result = []

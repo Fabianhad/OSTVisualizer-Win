@@ -169,9 +169,7 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
             AppEvents.PAGE_METADATA_CHANGED,
             lambda **event: changes.append(event),
         )
-
         self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1.0, 96.0))
-
         self.assertEqual(self.reloads, [])
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[0]["page_uids"], ("42",))
@@ -194,9 +192,7 @@ class SetScaleRepeatedApplyTests(unittest.TestCase):
         reloads = []
         self.service._execute_database_mutation = execute
         self.service._reload_database = lambda path: reloads.append(path) or True
-
         self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1.0, 96.0))
-
         self.assertEqual(str(resources[0].bid_uid), "7")
         self.assertEqual(replacement.scale_factor2, 24.0)
         self.assertEqual(reloads, ["test.mdb"])

@@ -5,7 +5,6 @@ from unittest.mock import Mock, patch, MagicMock
 from contextlib import nullcontext
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
@@ -94,9 +93,7 @@ class RefreshScopeTests(unittest.TestCase):
         coordinator._flush_dirty_mesh_refresh_if_needed = Mock()
         coordinator._restore_project_tree_bid_selection_if_needed = Mock()
         coordinator._update_export_menu_state = Mock()
-
         coordinator._on_database_refreshed("other.mdb")
-
         coordinator._do_file_refresh.assert_called_once_with()
         coordinator._nav.start_refresh.assert_not_called()
         coordinator._finish_refresh.assert_not_called()
@@ -135,10 +132,8 @@ class RefreshScopeTests(unittest.TestCase):
         )
         self.fixture.data.replace_cover_sheet_data("test.mdb", "7", cover_sheet)
         self.fixture.data.replace_cover_sheet_data("other.mdb", "7", cover_sheet)
-
         self.assertTrue(self.service.save_page_name("test.mdb", "42", "Renamed"))
         self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1, 24))
-
         self.assertEqual(self.info.name, "Renamed")
         self.assertEqual(self.info.scale_factor2, 24)
         for database, name, scale in (
@@ -157,13 +152,11 @@ class RefreshScopeTests(unittest.TestCase):
             return_value=({"12": condition}, {})
         )
         page = self.fixture.original
-
         self.assertTrue(
             self.service.reload_conditions_and_notify(
                 "test.mdb", "7", ["12"], ["name"], [ChangeOperation.UPDATE]
             )
         )
-
         self.assertEqual(self.fixture.reloads, [])
         self.assertIs(self.fixture.data.get_page("42"), page)
         self.assertIs(self.fixture.data.get_bid_conditions()["12"], condition)
@@ -371,9 +364,7 @@ class RefreshScopeTests(unittest.TestCase):
         self.fixture.events.subscribe(
             AppEvents.PAGE_METADATA_CHANGED, coordinator._on_page_metadata_changed
         )
-
         self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1, 24))
-
         sidebar.conditions_sidebar.update_quantities.assert_called_once()
         after = sidebar.conditions_sidebar.update_quantities.call_args.args[0]["12"][0]
         self.assertEqual(before, 12)

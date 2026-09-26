@@ -40,7 +40,7 @@ def is_takeoff_relevant_for_area_usage(
     condition = takeoff.get_condition(bid_conditions)
     if condition is None:
         return False
-    if takeoff.is_hole:
+    if takeoff.is_hole and condition.is_area:
         return False
     if not is_takeoff_visible(takeoff, bid_conditions):
         return False

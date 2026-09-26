@@ -286,13 +286,11 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
         coordinator._flush_dirty_mesh_refresh_if_needed = lambda: calls.append(
             "flush-mesh"
         )
-
         coordinator._on_database_refreshed(
             file_path=bid_ref.file_path,
             image_sources_unchanged=True,
             page_scale_uids=("page-1",),
         )
-
         self.assertIn(("refresh", False), calls)
         self.assertIn(("finish", True), calls)
         self.assertIn(("dirty-mesh", ("page-1",)), calls)
@@ -312,13 +310,11 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
                 build_complete_structure=rebuilt.append,
             )
         )
-
         with patch(
             "ost_visualizer.presentation.coordinators.ui_event_coordinator.build_loaded_files",
             return_value=loaded_files,
         ):
             coordinator._do_file_refresh(rebuild_project_tree=False)
-
         self.assertEqual(cached, [loaded_files])
         self.assertEqual(rebuilt, [])
 
@@ -353,9 +349,7 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
                 return accept_reconstructed_conditions
 
         coordinator._placement = Placement()
-
         coordinator._finish_refresh(accept_reconstructed_placement_conditions=True)
-
         self.assertEqual(accepted_reconstruction, [True])
         self.assertEqual(select_resets, [])
         self.assertEqual(
@@ -386,7 +380,6 @@ class PageScaleSurfaceSyncRegressionTests(unittest.TestCase):
 
         coordinator._placement = Placement()
         coordinator._finish_refresh(accept_reconstructed_placement_conditions=True)
-
         self.assertEqual(reconcile_calls, [])
         self.assertIsNone(coordinator._pending_takeoff_place_condition_uid)
 
