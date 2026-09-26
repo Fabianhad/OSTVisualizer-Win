@@ -178,6 +178,15 @@ Threading and events:
   an entry; completing persistence must not repopulate invalidated history.
   Clearing history also invalidates retained Takeoff lifetime targets, so late
   replay completions cannot suspend a new lifetime that reused their UIDs.
+  Queued placement, paste, mixed geometry and deletion history captures Page
+  scales with the submitted geometry on Main and detached Plans. Completion
+  may bind accepted identities, but must not recapture a later calibration as
+  the geometry's original scale. Placement and cancellation-recovery selection
+  retain the originating Page, selection revision and tool revision.
+  Pending Plan/3D mutation state is keyed by BidRef. Its event carries both
+  database and Bid identity; an old-Bid completion cannot clear or project
+  another Bid's same-UID pending item. Mixed Backout/annotation paste uses the
+  atomic Plan-items mutation; interactive child-only placement cannot split it.
   Queued Area saves copy their changeset at submission, so persistence, request
   identity, and committed deletion notifications describe the same draft.
   Composite Backout restoration remaps parents restored in the same batch and
@@ -1181,6 +1190,10 @@ must check its original history token before recording history. Geometry replay
 uses the shared Page-scale conversion on MDB and SQL, retaining rotation values.
 BidTexts Position preserves float precision, and text decoding preserves significant
 whitespace. Legacy Latin-1 text encoding must fail rather than substitute characters.
+Raw OST export/import uses the same Latin-1 Name mapping for BidTexts and
+BidCallOuts on MDB and SQL. Other text blobs retain UTF-8. Raw serialization
+receives table/column identity and rejects unsupported binary text encoding
+instead of dropping bytes; it must not guess an encoding from byte validity.
 ClippedTextGraphicsItem owns wrapping/clipping; do not destructively pre-elide its
 stored text. Resize follows the established unrotated model contract in both preview
 and commit. See TEXT_ANNOTATION_LIFECYCLE_AUDIT.md for coverage and format limits.

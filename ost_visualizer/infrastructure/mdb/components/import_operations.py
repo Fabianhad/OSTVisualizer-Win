@@ -22,7 +22,11 @@ from ..raw_bid_integrity import BID_RELATIONSHIPS
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
 from .constants import BID_TABLES_WRITE_ORDER, NUMERIC_TYPE_SUBSTRINGS
 from .identity_allocation import AccessIdentityAllocationMixin
-from .serialization import encode_text_blob
+from .serialization import (
+    ANNOTATION_TEXT_BLOB_TABLES,
+    encode_annotation_text,
+    encode_text_blob,
+)
 
 
 class ImportOperationsMixin(AccessIdentityAllocationMixin):
@@ -555,7 +559,9 @@ class ImportOperationsMixin(AccessIdentityAllocationMixin):
         placeholders = ", ".join(["?"] * len(cols))
         col_names = ", ".join(f"[{c}]" for c in cols)
         values = [
-            self._convert_access_value(filtered[column], col_types.get(column, ""))
+            self._convert_access_value(
+                filtered[column], col_types.get(column, ""), table=table, column=column
+            )
             for column in cols
         ]
         cursor = connection.cursor()
@@ -576,7 +582,9 @@ class ImportOperationsMixin(AccessIdentityAllocationMixin):
             and value in (None, "", "0", "NULL")
         )
 
-    def _convert_access_value(self, value: str, type_name: str) -> Any:
+    def _convert_access_value(
+        self, value: str, type_name: str, *, table: str = "", column: str = ""
+    ) -> Any:
         if value is None or value == "NULL":
             return None
         if type_name == "yesno":
@@ -603,6 +611,8 @@ class ImportOperationsMixin(AccessIdentityAllocationMixin):
         if "longbinary" in type_name or "memo" in type_name:
             if not value or value == "":
                 return None
+            if table in ANNOTATION_TEXT_BLOB_TABLES and column == "Name":
+                return encode_annotation_text(value)
             return encode_text_blob(value)
         is_numeric = any(t in type_name for t in NUMERIC_TYPE_SUBSTRINGS)
         if is_numeric:

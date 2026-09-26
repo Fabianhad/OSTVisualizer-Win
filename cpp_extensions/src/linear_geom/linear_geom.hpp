@@ -3,6 +3,8 @@
 #include <optional>
 #include <tuple>
 #include <vector>
+#include <array>
+#include <utility>
 namespace ost_linear
 {
     double calc_chord_length(double x1, double y1, double x2, double y2);

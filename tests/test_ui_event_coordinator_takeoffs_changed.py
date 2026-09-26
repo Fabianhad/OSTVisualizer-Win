@@ -687,7 +687,7 @@ def configure_mesh_state(
     coordinator._dirty_mesh_page_uids = set()
     coordinator._pending_dirty_mesh_refresh = False
     coordinator._last_mesh_scene = last_mesh_scene
-    coordinator._pending_3d_takeoff_uids_by_database = {}
+    coordinator._pending_3d_takeoff_uids_by_bid = {}
     coordinator._is_cleaning_up = False
     coordinator.ui_access_manager = FakeMeshAccess()
 
@@ -960,7 +960,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             mesh_window=detached,
         )
         coordinator._on_pending_plan_mutations_changed(
-            "first.mdb", ["shared-takeoff"], True
+            "first.mdb", ["shared-takeoff"], True, bid_uid=first_ref.bid_uid
         )
         self.assertEqual(embedded.pending_mutation_uids, {"shared-takeoff"})
         self.assertEqual(detached.pending_mutation_uids, {"shared-takeoff"})
@@ -969,10 +969,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(embedded.pending_mutation_uids, set())
         self.assertEqual(detached.pending_mutation_uids, set())
         coordinator._on_pending_plan_mutations_changed(
-            "second.mdb", ["shared-takeoff"], True
+            "second.mdb", ["shared-takeoff"], True, bid_uid=second_ref.bid_uid
         )
         coordinator._on_pending_plan_mutations_changed(
-            "first.mdb", ["shared-takeoff"], False
+            "first.mdb", ["shared-takeoff"], False, bid_uid=first_ref.bid_uid
         )
         self.assertEqual(embedded.pending_mutation_uids, {"shared-takeoff"})
         self.assertEqual(detached.pending_mutation_uids, {"shared-takeoff"})
@@ -2046,7 +2046,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.opengl_viewer = None
         coordinator._mesh_window = None
         coordinator._last_mesh_scene = None
-        coordinator._pending_3d_takeoff_uids_by_database = {}
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
@@ -7680,7 +7680,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._is_cleaning_up = False
         coordinator.visualization_service = visualization
         coordinator._last_mesh_scene = None
-        coordinator._pending_3d_takeoff_uids_by_database = {}
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
@@ -7735,7 +7735,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._is_cleaning_up = False
         coordinator.visualization_service = FakeVisualization()
         coordinator._last_mesh_scene = None
-        coordinator._pending_3d_takeoff_uids_by_database = {}
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
@@ -8627,7 +8627,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._toolbar = FakeToolbar()
         coordinator._bid_clipboard = None
-        coordinator._pending_3d_takeoff_uids_by_database = {}
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
         coordinator._nav = FakeNav()
         coordinator._bid_data_cache = {}
         coordinator._takeoff_workspace_bid_ref = None
@@ -8674,8 +8674,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         embedded = FakeMeshReceiver()
         embedded.pending_mutation_uids = {"shared-takeoff"}
         coordinator.opengl_viewer = embedded
-        coordinator._pending_3d_takeoff_uids_by_database = {
-            "active.mdb": {"shared-takeoff"}
+        coordinator._pending_3d_takeoff_uids_by_bid = {
+            BidRef("active.mdb", "bid-1"): {"shared-takeoff"}
         }
         status_panel = _CollaborationStatusPanel()
         status_panel.set_page_info("Page One")
@@ -8694,7 +8694,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
         self.assertEqual(embedded.clear_calls, 1)
         self.assertEqual(embedded.pending_mutation_uids, set())
-        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_database, {})
+        self.assertEqual(coordinator._pending_3d_takeoff_uids_by_bid, {})
         self.assertEqual(
             embedded.discarded_camera_states,
             [(None, "active.mdb")],

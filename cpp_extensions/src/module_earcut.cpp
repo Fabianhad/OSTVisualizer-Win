@@ -1,10 +1,12 @@
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/array.h>
 #include <array>
 #include <nanobind/stl/vector.h>
 #include <stdexcept>
 #include <vector>
 #include "earcut/earcut.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <utility>
 namespace nb = nanobind;
 std::vector<uint32_t> earcut_triangulate(
     const std::vector<double> &flat_coords,

@@ -6,8 +6,10 @@ from ..services.annotation_history import (
 import logging
 import uuid
 import weakref
+from copy import deepcopy
+from ...domain.entities.identity_refs import BidRef
 from dataclasses import dataclass, replace
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 from PySide6 import QtWidgets
 from shiboken6 import isValid
 from ...application.dtos.collaboration_dtos import (
@@ -71,6 +73,9 @@ from ..utils.named_view_validation import (
     show_duplicate_named_view_name,
 )
 
+if TYPE_CHECKING:
+    from ..components.plan_view.view import TakeoffPlanView
+
 logger = logging.getLogger(__name__)
 _SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS = frozenset(
     {
@@ -113,6 +118,9 @@ class _PendingTakeoffPlacement:
     pending_uids: tuple[str, ...]
     specs: tuple[InsertTakeoffSpec, ...]
     page_identities: tuple[tuple[str, object], ...]
+    page_scales: dict[str, PageScale]
+    selection_revision: int
+    tool_revision: int
     runtime_generation: Optional[int]
     history_token: object = None
     deleted_pending_uids: frozenset[str] = frozenset()
@@ -121,7 +129,7 @@ class _PendingTakeoffPlacement:
 class PlanViewActionHandler:
     def __init__(
         self,
-        plan_view,
+        plan_view: "TakeoffPlanView",
         ui_state_manager,
         project_data_svc,
         project_write_svc,
@@ -146,8 +154,8 @@ class PlanViewActionHandler:
             annotation_write_svc, project_data_svc, event_bus
         )
         self._pending_takeoff_placements: dict[str, _PendingTakeoffPlacement] = {}
-        self._pending_plan_takeoff_uids_by_database: dict[str, set[str]] = {}
-        self._pending_plan_annotations_by_database: dict[str, set[tuple[str, str]]] = {}
+        self._pending_plan_takeoff_uids_by_bid: dict[BidRef, set[str]] = {}
+        self._pending_plan_annotations_by_bid: dict[BidRef, set[tuple[str, str]]] = {}
         self._completed_sql_mutation_ids: set[str] = set()
         self._geometry_edit_lease_handle: Optional[EditLeaseHandle] = None
         self._geometry_edit_lease_request_id = ""
@@ -171,18 +179,17 @@ class PlanViewActionHandler:
 
     def _set_plan_items_pending(
         self,
-        database_id: str,
+        bid_ref: BidRef,
         plan_uids: set[str],
         takeoff_uids: set[str],
         pending: bool,
         annotation_identities: set[tuple[str, str]] = frozenset(),
     ) -> None:
-        database_key = str(database_id)
-        pending_takeoffs = self._pending_plan_takeoff_uids_by_database.setdefault(
-            database_key, set()
+        pending_takeoffs = self._pending_plan_takeoff_uids_by_bid.setdefault(
+            bid_ref, set()
         )
-        pending_annotations = self._pending_plan_annotations_by_database.setdefault(
-            database_key, set()
+        pending_annotations = self._pending_plan_annotations_by_bid.setdefault(
+            bid_ref, set()
         )
         pending_takeoff_uids = set(plan_uids).intersection(takeoff_uids)
         if pending:
@@ -192,20 +199,24 @@ class PlanViewActionHandler:
             pending_takeoffs.difference_update(pending_takeoff_uids)
             pending_annotations.difference_update(annotation_identities)
         if not pending_takeoffs:
-            self._pending_plan_takeoff_uids_by_database.pop(database_key, None)
+            self._pending_plan_takeoff_uids_by_bid.pop(bid_ref, None)
         if not pending_annotations:
-            self._pending_plan_annotations_by_database.pop(database_key, None)
+            self._pending_plan_annotations_by_bid.pop(bid_ref, None)
         active_bid = self._ui_state.get_selected_bid_ref()
-        active_database = str(active_bid.file_path) if active_bid is not None else ""
-        self._plan_view.set_pending_mutation_uids(
-            self._current_plan_keys_for_identities(
-                self._pending_plan_takeoff_uids_by_database.get(active_database, set()),
-                self._pending_plan_annotations_by_database.get(active_database, set()),
+        if (
+            active_bid == bid_ref
+            and isValid(self._plan_view)
+            and not self._plan_view._is_cleaning_up
+        ):
+            self._plan_view.set_pending_mutation_uids(
+                self._current_plan_keys_for_identities(
+                    pending_takeoffs, pending_annotations
+                )
             )
-        )
         self._event_bus.publish(
             AppEvents.PENDING_PLAN_MUTATIONS_CHANGED,
-            database_id=database_id,
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
             takeoff_uids=sorted(takeoff_uids),
             pending=pending,
         )
@@ -288,9 +299,7 @@ class PlanViewActionHandler:
         page_uids: tuple[str, ...],
         page_identities: Optional[tuple[tuple[str, object], ...]] = None,
     ) -> bool:
-        if not isValid(self._plan_view) or getattr(
-            self._plan_view, "_is_cleaning_up", False
-        ):
+        if not isValid(self._plan_view) or self._plan_view._is_cleaning_up:
             return False
         if self._ui_state.get_selected_bid_ref() != bid_ref:
             return False
@@ -969,6 +978,9 @@ class PlanViewActionHandler:
         ]
         rotation_new = [(str(uid), float(new)) for uid, _old, new in rotation_changes]
         takeoff_scales = self._capture_takeoff_scales(takeoff_old or takeoff_new)
+        annotation_scales = self._capture_annotation_scales(
+            annotation_old or annotation_new
+        )
         takeoff_uids = {uid for uid, _position in takeoff_new}.union(
             uid for uid, _rotation in rotation_new
         )
@@ -1011,7 +1023,7 @@ class PlanViewActionHandler:
             self._geometry_edit_lease_request_id = ""
             self._plan_view.disable_geometry_edit_leasing()
         self._set_plan_items_pending(
-            bid_ref.file_path,
+            bid_ref,
             plan_uids,
             takeoff_uids,
             True,
@@ -1041,7 +1053,7 @@ class PlanViewActionHandler:
             }:
                 return
             handler._set_plan_items_pending(
-                bid_ref.file_path,
+                bid_ref,
                 plan_uids,
                 takeoff_uids,
                 False,
@@ -1087,6 +1099,7 @@ class PlanViewActionHandler:
                     rotation_new,
                     page_uids,
                     takeoff_scales=takeoff_scales,
+                    annotation_scales=annotation_scales,
                 )
                 handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
             handler._mark_sql_completion_applied(result)
@@ -1120,6 +1133,7 @@ class PlanViewActionHandler:
         page_uids: tuple[str, ...],
         *,
         takeoff_scales=None,
+        annotation_scales=None,
     ) -> None:
         takeoff_targets = self._property_history_targets(
             bid_ref, "takeoff_geometry", takeoff_old + rotation_old
@@ -1127,7 +1141,8 @@ class PlanViewActionHandler:
         if takeoff_scales is None:
             takeoff_scales = self._capture_takeoff_scales(takeoff_old)
         annotation_targets = self._annotation_history_targets(bid_ref, annotation_old)
-        annotation_scales = self._capture_annotation_scales(annotation_old)
+        if annotation_scales is None:
+            annotation_scales = self._capture_annotation_scales(annotation_old)
 
         def submit(
             done,
@@ -1235,7 +1250,7 @@ class PlanViewActionHandler:
             else None
         )
         self._set_plan_items_pending(
-            bid_ref.file_path,
+            bid_ref,
             plan_uids,
             takeoff_uids,
             True,
@@ -1285,7 +1300,7 @@ class PlanViewActionHandler:
                 return
             terminal_delivered = True
             handler._set_plan_items_pending(
-                bid_ref.file_path,
+                bid_ref,
                 plan_uids,
                 takeoff_uids,
                 False,
@@ -1334,7 +1349,7 @@ class PlanViewActionHandler:
                 return
             terminal_delivered = True
             self._set_plan_items_pending(
-                bid_ref.file_path, plan_uids, takeoff_uids, False, annotation_identities
+                bid_ref, plan_uids, takeoff_uids, False, annotation_identities
             )
             if owner_is_current is None or owner_is_current():
                 restore_failed_selection(self)
@@ -2446,6 +2461,7 @@ class PlanViewActionHandler:
         self._insert_takeoffs_with_undo(bid_ref, specs, fast_refresh=True)
 
     def _queue_takeoff_placement(self, bid_ref, specs: List[InsertTakeoffSpec]) -> None:
+        specs = deepcopy(specs)
         operation_id = str(uuid.uuid4())
         history_token = self._undo_svc.begin_forward_mutation(bid_ref)
         pending_uids = tuple(
@@ -2460,6 +2476,9 @@ class PlanViewActionHandler:
             page_identities=self._capture_page_identities(
                 tuple(self._takeoff_spec_page_uids(specs))
             ),
+            page_scales=self._capture_takeoff_spec_scales(specs),
+            selection_revision=self._plan_view.begin_deferred_selection(),
+            tool_revision=self._plan_view.tool_revision,
             runtime_generation=None,
             history_token=history_token,
         )
@@ -2476,7 +2495,7 @@ class PlanViewActionHandler:
                 list(pending_uids), specs, transient=True
             )
             self._set_plan_items_pending(
-                bid_ref.file_path,
+                bid_ref,
                 set(pending_uids),
                 set(pending_uids),
                 True,
@@ -2499,7 +2518,7 @@ class PlanViewActionHandler:
             self._data_svc.remove_takeoffs(pending_uids)
             try:
                 self._set_plan_items_pending(
-                    bid_ref.file_path,
+                    bid_ref,
                     set(pending_uids),
                     set(pending_uids),
                     False,
@@ -2535,13 +2554,22 @@ class PlanViewActionHandler:
         self._pending_takeoff_placements.pop(result.operation_id, None)
         self._data_svc.remove_takeoffs(pending.pending_uids)
         self._set_plan_items_pending(
-            pending.database_id,
+            BidRef(pending.database_id, pending.bid_uid),
             set(pending.pending_uids),
             set(pending.pending_uids),
             False,
         )
         page_uids = self._takeoff_spec_page_uids(list(pending.specs))
         condition_uids = [str(spec.condition_uid) for spec in pending.specs]
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        originating_model_is_current = bool(
+            bid_ref is not None
+            and bid_ref.file_path == pending.database_id
+            and bid_ref.bid_uid == pending.bid_uid
+            and self._page_identities_are_current(
+                tuple(page_uids), pending.page_identities
+            )
+        )
         if result.outcome_status != MutationOutcomeStatus.COMMITTED:
             if (
                 result.outcome_status == MutationOutcomeStatus.CANCELLED_BEFORE_START
@@ -2549,11 +2577,12 @@ class PlanViewActionHandler:
             ):
                 self._undo_svc.finish_forward_mutation(pending.history_token)
                 return
-            self._publish_takeoffs_changed_for_pages(
-                page_uids,
-                list(pending.pending_uids),
-                condition_uids,
-            )
+            if originating_model_is_current:
+                self._publish_takeoffs_changed_for_pages(
+                    page_uids,
+                    list(pending.pending_uids),
+                    condition_uids,
+                )
             logger.warning(
                 "SQL takeoff placement failed: %s",
                 result.message or "The database rejected the placement.",
@@ -2562,11 +2591,12 @@ class PlanViewActionHandler:
             return
         new_uids = list(result.created_resource_ids)
         if len(new_uids) != len(pending.specs):
-            self._publish_takeoffs_changed_for_pages(
-                page_uids,
-                list(pending.pending_uids),
-                condition_uids,
-            )
+            if originating_model_is_current:
+                self._publish_takeoffs_changed_for_pages(
+                    page_uids,
+                    list(pending.pending_uids),
+                    condition_uids,
+                )
             logger.error(
                 "SQL takeoff placement returned %d identities for %d takeoffs.",
                 len(new_uids),
@@ -2630,7 +2660,14 @@ class PlanViewActionHandler:
         selected_uids = {
             uid for uid, spec in retained if str(spec.page_uid) == current_page_uid
         }
-        if selected_uids:
+        if (
+            selected_uids
+            and self._plan_context_is_current(
+                bid_ref, tuple(page_uids), pending.page_identities
+            )
+            and self._plan_view.selection_revision == pending.selection_revision
+            and self._plan_view.tool_revision == pending.tool_revision
+        ):
             self._plan_view.set_selected_uids(selected_uids)
         if retained and self._undo_svc.is_forward_mutation_current(
             pending.history_token
@@ -2639,6 +2676,7 @@ class PlanViewActionHandler:
                 bid_ref,
                 [spec for _uid, spec in retained],
                 [uid for uid, _spec in retained],
+                captured_scales=pending.page_scales,
             )
             self._undo_svc.bind_latest_history_to_forward_mutation(
                 pending.history_token
@@ -2664,7 +2702,7 @@ class PlanViewActionHandler:
             )
             self._data_svc.remove_takeoffs(newly_deleted)
             self._set_plan_items_pending(
-                pending.database_id,
+                BidRef(pending.database_id, pending.bid_uid),
                 set(newly_deleted),
                 set(newly_deleted),
                 False,
@@ -2714,7 +2752,7 @@ class PlanViewActionHandler:
         )
         if project_pending_state:
             self._set_plan_items_pending(
-                pending.database_id,
+                BidRef(pending.database_id, pending.bid_uid),
                 takeoff_uid_set,
                 takeoff_uid_set,
                 True,
@@ -2732,7 +2770,7 @@ class PlanViewActionHandler:
                 return
             if project_pending_state:
                 handler._set_plan_items_pending(
-                    pending.database_id,
+                    BidRef(pending.database_id, pending.bid_uid),
                     takeoff_uid_set,
                     takeoff_uid_set,
                     False,
@@ -2745,11 +2783,14 @@ class PlanViewActionHandler:
                 current_bid is not None
                 and current_bid.file_path == pending.database_id
                 and current_bid.bid_uid == pending.bid_uid
+                and handler._plan_view.tool_revision == pending.tool_revision
             ):
                 handler._restore_plan_selection_if_current(
                     current_bid,
                     page_uids,
                     takeoff_uid_set,
+                    pending.page_identities,
+                    selection_revision=pending.selection_revision,
                 )
 
         self._write_svc.queue_plan_items_delete(
@@ -2767,7 +2808,11 @@ class PlanViewActionHandler:
         bid_ref,
         specs: List[InsertTakeoffSpec],
         created_uids: List[str],
+        *,
+        captured_scales: Optional[dict[str, PageScale]] = None,
     ) -> None:
+        if captured_scales is None:
+            captured_scales = self._capture_takeoff_spec_scales(specs)
         targets = tuple(
             TakeoffHistoryTarget(bid_ref, str(spec.page_uid), uid)
             for uid, spec in zip(created_uids, specs)
@@ -2812,7 +2857,10 @@ class PlanViewActionHandler:
             self._write_svc.queue_takeoff_placement(
                 bid_ref.file_path,
                 bid_ref.bid_uid,
-                self._specs_with_history_parents(specs, parents),
+                self._specs_with_history_parents(
+                    self._takeoff_specs_for_current_scales(specs, captured_scales),
+                    parents,
+                ),
                 operation_id,
                 completed,
             )
@@ -2856,20 +2904,25 @@ class PlanViewActionHandler:
             if (
                 self._data_svc.get_takeoff(uid) is not None
                 or uid
-                in self._pending_plan_takeoff_uids_by_database.get(
-                    placement.database_id, set()
+                in self._pending_plan_takeoff_uids_by_bid.get(
+                    BidRef(placement.database_id, placement.bid_uid), set()
                 )
             )
         ]
         if not removed_uids:
             return
         self._data_svc.remove_takeoffs(removed_uids)
-        self._set_plan_items_pending(
-            current_bid.file_path if current_bid is not None else "",
-            set(removed_uids),
-            set(removed_uids),
-            False,
-        )
+        for bid_ref in {
+            BidRef(item.database_id, item.bid_uid) for item in current_pending
+        }:
+            owned_uids = {
+                uid
+                for item in current_pending
+                if BidRef(item.database_id, item.bid_uid) == bid_ref
+                for uid in item.pending_uids
+                if uid in removed_uids
+            }
+            self._set_plan_items_pending(bid_ref, owned_uids, owned_uids, False)
         page_uids = self._takeoff_spec_page_uids(
             [spec for placement in current_pending for spec in placement.specs]
         )
@@ -2880,9 +2933,10 @@ class PlanViewActionHandler:
                 for spec in placement.specs
             )
         )
-        self._publish_takeoffs_changed_for_pages(
-            page_uids, removed_uids, condition_uids
-        )
+        if current_bid is not None:
+            self._publish_takeoffs_changed_for_pages(
+                page_uids, removed_uids, condition_uids
+            )
 
     @staticmethod
     def _takeoff_spec_page_uids(specs: List[InsertTakeoffSpec]) -> List[str]:
@@ -3078,7 +3132,9 @@ class PlanViewActionHandler:
         specs: List[InsertAnnotationSpec],
         after_success=None,
     ) -> None:
+        specs = deepcopy(specs)
         self._annotation_writes.apply_default_annotation_layer(bid_ref, specs)
+        annotation_scales = self._capture_annotation_spec_scales(specs)
         history_token = self._undo_svc.begin_forward_mutation(bid_ref)
         source_uids = tuple(
             annotation_resource_id(spec.annotation_type, str(uuid.uuid4()))
@@ -3155,6 +3211,8 @@ class PlanViewActionHandler:
                     payload,
                     {},
                     annotation_map,
+                    takeoff_scales={},
+                    annotation_scales=annotation_scales,
                 )
                 handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
             if (
@@ -3820,6 +3878,11 @@ class PlanViewActionHandler:
         skipped_selection_keys: set[str],
         requested_annotation_identities: set[tuple[str, str]],
     ) -> None:
+        saved_takeoffs = deepcopy(saved_takeoffs)
+        saved_annotations = deepcopy(saved_annotations)
+        saved_takeoff_extras = deepcopy(saved_takeoff_extras)
+        takeoff_scales = self._capture_item_page_scales(saved_takeoffs)
+        annotation_scales = self._capture_item_page_scales(saved_annotations)
         history_token = self._undo_svc.begin_forward_mutation(bid_ref)
         takeoff_uids = [str(item.uid) for item in saved_takeoffs]
         annotations = [
@@ -3858,7 +3921,7 @@ class PlanViewActionHandler:
             ).intersection(skipped_selection_keys)
         }
         self._set_plan_items_pending(
-            bid_ref.file_path,
+            bid_ref,
             plan_uids,
             takeoff_uid_set,
             True,
@@ -3880,7 +3943,7 @@ class PlanViewActionHandler:
             }:
                 return
             handler._set_plan_items_pending(
-                bid_ref.file_path,
+                bid_ref,
                 plan_uids,
                 takeoff_uid_set,
                 False,
@@ -3923,6 +3986,8 @@ class PlanViewActionHandler:
                     saved_takeoff_extras,
                     takeoff_uids,
                     annotations,
+                    takeoff_scales=takeoff_scales,
+                    annotation_scales=annotation_scales,
                 )
                 handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
             else:
@@ -4162,6 +4227,9 @@ class PlanViewActionHandler:
         saved_takeoff_extras: dict,
         deleted_takeoff_uids: list[str],
         deleted_annotations: list[tuple[str, str]],
+        *,
+        takeoff_scales=None,
+        annotation_scales=None,
     ) -> None:
         paste_payload = self._delete_restore_payload(
             bid_ref,
@@ -4169,6 +4237,10 @@ class PlanViewActionHandler:
             saved_annotations,
             saved_takeoff_extras,
         )
+        if takeoff_scales is None:
+            takeoff_scales = self._capture_item_page_scales(saved_takeoffs)
+        if annotation_scales is None:
+            annotation_scales = self._capture_item_page_scales(saved_annotations)
         targets = self._takeoff_restore_history_targets(
             bid_ref,
             paste_payload,
@@ -4211,7 +4283,12 @@ class PlanViewActionHandler:
 
             self._write_svc.queue_plan_items_paste(
                 bid_ref.file_path,
-                self._paste_payload_with_history_parents(paste_payload, parents),
+                self._paste_payload_with_history_parents(
+                    self._paste_payload_for_current_scales(
+                        paste_payload, takeoff_scales, annotation_scales
+                    ),
+                    parents,
+                ),
                 completed,
             )
 
@@ -4323,9 +4400,9 @@ class PlanViewActionHandler:
             return
         regulars = [t for t in all_items if not t.is_hole]
         holes = [t for t in all_items if t.is_hole]
-        if holes and not regulars:
-            if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
-                return
+        if holes and not regulars and not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+            return
+        if holes and not regulars and not clipboard_anns:
             extras_by_uid = {
                 h.uid: dict(self._clipboard_svc.get_extras(h.uid)) for h in holes
             }
@@ -4711,6 +4788,10 @@ class PlanViewActionHandler:
         payload: PlanItemsPastePayload,
         dependencies: tuple[ResourceRef, ...],
     ) -> None:
+        takeoff_scales = self._capture_item_page_scales(list(payload.takeoff_specs))
+        annotation_scales = self._capture_item_page_scales(
+            list(payload.annotation_specs)
+        )
         page_identities = self._capture_page_identities((page_uid,))
         history_token = self._undo_svc.begin_forward_mutation(bid_ref)
         previous_selection = set(self._plan_view.get_selected_uids())
@@ -4775,6 +4856,8 @@ class PlanViewActionHandler:
                     handler._committed_paste_history_payload(payload, result),
                     takeoff_map,
                     annotation_map,
+                    takeoff_scales=takeoff_scales,
+                    annotation_scales=annotation_scales,
                 )
                 handler._undo_svc.bind_latest_history_to_forward_mutation(history_token)
             handler._mark_sql_completion_applied(result)
@@ -4940,6 +5023,9 @@ class PlanViewActionHandler:
         payload: PlanItemsPastePayload,
         takeoff_map: dict[str, str],
         annotation_map: dict[str, str],
+        *,
+        takeoff_scales=None,
+        annotation_scales=None,
     ) -> None:
         targets = self._takeoff_restore_history_targets(bid_ref, payload, takeoff_map)
         parents = self._history_parent_targets(
@@ -4961,10 +5047,14 @@ class PlanViewActionHandler:
                 for spec in (*payload.takeoff_specs, *payload.annotation_specs)
             )
         )
-        takeoff_scales = self._capture_takeoff_spec_scales(list(payload.takeoff_specs))
-        annotation_scales = self._capture_annotation_spec_scales(
-            list(payload.annotation_specs)
-        )
+        if takeoff_scales is None:
+            takeoff_scales = self._capture_takeoff_spec_scales(
+                list(payload.takeoff_specs)
+            )
+        if annotation_scales is None:
+            annotation_scales = self._capture_annotation_spec_scales(
+                list(payload.annotation_specs)
+            )
 
         def undo_submit(done) -> None:
             def deleted(result: QueuedMutationResult) -> None:

@@ -246,6 +246,7 @@ def _rect_annotation(uid: str) -> BidAnnotation:
 
 class FakePlanView:
     def __init__(self, data=None):
+        self._is_cleaning_up = False
         self.selected = set()
         self.selection_revision = 0
         self.tool_revision = 0
@@ -5297,6 +5298,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_condition_text_properties_flushed(changes)
         selected_bid[0] = BidRef("other.mdb", "9")
         plan_view.current_page_uid = "other-page"
+        # Production load_page discards the previous Bid's pending identities.
+        plan_view.set_pending_mutation_uids(set())
         write.queued_properties[0][-1](
             QueuedMutationResult(
                 database_id="bid.mdb",
@@ -6923,6 +6926,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         callback = write.queued_deletes[0][-1]
         selected_bid[0] = BidRef("other.mdb", "9")
         plan_view.current_page_uid = "other-page"
+        plan_view.set_pending_mutation_uids(set())
         plan_view.selected = {"other-selection"}
         callback(
             QueuedMutationResult(

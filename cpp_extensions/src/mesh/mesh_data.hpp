@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 #include <algorithm>
+#include <cstddef>
 namespace ost_geometry
 {
     struct CppMeshData

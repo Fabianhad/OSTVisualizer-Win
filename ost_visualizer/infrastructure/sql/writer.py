@@ -1435,7 +1435,10 @@ class SqlProjectWriter(MdbWriter):
         columns = list(filtered)
         values = [
             self._convert_sql_import_value(
-                filtered[column], column_types.get(column, "")
+                filtered[column],
+                column_types.get(column, ""),
+                table=table,
+                column=column,
             )
             for column in columns
         ]
@@ -1455,7 +1458,9 @@ class SqlProjectWriter(MdbWriter):
         finally:
             cursor.close()
 
-    def _convert_sql_import_value(self, value, type_name: str):
+    def _convert_sql_import_value(
+        self, value, type_name: str, *, table: str = "", column: str = ""
+    ):
         if value is not None and not isinstance(value, str):
             return value
         normalized = type_name.casefold()
@@ -1465,7 +1470,9 @@ class SqlProjectWriter(MdbWriter):
                 raise ValueError("Imported date value is invalid")
             return converted
         if normalized == "varbinary":
-            return self._convert_access_value(value, "longbinary")
+            return self._convert_access_value(
+                value, "longbinary", table=table, column=column
+            )
         if value is None or value == "NULL":
             return None
         if normalized in {"int", "smallint", "bigint"}:

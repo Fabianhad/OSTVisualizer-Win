@@ -3,6 +3,7 @@
 #include <unordered_set>
 #include <cmath>
 #include <algorithm>
+#include <functional>
 namespace ost_geometry
 {
     namespace

@@ -184,6 +184,7 @@ class AnnotationsChangedEvent:
 @dataclass
 class PendingPlanMutationsChangedEvent:
     database_id: str
+    bid_uid: str
     takeoff_uids: list = field(default_factory=list)
     pending: bool = True
 

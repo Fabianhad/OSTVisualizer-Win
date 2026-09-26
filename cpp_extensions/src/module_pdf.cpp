@@ -6,6 +6,8 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/ndarray.h>
 #include "pdf/pdf_renderer.hpp"
+#include <cstddef>
+#include <cstdint>
 namespace nb = nanobind;
 using namespace ost_pdf;
 NB_MODULE(ost_pdf, m)

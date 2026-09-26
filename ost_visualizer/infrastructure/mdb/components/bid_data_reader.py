@@ -357,7 +357,7 @@ class BidDataReaderMixin:
                 )
                 row = cursor.fetchone()
                 if row:
-                    return serialize_row(row, cursor.description)
+                    return serialize_row(row, cursor.description, table=table)
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):
                 raise
@@ -385,7 +385,7 @@ class BidDataReaderMixin:
                 )
                 desc = cursor.description
                 for row in cursor.fetchall():
-                    rows_out.append(serialize_row(row, desc))
+                    rows_out.append(serialize_row(row, desc, table=table))
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):
                 raise
@@ -422,7 +422,9 @@ class BidDataReaderMixin:
                         bid_uid,
                     )
                 desc = cursor.description
-                return [serialize_row(row, desc) for row in cursor.fetchall()]
+                return [
+                    serialize_row(row, desc, table=table) for row in cursor.fetchall()
+                ]
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):
                 raise
@@ -441,7 +443,7 @@ class BidDataReaderMixin:
                 cursor.execute(f"SELECT {select_clause} FROM [{table}]")
                 desc = cursor.description
                 for row in cursor.fetchall():
-                    rows_out.append(serialize_row(row, desc))
+                    rows_out.append(serialize_row(row, desc, table=table))
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):
                 raise

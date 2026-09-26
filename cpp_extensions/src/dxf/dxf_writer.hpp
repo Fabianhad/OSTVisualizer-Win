@@ -2,10 +2,10 @@
 #include "mesh_data.hpp"
 #include <string>
 #include <vector>
-#include <unordered_map>
 #include <fstream>
 #include <array>
 #include <cstdint>
+#include <cstddef>
 namespace ost_geometry
 {
     struct RGBColor

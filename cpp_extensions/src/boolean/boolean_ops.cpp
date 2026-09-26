@@ -1,7 +1,6 @@
 #include "boolean_ops.hpp"
 #include "../earcut/earcut.hpp"
 #include <manifold/manifold.h>
-#include <stdexcept>
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -9,6 +8,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <queue>
+#include <exception>
+#include <functional>
+#include <utility>
 namespace ost_geometry
 {
     namespace

@@ -980,9 +980,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         )
         handler._ui_state = self.state
         self.detached._project_write_svc = write
-        self.detached._annotation_write_coordinator = SimpleNamespace(
-            apply_default_annotation_layer=lambda _bid_ref, _specs: None
-        )
+        self.detached._annotation_write_coordinator = handler._annotation_writes
         self.detached._project_data_svc = self.data
         self.data.annotations = [
             BidAnnotation(

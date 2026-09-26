@@ -5,6 +5,17 @@ from ...domain.services.page_scale_transform import (
 from .undo_redo_service import AnnotationHistoryTarget
 
 
+def _annotation_page_scale(data, page_uid):
+    page = data.get_page(page_uid)
+    if page is None:
+        raise ValueError("The history Annotation Page no longer exists.")
+    return (float(page.scale_factor1 or 1.0), float(page.scale_factor2 or 1.0))
+
+
+def capture_annotation_page_scales(data, page_uids):
+    return {str(uid): _annotation_page_scale(data, str(uid)) for uid in page_uids}
+
+
 def capture_annotation_targets(data, bid_ref, updates):
     annotations = {
         (str(item.uid), item.annotation_type): item
@@ -45,22 +56,23 @@ def resolve_annotation_updates(data, updates, targets):
 
 
 class AnnotationHistoryBinding:
-    def __init__(self, data, undo, bid_ref, targets):
+    def __init__(self, data, undo, bid_ref, targets, *, captured_scales=None):
         self._data = data
         self._undo = undo
         self.bid_ref = bid_ref
         self.targets = targets
         self._suspended = ()
-        self._scales = {
-            target.page_uid: self._page_scale(target.page_uid)
-            for target in targets.values()
-        }
+        self._scales = (
+            dict(captured_scales)
+            if captured_scales is not None
+            else {
+                target.page_uid: self._page_scale(target.page_uid)
+                for target in targets.values()
+            }
+        )
 
     def _page_scale(self, page_uid):
-        page = self._data.get_page(page_uid)
-        if page is None:
-            raise ValueError("The history Annotation Page no longer exists.")
-        return (float(page.scale_factor1 or 1.0), float(page.scale_factor2 or 1.0))
+        return _annotation_page_scale(self._data, page_uid)
 
     def updates(self, updates):
         return resolve_annotation_updates(self._data, updates, self.targets)

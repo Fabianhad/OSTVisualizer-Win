@@ -721,7 +721,7 @@ class DialogLifecycleTests(unittest.TestCase):
         coordinator._plan_view_signaler = None
         coordinator._menu_state_signaler = None
         coordinator._bid_data_cache = None
-        coordinator._pending_3d_takeoff_uids_by_database = {}
+        coordinator._pending_3d_takeoff_uids_by_bid = {}
         coordinator._mesh_window = None
         coordinator._mesh_window_action = None
         coordinator._placement = SimpleNamespace(cleanup=failing("placement"))

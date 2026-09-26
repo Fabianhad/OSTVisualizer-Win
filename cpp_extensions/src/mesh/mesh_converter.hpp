@@ -1,8 +1,9 @@
 #pragma once
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/vector.h>
-#include <nanobind/stl/array.h>
 #include "mesh_data.hpp"
+#include <array>
+#include <cstdint>
+#include <vector>
 namespace nb = nanobind;
 namespace ost_geometry
 {

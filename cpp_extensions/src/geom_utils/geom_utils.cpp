@@ -1,6 +1,7 @@
 #include "geom_utils.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 namespace ost_geom
 {
     static double cross_2d(const Vec2 &o, const Vec2 &a, const Vec2 &b)

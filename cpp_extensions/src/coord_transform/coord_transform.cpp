@@ -1,5 +1,8 @@
 #include "coord_transform.hpp"
 #include "../common/page_transform.hpp"
+#include <cmath>
+#include <stdexcept>
+#include <cstddef>
 namespace ost_coord
 {
     constexpr double PDF_POINTS_PER_INCH = 72.0;

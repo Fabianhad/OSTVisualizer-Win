@@ -8,6 +8,8 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include <array>
+#include <tuple>
 namespace mapbox
 {
     namespace util

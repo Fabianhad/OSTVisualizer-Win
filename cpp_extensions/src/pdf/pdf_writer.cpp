@@ -11,6 +11,12 @@
 #include <chrono>
 #include <algorithm>
 #include <memory>
+#include <cmath>
+#include <ctime>
+#include <exception>
+#include <stdexcept>
+#include <utility>
+#include <qpdf/QPDFObjectHandle.hh>
 namespace ost_pdf_writer
 {
     static std::string get_pdf_date()

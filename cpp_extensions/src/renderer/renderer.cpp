@@ -12,6 +12,8 @@
 #include <unordered_map>
 #ifdef _WIN32
 #include <windows.h>
+#include <functional>
+#include <glm/gtc/constants.hpp>
 #endif
 namespace ost_renderer
 {

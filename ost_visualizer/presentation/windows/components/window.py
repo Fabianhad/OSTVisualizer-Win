@@ -1,6 +1,7 @@
 import logging
 import uuid
 import weakref
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Callable, List, Optional, Tuple, cast
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -1586,6 +1587,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         keys = self._annotation_keys_for_identities(identities)
         page_uids = self._annotation_page_uids_for_keys(keys)
         page_identities = self._capture_page_identities(page_uids)
+        captured_scales = self._annotation_write_coordinator.capture_page_scales(
+            page_uids
+        )
         resources, dependencies = self._annotation_edit_resources(bid_ref, keys)
         edit_lease_handle = self._geometry_edit_lease_handle
         if edit_lease_handle is not None and (
@@ -1651,6 +1655,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     old_changes,
                     new_changes,
                     page_uids,
+                    captured_scales=captured_scales,
                 )
                 if window._undo_svc is not None:
                     window._undo_svc.bind_latest_history_to_forward_mutation(
@@ -1682,11 +1687,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         old_changes: list,
         new_changes: list,
         page_uids: tuple[str, ...],
+        *,
+        captured_scales=None,
     ) -> None:
         if self._undo_svc is None:
             return
         history = self._annotation_write_coordinator.capture_history(
-            bid_ref, old_changes, self._undo_svc
+            bid_ref, old_changes, self._undo_svc, captured_scales=captured_scales
         )
 
         def submit(done, updates: list) -> None:
@@ -1866,6 +1873,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     ) -> None:
         if not specs:
             return
+        specs = deepcopy(specs)
         self._annotation_write_coordinator.apply_default_annotation_layer(
             bid_ref, specs
         )
@@ -1892,6 +1900,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         page_uids = tuple(dict.fromkeys(str(spec.page_uid) for spec in specs))
         page_identities = self._capture_page_identities(page_uids)
+        captured_scales = self._annotation_write_coordinator.capture_page_scales(
+            page_uids
+        )
         selection_revision = self.plan_view.begin_deferred_selection()
         tool_revision = self.plan_view.tool_revision
         window_ref = weakref.ref(self)
@@ -1954,6 +1965,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                     bid_ref,
                     payload,
                     uid_map,
+                    captured_scales=captured_scales,
                 )
                 if window._undo_svc is not None:
                     window._undo_svc.bind_latest_history_to_forward_mutation(
@@ -1980,6 +1992,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         bid_ref,
         payload: PlanItemsPastePayload,
         uid_map: dict[str, str],
+        *,
+        captured_scales=None,
     ) -> None:
         if self._undo_svc is None:
             return
@@ -1988,6 +2002,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             payload.annotation_specs,
             [uid_map[source] for source in payload.annotation_source_uids],
             self._undo_svc,
+            captured_scales=captured_scales,
         )
         self._push_sql_annotation_lifetime_history(
             bid_ref, payload, history, deleted=False
@@ -2051,6 +2066,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         skipped_selection_keys: set[str],
         requested_annotation_identities: set[tuple[str, str]],
     ) -> None:
+        saved_annotations = deepcopy(saved_annotations)
         history_token = (
             self._undo_svc.begin_forward_mutation(bid_ref)
             if self._undo_svc is not None
@@ -2076,6 +2092,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
         )
         page_identities = self._capture_page_identities(page_uids)
+        captured_scales = self._annotation_write_coordinator.capture_page_scales(
+            page_uids
+        )
         self._set_annotation_items_pending(bid_ref, pending_identities, True)
         self.plan_view.set_selected_uids(set(skipped_selection_keys))
         selection_revision = self.plan_view.begin_deferred_selection()
@@ -2143,6 +2162,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 window._push_sql_annotation_delete_history(
                     bid_ref,
                     saved_annotations,
+                    captured_scales=captured_scales,
                 )
                 if window._undo_svc is not None:
                     window._undo_svc.bind_latest_history_to_forward_mutation(
@@ -2179,6 +2199,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self,
         bid_ref,
         saved_annotations: list,
+        *,
+        captured_scales=None,
     ) -> None:
         if self._undo_svc is None:
             return
@@ -2198,7 +2220,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             annotation_specs=specs,
         )
         history = self._annotation_write_coordinator.history_from_saved(
-            bid_ref, saved_annotations, self._undo_svc
+            bid_ref, saved_annotations, self._undo_svc, captured_scales=captured_scales
         )
         history.suspend()
         self._push_sql_annotation_lifetime_history(

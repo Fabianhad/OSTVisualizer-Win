@@ -2,7 +2,6 @@
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/string.h>
-#include <nanobind/stl/pair.h>
 #include "pdf/pdf_writer.hpp"
 namespace nb = nanobind;
 using namespace ost_pdf_writer;

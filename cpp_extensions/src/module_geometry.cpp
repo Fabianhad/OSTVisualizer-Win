@@ -1,15 +1,13 @@
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/vector.h>
-#include <nanobind/stl/pair.h>
-#include <nanobind/stl/optional.h>
-#include <nanobind/stl/function.h>
 #include "mesh_data.hpp"
 #include "mesh_converter.hpp"
 #include "boolean_ops.hpp"
 #include "mesh_repair.hpp"
 #include "feature_edges.hpp"
 #include <vector>
-#include <optional>
+#include <cstddef>
+#include <unordered_map>
+#include <utility>
 namespace nb = nanobind;
 using namespace ost_geometry;
 namespace

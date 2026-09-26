@@ -5,6 +5,7 @@
 #include <vector>
 #include <optional>
 #include <utility>
+#include <cstdint>
 namespace ost_pdf
 {
     class RenderCancelToken

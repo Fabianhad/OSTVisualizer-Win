@@ -20,10 +20,14 @@ class TakeoffLifecycleHistoryTests(unittest.TestCase):
             fixtures.PlanPropertyHistoryIdentityTests().make_handler()
         )
         plan = QWidget()
+        plan._is_cleaning_up = False
         plan.current_page_uid = "p1"
         handler._plan_view = plan
         bid_ref = handler._ui_state.get_selected_bid_ref()
         self.assertTrue(handler._plan_context_is_current(bid_ref, ("p1",)))
+        plan._is_cleaning_up = True
+        self.assertFalse(handler._plan_context_is_current(bid_ref, ("p1",)))
+        plan._is_cleaning_up = False
         delete(plan)
         self.assertFalse(handler._plan_context_is_current(bid_ref, ("p1",)))
 

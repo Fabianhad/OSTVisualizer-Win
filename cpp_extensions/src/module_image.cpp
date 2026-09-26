@@ -1,6 +1,7 @@
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/vector.h>
 #include "image/image_tint.hpp"
+#include <cstddef>
+#include <stdexcept>
 namespace nb = nanobind;
 using namespace ost_image;
 NB_MODULE(ost_image, m)

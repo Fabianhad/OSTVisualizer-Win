@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <glm/glm.hpp>
+#include <cstddef>
 namespace ost_renderer
 {
     class Scene;

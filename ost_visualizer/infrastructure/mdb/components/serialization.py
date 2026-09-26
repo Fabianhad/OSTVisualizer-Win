@@ -5,6 +5,7 @@ from ...database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 POSITION_TEXT_ENCODING = "latin-1"
 TEXT_BLOB_ENCODING = "utf-8"
 ANNOTATION_TEXT_ENCODING = "latin-1"
+ANNOTATION_TEXT_BLOB_TABLES = frozenset({"BidTexts", "BidCallOuts"})
 TEXT_POSITION_TABLES: FrozenSet[str] = frozenset(
     {
         "BidCallOuts",

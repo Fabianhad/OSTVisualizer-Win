@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 namespace ost_linear
 {
     static void require_positive_segments(int segments)

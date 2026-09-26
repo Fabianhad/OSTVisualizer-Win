@@ -243,7 +243,7 @@ class UIEventCoordinator:
         self._mesh_window: Optional[MeshViewWindow] = None
         self._mesh_window_action: Optional[QtGui.QAction] = None
         self._last_mesh_scene: Optional[_MeshScenePublication] = None
-        self._pending_3d_takeoff_uids_by_database: dict[str, set[str]] = {}
+        self._pending_3d_takeoff_uids_by_bid: dict[BidRef, set[str]] = {}
         self._mesh_scene_dirty: bool = False
         self._dirty_mesh_page_uids: set[str] = set()
         self._pending_dirty_mesh_refresh: bool = False
@@ -795,7 +795,7 @@ class UIEventCoordinator:
 
     def _project_pending_3d_mutations(self, surface, bid_ref: Optional[BidRef]) -> None:
         takeoff_uids = (
-            self._pending_3d_takeoff_uids_by_database.get(bid_ref.file_path, set())
+            self._pending_3d_takeoff_uids_by_bid.get(bid_ref, set())
             if bid_ref is not None
             else set()
         )
@@ -2965,7 +2965,7 @@ class UIEventCoordinator:
         if self._bid_data_cache:
             cleanup_step(self._bid_data_cache.clear)
         self._bid_data_cache = None
-        self._pending_3d_takeoff_uids_by_database.clear()
+        self._pending_3d_takeoff_uids_by_bid.clear()
         if self._mesh_window is not None:
             cleanup_step(self._mesh_window.close)
             self._mesh_window = None
@@ -3265,16 +3265,19 @@ class UIEventCoordinator:
         database_id: str,
         takeoff_uids: Optional[List[str]] = None,
         pending: bool = True,
+        *,
+        bid_uid: str,
     ) -> None:
+        bid_ref = BidRef(database_id, bid_uid)
         changed = {str(uid) for uid in (takeoff_uids or ()) if uid}
-        current = set(self._pending_3d_takeoff_uids_by_database.get(database_id, set()))
+        current = set(self._pending_3d_takeoff_uids_by_bid.get(bid_ref, set()))
         next_uids = current.union(changed) if pending else current.difference(changed)
         if next_uids:
-            self._pending_3d_takeoff_uids_by_database[database_id] = next_uids
+            self._pending_3d_takeoff_uids_by_bid[bid_ref] = next_uids
         else:
-            self._pending_3d_takeoff_uids_by_database.pop(database_id, None)
+            self._pending_3d_takeoff_uids_by_bid.pop(bid_ref, None)
         selected = self.ui_state_manager.get_selected_bid_ref()
-        if selected is None or selected.file_path != database_id:
+        if selected != bid_ref:
             return
         for view in self._native_3d_views():
             view.set_pending_mutation_uids(next_uids)
@@ -4195,7 +4198,9 @@ class UIEventCoordinator:
     ) -> None:
         self.project_operations.cancel_navigation_load(file_path)
         removed_path = file_path or ""
-        self._pending_3d_takeoff_uids_by_database.pop(removed_path, None)
+        for pending_bid in tuple(self._pending_3d_takeoff_uids_by_bid):
+            if normalize_path(pending_bid.file_path) == normalize_path(removed_path):
+                self._pending_3d_takeoff_uids_by_bid.pop(pending_bid, None)
         if self._bid_clipboard is not None:
             self._bid_clipboard.clear_for_file(removed_path)
         selected_path = self.ui_state_manager.selected_file_path

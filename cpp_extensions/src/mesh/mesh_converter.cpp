@@ -1,5 +1,6 @@
 #include "mesh_converter.hpp"
 #include <stdexcept>
+#include <string>
 namespace ost_geometry
 {
     std::vector<std::array<double, 3>> extract_vertices(nb::object py_vertices)

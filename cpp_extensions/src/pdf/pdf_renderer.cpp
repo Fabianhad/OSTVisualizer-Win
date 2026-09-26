@@ -7,11 +7,12 @@
 #include <algorithm>
 #include <cmath>
 #include <atomic>
-#include <cstring>
 #include <limits>
 #include <mutex>
 #include <new>
 #include <stdexcept>
+#include <cstddef>
+#include <utility>
 namespace ost_pdf
 {
 #define DOC() (static_cast<FPDF_DOCUMENT>(doc_))

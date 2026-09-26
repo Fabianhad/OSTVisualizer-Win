@@ -1,6 +1,8 @@
 #pragma once
 #include "mesh_data.hpp"
 #include <vector>
+#include <array>
+#include <cstdint>
 namespace ost_geometry
 {
     std::vector<std::array<uint32_t, 2>> extract_feature_edges(

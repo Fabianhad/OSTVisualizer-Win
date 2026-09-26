@@ -43,7 +43,8 @@
   rotation use their own geometry, and MCP totals include Attachment counts.
   Single Area rotation also rotates legacy Count child orientation.
   Delayed Takeoff completions cannot project selection into a destroyed or
-  cleaned-up Plan.
+  cleaned-up Plan or override newer selection/tool intent. Old-Bid completions
+  cannot refresh the new Bid or clear its pending Plan/3D edit markers.
 - Annotation geometry now retains fractional coordinates on reload across all
   supported tables. Minimum snapped annotation placements commit reliably;
   body-drag previews follow the current snapped position, and rotated Oval resize
@@ -53,12 +54,16 @@
   geometry and style even if the caller changes its draft before execution.
 - Text annotations retain fractional geometry and significant whitespace on reload;
   unsupported legacy-encoding characters reject the write instead of becoming `?`.
+  Text and Callout contents retain their storage encoding through OST export and
+  MDB/SQL import; unsupported binary text fails instead of silently losing bytes.
   Long multiline text now uses Qt wrapping without destructive pre-elision, and
   rotated resize previews agree with committed geometry.
 - Text annotation history follows accepted restore identities on Main and detached
   Plans, including scale-aware SQL replay and group rotation. Late completions
   cannot recreate cleared history, and deletion invalidates matching peer-window
   history before a reused UID can target a different annotation.
+  Queued insert, paste, geometry and delete history retain submission-time scales
+  when Main changes Page Scale before completion, including mixed Takeoff edits.
 
 - Small snapped Area and Takeoff drags now persist after release, including
   one-inch and fractional-increment moves below the viewport drag threshold.
@@ -93,10 +98,12 @@
 - Takeoff geometry history follows restored identities after deletion and Page
   scale changes on MDB and SQL. Child-paste redo follows restored parents, and
   cross-Bid redo reuses the Conditions created by the original paste. Late paste
-  results cannot select into a replacement Page.
+  results cannot select into a replacement Page. Queued Takeoff placement and
+  mixed deletion replay preserve paper geometry after intervening scale changes.
 - Copy, delete and restore preserve complete Takeoff descendant chains. Child-only
   and mixed paste validate destination geometry, including Attachments, overlapping
   candidate Areas and pending siblings; MDB child paste is one atomic mutation.
+  Backouts copied with annotations paste together atomically on MDB and SQL.
 - Takeoff readers and writers reject cross-Page parent relationships. Failed family
   reads retain the prior model instead of reporting an empty successful reload.
 - Attachment quantities, Bid Area usage and scoped Area totals now include their

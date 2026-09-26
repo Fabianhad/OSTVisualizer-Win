@@ -1,8 +1,9 @@
 #include "mesh_repair.hpp"
 #include <unordered_map>
-#include <unordered_set>
 #include <cmath>
 #include <algorithm>
+#include <functional>
+#include <utility>
 namespace ost_geometry
 {
     namespace
