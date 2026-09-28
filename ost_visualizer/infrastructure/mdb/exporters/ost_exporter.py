@@ -13,7 +13,10 @@ from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.condition import Condition
-from ....domain.services.uom_service import convert_and_round_quantity
+from ....domain.services.uom_service import (
+    convert_and_round_quantity,
+    normalize_uoms_for_calculations,
+)
 from ....domain.utils.position import parse_position
 from ...parsers.ost_serializer import serialize_value
 from ..raw_bid_integrity import (
@@ -522,6 +525,25 @@ def _normalize_table_rows(tables: Dict[str, List]) -> Dict[str, List]:
     }
 
 
+def _normalize_condition_uoms_for_bid_system(
+    bid_row: Dict[str, str], bid_tables: Dict[str, List]
+) -> None:
+    metric = int(bid_row.get("MeasureBase", "0") or "0") == 1
+    for condition_row in bid_tables.get("BidConditions", []):
+        calc_types = tuple(
+            int(condition_row.get(f"Quantity{index}", "0") or "0")
+            for index in range(1, 4)
+        )
+        uom_codes = tuple(
+            int(condition_row.get(f"UOM{index}", "0") or "0") for index in range(1, 4)
+        )
+        normalized = normalize_uoms_for_calculations(calc_types, uom_codes, metric)
+        for index, uom_code in enumerate(normalized, start=1):
+            key = f"UOM{index}"
+            if key in condition_row or calc_types[index - 1] != 0:
+                condition_row[key] = str(uom_code)
+
+
 def _filter_empty_attrs(row: Dict[str, str], element_type: str = "") -> Dict[str, str]:
     element_omit_fields = _OMIT_IF_EMPTY_BY_ELEMENT.get(element_type, frozenset())
     return {
@@ -636,6 +658,7 @@ class OstExporter:
             bid_tables = _normalize_table_rows(raw_data.bid_tables)
             page_tables = _normalize_table_rows(raw_data.page_tables)
             global_tables = _normalize_table_rows(raw_data.global_tables)
+            _normalize_condition_uoms_for_bid_system(bid_row, bid_tables)
             if "ExternalID" not in bid_row or not bid_row["ExternalID"]:
                 bid_row["ExternalID"] = "0"
             sorted_bid_row = _sort_attrs(bid_row, element_type="Bid")

@@ -47,12 +47,12 @@ UOM_LABELS = {
     UOM_SQUARE_ROOFING: "ROOF",
     UOM_CUBIC_FEET: "CF",
     UOM_CUBIC_YARDS: "CY",
-    UOM_MM: "MM",
-    UOM_MM2: "MM²",
-    UOM_M: "M",
-    UOM_M2: "M²",
-    UOM_MM3: "MM³",
-    UOM_M3: "M³",
+    UOM_MM: "mm",
+    UOM_MM2: "mm²",
+    UOM_M: "m",
+    UOM_M2: "m²",
+    UOM_MM3: "mm³",
+    UOM_M3: "m³",
 }
 _METRIC_UOMS = frozenset({UOM_MM, UOM_MM2, UOM_M, UOM_M2, UOM_MM3, UOM_M3})
 
@@ -114,22 +114,23 @@ _AREA_UOMS: List[Tuple[int, str]] = [
     (UOM_SQUARE_FEET, "SF"),
     (UOM_SQUARE_YARDS, "SY"),
     (UOM_SQUARE_INCHES, "SQ IN"),
+    (UOM_SQUARE_ROOFING, "ROOF"),
 ]
 _VOLUME_UOMS: List[Tuple[int, str]] = [
     (UOM_CUBIC_FEET, "CF"),
     (UOM_CUBIC_YARDS, "CY"),
 ]
 _LENGTH_UOMS_METRIC: List[Tuple[int, str]] = [
-    (UOM_M, "M"),
-    (UOM_MM, "MM"),
+    (UOM_M, "m"),
+    (UOM_MM, "mm"),
 ]
 _AREA_UOMS_METRIC: List[Tuple[int, str]] = [
-    (UOM_M2, "M²"),
-    (UOM_MM2, "MM²"),
+    (UOM_M2, "m²"),
+    (UOM_MM2, "mm²"),
 ]
 _VOLUME_UOMS_METRIC: List[Tuple[int, str]] = [
-    (UOM_M3, "M³"),
-    (UOM_MM3, "MM³"),
+    (UOM_M3, "m³"),
+    (UOM_MM3, "mm³"),
 ]
 _CALC_COUNT = {CALC_COUNT, 2, 17, 18, 19}
 _CALC_LENGTH = {
@@ -267,6 +268,48 @@ def normalize_uom_for_system(uom_code: int, metric: bool) -> int:
     if metric:
         return _UOM_IMPERIAL_TO_METRIC.get(uom_code, uom_code)
     return _UOM_METRIC_TO_IMPERIAL.get(uom_code, uom_code)
+
+
+def normalize_uoms_for_system(
+    uom_codes: Tuple[int, ...], metric: bool
+) -> Tuple[int, ...]:
+    return tuple(normalize_uom_for_system(code, metric) for code in uom_codes)
+
+
+def normalize_uom_for_calculation(calc_type: int, uom_code: int, metric: bool) -> int:
+    normalized = normalize_uom_for_system(uom_code, metric)
+    if calc_type == 0:
+        return normalized
+    valid_uoms = get_valid_uoms_for_calc_type(calc_type, metric)
+    if any(code == normalized for code, _label in valid_uoms):
+        return normalized
+    return valid_uoms[0][0]
+
+
+def normalize_uoms_for_calculations(
+    calc_types: Tuple[int, ...],
+    uom_codes: Tuple[int, ...],
+    metric: bool,
+) -> Tuple[int, ...]:
+    return tuple(
+        normalize_uom_for_calculation(calc_type, uom_code, metric)
+        for calc_type, uom_code in zip(calc_types, uom_codes)
+    )
+
+
+def normalize_condition_uoms_for_system(
+    condition: Condition, metric: bool
+) -> Condition:
+    condition.uom1, condition.uom2, condition.uom3 = normalize_uoms_for_calculations(
+        (
+            condition.calc_type1,
+            condition.calc_type2,
+            condition.calc_type3,
+        ),
+        (condition.uom1, condition.uom2, condition.uom3),
+        metric,
+    )
+    return condition
 
 
 def convert_to_uom(raw_value: float, uom_code: int) -> float:

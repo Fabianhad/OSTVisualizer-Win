@@ -932,6 +932,17 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 "_update_layer_name",
             ),
             (
+                "update_all_layers_show",
+                lambda service: service.queue_all_layers_show(
+                    "database",
+                    "7",
+                    False,
+                    ["70", "71"],
+                    lambda _result: None,
+                ),
+                "_update_all_layers_show",
+            ),
+            (
                 "create_condition",
                 lambda service: service.queue_condition_create(
                     "database",
@@ -1154,9 +1165,35 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 request, execute, _callback = provider.requests[0]
                 self.assertIsInstance(request.payload, ProjectWritePayload)
                 self.assertEqual(request.payload.write_kind, write_kind)
+                if write_kind == "update_all_layers_show":
+                    self.assertEqual(
+                        request.payload.values_json,
+                        '{"layer_uids":["70","71"],"show":false}',
+                    )
                 result = execute()
                 self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
                 self.assertEqual(len(use_case.calls), 1)
+                if write_kind == "update_all_layers_show":
+                    self.assertEqual(
+                        use_case.calls,
+                        [("database", "7", False, ["70", "71"])],
+                    )
+
+    def test_queued_bulk_layer_visibility_rejects_a_bid_switch(self):
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service.uses_sql_collaboration_mutations = lambda _database_id: True
+        service._active_bid_uid_for = lambda _database_id: 8
+        service.queue_all_layers_show = lambda *_args, **_kwargs: self.fail(
+            "a captured Bid 7 operation must not write to active Bid 8"
+        )
+        self.assertFalse(
+            service.queue_page_setting_if_sql(
+                "database",
+                "7",
+                "all_layers_show",
+                [False],
+            )
+        )
 
     def test_sql_mixed_delete_removes_endpoint_annotation_before_takeoff_cascade(self):
         service, provider = self._queued_project_service()

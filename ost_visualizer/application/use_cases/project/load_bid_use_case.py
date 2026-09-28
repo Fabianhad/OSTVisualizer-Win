@@ -8,6 +8,7 @@ from ....domain.entities.layer import normalize_layer_name
 from ....domain.entities.page import build_pages_from_bid_data
 from ....domain.entities.project_factory import build_bid
 from ....domain.services.file_manager_service import FileManager
+from ....domain.services.uom_service import normalize_condition_uoms_for_system
 from ...dtos.collaboration_dtos import ConcurrencyToken, ResourceRef
 from ...dtos.user_workspace_state_dtos import UserBidWorkspaceState
 
@@ -74,6 +75,12 @@ class LoadBidUseCase:
     def _apply_prepared(self, bid_ref: BidRef, prepared: PreparedBidLoad) -> bool:
         bid_data = prepared.bid_data
         self.file_manager.apply_bid_load(bid_ref.file_path)
+        bid_info = self.model.find_bid_info(bid_ref)
+        self.model.current_bid = build_bid(bid_info) if bid_info else None
+        if self.model.current_bid is not None:
+            metric = self.model.current_bid.measure_base == 1
+            for condition in bid_data.bid_conditions.values():
+                normalize_condition_uoms_for_system(condition, metric)
         self.model.bid_conditions = bid_data.bid_conditions
         self.model.bid_takeoffs = bid_data.bid_takeoffs
         self.model.bid_areas = dict(bid_data.bid_areas or {})
@@ -95,8 +102,6 @@ class LoadBidUseCase:
                 self.model.bid_layer_names_by_uid[layer_uid] = layer_name
                 self.model.bid_layer_visibility_by_name[layer_name] = visible
         self.model.current_bid_ref = bid_ref
-        bid_info = self.model.find_bid_info(bid_ref)
-        self.model.current_bid = build_bid(bid_info) if bid_info else None
         pages = bid_data.pages
         if not pages:
             pages = build_pages_from_bid_data(

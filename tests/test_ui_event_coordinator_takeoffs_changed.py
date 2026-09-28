@@ -2194,6 +2194,12 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(title_refreshes, [True])
         self.assertEqual(condition_refreshes, [True])
         self.assertEqual(plan_refreshes, [])
+        condition_refreshes.clear()
+        coordinator._on_remote_hierarchy_changed(
+            bid_ref.file_path,
+            condition_family_projected=True,
+        )
+        self.assertEqual(condition_refreshes, [])
 
     def test_deferred_page_metadata_refreshes_summary_and_status_without_plan(self):
         bid_ref = BidRef("sql-database", "bid-1")
@@ -2721,7 +2727,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
-        coordinator.project_data = SimpleNamespace(get_page=lambda uid: pages.get(uid))
+        hierarchy_entry = HierarchyFileEntry(file_path=bid_ref.file_path)
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda uid: pages.get(uid),
+            get_hierarchy=lambda: HierarchyData(loaded_files=[hierarchy_entry]),
+        )
         coordinator.takeoff_sidebar = SimpleNamespace(
             get_page_order=lambda: ["page-1", "page-2"]
         )
@@ -5021,7 +5031,13 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 self.plan_view.cursor_mode = CURSOR_MODE_PLACE
                 return True
 
+        layers = {
+            "layer-1": SimpleNamespace(uid="layer-1", show=True),
+            "layer-2": SimpleNamespace(uid="layer-2", show=True),
+        }
+
         def update_layer_visibility(layer_uid, show):
+            layers[layer_uid].show = show
             for condition in conditions.values():
                 if condition.layer_uid == layer_uid:
                     condition.layer_visible = show
@@ -5030,6 +5046,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         plan_view = PlanView()
         placement = Placement(plan_view)
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.plan_view = plan_view
         coordinator.ui_state_manager = ui_state
         access = SimpleNamespace(place_allowed=True)
@@ -5040,10 +5057,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.project_data = SimpleNamespace(
             get_bid=lambda ref: bid_owner if ref == bid_ref else None,
             get_bid_conditions=lambda: conditions,
-            get_bid_layer_snapshot=lambda: [
-                SimpleNamespace(uid="layer-1"),
-                SimpleNamespace(uid="layer-2"),
-            ],
+            get_bid_layer_snapshot=lambda: list(layers.values()),
             is_image_layer_uid=lambda _uid: False,
             update_layer_visibility=update_layer_visibility,
             get_selected_page_uids=lambda: ["page-1"],
@@ -5059,12 +5073,16 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._update_export_menu_state = lambda: None
         coordinator._is_takeoff_2d_view_active = lambda: True
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", False)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", False
+            )
         )
         self.assertEqual(plan_view.cursor_mode, CURSOR_MODE_SELECT)
         self.assertEqual(placement.enter_calls, [])
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", True)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", True
+            )
         )
         self.assertEqual(
             placement.enter_calls,
@@ -5074,7 +5092,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         # Replacing a participating Condition with the same UID while the
         # Layer is hidden invalidates the exact suspended placement owners.
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", False)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", False
+            )
         )
         conditions["secondary"] = Condition(
             uid="secondary",
@@ -5083,7 +5103,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             condition_type=Condition.TYPE_AREA,
         )
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", True)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", True
+            )
         )
         self.assertEqual(
             placement.enter_calls,
@@ -5094,11 +5116,15 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         # later access loss still prevents automatic restoration.
         placement.enter("primary", ["primary", "secondary"])
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", False)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", False
+            )
         )
         access.place_allowed = False
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", True)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", True
+            )
         )
         self.assertEqual(
             placement.enter_calls,
@@ -5113,12 +5139,16 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         access.place_allowed = True
         placement.enter("primary", ["primary", "secondary"])
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", False)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", False
+            )
         )
         plan_view.set_cursor_mode("pan")
         plan_view.set_cursor_mode(CURSOR_MODE_SELECT)
         self.assertTrue(
-            coordinator._project_layer_visibility_if_current(bid_ref, "layer-2", True)
+            coordinator._project_layer_visibility_if_current(
+                bid_ref, bid_owner, "layer-2", True
+            )
         )
         self.assertEqual(
             placement.enter_calls,
@@ -5666,7 +5696,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "page-b")
         self.assertEqual(restored_navigation, [(["page-b"], "page-b")])
         self.assertEqual(invalidated, [])
-        self.assertEqual(reprojected, [("sql-db", ["page-a"])])
+        self.assertEqual(reprojected, [("sql-db", ["page-a"], "bid-1")])
 
     def test_remote_removal_of_all_checked_pages_publishes_recoverable_empty_scene(
         self,

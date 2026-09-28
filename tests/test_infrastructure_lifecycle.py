@@ -18,6 +18,13 @@ from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
+from ost_visualizer.domain.services.uom_service import (
+    CALC_COUNT,
+    CALC_LINEAR_LENGTH,
+    UOM_EACH,
+    UOM_LINEAR_FEET,
+    UOM_M,
+)
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.database.bid_owned_identity import (
     require_single_bid_scope_for_uids,
@@ -1294,6 +1301,45 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             [(11,)],
         )
 
+    def test_measurement_system_save_normalizes_uoms_by_quantity_dimension(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE Bids ("
+            "UID INTEGER PRIMARY KEY, JobName TEXT, MeasureBase INTEGER)"
+        )
+        conn.execute("INSERT INTO Bids VALUES (1, 'Bid', 0)")
+        conn.execute(
+            "CREATE TABLE BidConditions ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, Name TEXT, "
+            "Quantity1 INTEGER, UOM1 INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidConditions VALUES (?, 1, ?, ?, ?)",
+            (
+                (10, "Count", CALC_COUNT, UOM_LINEAR_FEET),
+                (11, "Length", CALC_LINEAR_LENGTH, UOM_LINEAR_FEET),
+            ),
+        )
+        operations = _SqliteDuplicateOps(conn)
+        self.assertTrue(
+            operations.save_cover_sheet(
+                "bid.mdb", "1", {"job_name": "Bid", "measure_base": 1}
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, UOM1 FROM BidConditions ORDER BY UID").fetchall(),
+            [(10, UOM_EACH), (11, UOM_M)],
+        )
+        self.assertTrue(
+            operations.save_cover_sheet(
+                "bid.mdb", "1", {"job_name": "Bid", "measure_base": 1}
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, UOM1 FROM BidConditions ORDER BY UID").fetchall(),
+            [(10, UOM_EACH), (11, UOM_M)],
+        )
+
     def test_delete_page_removes_indexed_annotation_shape_rows(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -2289,6 +2335,33 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         self.assertEqual(
             conn.execute("SELECT UID, BidUID FROM BidConditions").fetchall(),
             [(7, 1)],
+        )
+
+    def test_condition_cross_bid_duplicate_normalizes_uom_for_destination_system(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER, MeasureBase INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?, ?)", ((1, 0), (2, 1)))
+        conn.execute(
+            "CREATE TABLE BidConditions ("
+            "UID INTEGER, BidUID INTEGER, GUID TEXT, RefNo INTEGER, Name TEXT, "
+            "Quantity1 INTEGER, UOM1 INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO BidConditions VALUES "
+            "(7, 1, 'source-guid', 1, 'Source', ?, ?)",
+            (CALC_LINEAR_LENGTH, UOM_LINEAR_FEET),
+        )
+        result = _SqliteDuplicateOps(conn).duplicate_conditions_to_bid(
+            "mixed.mdb", "1", "2", ["7"]
+        )
+        self.assertEqual(len(result), 1)
+        duplicated_uid = int(result["7"])
+        self.assertEqual(
+            conn.execute(
+                "SELECT BidUID, Quantity1, UOM1 FROM BidConditions WHERE UID=?",
+                (duplicated_uid,),
+            ).fetchone(),
+            (2, CALC_LINEAR_LENGTH, UOM_M),
         )
 
     def test_layer_insert_reserves_dangling_layer_reference_uid(self):
@@ -6199,6 +6272,81 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 0
             ],
             "Orphan folder",
+        )
+
+    def test_bulk_layer_visibility_only_updates_captured_sidebar_layers(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
+        conn.execute(
+            "CREATE TABLE BidLayers ("
+            "UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER, "
+            "IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (100, None, "Shared", -1, -1, -1),
+                (101, 7, "Shared", -1, 0, 0),
+                (102, 7, "Bid 7 only", -1, 0, 0),
+            ],
+        )
+        ops = _SqliteDuplicateOps(conn)
+        self.assertTrue(
+            ops.update_all_layers_show("fixture.mdb", "7", False, ["101", "102"])
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(100, -1), (101, 0), (102, 0)],
+        )
+
+    def test_bulk_layer_visibility_rejects_ineligible_uid_before_any_write(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
+        conn.execute(
+            "CREATE TABLE BidLayers ("
+            "UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER, "
+            "IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (101, 7, "Bid 7", -1, 0, 0),
+                (201, 8, "Bid 8", -1, 0, 0),
+            ],
+        )
+        ops = _SqliteDuplicateOps(conn)
+        self.assertFalse(
+            ops.update_all_layers_show("fixture.mdb", "7", False, ["101", "201"])
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(101, -1), (201, -1)],
+        )
+
+    def test_large_bulk_layer_visibility_stays_within_parameter_limits(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (7)")
+        conn.execute(
+            "CREATE TABLE BidLayers ("
+            "UID INTEGER, BidUID INTEGER, Show INTEGER, "
+            "IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        layer_uids = list(range(1000, 1600))
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, 7, -1, 0, 0)",
+            ((uid,) for uid in layer_uids),
+        )
+        self.assertTrue(
+            _ParameterLimitedSqliteOps(conn, max_parameters=55).update_all_layers_show(
+                "large.mdb", "7", False, [str(uid) for uid in layer_uids]
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidLayers WHERE Show = 0").fetchone()[0],
+            len(layer_uids),
         )
 
     def test_orphan_takeoff_and_annotation_mutations_reject_before_write(self):

@@ -2,7 +2,7 @@ import uuid
 from typing import Any, Dict, Optional
 import pyodbc
 from ....domain.entities.area import BidAreaChangeset
-from ....domain.services.uom_service import normalize_uom_for_system
+from ....domain.services.uom_service import normalize_uoms_for_calculations
 from ...database.bid_owned_identity import (
     DanglingBidOwnedReferenceError,
     MissingBidOwnedUidError,
@@ -629,10 +629,14 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             for column in ("UOM1", "UOM2", "UOM3")
             if schema.column_exists("BidConditions", column)
         ]
+        quantity_columns = [
+            column
+            for column in ("Quantity1", "Quantity2", "Quantity3")
+            if schema.column_exists("BidConditions", column)
+        ]
+        selected_condition_columns = quantity_columns + uom_columns
         select_columns = ["[UID]", "[Name]"] + [
-            f"[{column}]"
-            for column in ("UOM1", "UOM2", "UOM3")
-            if column in uom_columns
+            f"[{column}]" for column in selected_condition_columns
         ]
         cursor.execute(
             f"SELECT {', '.join(select_columns)} "
@@ -647,9 +651,15 @@ class SettingsOperationsMixin(AccessIdentityAllocationMixin):
             old_u1 = int(row_data.get("UOM1") or 0)
             old_u2 = int(row_data.get("UOM2") or 0)
             old_u3 = int(row_data.get("UOM3") or 0)
-            new_u1 = normalize_uom_for_system(old_u1, metric)
-            new_u2 = normalize_uom_for_system(old_u2, metric)
-            new_u3 = normalize_uom_for_system(old_u3, metric)
+            new_u1, new_u2, new_u3 = normalize_uoms_for_calculations(
+                (
+                    int(row_data.get("Quantity1") or 0),
+                    int(row_data.get("Quantity2") or 0),
+                    int(row_data.get("Quantity3") or 0),
+                ),
+                (old_u1, old_u2, old_u3),
+                metric,
+            )
             uom_values = {}
             if "UOM1" in uom_columns and new_u1 != old_u1:
                 uom_values["UOM1"] = new_u1

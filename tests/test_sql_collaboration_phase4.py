@@ -3666,6 +3666,56 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertIn(AppEvents.REMOTE_HIERARCHY_CHANGED, published)
         self.assertNotIn(AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED, published)
 
+    def test_mixed_hierarchy_condition_event_assigns_sidebar_refresh_to_condition(self):
+        database_id = "database"
+        events = _EventBus()
+        tokens, drafts = _token_service()
+
+        class _HierarchyProjectData(_ProjectData):
+            def replace_database_hierarchy(self, _file_entry, _cdn_types):
+                pass
+
+        service = RemoteChangeReconciliationService(
+            _HierarchyProjectData(database_id),
+            events,
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(database_id, ResourceRef("database", database_id), 1),
+                    _change(database_id, ResourceRef("condition", "42", 8), 2),
+                ),
+            ),
+            hierarchy_file=HierarchyFileEntry(
+                file_path=database_id,
+                display_name="SQL",
+            ),
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Remote")}},
+            condition_folders_by_bid={8: {}},
+            settings_defaults={"next_bid_no": 1},
+        )
+        self.assertTrue(service.apply(hydrated).applied)
+        hierarchy_event = next(
+            payload
+            for event, payload in events.published
+            if event is AppEvents.REMOTE_HIERARCHY_CHANGED
+        )
+        self.assertTrue(hierarchy_event["condition_family_projected"])
+        self.assertEqual(
+            sum(
+                event is AppEvents.CONDITIONS_CHANGED
+                for event, _payload in events.published
+            ),
+            1,
+        )
+
     def test_condition_type_only_change_refreshes_conditions_without_view_rebuild(self):
         database_id = "database"
         events = _EventBus()

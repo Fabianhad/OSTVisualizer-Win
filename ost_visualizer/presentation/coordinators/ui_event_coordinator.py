@@ -1784,14 +1784,44 @@ class UIEventCoordinator:
         after_close: Optional[Callable[[bool], None]] = None,
         lease_session: Optional[ModalEditLeaseSession] = None,
     ) -> None:
+        database_owner = next(
+            (
+                entry
+                for entry in self.project_data.get_hierarchy().loaded_files
+                if normalize_path(entry.file_path) == normalize_path(database_id)
+            ),
+            None,
+        )
+        validate_database_owner = database_owner is not None
+
+        def database_owner_is_current() -> bool:
+            if not validate_database_owner:
+                return True
+            return any(
+                entry is database_owner
+                for entry in self.project_data.get_hierarchy().loaded_files
+                if normalize_path(entry.file_path) == normalize_path(database_id)
+            )
+
+        terminal_delivered = False
+        handled_lease = None
+
         def resolved(result: EditLeaseResult) -> None:
+            nonlocal terminal_delivered, handled_lease
+            if terminal_delivered:
+                if result.handle is not None and result.handle != handled_lease:
+                    self.end_collaboration_edit(result.handle)
+                return
+            terminal_delivered = True
+            handled_lease = result.handle
             executed = False
             try:
                 if result.granted:
                     if lease_session is not None:
                         lease_session.accept_initial_lease(result)
-                    exec_with_ost_blocking(dialog, self.event_bus)
-                    executed = isValid(dialog)
+                    if database_owner_is_current() and isValid(dialog):
+                        exec_with_ost_blocking(dialog, self.event_bus)
+                        executed = isValid(dialog)
             finally:
                 if lease_session is not None:
                     lease_session.close()
@@ -3333,6 +3363,7 @@ class UIEventCoordinator:
             self._deferred_persistence.reproject_newer_page_visual_revisions(
                 database_id,
                 changed_uids.get(CollaborationResourceFamily.PAGES.value) or None,
+                bid_uid,
             )
         if layers_changed and not local_completion:
             self._deferred_persistence.invalidate_layer_visual_revisions(
@@ -3343,6 +3374,7 @@ class UIEventCoordinator:
             self._deferred_persistence.invalidate_page_visual_revisions(
                 database_id,
                 changed_uids.get(CollaborationResourceFamily.PAGES.value) or None,
+                bid_uid,
             )
         if self._undo_service and changed_families and not local_completion:
             self._undo_service.clear()
@@ -3753,6 +3785,7 @@ class UIEventCoordinator:
         self,
         database_id: str = "",
         defer_plan_projection: bool = False,
+        condition_family_projected: bool = False,
     ) -> None:
         del defer_plan_projection
         active_bid = self.project_data.get_current_bid_ref()
@@ -3760,9 +3793,12 @@ class UIEventCoordinator:
         selected_database_id = self.ui_state_manager.selected_file_path
         selected_node_before = self.main_window.project_view.get_selected_node_state()
         self._do_file_refresh()
-        if self.project_data.get_current_file_path() and normalize_path(
-            self.project_data.get_current_file_path()
-        ) == normalize_path(database_id):
+        if (
+            not condition_family_projected
+            and self.project_data.get_current_file_path()
+            and normalize_path(self.project_data.get_current_file_path())
+            == normalize_path(database_id)
+        ):
             self._sidebar.refresh_conditions_from_memory()
         if active_bid is None:
             if selected_database_id and normalize_path(
@@ -5875,42 +5911,56 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if bid_ref is None or bid_ref.file_path != file_path:
             return
+        page_owner = self.project_data.get_page(page_uid)
+        if page_owner is None:
+            return
         page_area_selections = self.project_data.get_page_area_selections()
         previous_area_uid = page_area_selections.get(page_uid)
-        self._project_page_area_if_current(bid_ref, page_uid, area_uid)
-        self._deferred_persistence.schedule_page_area_selection(
+        scheduled = self._deferred_persistence.schedule_page_area_selection(
             file_path,
             page_uid,
             area_uid or "",
+            bid_uid=bid_ref.bid_uid,
             restore_authoritative=lambda: self._project_page_area_if_current(
                 bid_ref,
                 page_uid,
                 previous_area_uid or "",
+                page_owner,
             ),
             project_value=lambda: self._project_page_area_if_current(
                 bid_ref,
                 page_uid,
                 area_uid,
+                page_owner,
             ),
         )
+        if scheduled:
+            self._project_page_area_if_current(bid_ref, page_uid, area_uid, page_owner)
 
     def _project_page_area_if_current(
         self,
         bid_ref: BidRef,
         page_uid: str,
         area_uid: str,
+        page_owner: Optional[Page] = None,
     ) -> None:
-        if not self._page_setting_context_is_current(bid_ref, page_uid):
+        if not self._page_setting_owner_is_current(bid_ref, page_uid, page_owner):
             return
         page_area_selections = self.project_data.get_page_area_selections()
         page_area_selections[page_uid] = area_uid if area_uid else None
-        self.ui_state_manager.selected_area_uid = area_uid or ""
-        self._update_page_settings_bar(page_uid)
-        if not self._viewer.update_page_area_selection(page_uid):
-            self._viewer.update_plan_view(page_uid)
+        if self.ui_state_manager.active_page_uid == page_uid:
+            self.ui_state_manager.selected_area_uid = area_uid or ""
+            self._update_page_settings_bar(page_uid)
+            if not self._viewer.update_page_area_selection(page_uid):
+                self._viewer.update_plan_view(page_uid)
+            self.main_window.refresh_detached_plan_area_selection(page_uid)
+            self._request_or_defer_mesh_refresh(
+                self.project_data.get_selected_page_uids()
+            )
+            self._apply_pending_hotlink_named_view_focus(require_stable=True)
+            return
         self.main_window.refresh_detached_plan_area_selection(page_uid)
         self._request_or_defer_mesh_refresh(self.project_data.get_selected_page_uids())
-        self._apply_pending_hotlink_named_view_focus(require_stable=True)
 
     def _on_overlay_display_mode_requested(self, show_mode: int) -> None:
         if show_mode not in (SHOW_ORIGINAL, SHOW_OVERLAY, SHOW_BOTH):
@@ -5926,51 +5976,68 @@ class UIEventCoordinator:
             return
         previous_show_mode = page.image_show_mode
         self._save_current_page_view_state(selected_page_override=page_uid)
-        self._project_page_show_mode_if_current(bid_ref, page_uid, show_mode)
-        self._deferred_persistence.schedule_page_show_mode(
+        scheduled = self._deferred_persistence.schedule_page_show_mode(
             bid_ref.file_path,
             page_uid,
             show_mode,
+            bid_uid=bid_ref.bid_uid,
             restore_authoritative=lambda: self._project_page_show_mode_if_current(
                 bid_ref,
                 page_uid,
                 previous_show_mode,
+                page,
             ),
             project_value=lambda: self._project_page_show_mode_if_current(
                 bid_ref,
                 page_uid,
                 show_mode,
+                page,
             ),
         )
+        if scheduled:
+            self._project_page_show_mode_if_current(bid_ref, page_uid, show_mode, page)
 
     def _project_page_show_mode_if_current(
         self,
         bid_ref: BidRef,
         page_uid: str,
         show_mode: int,
+        page_owner: Optional[Page] = None,
     ) -> None:
-        if not self._page_setting_context_is_current(bid_ref, page_uid):
+        if not self._page_setting_owner_is_current(bid_ref, page_uid, page_owner):
             return
         page = self.project_data.get_page(page_uid)
         if page is None:
             return
         page.image_show_mode = show_mode
-        self._sync_overlay_display_mode(page_uid)
+        if self.ui_state_manager.active_page_uid == page_uid:
+            self._sync_overlay_display_mode(page_uid)
+            self._update_native_page_textures()
+            if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
+                self._update_plan_view(page_uid)
+            self.main_window.refresh_detached_plan_views()
+            self._update_export_menu_state()
+            return
         self._update_native_page_textures()
-        if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
-            self._update_plan_view(page_uid)
         self.main_window.refresh_detached_plan_views()
-        self._update_export_menu_state()
 
-    def _page_setting_context_is_current(
+    def _page_setting_owner_is_current(
         self,
         bid_ref: BidRef,
         page_uid: str,
+        page_owner: Optional[Page] = None,
     ) -> bool:
+        if (
+            self._is_cleaning_up
+            or self.ui_state_manager is None
+            or self.project_data is None
+        ):
+            return False
+        current_page = self.project_data.get_page(page_uid)
         return bool(
             self.ui_state_manager.get_selected_bid_ref() == bid_ref
-            and self.ui_state_manager.active_page_uid == page_uid
-            and self.project_data.get_page(page_uid) is not None
+            and current_page is not None
+            and (page_owner is None or current_page is page_owner)
         )
 
     def toggle_page_invert(self, invert: bool) -> None:
@@ -6015,13 +6082,6 @@ class UIEventCoordinator:
             previous_value = bool(page.bitonal)
         else:
             raise ValueError("Unsupported deferred page image flag")
-        self._project_page_image_flag_if_current(
-            bid_ref,
-            page_uid,
-            flag_name,
-            write_fn,
-            value,
-        )
         callbacks = {
             "restore_authoritative": lambda: self._project_page_image_flag_if_current(
                 bid_ref,
@@ -6029,6 +6089,7 @@ class UIEventCoordinator:
                 flag_name,
                 write_fn,
                 previous_value,
+                page,
             ),
             "project_value": lambda: self._project_page_image_flag_if_current(
                 bid_ref,
@@ -6036,15 +6097,34 @@ class UIEventCoordinator:
                 flag_name,
                 write_fn,
                 value,
+                page,
             ),
         }
+        scheduled = False
         if flag_name == "invert":
-            self._deferred_persistence.schedule_page_invert(
-                bid_ref.file_path, page_uid, value, **callbacks
+            scheduled = self._deferred_persistence.schedule_page_invert(
+                bid_ref.file_path,
+                page_uid,
+                value,
+                bid_uid=bid_ref.bid_uid,
+                **callbacks,
             )
         elif flag_name == "bitonal":
-            self._deferred_persistence.schedule_page_bitonal(
-                bid_ref.file_path, page_uid, value, **callbacks
+            scheduled = self._deferred_persistence.schedule_page_bitonal(
+                bid_ref.file_path,
+                page_uid,
+                value,
+                bid_uid=bid_ref.bid_uid,
+                **callbacks,
+            )
+        if scheduled:
+            self._project_page_image_flag_if_current(
+                bid_ref,
+                page_uid,
+                flag_name,
+                write_fn,
+                value,
+                page,
             )
 
     def _project_page_image_flag_if_current(
@@ -6054,18 +6134,23 @@ class UIEventCoordinator:
         flag_name: str,
         write_fn,
         value: bool,
+        page_owner: Optional[Page] = None,
     ) -> None:
-        if not self._page_setting_context_is_current(bid_ref, page_uid):
+        if not self._page_setting_owner_is_current(bid_ref, page_uid, page_owner):
             return
         page = self.project_data.get_page(page_uid)
         if page is None:
             return
         write_fn(page, value)
+        if self.ui_state_manager.active_page_uid == page_uid:
+            self._update_native_page_textures()
+            if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
+                self._update_plan_view(page_uid)
+            self.main_window.refresh_detached_plan_views()
+            self._update_export_menu_state()
+            return
         self._update_native_page_textures()
-        if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
-            self._update_plan_view(page_uid)
         self.main_window.refresh_detached_plan_views()
-        self._update_export_menu_state()
 
     def _on_layer_visibility_toggled(self, layer_uid: str, show: bool) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -6086,6 +6171,9 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
+        bid_owner = self.project_data.get_bid(bid_ref)
+        if bid_owner is None:
+            return False
         layer = next(
             (
                 layer
@@ -6097,38 +6185,68 @@ class UIEventCoordinator:
         if layer is None:
             return False
         previous_show = bool(layer.show)
-        if not self._project_layer_visibility_if_current(bid_ref, layer_uid, show):
-            return False
-        self._deferred_persistence.schedule_layer_show(
+        scheduled = self._deferred_persistence.schedule_layer_show(
             bid_ref.file_path,
             layer_uid,
             show,
             restore_authoritative=lambda: self._project_layer_visibility_if_current(
                 bid_ref,
+                bid_owner,
                 layer_uid,
                 previous_show,
             ),
             project_value=lambda: self._project_layer_visibility_if_current(
                 bid_ref,
+                bid_owner,
                 layer_uid,
                 show,
             ),
         )
+        if not scheduled:
+            sidebar = self._sidebar.bid_layers_sidebar
+            if sidebar:
+                sidebar.set_layer_visible(layer_uid, previous_show)
+            return False
+        if not self._project_layer_visibility_if_current(
+            bid_ref, bid_owner, layer_uid, show
+        ):
+            return False
         return True
 
     def _project_layer_visibility_if_current(
         self,
         bid_ref: BidRef,
+        bid_owner: Optional[Bid],
         layer_uid: str,
         show: bool,
     ) -> bool:
-        if self.ui_state_manager.get_selected_bid_ref() != bid_ref:
-            return False
-        if not any(
-            str(layer.uid) == str(layer_uid)
-            for layer in self.project_data.get_bid_layer_snapshot()
+        if (
+            self._is_cleaning_up
+            or bid_owner is None
+            or self.ui_state_manager.get_selected_bid_ref() != bid_ref
+            or self.project_data.get_bid(bid_ref) is not bid_owner
         ):
             return False
+        layer = next(
+            (
+                layer
+                for layer in self.project_data.get_bid_layer_snapshot()
+                if str(layer.uid) == str(layer_uid)
+            ),
+            None,
+        )
+        if layer is None:
+            return False
+        sidebar = self._sidebar.bid_layers_sidebar
+        if isinstance(sidebar, QtCore.QObject) and not isValid(sidebar):
+            sidebar = None
+        sidebar_visibility = None
+        if sidebar:
+            sidebar_visibility = sidebar.get_layer_visibility(layer_uid)
+        if bool(layer.show) == bool(show) and (
+            sidebar is None or sidebar_visibility == bool(show)
+        ):
+            return True
         image_layer = self.project_data.is_image_layer_uid(layer_uid)
         condition_layer = self._layer_has_condition_rows(layer_uid)
         if not show and not image_layer:
@@ -6145,8 +6263,8 @@ class UIEventCoordinator:
             image_layer=image_layer,
             all_layers=False,
         )
-        if self._sidebar.bid_layers_sidebar:
-            self._sidebar.bid_layers_sidebar.set_layer_visible(layer_uid, show)
+        if sidebar:
+            sidebar.set_layer_visible(layer_uid, show)
         if condition_layer:
             self._refresh_conditions_sidebar_layer_visibility_from_memory(layer_uid)
         self._apply_layer_visibility_to_current_plan_view(
@@ -6315,6 +6433,9 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
+        bid_owner = self.project_data.get_bid(bid_ref)
+        if bid_owner is None:
+            return False
         uses_sql_queue = self._project_write_service.uses_sql_collaboration_mutations(
             bid_ref.file_path
         )
@@ -6327,6 +6448,44 @@ class UIEventCoordinator:
                 bid_ref.file_path, bid_ref.bid_uid
             )
         previous_visibility = {str(layer.uid): bool(layer.show) for layer in layers}
+        if not previous_visibility:
+            return False
+        changed_layer_uids = [
+            layer_uid
+            for layer_uid, visible in previous_visibility.items()
+            if visible != bool(show)
+        ]
+        if not changed_layer_uids:
+            if not self._deferred_persistence.has_all_layers_show_revision(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                list(previous_visibility),
+            ):
+                return True
+            changed_layer_uids = list(previous_visibility)
+        scheduled = self._deferred_persistence.schedule_all_layers_show(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            show,
+            changed_layer_uids,
+            restore_authoritative=lambda: (
+                self._project_layer_visibility_map_if_current(
+                    bid_ref,
+                    bid_owner,
+                    {
+                        layer_uid: previous_visibility[layer_uid]
+                        for layer_uid in changed_layer_uids
+                    },
+                )
+            ),
+            project_value=lambda: self._project_layer_visibility_map_if_current(
+                bid_ref,
+                bid_owner,
+                {layer_uid: show for layer_uid in changed_layer_uids},
+            ),
+        )
+        if not scheduled:
+            return False
         if self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
         if not show:
@@ -6344,26 +6503,6 @@ class UIEventCoordinator:
         self._refresh_conditions_sidebar_layer_visibility_from_memory(
             update_summary=False
         )
-        for layer in layers:
-            self._deferred_persistence.schedule_layer_show(
-                bid_ref.file_path,
-                layer.uid,
-                show,
-                restore_authoritative=lambda layer_uid=str(layer.uid): (
-                    self._project_layer_visibility_if_current(
-                        bid_ref,
-                        layer_uid,
-                        previous_visibility[layer_uid],
-                    )
-                ),
-                project_value=lambda layer_uid=str(layer.uid): (
-                    self._project_layer_visibility_if_current(
-                        bid_ref,
-                        layer_uid,
-                        show,
-                    )
-                ),
-            )
         self._apply_layer_visibility_to_current_plan_view(
             "",
             show,
@@ -6374,6 +6513,76 @@ class UIEventCoordinator:
         self._load_condition_summary()
         self._update_export_menu_state()
         if show:
+            self._restore_suspended_layer_tool()
+        return True
+
+    def _project_layer_visibility_map_if_current(
+        self,
+        bid_ref: BidRef,
+        bid_owner: Optional[Bid],
+        visibility_by_uid: Dict[str, bool],
+    ) -> bool:
+        if (
+            self._is_cleaning_up
+            or bid_owner is None
+            or self.ui_state_manager.get_selected_bid_ref() != bid_ref
+            or self.project_data.get_bid(bid_ref) is not bid_owner
+        ):
+            return False
+        requested = {
+            str(layer_uid): bool(show) for layer_uid, show in visibility_by_uid.items()
+        }
+        layers = self.project_data.get_bid_layer_snapshot()
+        current = {str(layer.uid): bool(layer.show) for layer in layers}
+        if not requested or not set(requested).issubset(current):
+            return False
+        sidebar = self._sidebar.bid_layers_sidebar
+        if isinstance(sidebar, QtCore.QObject) and not isValid(sidebar):
+            sidebar = None
+        sidebar_current = (
+            {str(layer.uid): bool(layer.show) for layer in sidebar.get_layers()}
+            if sidebar
+            else current
+        )
+        if all(
+            current[layer_uid] == show and sidebar_current.get(layer_uid) == show
+            for layer_uid, show in requested.items()
+        ):
+            return True
+        if any(not show for show in requested.values()):
+            self._suspend_active_layer_tool()
+        changed_page_uids = set()
+        for layer_uid, show in requested.items():
+            changed_page_uids.update(
+                self.project_data.update_layer_visibility(layer_uid, show)
+            )
+        self._update_native_page_textures()
+        self.event_bus.publish(
+            AppEvents.LAYER_VISIBILITY_CHANGED,
+            file_path=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            show=all(requested.values()),
+            all_layers=True,
+        )
+        if sidebar:
+            sidebar.set_layer_visibilities(requested)
+        self._refresh_conditions_sidebar_layer_visibility_from_memory(
+            update_summary=False
+        )
+        requested_values = set(requested.values())
+        if len(requested_values) == 1:
+            self._apply_layer_visibility_to_current_plan_view(
+                "",
+                requested_values.pop(),
+                changed_page_uids=sorted(changed_page_uids),
+                all_layers=True,
+            )
+        elif self.ui_state_manager.active_page_uid:
+            self._update_plan_view(self.ui_state_manager.active_page_uid)
+        self._request_or_defer_mesh_refresh(self.project_data.get_selected_page_uids())
+        self._load_condition_summary()
+        self._update_export_menu_state()
+        if any(requested.values()):
             self._restore_suspended_layer_tool()
         return True
 

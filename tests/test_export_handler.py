@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import Optional
@@ -383,7 +382,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertEqual(calls[0][6], "#abcdef")
         self.assertEqual(calls[0][7], "#345678")
 
-    def test_pdf_export_snapshots_latest_modes_without_rechecking_pages(self):
+    def test_pdf_export_snapshots_latest_modes_for_retained_page_owners(self):
         project_data = _FakeProjectData(["A1", "A2"])
         selected_page_uids = ["page-1", "page-2"]
         for page in project_data._pages.values():
@@ -415,9 +414,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             modes = transitions[dialog_count]
             dialog_count += 1
             for page_uid, mode in zip(selected_page_uids, modes):
-                project_data._pages[page_uid] = replace(
-                    project_data._pages[page_uid], image_show_mode=mode
-                )
+                project_data._pages[page_uid].image_show_mode = mode
             return rf"C:\tmp\latest-modes-{dialog_count}.pdf", ""
 
         def export(
@@ -585,6 +582,64 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
             ),
             patch.object(export_handler_module, "show_critical"),
+        ):
+            handler.export_as_pdf(["page-1"])
+        self.assertEqual(exports, [])
+        self.assertEqual(warnings[0][0], "Export Cancelled")
+
+    def test_pdf_export_cancels_when_same_uid_page_is_replaced_inside_save_dialog(
+        self,
+    ):
+        project_data = _FakeProjectData(["Original Page"])
+        exports = []
+        warnings = []
+
+        def choose_output(_window, _title, _default_filename, _filter):
+            project_data._pages["page-1"] = Page(
+                uid="page-1",
+                name="Replacement Page",
+                width_pts=612.0,
+                height_pts=792.0,
+            )
+            return r"C:\tmp\out.pdf", ""
+
+        class _ProgressDialog:
+            def __init__(self, _filename, run, parent=None, reporter=None):
+                self.result = run()
+                self.error = None
+
+            def exec(self):
+                return export_handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            project_data_service=project_data,
+            pdf_exporter=SimpleNamespace(
+                export=lambda *_args, **_kwargs: exports.append(True)
+                or ExportResultDto(success=True, format_name="PDF", page_count=1)
+            ),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                side_effect=choose_output,
+            ),
+            patch.object(export_handler_module, "ProgressDialog", _ProgressDialog),
+            patch.object(
+                export_handler_module,
+                "show_warning",
+                side_effect=lambda _window, title, message: warnings.append(
+                    (title, message)
+                ),
+            ),
+            patch.object(export_handler_module, "show_info"),
         ):
             handler.export_as_pdf(["page-1"])
         self.assertEqual(exports, [])
@@ -786,6 +841,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 default_filename="bid.html",
                 format_name="HTML",
                 extension="html",
+                valid_pages=["page-1"],
             ),
             export=lambda _config, _request: export_calls.append(True)
             or ExportResultDto(success=True, format_name="HTML", page_count=1),
@@ -796,6 +852,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             project_data_service=SimpleNamespace(
                 get_current_bid_ref=lambda: current_bid[0],
                 get_current_bid=lambda: bid,
+                get_page=lambda _uid: Page(uid="page-1", name="Page"),
             ),
         )
 
@@ -807,6 +864,92 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         with patch.object(export_handler_module, "show_warning"):
             handler.export_format("html", ["page-1"])
         self.assertEqual(export_calls, [])
+
+    def test_general_export_cancels_when_same_uid_page_is_replaced_in_save_dialog(
+        self,
+    ):
+        bid = SimpleNamespace(name="Bid")
+        bid_ref = BidRef("database-1", "bid-1")
+        pages = {"page-1": Page(uid="page-1", name="Original")}
+        export_calls = []
+        warnings = []
+        service = SimpleNamespace(
+            get_export_dialog_info=lambda _pages, _format: SimpleNamespace(
+                success=True,
+                dialog_title="Export",
+                default_filename="bid.html",
+                format_name="HTML",
+                extension="html",
+                valid_pages=["page-1"],
+            ),
+            export=lambda _config, _request: export_calls.append(True)
+            or ExportResultDto(success=True, format_name="HTML", page_count=1),
+        )
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            export_service=service,
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: bid_ref,
+                get_current_bid=lambda: bid,
+                get_page=lambda uid: pages.get(uid),
+            ),
+        )
+
+        def replace_page(_dialog_info):
+            pages["page-1"] = Page(uid="page-1", name="Replacement")
+            return "out.html"
+
+        handler._show_save_dialog = replace_page
+        with (
+            patch.object(
+                export_handler_module,
+                "show_warning",
+                side_effect=lambda _window, title, message: warnings.append(
+                    (title, message)
+                ),
+            ),
+            patch.object(export_handler_module, "show_info"),
+        ):
+            handler.export_format("html", ["page-1"])
+        self.assertEqual(export_calls, [])
+        self.assertEqual(warnings[0][0], "Export Cancelled")
+
+    def test_general_export_snapshots_page_uid_request_before_save_dialog(self):
+        bid = SimpleNamespace(name="Bid")
+        bid_ref = BidRef("database-1", "bid-1")
+        pages = {"page-1": Page(uid="page-1", name="Original")}
+        selected_page_uids = ["page-1"]
+        requests = []
+        service = SimpleNamespace(
+            get_export_dialog_info=lambda _pages, _format: SimpleNamespace(
+                success=True,
+                dialog_title="Export",
+                default_filename="bid.html",
+                format_name="HTML",
+                extension="html",
+                valid_pages=["page-1"],
+            ),
+            export=lambda _config, request: requests.append(request)
+            or ExportResultDto(success=True, format_name="HTML", page_count=1),
+        )
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            export_service=service,
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: bid_ref,
+                get_current_bid=lambda: bid,
+                get_page=lambda uid: pages.get(uid),
+            ),
+        )
+
+        def mutate_selection(_dialog_info):
+            selected_page_uids.append("page-from-new-selection")
+            return "out.html"
+
+        handler._show_save_dialog = mutate_selection
+        with patch.object(export_handler_module, "show_info"):
+            handler.export_format("html", selected_page_uids)
+        self.assertEqual(requests[0].page_uids, ["page-1"])
 
     def test_summary_csv_export_uses_current_grouping_and_appends_extension(self):
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)

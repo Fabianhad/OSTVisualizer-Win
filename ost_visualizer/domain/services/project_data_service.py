@@ -41,6 +41,7 @@ from .takeoff_domain_service import (
     is_takeoff_visible,
     takeoffs_can_reassign_to_condition,
 )
+from .uom_service import normalize_condition_uoms_for_system
 
 
 @dataclass
@@ -269,6 +270,9 @@ class ProjectDataService:
                 current_bid.estimator = refreshed_bid.estimator
                 current_bid.condition_count = refreshed_bid.condition_count
                 current_bid.measure_base = refreshed_bid.measure_base
+                metric = current_bid.measure_base == 1
+                for condition in self.model.bid_conditions.values():
+                    normalize_condition_uoms_for_system(condition, metric)
                 current_bid.takeoff_increments = refreshed_bid.takeoff_increments
                 current_bid.orig_bid_project_uid = refreshed_bid.orig_bid_project_uid
                 current_bid.copy_from_bid_no = refreshed_bid.copy_from_bid_no
@@ -317,6 +321,10 @@ class ProjectDataService:
     ) -> bool:
         if self.model.current_bid_ref != bid_ref:
             return False
+        if self.model.current_bid is not None:
+            metric = self.model.current_bid.measure_base == 1
+            for condition in conditions.values():
+                normalize_condition_uoms_for_system(condition, metric)
         self.model.bid_conditions = dict(conditions)
         self.model.bid_condition_folders = dict(folders)
         return True

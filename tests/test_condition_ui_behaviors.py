@@ -977,7 +977,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions,
+            ),
             ui_state_manager=ui_state,
             workspace_state_model=make_workspace_state_model(),
         )
@@ -1100,7 +1102,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions,
+            ),
             ui_state_manager=ui_state,
             workspace_state_model=make_workspace_state_model(),
         )
@@ -1194,7 +1198,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 delete_conditions=lambda *args: delete_calls.append(args) or True,
             ),
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions,
+            ),
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
             ),
@@ -1287,7 +1293,10 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(get_bid=lambda _ref: bid),
+            project_data=SimpleNamespace(
+                get_bid=lambda _ref: bid,
+                get_bid_conditions=lambda: conditions,
+            ),
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: BidRef("database", "7")
             ),
@@ -1424,7 +1433,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             project_write_service=WriteService(),
             project_read_service=None,
             project_data=SimpleNamespace(
-                get_bid=lambda ref: bid if ref == active_bid[0] else None
+                get_bid=lambda ref: bid if ref == active_bid[0] else None,
+                get_bid_conditions=lambda: conditions,
             ),
             ui_state_manager=SimpleNamespace(
                 get_selected_bid_ref=lambda: active_bid[0]
@@ -1759,6 +1769,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         bid_ref = BidRef("database", "7")
         current_bid = [object()]
         placement_exits = []
+        conditions = {"c1": Condition(uid="c1", name="Condition")}
         sidebar = SimpleNamespace(
             get_condition_name=lambda _uid: "Condition",
             condition_selection_after_delete=lambda _uids: "c2",
@@ -1792,7 +1803,10 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=WriteService(),
             project_read_service=None,
-            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
+            project_data=SimpleNamespace(
+                get_bid=lambda _ref: current_bid[0],
+                get_bid_conditions=lambda: conditions,
+            ),
             ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
             workspace_state_model=make_workspace_state_model(),
         )
@@ -3204,7 +3218,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             def has_license(self):
                 return True
 
-        class Sidebar:
+        class Sidebar(QtCore.QObject):
             def window(self):
                 return None
 
@@ -3620,6 +3634,444 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(queued[0][4].draft_id, "draft-1")
         self.assertEqual([result.success for result in completions], [True])
         self.assertEqual([handle.draft_id for handle in ended_leases], ["draft-2"])
+
+    def test_delayed_condition_editor_lease_does_not_open_after_bid_switch(self):
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        bid_ref = BidRef("database", "1")
+        selected_bid_ref = [bid_ref]
+        original_bid = object()
+        current_bid = [original_bid]
+        lease_callbacks = []
+        ended_leases = []
+        executions = []
+
+        class Access:
+            @staticmethod
+            def is_allowed(_feature):
+                return True
+
+            @staticmethod
+            def has_license():
+                return True
+
+        class Sidebar:
+            @staticmethod
+            def window():
+                return None
+
+            @staticmethod
+            def collect_ordered_condition_uids():
+                return ["c1"]
+
+        class ProjectData:
+            @staticmethod
+            def is_current_bid_locked():
+                return False
+
+            @staticmethod
+            def get_bid_conditions():
+                return {"c1": condition}
+
+            @staticmethod
+            def get_all_takeoffs():
+                return []
+
+            @staticmethod
+            def get_current_bid():
+                return SimpleNamespace(measure_base=0)
+
+            @staticmethod
+            def get_cdn_types():
+                return {}
+
+            @staticmethod
+            def get_bid_layer_snapshot():
+                return []
+
+            @staticmethod
+            def get_layer_uids_in_use():
+                return set()
+
+            @staticmethod
+            def get_bid(_bid_ref):
+                return current_bid[0]
+
+        class Dialog(QtWidgets.QDialog):
+            condition_navigated = QtCore.Signal(str)
+
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+
+            @staticmethod
+            def refresh_condition_data(_conditions):
+                pass
+
+        def request_collaboration_edit(
+            _database_id,
+            _resources,
+            callback,
+            **_kwargs,
+        ):
+            lease_callbacks.append(callback)
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=Sidebar(),
+            main_window=SimpleNamespace(icon_provider=None),
+            event_bus=EventBus(),
+            placement=SimpleNamespace(is_active=False),
+            _is_takeoff_2d_view_active=lambda: True,
+            flush_deferred_for_file=lambda _file_path: True,
+            request_collaboration_edit=request_collaboration_edit,
+            end_collaboration_edit=ended_leases.append,
+            highlight_sidebar=lambda *_args, **_kwargs: None,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: True
+            ),
+            project_read_service=None,
+            project_data=ProjectData(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: selected_bid_ref[0]
+            ),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "EditConditionDialog",
+            Dialog,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "exec_with_ost_blocking",
+            lambda *_args: executions.append(True),
+        ):
+            handler.on_edit_requested(["c1"])
+            self.assertEqual(len(lease_callbacks), 1)
+            selected_bid_ref[0] = BidRef("database", "2")
+            handle = EditLeaseHandle(
+                database_id="database",
+                draft_id="late-condition-edit",
+                runtime_generation=1,
+                operation_id="edit-condition-dialog",
+                owning_surface="condition-sidebar",
+                resources=(ResourceRef("condition", "c1", 1),),
+            )
+            lease_callbacks[0](EditLeaseResult(True, handle=handle))
+        self.assertEqual(executions, [])
+        self.assertEqual(ended_leases, [handle])
+
+    def test_open_condition_editor_rejects_same_uid_condition_replacement(self):
+        original = Condition(uid="c1", name="Original", ref_no=1)
+        conditions = [{"c1": original}]
+        writes = []
+        save_results = []
+        bid_ref = BidRef("database", "1")
+
+        class Sidebar(QtCore.QObject):
+            @staticmethod
+            def window():
+                return None
+
+            @staticmethod
+            def collect_ordered_condition_uids():
+                return ["c1"]
+
+        class Dialog:
+            condition_navigated = SimpleNamespace(connect=lambda _callback: None)
+
+            def __init__(self, *args, save_fn, **kwargs):
+                self.save_fn = save_fn
+
+            @staticmethod
+            def refresh_condition_data(_conditions):
+                pass
+
+            @staticmethod
+            def deleteLater():
+                pass
+
+        project_data = SimpleNamespace(
+            is_current_bid_locked=lambda: False,
+            get_bid_conditions=lambda: conditions[0],
+            get_all_takeoffs=lambda: [],
+            get_current_bid=lambda: SimpleNamespace(measure_base=0),
+        )
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda _feature: True,
+                has_license=lambda: True,
+            ),
+            conditions_sidebar=Sidebar(),
+            main_window=SimpleNamespace(icon_provider=None),
+            event_bus=EventBus(),
+            placement=SimpleNamespace(is_active=False),
+            _is_takeoff_2d_view_active=lambda: True,
+            flush_deferred_for_file=lambda _file_path: True,
+            request_collaboration_edit=lambda _database_id, _resources, callback, **_kw: (
+                callback(
+                    EditLeaseResult(
+                        True,
+                        handle=EditLeaseHandle(
+                            database_id="database",
+                            draft_id="condition-editor",
+                            runtime_generation=1,
+                            operation_id="edit-condition-dialog",
+                            owning_surface="condition-sidebar",
+                            resources=(ResourceRef("condition", "c1", 1),),
+                        ),
+                    )
+                )
+            ),
+            highlight_sidebar=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                update_condition=lambda *args: (
+                    writes.append(args) or UpdateConditionResultDto(success=True)
+                ),
+            ),
+            project_read_service=SimpleNamespace(
+                get_cdn_types=lambda _file_path: {},
+                get_merged_bid_layers=lambda _file_path, _bid_uid: [],
+            ),
+            project_data=project_data,
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def execute(dialog, _event_bus):
+            conditions[0] = {"c1": Condition(uid="c1", name="Replacement", ref_no=1)}
+            save_results.append(
+                dialog.save_fn("c1", UpdateConditionDto({"name": "Edited"}))
+            )
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "EditConditionDialog",
+            Dialog,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "exec_with_ost_blocking",
+            execute,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "delete_later_if_valid",
+            lambda _dialog: None,
+        ):
+            handler.on_edit_requested(["c1"])
+        self.assertFalse(save_results[0].success)
+        self.assertEqual(writes, [])
+
+    def test_create_condition_dialog_rejects_same_uid_bid_replacement(self):
+        bid_ref = BidRef("database", "1")
+        current_bid = [SimpleNamespace(measure_base=0)]
+        writes = []
+        save_results = []
+
+        class Sidebar(QtCore.QObject):
+            @staticmethod
+            def window():
+                return None
+
+        class Dialog:
+            def __init__(self, *args, save_fn, **kwargs):
+                self.save_fn = save_fn
+                self._dirty = False
+
+            @staticmethod
+            def set_apply_allowed(_allowed):
+                pass
+
+            @staticmethod
+            def deleteLater():
+                pass
+
+        project_data = SimpleNamespace(
+            get_bid=lambda _bid_ref: current_bid[0],
+            get_current_bid=lambda: current_bid[0],
+        )
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=Sidebar(),
+            main_window=SimpleNamespace(icon_provider=None),
+            event_bus=EventBus(),
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                create_condition_result=lambda *args: (
+                    writes.append(args)
+                    or SimpleNamespace(
+                        write_success=True,
+                        value="new-condition",
+                        refresh_failed=False,
+                    )
+                ),
+            ),
+            project_read_service=SimpleNamespace(
+                get_cdn_types=lambda _file_path: {},
+                get_merged_bid_layers=lambda _file_path, _bid_uid: [],
+            ),
+            project_data=project_data,
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def execute(dialog, _event_bus):
+            current_bid[0] = SimpleNamespace(measure_base=0)
+            save_results.append(
+                dialog.save_fn("__new__", UpdateConditionDto({"name": "New Condition"}))
+            )
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "EditConditionDialog",
+            Dialog,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "exec_with_ost_blocking",
+            execute,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "delete_later_if_valid",
+            lambda _dialog: None,
+        ):
+            handler.on_create_requested("")
+        self.assertFalse(save_results[0].success)
+        self.assertEqual(writes, [])
+
+    def test_condition_delete_confirmation_rejects_same_uid_replacement(self):
+        original = Condition(uid="c1", name="Original", ref_no=1)
+        conditions = [{"c1": original}]
+        writes = []
+        bid_ref = BidRef("database", "1")
+        sidebar = SimpleNamespace(
+            get_condition_name=lambda uid: conditions[0][uid].name,
+            window=lambda: None,
+            condition_selection_after_delete=lambda _uids: None,
+        )
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=sidebar,
+            flush_deferred_for_file=lambda _file_path: True,
+            placement=SimpleNamespace(force_exit=lambda: None),
+            ensure_select_mode=lambda: None,
+            highlight_sidebar=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                delete_conditions=lambda *args: writes.append(args) or True,
+            ),
+            project_read_service=None,
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions[0],
+            ),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def replace_during_confirmation(_parent, _names):
+            conditions[0] = {"c1": Condition(uid="c1", name="Replacement", ref_no=1)}
+            return ["c1"]
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_delete_conditions",
+            replace_during_confirmation,
+        ):
+            handler.on_delete_requested(["c1"])
+        self.assertEqual(writes, [])
+
+    def test_condition_folder_delete_confirmation_rejects_same_uid_replacement(self):
+        folders = [{"f1": BidConditionFolder(uid="f1", name="Original")}]
+        writes = []
+        bid_ref = BidRef("database", "1")
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=SimpleNamespace(window=lambda: None),
+            flush_deferred_for_file=lambda _file_path: True,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                validate_condition_folder_delete=lambda *_args: SimpleNamespace(
+                    blocked_uids=()
+                ),
+                delete_condition_folders_result=lambda *args: (
+                    writes.append(args)
+                    or SimpleNamespace(write_success=True, refresh_failed=False)
+                ),
+            ),
+            project_read_service=None,
+            project_data=SimpleNamespace(
+                get_bid_condition_folders=lambda: folders[0],
+            ),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def replace_during_confirmation(*_args, **_kwargs):
+            folders[0] = {"f1": BidConditionFolder(uid="f1", name="Replacement")}
+            return [("Original", "f1")]
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_multi_delete",
+            replace_during_confirmation,
+        ):
+            handler.on_folder_delete_requested(["f1"])
+        self.assertEqual(writes, [])
+
+    def test_condition_renumber_confirmation_rejects_same_uid_replacement(self):
+        conditions = [{"c1": Condition(uid="c1", name="Original", ref_no=1)}]
+        writes = []
+        bid_ref = BidRef("database", "1")
+        sidebar = SimpleNamespace(
+            collect_ordered_condition_uids=lambda: ["c1"],
+            window=lambda: None,
+        )
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=sidebar,
+            flush_deferred_for_file=lambda _file_path: True,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                renumber_conditions=lambda *args: writes.append(args) or True,
+            ),
+            project_read_service=None,
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions[0],
+            ),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def replace_during_confirmation(*_args, **_kwargs):
+            conditions[0] = {"c1": Condition(uid="c1", name="Replacement", ref_no=1)}
+            return True
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler.confirm",
+            replace_during_confirmation,
+        ):
+            handler.on_renumber_requested()
+        self.assertEqual(writes, [])
 
     def test_count_attachment_advanced_properties_show_only_display_name(self):
         condition = Condition(

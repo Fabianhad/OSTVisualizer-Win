@@ -1,5 +1,6 @@
-from typing import Optional
+from typing import List, Optional
 from ...database.bid_owned_identity import (
+    BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE,
     require_existing_unique_bid_owned_uid_matches,
     require_single_bid_scope_for_uids,
     require_unique_bid_owned_uid_matches,
@@ -217,7 +218,13 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                 )
             return True
 
-    def update_all_layers_show(self, db_path: str, bid_uid: str, show: bool) -> bool:
+    def update_all_layers_show(
+        self,
+        db_path: str,
+        bid_uid: str,
+        show: bool,
+        layer_uids: Optional[List[str]] = None,
+    ) -> bool:
         show_value = -1 if show else 0
         with self._connection(db_path) as conn:
             schema = self._schema(conn)
@@ -229,6 +236,75 @@ class LayerOperationsMixin(AccessIdentityAllocationMixin):
                 template_filter = " OR ([IsTemplate] <> 0 AND [IsLocked] <> 0)"
             cursor = conn.cursor()
             require_existing_unique_bid_owned_uid_matches(cursor, "Bids", (bid_uid,))
+            if layer_uids is not None:
+                normalized_uids = []
+                seen_uids = set()
+                for layer_uid in layer_uids:
+                    layer_uid_int = int(layer_uid)
+                    if layer_uid_int in seen_uids:
+                        continue
+                    seen_uids.add(layer_uid_int)
+                    normalized_uids.append(layer_uid_int)
+                if not normalized_uids:
+                    return True
+                chunks = [
+                    normalized_uids[start : start + BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE]
+                    for start in range(
+                        0,
+                        len(normalized_uids),
+                        BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE,
+                    )
+                ]
+                for chunk in chunks:
+                    placeholders = ", ".join("?" for _uid in chunk)
+                    cursor.execute(
+                        "SELECT [UID] FROM [BidLayers] "
+                        f"WHERE [UID] IN ({placeholders}) AND "
+                        f"([BidUID] = ?{template_filter})",
+                        *chunk,
+                        int(bid_uid),
+                    )
+                    eligible_uid_rows = [int(row[0]) for row in cursor.fetchall()]
+                    if len(eligible_uid_rows) != len(chunk) or set(
+                        eligible_uid_rows
+                    ) != set(chunk):
+                        return False
+                for chunk in chunks:
+                    placeholders = ", ".join("?" for _uid in chunk)
+                    cursor.execute(
+                        "UPDATE [BidLayers] SET [Show] = ? "
+                        f"WHERE [UID] IN ({placeholders}) AND "
+                        f"([BidUID] = ?{template_filter})",
+                        show_value,
+                        *chunk,
+                        int(bid_uid),
+                    )
+                    affected_rows = int(cursor.rowcount)
+                    if affected_rows >= 0 and affected_rows != len(chunk):
+                        raise RuntimeError(
+                            "The bulk Layer visibility update affected "
+                            f"{affected_rows} of {len(chunk)} captured Layers in "
+                            f"a {len(normalized_uids)}-Layer operation."
+                        )
+                    if affected_rows < 0:
+                        cursor.execute(
+                            "SELECT [UID] FROM [BidLayers] "
+                            f"WHERE [UID] IN ({placeholders}) AND [Show] = ? AND "
+                            f"([BidUID] = ?{template_filter})",
+                            *chunk,
+                            show_value,
+                            int(bid_uid),
+                        )
+                        verified_uid_rows = [int(row[0]) for row in cursor.fetchall()]
+                        if len(verified_uid_rows) != len(chunk) or set(
+                            verified_uid_rows
+                        ) != set(chunk):
+                            raise RuntimeError(
+                                "The bulk Layer visibility update could verify only "
+                                f"{len(verified_uid_rows)} of {len(chunk)} captured Layers "
+                                f"in a {len(normalized_uids)}-Layer operation."
+                            )
+                return True
             cursor.execute(
                 "UPDATE [BidLayers] SET [Show] = ? "
                 f"WHERE [BidUID] = ?{template_filter}",

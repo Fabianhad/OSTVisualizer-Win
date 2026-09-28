@@ -536,6 +536,35 @@ def check_cpp_extensions():
 
 
 # ---------------------------------------------------------------------------
+# 7. Reflection policy
+# ---------------------------------------------------------------------------
+FORBIDDEN_REFLECTION_CALLS = {"getattr", "setattr", "hasattr"}
+
+
+def check_reflection_calls():
+    for py_file in iter_py_files(OST_ROOT):
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = None
+            if isinstance(node.func, ast.Name):
+                call_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                call_name = node.func.attr
+            if call_name in FORBIDDEN_REFLECTION_CALLS:
+                add(
+                    "reflection",
+                    py_file,
+                    node.lineno,
+                    f"Production code must not call {call_name}().",
+                )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -548,6 +577,7 @@ def main():
         ("Interface naming", check_interface_naming),
         ("Logging rules", check_logging),
         ("C++ extensions", check_cpp_extensions),
+        ("Reflection policy", check_reflection_calls),
     ]
     for name, fn in checks:
         count_before = len(violations)

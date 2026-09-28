@@ -230,6 +230,9 @@ class RemoteChangeReconciliationService:
                     AppEvents.REMOTE_HIERARCHY_CHANGED,
                     database_id=batch.database_id,
                     defer_plan_projection=projection_barrier is not None,
+                    condition_family_projected=(
+                        conditions is not None and folders is not None
+                    ),
                 )
         self._publish_database_settings_changed(hydrated)
         condition_changes = tuple(

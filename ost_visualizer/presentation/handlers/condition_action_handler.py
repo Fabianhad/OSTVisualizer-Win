@@ -143,6 +143,30 @@ class ConditionActionHandler:
             and self._project_data.get_bid(bid_ref) is bid_owner
         )
 
+    def _capture_resource_owners(
+        self,
+        resources: dict[str, object],
+        resource_uids,
+    ) -> dict[str, object]:
+        owners = {
+            str(uid): resources.get(str(uid)) for uid in resource_uids if str(uid)
+        }
+        if any(owner is None for owner in owners.values()):
+            return {}
+        return owners
+
+    def _resource_owners_are_current(
+        self,
+        bid_ref,
+        owners: dict[str, object],
+        current: dict[str, object],
+    ) -> bool:
+        if not self._is_current_bid(bid_ref):
+            return False
+        return bool(owners) and all(
+            current.get(uid) is owner for uid, owner in owners.items()
+        )
+
     def _bid_interaction_still_allowed(
         self,
         bid_ref,
@@ -392,9 +416,32 @@ class ConditionActionHandler:
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:
             return
+        bid_owner = self._capture_bid_owner(bid_ref)
+        if bid_owner is None:
+            return
         sidebar = self._coordinator.conditions_sidebar
         if not sidebar:
             return
+        folder_owners = (
+            self._capture_resource_owners(
+                self._project_data.get_bid_condition_folders(), (folder_uid,)
+            )
+            if folder_uid
+            else None
+        )
+        if folder_owners == {}:
+            return
+
+        def create_owner_is_current() -> bool:
+            return self._bid_owner_is_current(bid_ref, bid_owner) and (
+                not folder_uid
+                or self._resource_owners_are_current(
+                    bid_ref,
+                    folder_owners,
+                    self._project_data.get_bid_condition_folders(),
+                )
+            )
+
         uses_sql_queue = self._uses_sql_queue(bid_ref)
         cdn_types = (
             self._project_data.get_cdn_types()
@@ -507,7 +554,10 @@ class ConditionActionHandler:
             return spec
 
         def save_new_condition(_cond_uid, dto):
-            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+            if (
+                not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION)
+                or not create_owner_is_current()
+            ):
                 return UpdateConditionResultDto(
                     success=False,
                     error="The active bid or edit access changed.",
@@ -530,7 +580,10 @@ class ConditionActionHandler:
             )
 
         def save_new_condition_async(_cond_uid, dto, completed) -> bool:
-            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+            if (
+                not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION)
+                or not create_owner_is_current()
+            ):
                 completed(
                     UpdateConditionResultDto(
                         success=False,
@@ -630,7 +683,7 @@ class ConditionActionHandler:
             exec_with_ost_blocking(dialog, self._coordinator.event_bus)
         finally:
             delete_later_if_valid(dialog)
-        if not isValid(sidebar) or self._ui_state.get_selected_bid_ref() != bid_ref:
+        if not isValid(sidebar) or not create_owner_is_current():
             return
         if created_refresh_failed[0]:
             show_warning(
@@ -1067,11 +1120,22 @@ class ConditionActionHandler:
         sidebar = self._coordinator.conditions_sidebar
         if not sidebar:
             return
+        condition_owners = self._capture_resource_owners(
+            self._project_data.get_bid_conditions(), condition_uids
+        )
+        if condition_owners == {}:
+            return
         names = [(uid, sidebar.get_condition_name(uid)) for uid in condition_uids]
         confirmed_uids = confirm_delete_conditions(sidebar.window(), names)
         if not confirmed_uids:
             return
-        if not self._action_still_allowed(bid_ref, Feature.DELETE_CONDITION):
+        if not self._action_still_allowed(
+            bid_ref, Feature.DELETE_CONDITION
+        ) or not self._resource_owners_are_current(
+            bid_ref,
+            condition_owners,
+            self._project_data.get_bid_conditions(),
+        ):
             return
         replacement_uid = sidebar.condition_selection_after_delete(confirmed_uids)
         if not self._flush_deferred_for_bid(bid_ref):
@@ -1140,6 +1204,11 @@ class ConditionActionHandler:
         ordered_uids = sidebar.collect_ordered_condition_uids()
         if not ordered_uids:
             return
+        condition_owners = self._capture_resource_owners(
+            self._project_data.get_bid_conditions(), ordered_uids
+        )
+        if condition_owners == {}:
+            return
         if not confirm(
             sidebar.window(),
             "Renumber Conditions",
@@ -1147,7 +1216,13 @@ class ConditionActionHandler:
             "This cannot be undone",
         ):
             return
-        if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+        if not self._action_still_allowed(
+            bid_ref, Feature.EDIT_CONDITION
+        ) or not self._resource_owners_are_current(
+            bid_ref,
+            condition_owners,
+            self._project_data.get_bid_conditions(),
+        ):
             return
         if not self._flush_deferred_for_bid(bid_ref):
             return
@@ -1324,6 +1399,11 @@ class ConditionActionHandler:
             return
         if not self._flush_deferred_for_bid(bid_ref):
             return
+        folder_owners = self._capture_resource_owners(
+            self._project_data.get_bid_condition_folders(), folder_uids
+        )
+        if folder_owners == {}:
+            return
         validation = write_service.validate_condition_folder_delete(
             bid_ref.file_path, bid_ref.bid_uid, folder_uids
         )
@@ -1342,7 +1422,13 @@ class ConditionActionHandler:
         )
         if not to_delete:
             return
-        if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION_STRUCTURE):
+        if not self._action_still_allowed(
+            bid_ref, Feature.EDIT_CONDITION_STRUCTURE
+        ) or not self._resource_owners_are_current(
+            bid_ref,
+            folder_owners,
+            self._project_data.get_bid_condition_folders(),
+        ):
             return
         delete_uids = [uid for _, uid in to_delete]
         if self._uses_sql_queue(bid_ref):
@@ -1511,6 +1597,33 @@ class ConditionActionHandler:
         if not selected_conds:
             return
         ordered_uids = sidebar.collect_ordered_condition_uids()
+        condition_owners = self._capture_resource_owners(
+            self._project_data.get_bid_conditions(), ordered_uids
+        )
+        if condition_owners == {}:
+            return
+
+        def dialog_owner_is_current() -> bool:
+            return self._resource_owners_are_current(
+                bid_ref,
+                condition_owners,
+                self._project_data.get_bid_conditions(),
+            )
+
+        def advance_dialog_owner_after_save(condition_uid: str) -> bool:
+            if not self._is_current_bid(bid_ref):
+                return False
+            current = self._project_data.get_bid_conditions()
+            condition_uid = str(condition_uid)
+            replacement = current.get(condition_uid)
+            if replacement is None or any(
+                uid != condition_uid and current.get(uid) is not owner
+                for uid, owner in condition_owners.items()
+            ):
+                return False
+            condition_owners[condition_uid] = replacement
+            return True
+
         bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
         edit_resources = tuple(
             ResourceRef("condition", uid, bid_uid) for uid in ordered_uids
@@ -1573,7 +1686,10 @@ class ConditionActionHandler:
             return cond_uid in cond_uids_with_takeoffs
 
         def save_condition(cond_uid, dto):
-            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+            if (
+                not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION)
+                or not dialog_owner_is_current()
+            ):
                 return UpdateConditionResultDto(
                     success=False,
                     error="The active bid or edit access changed.",
@@ -1589,16 +1705,19 @@ class ConditionActionHandler:
                     cond_uid,
                     dto,
                 )
-                if result.success:
+                if result.success and advance_dialog_owner_after_save(cond_uid):
                     dialog.refresh_condition_data(
                         self._project_data.get_bid_conditions()
                     )
-            if result.success:
+            if result.success and dialog_owner_is_current():
                 self._coordinator.highlight_sidebar({cond_uid})
             return result
 
         def save_condition_async(cond_uid, dto, completed) -> bool:
-            if not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION):
+            if (
+                not self._action_still_allowed(bid_ref, Feature.EDIT_CONDITION)
+                or not dialog_owner_is_current()
+            ):
                 completed(
                     UpdateConditionResultDto(
                         success=False,
@@ -1636,7 +1755,7 @@ class ConditionActionHandler:
                 )
 
             def mutation_completed(success: bool, error=None) -> None:
-                if success:
+                if success and advance_dialog_owner_after_save(cond_uid):
                     dialog.refresh_condition_data(
                         self._project_data.get_bid_conditions()
                     )
@@ -1690,6 +1809,8 @@ class ConditionActionHandler:
         )
 
         def _on_navigated(uid):
+            if not dialog_owner_is_current():
+                return
             self._coordinator.highlight_sidebar({uid})
             if (
                 self._coordinator.placement.is_active
@@ -1703,7 +1824,7 @@ class ConditionActionHandler:
 
         def resolved(result: EditLeaseResult) -> None:
             try:
-                if result.granted:
+                if result.granted and dialog_owner_is_current():
                     exec_with_ost_blocking(dialog, self._coordinator.event_bus)
             finally:
                 if lease_session is not None:

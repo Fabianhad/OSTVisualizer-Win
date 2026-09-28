@@ -4,6 +4,7 @@ from types import MappingProxyType
 from typing import Dict, List, Optional
 from ....application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ....application.dtos.update_condition_dto import UpdateConditionDto
+from ....domain.services.uom_service import normalize_uoms_for_calculations
 from ...database.bid_owned_identity import (
     require_existing_bid_scoped_uid_match,
     require_existing_bid_scoped_uid_matches,
@@ -152,6 +153,16 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                 require_existing_unique_bid_owned_uid_matches(
                     cursor, "Bids", (destination_bid_uid,)
                 )
+                metric = False
+                if schema.column_exists("Bids", "MeasureBase"):
+                    cursor.execute(
+                        "SELECT [MeasureBase] FROM [Bids] WHERE [UID] = ?",
+                        int(destination_bid_uid),
+                    )
+                    measure_base_row = cursor.fetchone()
+                    metric = bool(
+                        measure_base_row and int(measure_base_row[0] or 0) == 1
+                    )
                 require_existing_bid_scoped_uid_matches(
                     cursor, "BidConditions", ordered_uids, source_bid_uid
                 )
@@ -182,6 +193,21 @@ class ConditionOperationsMixin(AccessIdentityAllocationMixin):
                     for col in self._CONDITION_CROSS_BID_CLEAR_COLUMNS:
                         if col in row_data:
                             row_data[col] = None
+                    normalized_uoms = normalize_uoms_for_calculations(
+                        tuple(
+                            int(row_data.get(f"Quantity{index}") or 0)
+                            for index in range(1, 4)
+                        ),
+                        tuple(
+                            int(row_data.get(f"UOM{index}") or 0)
+                            for index in range(1, 4)
+                        ),
+                        metric,
+                    )
+                    for index, uom_code in enumerate(normalized_uoms, start=1):
+                        key = f"UOM{index}"
+                        if key in row_data:
+                            row_data[key] = uom_code
                     values = []
                     for c in cols:
                         val = row_data[c]

@@ -3553,12 +3553,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 creator._ensure_snapshot_isolation(location, "")
         disable_snapshot.assert_called_once_with(location, "")
 
-    def test_exception_note_helper_is_safe_without_python_311_api(self):
-        class ExceptionWithoutNotes(RuntimeError):
-            add_note = None
-
-        exception_without_add_note = ExceptionWithoutNotes("initialization failed")
-        _add_exception_note(exception_without_add_note, "cleanup failed")
+    def test_exception_note_helper_uses_base_exception_contract(self):
         modern_exception = RuntimeError("initialization failed")
         _add_exception_note(modern_exception, "cleanup failed")
         self.assertIn("cleanup failed", modern_exception.__notes__)

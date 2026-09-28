@@ -3,6 +3,7 @@ import os
 import unittest
 import uuid
 from contextlib import nullcontext
+from itertools import permutations, product
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -27,6 +28,7 @@ from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
@@ -110,6 +112,26 @@ class FakeProjectWriteService:
             )
         )
         return "update_layer_show" not in self.fail_methods
+
+    def update_all_layers_show(
+        self,
+        db_path,
+        bid_uid,
+        show,
+        layer_uids,
+        publish_database_refreshed_after_write=True,
+    ):
+        self.calls.append(
+            (
+                "all_layers_show",
+                db_path,
+                bid_uid,
+                show,
+                list(layer_uids),
+                publish_database_refreshed_after_write,
+            )
+        )
+        return "update_all_layers_show" not in self.fail_methods
 
     def save_page_show_mode(
         self,
@@ -316,6 +338,339 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             ],
         )
 
+    def test_sql_all_layers_visibility_uses_one_queued_bulk_setting(self):
+        self.service.queue_sql_settings = True
+        for show in (False, True):
+            with self.subTest(show=show):
+                self.manager.schedule_all_layers_show("sql-db", "7", show, ["layer-1"])
+                self.assertEqual(self.manager.pending_count, 1)
+                self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.queued_settings,
+            [
+                ("sql-db", "7", "all_layers_show", [False, ["layer-1"]]),
+                ("sql-db", "7", "all_layers_show", [True, ["layer-1"]]),
+            ],
+        )
+        self.assertEqual(len(self.service.queued_setting_callbacks), 2)
+
+    def test_mdb_bulk_layer_visibility_captures_layer_uids_at_schedule_time(self):
+        layer_uids = ["layer-1"]
+        self.manager.schedule_all_layers_show("a.mdb", "7", False, layer_uids)
+        layer_uids[:] = ["layer-2"]
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [
+                (
+                    "all_layers_show",
+                    "a.mdb",
+                    "7",
+                    False,
+                    ["layer-1"],
+                    False,
+                )
+            ],
+        )
+
+    def test_failed_mdb_bulk_layer_visibility_restores_optimistic_state(self):
+        self.service.fail_methods.add("update_all_layers_show")
+        visibility = {"layer-1": True, "layer-2": True}
+        self.manager.schedule_all_layers_show(
+            "a.mdb",
+            "7",
+            False,
+            list(visibility),
+            restore_authoritative=lambda: visibility.update(
+                {"layer-1": True, "layer-2": True}
+            ),
+            project_value=lambda: visibility.update(
+                {"layer-1": False, "layer-2": False}
+            ),
+        )
+        visibility.update({"layer-1": False, "layer-2": False})
+        self.assertFalse(self.manager.flush())
+        self.assertEqual(visibility, {"layer-1": True, "layer-2": True})
+        self.service.fail_methods.remove("update_all_layers_show")
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(visibility, {"layer-1": False, "layer-2": False})
+
+    def test_newer_mdb_bulk_success_supersedes_failed_individual_retry(self):
+        self.service.fail_methods.add("update_layer_show")
+        visibility = {"layer-1": True}
+        self.manager.schedule_layer_show(
+            "a.mdb",
+            "layer-1",
+            False,
+            restore_authoritative=lambda: visibility.update({"layer-1": True}),
+            project_value=lambda: visibility.update({"layer-1": False}),
+        )
+        visibility["layer-1"] = False
+        self.manager.schedule_all_layers_show(
+            "a.mdb",
+            "7",
+            True,
+            ["layer-1"],
+            restore_authoritative=lambda: visibility.update({"layer-1": False}),
+            project_value=lambda: visibility.update({"layer-1": True}),
+        )
+        visibility["layer-1"] = True
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(visibility, {"layer-1": True})
+        self.assertEqual(self.manager.pending_count, 0)
+        calls = list(self.service.calls)
+        self.service.fail_methods.clear()
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(self.service.calls, calls)
+
+    def test_newer_mdb_individual_success_supersedes_failed_bulk_retry(self):
+        self.service.fail_methods.add("update_all_layers_show")
+        visibility = {"layer-1": True}
+        self.manager.schedule_all_layers_show(
+            "a.mdb",
+            "7",
+            False,
+            ["layer-1"],
+            restore_authoritative=lambda: visibility.update({"layer-1": True}),
+            project_value=lambda: visibility.update({"layer-1": False}),
+        )
+        visibility["layer-1"] = False
+        self.manager.schedule_layer_show(
+            "a.mdb",
+            "layer-1",
+            True,
+            restore_authoritative=lambda: visibility.update({"layer-1": False}),
+            project_value=lambda: visibility.update({"layer-1": True}),
+        )
+        visibility["layer-1"] = True
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(visibility, {"layer-1": True})
+        self.assertEqual(self.manager.pending_count, 0)
+        calls = list(self.service.calls)
+        self.service.fail_methods.clear()
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(self.service.calls, calls)
+
+    def test_transitive_success_discards_only_overlapping_failed_retries(self):
+        failed_layer_uids = {"layer-1"}
+
+        def update_layer_show(
+            db_path,
+            layer_uid,
+            show,
+            publish_database_refreshed_after_write=True,
+        ):
+            self.service.calls.append(
+                (
+                    "layer_show",
+                    db_path,
+                    layer_uid,
+                    show,
+                    publish_database_refreshed_after_write,
+                )
+            )
+            return layer_uid not in failed_layer_uids
+
+        self.service.update_layer_show = update_layer_show
+        self.service.fail_methods.add("update_all_layers_show")
+        visibility = {"layer-1": True, "layer-2": False}
+        self.manager.schedule_layer_show(
+            "a.mdb",
+            "layer-1",
+            False,
+            restore_authoritative=lambda: visibility.update({"layer-1": True}),
+            project_value=lambda: visibility.update({"layer-1": False}),
+        )
+        visibility["layer-1"] = False
+        self.manager.schedule_all_layers_show(
+            "a.mdb",
+            "7",
+            True,
+            ["layer-1", "layer-2"],
+            restore_authoritative=lambda: visibility.update(
+                {"layer-1": False, "layer-2": False}
+            ),
+            project_value=lambda: visibility.update({"layer-1": True, "layer-2": True}),
+        )
+        visibility.update({"layer-1": True, "layer-2": True})
+        self.manager.schedule_layer_show(
+            "a.mdb",
+            "layer-2",
+            False,
+            restore_authoritative=lambda: visibility.update({"layer-2": True}),
+            project_value=lambda: visibility.update({"layer-2": False}),
+        )
+        visibility["layer-2"] = False
+        self.assertFalse(self.manager.flush())
+        self.assertEqual(visibility, {"layer-1": True, "layer-2": False})
+        self.assertEqual(self.manager.pending_count, 1)
+        failed_layer_uids.clear()
+        self.service.fail_methods.clear()
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(visibility, {"layer-1": False, "layer-2": False})
+        self.assertEqual(self.manager.pending_count, 0)
+
+    def test_empty_bulk_layer_visibility_is_not_scheduled(self):
+        self.assertFalse(self.manager.schedule_all_layers_show("a.mdb", "7", False, []))
+        self.assertEqual(self.manager.pending_count, 0)
+
+    def test_immediate_bulk_queue_rejection_clears_terminal_visual_state(self):
+        projections = []
+        self.service.queue_page_setting_if_sql = lambda *_args, **_kwargs: False
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            restore_authoritative=lambda: projections.append("original"),
+            project_value=lambda: projections.append("disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(projections, ["original"])
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(self.manager._visual_states, {})
+
+    def test_late_bulk_layer_completion_reprojects_newer_bulk_intent(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            restore_authoritative=lambda: projections.append("original"),
+            project_value=lambda: projections.append("disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            True,
+            ["layer-1"],
+            restore_authoritative=lambda: projections.append("stale-original"),
+            project_value=lambda: projections.append("enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        first, second = self.service.queued_setting_callbacks
+        first(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(projections, ["enabled"])
+        second(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(projections[-1], "enabled")
+        self.assertNotIn("disabled", projections)
+        self.assertNotIn("original", projections)
+
+    def test_rejected_bulk_restores_layers_added_to_later_pending_intent(self):
+        self.service.queue_sql_settings = True
+        visibility = {"layer-1": True}
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            restore_authoritative=lambda: visibility.update({"layer-1": True}),
+            project_value=lambda: visibility.update({"layer-1": False}),
+        )
+        visibility["layer-1"] = False
+        self.assertTrue(self.manager.flush())
+        visibility["layer-2"] = True
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-2"],
+            restore_authoritative=lambda: visibility.update({"layer-2": True}),
+            project_value=lambda: visibility.update({"layer-2": False}),
+        )
+        visibility["layer-2"] = False
+        self.assertTrue(self.manager.flush())
+        for callback in self.service.queued_setting_callbacks:
+            callback(
+                QueuedMutationResult(
+                    database_id="sql-db",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.CONFLICT,
+                )
+            )
+        self.assertEqual(visibility, {"layer-1": True, "layer-2": True})
+        self.assertEqual(self.manager.pending_count, 0)
+
+    def test_expanded_bulk_scope_converges_for_every_terminal_order(self):
+        for outcomes in product((False, True), repeat=2):
+            for callback_order in permutations(range(2)):
+                with self.subTest(outcomes=outcomes, callback_order=callback_order):
+                    service = FakeProjectWriteService()
+                    service.queue_sql_settings = True
+                    manager = DeferredPersistenceManager(
+                        service,
+                        _workspace_service(service),
+                        logger_=self.logger,
+                    )
+                    self.addCleanup(manager.cleanup)
+                    visibility = {"layer-1": True}
+                    manager.schedule_all_layers_show(
+                        "sql-db",
+                        "7",
+                        False,
+                        ["layer-1"],
+                        restore_authoritative=lambda: visibility.update(
+                            {"layer-1": True}
+                        ),
+                        project_value=lambda: visibility.update({"layer-1": False}),
+                    )
+                    visibility["layer-1"] = False
+                    self.assertTrue(manager.flush())
+                    visibility["layer-2"] = True
+                    manager.schedule_all_layers_show(
+                        "sql-db",
+                        "7",
+                        False,
+                        ["layer-2"],
+                        restore_authoritative=lambda: visibility.update(
+                            {"layer-2": True}
+                        ),
+                        project_value=lambda: visibility.update({"layer-2": False}),
+                    )
+                    visibility["layer-2"] = False
+                    self.assertTrue(manager.flush())
+                    callbacks = list(service.queued_setting_callbacks)
+                    for index in callback_order:
+                        callbacks[index](
+                            QueuedMutationResult(
+                                database_id="sql-db",
+                                runtime_generation=1,
+                                operation_id=str(uuid.uuid4()),
+                                outcome_status=(
+                                    MutationOutcomeStatus.COMMITTED
+                                    if outcomes[index]
+                                    else MutationOutcomeStatus.CONFLICT
+                                ),
+                            )
+                        )
+                    self.assertEqual(
+                        visibility,
+                        {
+                            "layer-1": not outcomes[0],
+                            "layer-2": not outcomes[1],
+                        },
+                    )
+                    self.assertEqual(manager.pending_count, 0)
+                    manager.cleanup()
+
     def test_sql_visual_failure_waits_for_terminal_result_before_restoring(self):
         self.service.queue_sql_settings = True
         projections = []
@@ -384,6 +739,21 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             "sql-db",
             "layer-1",
             False,
+            restore_authoritative=lambda: None,
+            project_value=lambda: None,
+        )
+        self.manager.invalidate_layer_visual_revisions("sql-db", ["layer-1"])
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(self.service.queued_settings, [])
+
+    def test_remote_layer_reconciliation_cancels_unflushed_bulk_visibility(self):
+        self.service.queue_sql_settings = True
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
             restore_authoritative=lambda: None,
             project_value=lambda: None,
         )
@@ -497,6 +867,123 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertEqual(projections, ["original"])
 
+    def test_page_visual_state_does_not_merge_same_uid_across_bids(self):
+        self.service.queue_sql_settings = True
+        current_bid = {"uid": "bid-a"}
+        values = {"bid-a": 0, "bid-b": 10}
+
+        def project(owner, value):
+            if current_bid["uid"] == owner:
+                values[owner] = value
+
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "shared-page",
+            1,
+            bid_uid="bid-a",
+            restore_authoritative=lambda: project("bid-a", 0),
+            project_value=lambda: project("bid-a", 1),
+        )
+        values["bid-a"] = 1
+        self.assertTrue(self.manager.flush())
+        current_bid["uid"] = "bid-b"
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "shared-page",
+            20,
+            bid_uid="bid-b",
+            restore_authoritative=lambda: project("bid-b", 10),
+            project_value=lambda: project("bid-b", 20),
+        )
+        values["bid-b"] = 20
+        self.assertTrue(self.manager.flush())
+        for callback in self.service.queued_setting_callbacks:
+            callback(
+                QueuedMutationResult(
+                    database_id="sql-db",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.REJECTED,
+                )
+            )
+        self.assertEqual(values["bid-b"], 10)
+
+    def test_cancel_pages_isolates_same_page_uid_in_another_bid(self):
+        self.manager.schedule_page_invert(
+            "sql-db", "shared-page", True, bid_uid="bid-a"
+        )
+        self.manager.schedule_page_invert(
+            "sql-db", "shared-page", False, bid_uid="bid-b"
+        )
+        self.manager.cancel_pages("sql-db", "bid-a", ["shared-page"])
+        self.assertEqual(self.manager.pending_count, 1)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [("page_invert", "sql-db", "shared-page", False)],
+        )
+
+    def test_page_visual_invalidation_isolates_same_uid_in_another_bid(self):
+        projections = []
+        self.manager.schedule_page_invert(
+            "sql-db",
+            "shared-page",
+            True,
+            bid_uid="bid-a",
+            project_value=lambda: projections.append("bid-a"),
+        )
+        self.manager.schedule_page_invert(
+            "sql-db",
+            "shared-page",
+            False,
+            bid_uid="bid-b",
+            project_value=lambda: projections.append("bid-b"),
+        )
+        self.manager.invalidate_page_visual_revisions(
+            "sql-db", ["shared-page"], "bid-a"
+        )
+        self.manager.reproject_newer_page_visual_revisions(
+            "sql-db", ["shared-page"], "bid-b"
+        )
+        self.assertNotIn(
+            ("page_invert", "sql-db", "bid-a", "shared-page"),
+            self.manager._visual_states,
+        )
+        self.assertIn(
+            ("page_invert", "sql-db", "bid-b", "shared-page"),
+            self.manager._visual_states,
+        )
+
+    def test_cancelled_page_visual_state_cannot_own_recreated_page_rollback(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            1,
+            bid_uid="bid-1",
+            restore_authoritative=lambda: projections.append("old-restored"),
+        )
+        self.manager.cancel_pages("sql-db", "bid-1", ["page-1"])
+        self.manager.schedule_page_show_mode(
+            "sql-db",
+            "page-1",
+            2,
+            bid_uid="bid-1",
+            restore_authoritative=lambda: projections.append("new-restored"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.service.queued_setting_callbacks[-1](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(projections, ["new-restored"])
+        self.assertEqual(self.manager._visual_states, {})
+
     def test_sql_visual_out_of_order_completion_keeps_newest_success(self):
         self.service.queue_sql_settings = True
         projections = []
@@ -575,6 +1062,596 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             self.assertTrue(self.manager.flush())
         self.manager.reproject_newer_layer_visual_revisions("sql-db", ["layer-1"])
         self.assertEqual(projections, ["True"])
+
+    def test_local_bulk_completion_reprojects_newer_individual_layer_intent(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            project_value=lambda: projections.append("bulk-disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            True,
+            project_value=lambda: projections.append("layer-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.reproject_newer_layer_visual_revisions("sql-db", ["layer-1"])
+        self.assertEqual(projections, ["layer-enabled"])
+
+    def test_local_layer_completion_reprojects_newer_bulk_layer_intent(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            True,
+            project_value=lambda: projections.append("layer-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            project_value=lambda: projections.append("bulk-disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.reproject_newer_layer_visual_revisions("sql-db", ["layer-1"])
+        self.assertEqual(projections, ["bulk-disabled"])
+
+    def test_rejected_bulk_does_not_overwrite_newer_individual_layer_intent(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            restore_authoritative=lambda: projections.append("bulk-original"),
+            project_value=lambda: projections.append("bulk-disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            True,
+            project_value=lambda: projections.append("layer-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.service.queued_setting_callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(projections, ["bulk-original", "layer-enabled"])
+
+    def test_rejected_individual_does_not_overwrite_newer_bulk_layer_intent(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            True,
+            restore_authoritative=lambda: projections.append("layer-original"),
+            project_value=lambda: projections.append("layer-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            project_value=lambda: projections.append("bulk-disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.service.queued_setting_callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(projections, ["bulk-disabled"])
+
+    def test_rejected_bulk_then_rejected_individual_restores_true_authority(self):
+        self.service.queue_sql_settings = True
+        visible = {"layer-1": True, "layer-2": True}
+
+        def set_all(show):
+            visible.update({layer_uid: show for layer_uid in visible})
+
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1", "layer-2"],
+            restore_authoritative=lambda: set_all(True),
+            project_value=lambda: set_all(False),
+        )
+        set_all(False)
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            True,
+            restore_authoritative=lambda: visible.update({"layer-1": False}),
+            project_value=lambda: visible.update({"layer-1": True}),
+        )
+        visible["layer-1"] = True
+        self.assertTrue(self.manager.flush())
+        bulk_callback, individual_callback = self.service.queued_setting_callbacks
+        bulk_callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        individual_callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(visible, {"layer-1": True, "layer-2": True})
+
+    def test_three_bulk_revisions_converge_for_every_terminal_callback_order(self):
+        commands = (False, True, False)
+        terminal_statuses = (
+            MutationOutcomeStatus.COMMITTED,
+            MutationOutcomeStatus.REJECTED,
+        )
+        for outcomes in product(terminal_statuses, repeat=len(commands)):
+            for callback_order in permutations(range(len(commands))):
+                with self.subTest(outcomes=outcomes, order=callback_order):
+                    service = FakeProjectWriteService()
+                    service.queue_sql_settings = True
+                    manager = DeferredPersistenceManager(
+                        service, _workspace_service(service), logger_=self.logger
+                    )
+                    visible = {"layer-1": True, "layer-2": True}
+
+                    def set_all(show):
+                        visible.update({layer_uid: show for layer_uid in visible})
+
+                    try:
+                        for show in commands:
+                            previous = dict(visible)
+                            manager.schedule_all_layers_show(
+                                "sql-db",
+                                "7",
+                                show,
+                                list(visible),
+                                restore_authoritative=lambda previous=previous: (
+                                    visible.update(previous)
+                                ),
+                                project_value=lambda show=show: set_all(show),
+                            )
+                            set_all(show)
+                            self.assertTrue(manager.flush())
+                        callbacks = list(service.queued_setting_callbacks)
+                        for index in callback_order:
+                            callbacks[index](
+                                QueuedMutationResult(
+                                    database_id="sql-db",
+                                    runtime_generation=1,
+                                    operation_id=str(uuid.uuid4()),
+                                    outcome_status=outcomes[index],
+                                )
+                            )
+                        expected = True
+                        for show, outcome in zip(commands, outcomes):
+                            if outcome == MutationOutcomeStatus.COMMITTED:
+                                expected = show
+                        self.assertEqual(
+                            visible,
+                            {"layer-1": expected, "layer-2": expected},
+                        )
+                        self.assertFalse(
+                            manager.has_all_layers_show_revision("sql-db", "7")
+                        )
+                    finally:
+                        manager.cleanup()
+
+    def test_coalesced_bulk_flush_preserves_mixed_layer_intent_order(self):
+        self.service.queue_sql_settings = True
+        self.manager.schedule_all_layers_show(
+            "sql-db", "7", False, ["layer-1", "layer-2"]
+        )
+        self.manager.schedule_layer_show("sql-db", "layer-1", True)
+        self.manager.schedule_all_layers_show(
+            "sql-db", "7", False, ["layer-1", "layer-2"]
+        )
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.queued_settings,
+            [
+                ("sql-db", "layer-1", "layer_show", [True]),
+                (
+                    "sql-db",
+                    "7",
+                    "all_layers_show",
+                    [False, ["layer-1", "layer-2"]],
+                ),
+            ],
+        )
+
+    def test_coalesced_bulk_and_individual_rejections_restore_original_state(self):
+        self.service.queue_sql_settings = True
+        visible = {"layer-1": True, "layer-2": True}
+
+        def set_all(show):
+            visible.update({layer_uid: show for layer_uid in visible})
+
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            list(visible),
+            restore_authoritative=lambda: set_all(True),
+            project_value=lambda: set_all(False),
+        )
+        set_all(False)
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            True,
+            restore_authoritative=lambda: visible.update({"layer-1": False}),
+            project_value=lambda: visible.update({"layer-1": True}),
+        )
+        visible["layer-1"] = True
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            list(visible),
+            restore_authoritative=lambda: None,
+            project_value=lambda: set_all(False),
+        )
+        set_all(False)
+        self.assertTrue(self.manager.flush())
+        individual_callback, bulk_callback = self.service.queued_setting_callbacks
+        for callback in (bulk_callback, individual_callback):
+            callback(
+                QueuedMutationResult(
+                    database_id="sql-db",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=MutationOutcomeStatus.REJECTED,
+                )
+            )
+        self.assertEqual(visible, {"layer-1": True, "layer-2": True})
+
+    def test_mixed_bulk_and_individual_revisions_converge_for_every_order(self):
+        sequences = (
+            (
+                ("bulk", None, False),
+                ("layer", "layer-1", True),
+                ("layer", "layer-2", True),
+            ),
+            (
+                ("layer", "layer-1", False),
+                ("layer", "layer-2", False),
+                ("bulk", None, True),
+            ),
+        )
+        terminal_statuses = (
+            MutationOutcomeStatus.COMMITTED,
+            MutationOutcomeStatus.REJECTED,
+        )
+        for sequence in sequences:
+            for outcomes in product(terminal_statuses, repeat=len(sequence)):
+                for callback_order in permutations(range(len(sequence))):
+                    with self.subTest(
+                        sequence=sequence, outcomes=outcomes, order=callback_order
+                    ):
+                        service = FakeProjectWriteService()
+                        service.queue_sql_settings = True
+                        manager = DeferredPersistenceManager(
+                            service, _workspace_service(service), logger_=self.logger
+                        )
+                        visible = {"layer-1": True, "layer-2": True}
+                        original = dict(visible)
+                        try:
+                            for kind, layer_uid, show in sequence:
+                                if kind == "bulk":
+                                    previous = dict(visible)
+                                    manager.schedule_all_layers_show(
+                                        "sql-db",
+                                        "7",
+                                        show,
+                                        list(visible),
+                                        restore_authoritative=(
+                                            lambda previous=previous: visible.update(
+                                                previous
+                                            )
+                                        ),
+                                        project_value=(
+                                            lambda show=show: visible.update(
+                                                {uid: show for uid in tuple(visible)}
+                                            )
+                                        ),
+                                    )
+                                    visible.update(
+                                        {uid: show for uid in tuple(visible)}
+                                    )
+                                else:
+                                    previous = visible[layer_uid]
+                                    manager.schedule_layer_show(
+                                        "sql-db",
+                                        layer_uid,
+                                        show,
+                                        restore_authoritative=(
+                                            lambda layer_uid=layer_uid, previous=previous: (
+                                                visible.update({layer_uid: previous})
+                                            )
+                                        ),
+                                        project_value=(
+                                            lambda layer_uid=layer_uid, show=show: (
+                                                visible.update({layer_uid: show})
+                                            )
+                                        ),
+                                    )
+                                    visible[layer_uid] = show
+                                self.assertTrue(manager.flush())
+                            callbacks = list(service.queued_setting_callbacks)
+                            for index in callback_order:
+                                callbacks[index](
+                                    QueuedMutationResult(
+                                        database_id="sql-db",
+                                        runtime_generation=1,
+                                        operation_id=str(uuid.uuid4()),
+                                        outcome_status=outcomes[index],
+                                    )
+                                )
+                            expected = dict(original)
+                            for operation, outcome in zip(sequence, outcomes):
+                                if outcome != MutationOutcomeStatus.COMMITTED:
+                                    continue
+                                kind, layer_uid, show = operation
+                                if kind == "bulk":
+                                    expected.update(
+                                        {uid: show for uid in tuple(expected)}
+                                    )
+                                else:
+                                    expected[layer_uid] = show
+                            self.assertEqual(visible, expected)
+                        finally:
+                            manager.cleanup()
+
+    def test_bulk_unknown_and_projection_failed_wait_for_one_terminal_recovery(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1", "layer-2"],
+            restore_authoritative=lambda: projections.append("restored"),
+            project_value=lambda: projections.append("projected"),
+        )
+        self.assertTrue(self.manager.flush())
+        callback = self.service.queued_setting_callbacks[0]
+        for status in (
+            MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
+            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+        ):
+            callback(
+                QueuedMutationResult(
+                    database_id="sql-db",
+                    runtime_generation=1,
+                    operation_id=str(uuid.uuid4()),
+                    outcome_status=status,
+                    commit_attempted=True,
+                )
+            )
+            self.assertTrue(self.manager.has_all_layers_show_revision("sql-db", "7"))
+            self.assertEqual(projections, [])
+        callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(projections, ["projected"])
+        self.assertFalse(self.manager.has_all_layers_show_revision("sql-db", "7"))
+        self.assertEqual(len(self.service.queued_settings), 1)
+
+    def test_old_bulk_callback_cannot_touch_reopened_database_state(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-1"],
+            restore_authoritative=lambda: projections.append("old-restored"),
+            project_value=lambda: projections.append("old-projected"),
+        )
+        self.assertTrue(self.manager.flush())
+        old_callback = self.service.queued_setting_callbacks[-1]
+        self.manager.cancel_for_file("sql-db")
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            True,
+            ["layer-1"],
+            restore_authoritative=lambda: projections.append("new-restored"),
+            project_value=lambda: projections.append("new-projected"),
+        )
+        self.assertTrue(self.manager.flush())
+        new_callback = self.service.queued_setting_callbacks[-1]
+        old_callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(projections, [])
+        new_callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=2,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(projections, ["new-projected"])
+
+    def test_failed_bulk_does_not_reconcile_disjoint_bid_bulk_state(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["bid-7-layer"],
+            restore_authoritative=lambda: projections.append("bid-7-restored"),
+            project_value=lambda: projections.append("bid-7-projected"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "8",
+            False,
+            ["bid-8-layer"],
+            restore_authoritative=lambda: projections.append("bid-8-restored"),
+            project_value=lambda: projections.append("bid-8-projected"),
+        )
+        self.assertTrue(self.manager.flush())
+        bid_7_callback, bid_8_callback = self.service.queued_setting_callbacks
+        bid_7_callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        bid_8_callback(
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(
+            projections,
+            ["bid-7-restored", "bid-8-projected"],
+        )
+
+    def test_older_bulk_completion_preserves_newer_individual_after_repeated_bulk(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        for show, label in ((False, "bulk-disabled"), (True, "bulk-enabled")):
+            self.manager.schedule_all_layers_show(
+                "sql-db",
+                "7",
+                show,
+                ["layer-1"],
+                project_value=lambda label=label: projections.append(label),
+            )
+            self.assertTrue(self.manager.flush())
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-1",
+            False,
+            project_value=lambda: projections.append("layer-disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.service.queued_setting_callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-db",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(projections[-1], "layer-disabled")
+
+    def test_bulk_reprojection_preserves_newer_intent_for_another_layer(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-a",
+            True,
+            project_value=lambda: projections.append("layer-a-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-a", "layer-b"],
+            project_value=lambda: projections.append("bulk-disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-b",
+            True,
+            project_value=lambda: projections.append("layer-b-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.reproject_newer_layer_visual_revisions("sql-db", ["layer-a"])
+        self.assertEqual(projections, ["bulk-disabled", "layer-b-enabled"])
+
+    def test_bulk_reprojection_does_not_duplicate_newer_individual_projection(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-a",
+            True,
+            project_value=lambda: projections.append("layer-a-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_all_layers_show(
+            "sql-db",
+            "7",
+            False,
+            ["layer-a", "layer-b"],
+            project_value=lambda: projections.append("bulk-disabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.schedule_layer_show(
+            "sql-db",
+            "layer-b",
+            True,
+            project_value=lambda: projections.append("layer-b-enabled"),
+        )
+        self.assertTrue(self.manager.flush())
+        self.manager.reproject_newer_layer_visual_revisions(
+            "sql-db", ["layer-a", "layer-b"]
+        )
+        self.assertEqual(projections, ["bulk-disabled", "layer-b-enabled"])
 
     def test_newest_rejection_reprojects_prior_pending_visual_value(self):
         self.service.queue_sql_settings = True
@@ -695,6 +1772,23 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(manager.flush())
         self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(self.service.calls, [])
+
+    def test_expected_blocked_page_visual_write_restores_authoritative_state(self):
+        self.service.expected_deferred_write_blocked = True
+        visual_state = {"invert": False}
+        self.manager.schedule_page_invert(
+            "a.mdb",
+            "p1",
+            True,
+            restore_authoritative=lambda: visual_state.update(invert=False),
+            project_value=lambda: visual_state.update(invert=True),
+        )
+        visual_state["invert"] = True
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(visual_state, {"invert": False})
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(self.manager._visual_states, {})
         self.assertEqual(self.service.calls, [])
 
     def test_expected_blocked_visual_write_does_not_block_cleanup(self):
@@ -1045,6 +2139,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
 
     def test_deferred_visual_writes_do_not_request_full_reload(self):
         self.manager.schedule_layer_show("a.mdb", "l1", True)
+        self.manager.schedule_all_layers_show("a.mdb", "b1", False, ["layer-1"])
         self.manager.schedule_page_show_mode("a.mdb", "p1", 1)
         self.manager.schedule_page_overlay_rect("a.mdb", "p1", (0, 0, 10, 10))
         self.assertTrue(self.manager.flush())
@@ -1052,6 +2147,14 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             self.service.calls,
             [
                 ("layer_show", "a.mdb", "l1", True, False),
+                (
+                    "all_layers_show",
+                    "a.mdb",
+                    "b1",
+                    False,
+                    ["layer-1"],
+                    False,
+                ),
                 ("page_show_mode", "a.mdb", "p1", 1, False),
                 (
                     "page_overlay_rect",
@@ -1093,6 +2196,8 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
 class RecordingDeferredPersistence:
     def __init__(self):
         self.layer_calls = []
+        self.all_layer_calls = []
+        self.all_layer_callbacks = []
         self.page_view_calls = []
         self.selected_page_calls = []
         self.page_area_calls = []
@@ -1113,6 +2218,15 @@ class RecordingDeferredPersistence:
     def schedule_layer_show(self, db_path, layer_uid, show, **callbacks):
         self.layer_calls.append((db_path, layer_uid, show))
         self.layer_callbacks.append(callbacks)
+        return True
+
+    def schedule_all_layers_show(self, db_path, bid_uid, show, layer_uids, **callbacks):
+        self.all_layer_calls.append((db_path, bid_uid, show, list(layer_uids)))
+        self.all_layer_callbacks.append(callbacks)
+        return True
+
+    def has_all_layers_show_revision(self, _db_path, _bid_uid, _layer_uids=None):
+        return bool(self.all_layer_callbacks)
 
     def schedule_page_view_state(
         self, db_path, bid_uid, page_uid, zoom_fac, current_x, current_y
@@ -1127,18 +2241,22 @@ class RecordingDeferredPersistence:
     def schedule_page_area_selection(self, db_path, page_uid, area_uid, **callbacks):
         self.page_area_calls.append((db_path, page_uid, area_uid))
         self.page_area_callbacks.append(callbacks)
+        return True
 
     def schedule_page_show_mode(self, db_path, page_uid, show_mode, **callbacks):
         self.page_show_mode_calls.append((db_path, page_uid, show_mode))
         self.page_show_mode_callbacks.append(callbacks)
+        return True
 
     def schedule_page_invert(self, db_path, page_uid, invert, **callbacks):
         self.page_invert_calls.append((db_path, page_uid, invert))
         self.page_invert_callbacks.append(callbacks)
+        return True
 
     def schedule_page_bitonal(self, db_path, page_uid, bitonal, **callbacks):
         self.page_bitonal_calls.append((db_path, page_uid, bitonal))
         self.page_bitonal_callbacks.append(callbacks)
+        return True
 
     def flush_for_file(self, db_path):
         self.flush_calls.append(db_path)
@@ -2283,6 +3401,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def _make_view_state_coordinator(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._plan_view_handler = None
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False
@@ -2488,6 +3607,68 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(pages["p1"].image_show_mode, 0)
         coordinator.ui_state_manager.active_page_uid = "p2"
         callbacks["project_value"]()
+        self.assertEqual(pages["p1"].image_show_mode, 2)
+
+    def test_page_visual_completion_does_not_touch_cleaned_up_coordinator(self):
+        coordinator, _pages = self._make_view_state_coordinator()
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: None
+        )
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._on_overlay_display_mode_requested(2)
+        callbacks = coordinator._deferred_persistence.page_show_mode_callbacks[0]
+        coordinator._is_cleaning_up = True
+        coordinator.ui_state_manager = None
+        coordinator.project_data = None
+        callbacks["restore_authoritative"]()
+        callbacks["project_value"]()
+
+    def test_page_visual_completion_rejects_same_uid_page_replacement(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: None
+        )
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._on_overlay_display_mode_requested(2)
+        callbacks = coordinator._deferred_persistence.page_show_mode_callbacks[0]
+        replacement = Page(uid="p1", name="replacement", image_show_mode=1)
+        pages["p1"] = replacement
+        callbacks["restore_authoritative"]()
+        callbacks["project_value"]()
+        self.assertEqual(replacement.image_show_mode, 1)
+
+    def test_page_visual_failure_restores_inactive_originating_page_model(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        pages["p1"].image_show_mode = 0
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: None
+        )
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._on_overlay_display_mode_requested(2)
+        callbacks = coordinator._deferred_persistence.page_show_mode_callbacks[0]
+        coordinator.ui_state_manager.active_page_uid = "p2"
+        callbacks["restore_authoritative"]()
+        self.assertEqual(pages["p1"].image_show_mode, 0)
+
+    def test_rejected_page_visual_schedule_does_not_leave_optimistic_state(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        pages["p1"].image_show_mode = 0
+        coordinator.main_window = SimpleNamespace(
+            refresh_detached_plan_views=lambda: None
+        )
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._deferred_persistence.schedule_page_show_mode = (
+            lambda *_args, **_kwargs: False
+        )
+        coordinator._on_overlay_display_mode_requested(2)
         self.assertEqual(pages["p1"].image_show_mode, 0)
 
     def test_page_image_flag_failure_restores_main_and_detached_views(self):
@@ -2510,7 +3691,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator.ui_state_manager.active_page_uid = "p2"
         callbacks["project_value"]()
-        self.assertFalse(page.invert)
+        self.assertTrue(page.invert)
+        self.assertEqual(updates[-1], "detached")
 
     def test_overlay_visibility_cannot_select_or_hide_the_only_source(self):
         coordinator, pages = self._make_view_state_coordinator()
@@ -2577,6 +3759,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             "l1" if page_layer_uid is None and layer_name == "Image" else page_layer_uid
         )
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False
         )
@@ -2646,8 +3829,22 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             bid_layers_sidebar=SimpleNamespace(
                 get_layer=lambda _uid: layers[0],
                 get_layers=lambda: list(layers),
-                set_layer_visible=lambda _layer_uid, _show: None,
-                set_all_layers_visible=lambda _show: None,
+                get_layer_visibility=lambda layer_uid: next(
+                    (
+                        bool(layer.show)
+                        for layer in layers
+                        if str(layer.uid) == str(layer_uid)
+                    ),
+                    None,
+                ),
+                set_layer_visible=lambda layer_uid, show: [
+                    setattr(layer, "show", bool(show))
+                    for layer in layers
+                    if str(layer.uid) == str(layer_uid)
+                ],
+                set_all_layers_visible=lambda show: [
+                    setattr(layer, "show", bool(show)) for layer in layers
+                ],
             ),
             update_conditions_quantities=lambda: quantity_calls.append("quantity"),
             load_condition_summary=lambda: None,
@@ -2731,7 +3928,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                     )
                     service = FakeProjectWriteService()
                     service.queue_sql_settings = sql
-                    service.fail_methods.add("update_layer_show")
+                    service.fail_methods.add("update_all_layers_show")
                     manager = DeferredPersistenceManager(
                         service, _workspace_service(service)
                     )
@@ -2749,22 +3946,23 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                         )
                         self.assertEqual(manager.flush(), sql)
                         if sql:
-                            for callback in service.queued_setting_callbacks:
-                                callback(
-                                    QueuedMutationResult(
-                                        database_id="a.mdb",
-                                        runtime_generation=1,
-                                        operation_id=str(uuid.uuid4()),
-                                        outcome_status=MutationOutcomeStatus.REJECTED,
-                                    )
+                            self.assertEqual(len(service.queued_setting_callbacks), 1)
+                            service.queued_setting_callbacks[0](
+                                QueuedMutationResult(
+                                    database_id="a.mdb",
+                                    runtime_generation=1,
+                                    operation_id=str(uuid.uuid4()),
+                                    outcome_status=MutationOutcomeStatus.REJECTED,
                                 )
+                            )
                             expected = original
                         else:
-                            # Access failure remains pending; a later flush retries it.
-                            self.assertEqual(manager.pending_count, 2)
+                            # Access failure remains pending, but its optimistic
+                            # projection is rolled back until a retry succeeds.
+                            self.assertEqual(manager.pending_count, 1)
                             self.assertEqual(
                                 [box.isChecked() for box in sidebar._checkboxes],
-                                [requested, requested],
+                                original,
                             )
                             service.fail_methods.clear()
                             self.assertTrue(manager.flush())
@@ -2780,8 +3978,83 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                         sidebar.close()
                         sidebar.deleteLater()
 
+    def test_noop_bulk_intent_supersedes_rolled_back_mdb_retry(self):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [
+            BidLayer("l1", "bid-1", "Layer 1", False, 1),
+            BidLayer("other", "bid-1", "Other", False, 2),
+        ]
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers(layers)
+        sidebar.layers_show_all.connect(coordinator._on_layers_show_all)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        coordinator._sidebar.load_condition_summary_from_memory = lambda: None
+        service = FakeProjectWriteService()
+        service.fail_methods.add("update_all_layers_show")
+        manager = DeferredPersistenceManager(service, _workspace_service(service))
+        coordinator._deferred_persistence = manager
+        try:
+            sidebar._select_all_btn.click()
+            self.assertFalse(manager.flush())
+            self.assertEqual([layer.show for layer in layers], [False, False])
+            self.assertEqual(manager.pending_count, 1)
+            sidebar._unselect_all_btn.click()
+            service.fail_methods.clear()
+            self.assertTrue(manager.flush())
+            self.assertEqual([layer.show for layer in layers], [False, False])
+            self.assertEqual(
+                [call[3] for call in service.calls if call[0] == "all_layers_show"],
+                [True, False],
+            )
+            self.assertEqual(manager.pending_count, 0)
+        finally:
+            manager.cancel_for_file("a.mdb")
+            manager.cleanup()
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_noop_bulk_intent_supersedes_rolled_back_individual_retry(self):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [
+            BidLayer("l1", "bid-1", "Layer 1", False, 1),
+            BidLayer("other", "bid-1", "Other", False, 2),
+        ]
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers(layers)
+        sidebar.set_toggle_callback(coordinator.update_layer_visibility_deferred)
+        sidebar.layers_show_all.connect(coordinator._on_layers_show_all)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        coordinator._sidebar.load_condition_summary_from_memory = lambda: None
+        service = FakeProjectWriteService()
+        service.fail_methods.add("update_layer_show")
+        manager = DeferredPersistenceManager(service, _workspace_service(service))
+        coordinator._deferred_persistence = manager
+        try:
+            sidebar._checkboxes[0].click()
+            self.assertFalse(manager.flush())
+            self.assertEqual([layer.show for layer in layers], [False, False])
+            self.assertEqual(manager.pending_count, 1)
+            sidebar._unselect_all_btn.click()
+            service.fail_methods.clear()
+            self.assertTrue(manager.flush())
+            self.assertEqual([layer.show for layer in layers], [False, False])
+            self.assertEqual(
+                [call[0] for call in service.calls],
+                ["layer_show", "all_layers_show"],
+            )
+            self.assertEqual(manager.pending_count, 0)
+        finally:
+            manager.cancel_for_file("a.mdb")
+            manager.cleanup()
+            sidebar.close()
+            sidebar.deleteLater()
+
     def test_show_all_without_sidebar_queues_all_layers_from_read_service(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        bid_owner = object()
         coordinator._project_write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _file_path: False
         )
@@ -2799,7 +4072,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_hidden_layer_uids=lambda: set(),
             is_annotation_layer_visible=lambda: True,
             get_selected_page_uids=lambda: ["p1"],
-            get_bid=lambda _bid_ref: None,
+            get_bid=lambda _bid_ref: bid_owner,
             get_page=lambda _page_uid: None,
             get_bid_conditions=lambda: {},
             get_annotation_layer_uid=lambda: "annotation-layer",
@@ -2844,11 +4117,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._deferred_persistence = deferred
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
         self.assertEqual(
-            deferred.layer_calls,
-            [
-                ("a.mdb", "l1", False),
-                ("a.mdb", "l2", False),
-            ],
+            deferred.all_layer_calls,
+            [("a.mdb", "bid-1", False, ["l1", "l2"])],
         )
         self.assertEqual(coordinator.mesh_refresh_calls, [])
         self.assertTrue(coordinator._mesh_scene_dirty)
@@ -2873,9 +4143,83 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
         self.assertEqual(
-            coordinator._deferred_persistence.layer_calls,
-            [("a.mdb", "l1", False), ("a.mdb", "l2", False)],
+            coordinator._deferred_persistence.all_layer_calls,
+            [("a.mdb", "bid-1", False, ["l1", "l2"])],
         )
+
+    def test_bulk_layer_visibility_already_at_requested_state_is_a_no_op(self):
+        coordinator = self._make_visibility_coordinator()
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(True))
+        self.assertEqual(coordinator._deferred_persistence.all_layer_calls, [])
+        self.assertEqual(coordinator.layer_events, [])
+
+    def test_repeated_same_bulk_intent_is_retained_while_first_write_is_pending(self):
+        coordinator = self._make_visibility_coordinator()
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(
+            coordinator._deferred_persistence.all_layer_calls,
+            [
+                (
+                    "a.mdb",
+                    "bid-1",
+                    False,
+                    ["l1", "other", "annotation-layer"],
+                ),
+                (
+                    "a.mdb",
+                    "bid-1",
+                    False,
+                    ["l1", "other", "annotation-layer"],
+                ),
+            ],
+        )
+
+    def test_bulk_layer_visibility_with_no_layers_does_not_queue_a_write(self):
+        coordinator = self._make_visibility_coordinator()
+        coordinator._visibility_test_layers.clear()
+        self.assertFalse(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(coordinator._deferred_persistence.all_layer_calls, [])
+        self.assertEqual(coordinator.layer_events, [])
+
+    def test_rejected_deferred_schedule_does_not_leave_optimistic_visibility(self):
+        coordinator = self._make_visibility_coordinator()
+        original = [layer.show for layer in coordinator._visibility_test_layers]
+        coordinator._deferred_persistence = SimpleNamespace(
+            has_all_layers_show_revision=lambda *_args: False,
+            schedule_all_layers_show=lambda *_args, **_kwargs: False,
+            schedule_layer_show=lambda *_args, **_kwargs: False,
+        )
+        self.assertFalse(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(
+            [layer.show for layer in coordinator._visibility_test_layers], original
+        )
+        self.assertEqual(coordinator.layer_events, [])
+        self.assertFalse(coordinator.update_layer_visibility_deferred("l1", False))
+        self.assertEqual(
+            [layer.show for layer in coordinator._visibility_test_layers], original
+        )
+        self.assertEqual(coordinator.layer_events, [])
+
+    def test_rejected_individual_schedule_restores_clicked_checkbox(self):
+        coordinator = self._make_visibility_coordinator()
+        layers = coordinator._visibility_test_layers
+        layers[:] = [BidLayer("l1", "bid-1", "Layer 1", True, 1)]
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers(layers)
+        sidebar.set_toggle_callback(coordinator.update_layer_visibility_deferred)
+        coordinator._sidebar.bid_layers_sidebar = sidebar
+        coordinator._deferred_persistence = SimpleNamespace(
+            schedule_layer_show=lambda *_args, **_kwargs: False,
+        )
+        try:
+            sidebar._checkboxes[0].click()
+            self.assertTrue(sidebar._checkboxes[0].isChecked())
+            self.assertTrue(layers[0].show)
+            self.assertEqual(coordinator.layer_events, [])
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
 
     def test_image_layer_disable_queues_write_and_does_not_reload_pages(self):
         coordinator = self._make_visibility_coordinator(
@@ -3011,6 +4355,119 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         callbacks["project_value"]()
         self.assertTrue(coordinator.project_data.get_bid_layer_snapshot()[0].show)
 
+    def test_individual_layer_completion_rejects_same_uid_bid_replacement(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        callbacks = coordinator._deferred_persistence.layer_callbacks[0]
+        event_count = len(coordinator.layer_events)
+        coordinator.project_data.get_bid = lambda _bid_ref: object()
+        callbacks["restore_authoritative"]()
+        callbacks["project_value"]()
+        self.assertEqual(len(coordinator.layer_events), event_count)
+
+    def test_individual_layer_completion_does_not_duplicate_current_projection(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        callbacks = coordinator._deferred_persistence.layer_callbacks[0]
+        event_count = len(coordinator.layer_events)
+        callbacks["project_value"]()
+        self.assertEqual(len(coordinator.layer_events), event_count)
+
+    def test_layer_completion_does_not_touch_cleaned_up_coordinator(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        callbacks = coordinator._deferred_persistence.layer_callbacks[0]
+        coordinator._is_cleaning_up = True
+        coordinator.ui_state_manager = None
+        coordinator.project_data = None
+        self.assertFalse(callbacks["restore_authoritative"]())
+        self.assertFalse(callbacks["project_value"]())
+        bulk_coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(bulk_coordinator.update_all_layers_visibility_deferred(False))
+        bulk_callbacks = bulk_coordinator._deferred_persistence.all_layer_callbacks[0]
+        bulk_coordinator._is_cleaning_up = True
+        bulk_coordinator.ui_state_manager = None
+        bulk_coordinator.project_data = None
+        self.assertFalse(bulk_callbacks["restore_authoritative"]())
+        self.assertFalse(bulk_callbacks["project_value"]())
+
+    def test_layer_completion_does_not_touch_destroyed_sidebar(self):
+        from shiboken6 import delete
+
+        for bulk in (False, True):
+            with self.subTest(bulk=bulk):
+                coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+                coordinator._visibility_test_layers[:] = [
+                    BidLayer("l1", "bid-1", "Layer 1", True, 1),
+                    BidLayer("other", "bid-1", "Other", True, 2),
+                ]
+                sidebar = BidLayersSidebar(None)
+                sidebar.load_layers(coordinator._visibility_test_layers)
+                coordinator._sidebar.bid_layers_sidebar = sidebar
+                if bulk:
+                    self.assertTrue(
+                        coordinator.update_all_layers_visibility_deferred(False)
+                    )
+                    callbacks = coordinator._deferred_persistence.all_layer_callbacks[0]
+                else:
+                    self.assertTrue(
+                        coordinator.update_layer_visibility_deferred("l1", False)
+                    )
+                    callbacks = coordinator._deferred_persistence.layer_callbacks[0]
+                delete(sidebar)
+                self.assertTrue(callbacks["project_value"]())
+
+    def test_bulk_layer_completion_does_not_project_after_bid_switch(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        callbacks = coordinator._deferred_persistence.all_layer_callbacks[0]
+        event_count = len(coordinator.layer_events)
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: BidRef(
+            "a.mdb", "bid-2"
+        )
+        callbacks["restore_authoritative"]()
+        callbacks["project_value"]()
+        self.assertEqual(len(coordinator.layer_events), event_count)
+
+    def test_bulk_layer_completion_rejects_same_uid_bid_replacement(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        callbacks = coordinator._deferred_persistence.all_layer_callbacks[0]
+        event_count = len(coordinator.layer_events)
+        coordinator.project_data.get_bid = lambda _bid_ref: object()
+        callbacks["restore_authoritative"]()
+        callbacks["project_value"]()
+        self.assertEqual(len(coordinator.layer_events), event_count)
+
+    def test_bulk_layer_visibility_rejects_missing_authoritative_bid_owner(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        coordinator.project_data.get_bid = lambda _bid_ref: None
+        original = [layer.show for layer in coordinator._visibility_test_layers]
+        self.assertFalse(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(
+            [layer.show for layer in coordinator._visibility_test_layers], original
+        )
+        self.assertEqual(coordinator._deferred_persistence.all_layer_calls, [])
+        self.assertEqual(coordinator.layer_events, [])
+
+    def test_bulk_layer_recovery_uses_the_production_event_contract(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        events = []
+        event_bus = EventBus()
+        event_bus.subscribe(
+            AppEvents.LAYER_VISIBILITY_CHANGED,
+            lambda **payload: events.append(payload),
+        )
+        coordinator.event_bus = event_bus
+        coordinator._sidebar.bid_layers_sidebar.set_layer_visibilities = (
+            lambda _map: None
+        )
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        callbacks = coordinator._deferred_persistence.all_layer_callbacks[0]
+        callbacks["restore_authoritative"]()
+        self.assertEqual(len(events), 2)
+        self.assertTrue(events[-1]["all_layers"])
+
     def test_layer_visibility_failure_does_not_restore_deleted_layer(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
@@ -3140,6 +4597,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_database_refresh_flushes_pending_visual_state_before_reload(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
@@ -3167,6 +4625,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_external_access_refresh_discards_old_runtime_state_before_projection(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._deferred_persistence = SimpleNamespace(
             flush_for_file=lambda file_path: calls.append(("flush", file_path)) or True,
             cancel_for_file=lambda file_path: calls.append(("cancel", file_path)),
@@ -3219,6 +4678,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_external_background_access_refresh_preserves_active_runtime_state(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._deferred_persistence = SimpleNamespace(
             cancel_for_file=lambda file_path: calls.append(("cancel", file_path)),
         )
@@ -3262,6 +4722,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_database_refresh_stops_when_deferred_flush_fails(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._deferred_persistence = SimpleNamespace(
             flush_for_file=lambda file_path: calls.append(("flush", file_path)) or False
         )
@@ -3333,6 +4794,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         area_selections = {"p1": None}
         direct_writes = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._page_settings_bar = None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
@@ -3343,10 +4805,11 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             selected_page_reads.append(area_selections["p1"])
             return ["p1"]
 
+        page_owner = object()
         coordinator.project_data = SimpleNamespace(
             get_page_area_selections=lambda: area_selections,
             get_selected_page_uids=selected_page_uids,
-            get_page=lambda page_uid: object() if page_uid == "p1" else None,
+            get_page=lambda page_uid: page_owner if page_uid == "p1" else None,
         )
         coordinator.ui_state_manager = SimpleNamespace(
             active_page_uid="p1",
@@ -3402,14 +4865,16 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_page_area_clear_updates_model_to_no_filter(self):
         area_selections = {"p1": "2"}
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._page_settings_bar = None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
+        page_owner = object()
         coordinator.project_data = SimpleNamespace(
             get_page_area_selections=lambda: area_selections,
             get_selected_page_uids=lambda: ["p1"],
-            get_page=lambda page_uid: object() if page_uid == "p1" else None,
+            get_page=lambda page_uid: page_owner if page_uid == "p1" else None,
         )
         coordinator.ui_state_manager = SimpleNamespace(
             active_page_uid="p1",
@@ -3443,6 +4908,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_page_area_failure_restores_only_originating_page(self):
         area_selections = {"p1": "area-1", "p2": "area-2"}
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator._page_settings_bar = None
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True

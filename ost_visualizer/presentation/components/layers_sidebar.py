@@ -140,6 +140,24 @@ class BidLayersSidebar(QtWidgets.QWidget):
             layer.show = bool(show)
             self._set_checkbox_checked(row, show)
 
+    def set_layer_visibilities(self, visibility_by_uid: dict[str, bool]) -> None:
+        normalized = {
+            str(layer_uid): bool(show) for layer_uid, show in visibility_by_uid.items()
+        }
+        for row, layer in enumerate(self._layers):
+            layer_uid = str(layer.uid)
+            if layer_uid not in normalized:
+                continue
+            layer.show = normalized[layer_uid]
+            self._set_checkbox_checked(row, normalized[layer_uid])
+
+    def get_layer_visibility(self, layer_uid: str) -> Optional[bool]:
+        normalized_uid = str(layer_uid)
+        for row, layer in enumerate(self._layers):
+            if str(layer.uid) == normalized_uid and row < len(self._checkboxes):
+                return bool(self._checkboxes[row].isChecked())
+        return None
+
     def _set_checkbox_checked(self, row: int, checked: bool) -> None:
         if row < 0 or row >= len(self._checkboxes):
             return

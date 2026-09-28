@@ -12,6 +12,10 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
 )
 from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+)
 from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation import main_window as main_window_module
 from ost_visualizer.presentation.components.progress_dialog import (
@@ -182,6 +186,10 @@ class DialogLifecycleTests(unittest.TestCase):
         dialog = QtWidgets.QDialog(parent)
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.event_bus = EventBus()
+        hierarchy_entry = HierarchyFileEntry(file_path="database")
+        coordinator.project_data = SimpleNamespace(
+            get_hierarchy=lambda: HierarchyData(loaded_files=[hierarchy_entry])
+        )
         handle = EditLeaseHandle(
             database_id="database",
             draft_id="draft",
@@ -219,6 +227,141 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertEqual(released, [handle])
         self.assertEqual(cleaned, [True])
         self.assertEqual(after_close, [False])
+
+    def test_collaboration_modal_rejects_same_path_database_replacement(self):
+        _app()
+        database_id = "database"
+        original_entry = HierarchyFileEntry(file_path=database_id)
+        hierarchy = [HierarchyData(loaded_files=[original_entry])]
+        dialog = QtWidgets.QDialog()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.event_bus = EventBus()
+        coordinator.project_data = SimpleNamespace(get_hierarchy=lambda: hierarchy[0])
+        callbacks = []
+        released = []
+        cleaned = []
+        executions = []
+        handle = EditLeaseHandle(
+            database_id=database_id,
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="dialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("condition_type", "1"),),
+        )
+        coordinator.request_collaboration_edit = (
+            lambda _database_id, _resources, callback, **_kwargs: callbacks.append(
+                callback
+            )
+        )
+        coordinator.end_collaboration_edit = released.append
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "exec_with_ost_blocking",
+            lambda *_args: executions.append(True),
+        ):
+            coordinator._exec_with_collaboration_lease(
+                dialog,
+                database_id,
+                handle.resources,
+                lambda: cleaned.append(True),
+            )
+            hierarchy[0] = HierarchyData(
+                loaded_files=[HierarchyFileEntry(file_path=database_id)]
+            )
+            callbacks[0](EditLeaseResult(True, handle=handle))
+        self.assertEqual(executions, [])
+        self.assertEqual(released, [handle])
+        self.assertEqual(cleaned, [True])
+
+    def test_collaboration_modal_consumes_duplicate_lease_callback_once(self):
+        _app()
+        dialog = QtWidgets.QDialog()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.event_bus = EventBus()
+        hierarchy_entry = HierarchyFileEntry(file_path="database")
+        coordinator.project_data = SimpleNamespace(
+            get_hierarchy=lambda: HierarchyData(loaded_files=[hierarchy_entry])
+        )
+        callbacks = []
+        released = []
+        cleaned = []
+        executions = []
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="dialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("condition_type", "1"),),
+        )
+        coordinator.request_collaboration_edit = (
+            lambda _database_id, _resources, callback, **_kwargs: callbacks.append(
+                callback
+            )
+        )
+        coordinator.end_collaboration_edit = released.append
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "exec_with_ost_blocking",
+            lambda *_args: executions.append(True),
+        ):
+            coordinator._exec_with_collaboration_lease(
+                dialog,
+                "database",
+                handle.resources,
+                lambda: cleaned.append(True),
+            )
+            result = EditLeaseResult(True, handle=handle)
+            callbacks[0](result)
+            callbacks[0](result)
+        self.assertEqual(executions, [True])
+        self.assertEqual(released, [handle])
+        self.assertEqual(cleaned, [True])
+
+    def test_collaboration_modal_does_not_execute_destroyed_dialog(self):
+        _app()
+        dialog = QtWidgets.QDialog()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.event_bus = EventBus()
+        hierarchy_entry = HierarchyFileEntry(file_path="database")
+        coordinator.project_data = SimpleNamespace(
+            get_hierarchy=lambda: HierarchyData(loaded_files=[hierarchy_entry])
+        )
+        callbacks = []
+        released = []
+        cleaned = []
+        executions = []
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="dialog",
+            owning_surface="main-window-dialog",
+            resources=(ResourceRef("condition_type", "1"),),
+        )
+        coordinator.request_collaboration_edit = (
+            lambda _database_id, _resources, callback, **_kwargs: callbacks.append(
+                callback
+            )
+        )
+        coordinator.end_collaboration_edit = released.append
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+            "exec_with_ost_blocking",
+            lambda *_args: executions.append(True),
+        ):
+            coordinator._exec_with_collaboration_lease(
+                dialog,
+                "database",
+                handle.resources,
+                lambda: cleaned.append(True),
+            )
+            delete(dialog)
+            callbacks[0](EditLeaseResult(True, handle=handle))
+        self.assertEqual(executions, [])
+        self.assertEqual(released, [handle])
+        self.assertEqual(cleaned, [True])
 
     def test_message_notifier_cleanup_tolerates_parent_destroyed_dialog(self):
         _app()

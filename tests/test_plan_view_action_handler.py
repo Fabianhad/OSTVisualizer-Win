@@ -1850,8 +1850,41 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         deferred.overlay_rect_callbacks[0]["project_value"]()
         self.assertEqual(
             data.get_page("p1").overlay_rect,
+            (1.0, 2.0, 3.0, 4.0),
+        )
+
+    def test_overlay_rect_completion_rejects_same_uid_page_replacement(self):
+        data = FakeProjectData()
+        deferred = FakeDeferredPersistence()
+        handler = self._overlay_handler(data, deferred)
+        self.assertTrue(handler.save_current_page_overlay_rect((1, 2, 3, 4)))
+        replacement = SimpleNamespace(
+            uid="p1",
+            overlay_rect=(9.0, 9.0, 9.0, 9.0),
+            scale_factor1=1.0,
+            scale_factor2=1.0,
+        )
+        data.pages["p1"] = replacement
+        callbacks = deferred.overlay_rect_callbacks[0]
+        callbacks["restore_authoritative"]()
+        callbacks["project_value"]()
+        self.assertEqual(replacement.overlay_rect, (9.0, 9.0, 9.0, 9.0))
+        self.assertEqual(handler._plan_view.projected_overlay_rects, [])
+
+    def test_overlay_rect_failure_restores_inactive_originating_page_model(self):
+        data = FakeProjectData()
+        data.get_page("p1").overlay_rect = (0.0, 0.0, 10.0, 10.0)
+        deferred = FakeDeferredPersistence()
+        handler = self._overlay_handler(data, deferred)
+        self.assertTrue(handler.save_current_page_overlay_rect((1, 2, 3, 4)))
+        handler._ui_state.active_page_uid = "p2"
+        handler._plan_view.current_page_uid = "p2"
+        deferred.overlay_rect_callbacks[0]["restore_authoritative"]()
+        self.assertEqual(
+            data.get_page("p1").overlay_rect,
             (0.0, 0.0, 10.0, 10.0),
         )
+        self.assertEqual(handler._plan_view.projected_overlay_rects, [])
 
     def test_overlay_rect_permission_denial_returns_rejected_without_scheduling(self):
         data = FakeProjectData()

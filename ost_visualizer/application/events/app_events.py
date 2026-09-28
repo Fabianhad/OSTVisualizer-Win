@@ -83,6 +83,7 @@ class RemoteBidContentChangedEvent:
 class RemoteHierarchyChangedEvent:
     database_id: str = ""
     defer_plan_projection: bool = False
+    condition_family_projected: bool = False
 
 
 @dataclass

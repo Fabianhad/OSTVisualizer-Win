@@ -38,9 +38,7 @@ _CREATE_PERMISSION_PREDICATE = (
 
 
 def _add_exception_note(error: BaseException, note: str) -> None:
-    add_note = getattr(error, "add_note", None)
-    if callable(add_note):
-        add_note(note)
+    error.add_note(note)
 
 
 class SqlDatabaseCreator:

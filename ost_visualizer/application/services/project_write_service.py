@@ -5548,6 +5548,55 @@ class ProjectWriteService(DatabaseMutationWriteService):
             dependency_resources=(collection,),
         )
 
+    def queue_all_layers_show(
+        self,
+        database_id: str,
+        bid_uid: str,
+        show: bool,
+        layer_uids: List[str],
+        callback: Callable[[QueuedMutationResult], None],
+        *,
+        owning_surface: str = "main-plan",
+    ) -> int:
+        bid_value = int(bid_uid)
+        collection = ResourceRef("layers_collection", bid_uid, bid_value)
+        captured_layer_uids = tuple(dict.fromkeys(str(uid) for uid in layer_uids))
+        if not captured_layer_uids:
+            raise ValueError("A bulk Layer visibility update requires Layer UIDs")
+        payload = ProjectWritePayload.from_values(
+            "update_all_layers_show",
+            {"show": bool(show), "layer_uids": list(captured_layer_uids)},
+        )
+
+        def update(recorder):
+            if not self._update_all_layers_show.execute(
+                database_id,
+                bid_uid,
+                bool(show),
+                list(captured_layer_uids),
+            ):
+                raise RuntimeError("The bulk Layer visibility update was incomplete.")
+            recorder.record(
+                collection,
+                ChangeOperation.UPDATE,
+                changed_fields=("show",),
+            )
+            return True
+
+        return self._queue_project_write(
+            database_id,
+            bid_uid,
+            payload,
+            (collection,),
+            callback,
+            update,
+            lambda _value: AuthoritativeMutationResult(
+                updated_resources=(collection,),
+                affected_families=("layers",),
+            ),
+            owning_surface=owning_surface,
+        )
+
     def queue_layer_rename(
         self,
         database_id: str,
@@ -5604,6 +5653,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_uid = self._active_bid_uid_for(database_id)
         if bid_uid is None:
             return False
+        if setting_kind == "all_layers_show" and str(bid_uid) != str(page_uid):
+            return False
 
         def complete(result: QueuedMutationResult) -> None:
             if result.outcome_status not in {
@@ -5620,14 +5671,28 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if callback is not None:
                 callback(result)
 
-        sequence = self.queue_page_settings(
-            database_id,
-            str(bid_uid),
-            setting_kind,
-            [[str(page_uid), *values]],
-            complete,
-            owning_surface=owning_surface,
-        )
+        if setting_kind == "all_layers_show":
+            if len(values) != 2 or not isinstance(values[1], (list, tuple)):
+                raise ValueError(
+                    "An all-Layers visibility update requires a value and Layer UIDs"
+                )
+            sequence = self.queue_all_layers_show(
+                database_id,
+                str(bid_uid),
+                bool(values[0]),
+                [str(uid) for uid in values[1]],
+                complete,
+                owning_surface=owning_surface,
+            )
+        else:
+            sequence = self.queue_page_settings(
+                database_id,
+                str(bid_uid),
+                setting_kind,
+                [[str(page_uid), *values]],
+                complete,
+                owning_surface=owning_surface,
+            )
         return sequence >= 0
 
     def delete_takeoffs(
@@ -6099,7 +6164,14 @@ class ProjectWriteService(DatabaseMutationWriteService):
             result.reload_success = self.reload_and_notify(db_path)
         return result
 
-    def update_all_layers_show(self, db_path: str, bid_uid: str, show: bool) -> bool:
+    def update_all_layers_show(
+        self,
+        db_path: str,
+        bid_uid: str,
+        show: bool,
+        layer_uids: Optional[List[str]] = None,
+        publish_database_refreshed_after_write: bool = True,
+    ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
         collection = ResourceRef("layers_collection", bid_uid, int(bid_uid))
@@ -6107,10 +6179,14 @@ class ProjectWriteService(DatabaseMutationWriteService):
             db_path,
             (collection,),
             ChangeOperation.UPDATE,
-            lambda: self._update_all_layers_show.execute(db_path, bid_uid, show),
+            lambda: self._update_all_layers_show.execute(
+                db_path, bid_uid, show, layer_uids
+            ),
             ("show",),
         )
-        return self._reload_after_success(db_path, success)
+        return self._reload_after_success(
+            db_path, success, publish_database_refreshed_after_write
+        )
 
     def update_all_default_layers_show(self, db_path: str, show: bool) -> bool:
         if self._is_write_blocked():

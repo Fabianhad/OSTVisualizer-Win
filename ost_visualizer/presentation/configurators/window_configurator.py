@@ -11,7 +11,11 @@ ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(MY_APP_ID)
 
 
 def resource_path(*parts: str) -> str:
-    if hasattr(sys, "frozen"):
+    try:
+        frozen = bool(sys.frozen)
+    except AttributeError:
+        frozen = False
+    if frozen:
         base = Path(sys.executable).resolve().parent / "ost_visualizer"
     else:
         base = Path(__file__).resolve().parents[2]

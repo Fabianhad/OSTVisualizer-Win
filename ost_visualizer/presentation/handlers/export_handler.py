@@ -75,19 +75,22 @@ class ExportHandler:
     def _current_bid_context(self):
         return self.project_data.get_current_bid_ref()
 
-    def _export_context_is_current(self, bid_ref, bid) -> bool:
+    def _export_context_is_current(self, bid_ref, bid, pages=None) -> bool:
         if not isValid(self.window):
             return False
         if (
             bid_ref
             and self._current_bid_context() == bid_ref
             and self.project_data.get_current_bid() is bid
+            and all(
+                self.project_data.get_page(page.uid) is page for page in (pages or ())
+            )
         ):
             return True
         show_warning(
             self.window,
             "Export Cancelled",
-            "The selected bid changed while the save dialog was open. "
+            "The selected bid or page changed while the save dialog was open. "
             "Please start the export again.",
         )
         return False
@@ -102,21 +105,36 @@ class ExportHandler:
             return
         if not page_uids:
             return
+        requested_page_uids = list(page_uids)
         bid_ref = self._current_bid_context()
         bid = self.project_data.get_current_bid()
         if not bid_ref or bid is None:
             return
-        dialog_info = self.export_service.get_export_dialog_info(page_uids, format_key)
+        dialog_info = self.export_service.get_export_dialog_info(
+            requested_page_uids, format_key
+        )
         if not dialog_info.success:
             self._on_export_preparation_error(dialog_info)
+            return
+        valid_page_uids = list(dialog_info.valid_pages)
+        page_owners = [
+            self.project_data.get_page(page_uid) for page_uid in valid_page_uids
+        ]
+        if any(page is None for page in page_owners):
+            show_warning(
+                self.window,
+                "Export Cancelled",
+                "A selected page changed before the save dialog opened. "
+                "Please start the export again.",
+            )
             return
         filename = self._show_save_dialog(dialog_info)
         if not filename:
             return
-        if not self._export_context_is_current(bid_ref, bid):
+        if not self._export_context_is_current(bid_ref, bid, page_owners):
             return
         request = ExportRequestDto(
-            page_uids=page_uids,
+            page_uids=requested_page_uids,
             format_key=format_key,
             filename=filename,
             active_page_uid=active_page_uid,
@@ -128,6 +146,7 @@ class ExportHandler:
             return
         if not page_uids:
             return
+        page_uids = list(page_uids)
         bid_ref = self._current_bid_context()
         bid = self.project_data.get_current_bid()
         if not bid_ref or bid is None:
@@ -163,7 +182,7 @@ class ExportHandler:
         )
         if not filename:
             return
-        if not self._export_context_is_current(bid_ref, bid):
+        if not self._export_context_is_current(bid_ref, bid, valid_pages):
             return
         pages_data = self._build_pdf_export_snapshot(page_uids)
         if not pages_data:

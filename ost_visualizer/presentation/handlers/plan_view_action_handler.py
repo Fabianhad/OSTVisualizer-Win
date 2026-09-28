@@ -75,7 +75,6 @@ from ..utils.named_view_validation import (
 
 if TYPE_CHECKING:
     from ..components.plan_view.view import TakeoffPlanView
-
 logger = logging.getLogger(__name__)
 _SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS = frozenset(
     {
@@ -551,19 +550,23 @@ class PlanViewActionHandler:
         if page is None:
             return False
         original_rect = page.overlay_rect
+        page_identities = ((str(page_uid), page),)
         accepted = self._deferred_persistence.schedule_page_overlay_rect(
             bid_ref.file_path,
             page_uid,
             rect,
+            bid_uid=bid_ref.bid_uid,
             restore_authoritative=lambda: self._project_overlay_rect_if_current(
                 bid_ref,
                 page_uid,
                 original_rect,
+                page_identities,
             ),
             project_value=lambda: self._project_overlay_rect_if_current(
                 bid_ref,
                 page_uid,
                 rect,
+                page_identities,
             ),
         )
         if accepted:
@@ -575,14 +578,19 @@ class PlanViewActionHandler:
         bid_ref,
         page_uid: str,
         overlay_rect,
+        page_identities: tuple[tuple[str, object], ...],
     ) -> None:
-        if not self._plan_context_is_current(bid_ref, (page_uid,)):
+        if (
+            self._ui_state.get_selected_bid_ref() != bid_ref
+            or not self._page_identities_are_current((page_uid,), page_identities)
+        ):
             return
         page = self._data_svc.get_page(page_uid)
         if page is None:
             return
         page.overlay_rect = overlay_rect
-        self._plan_view.project_overlay_rect(page_uid, overlay_rect)
+        if self._plan_context_is_current(bid_ref, (page_uid,), page_identities):
+            self._plan_view.project_overlay_rect(page_uid, overlay_rect)
 
     def can_paste_to_current_bid(self) -> bool:
         bid_ref = self._ui_state.get_selected_bid_ref()

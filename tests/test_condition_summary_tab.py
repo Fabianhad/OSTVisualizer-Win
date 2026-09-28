@@ -1085,8 +1085,12 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             "c2": Condition(uid="c2", name="B", layer_uid="layer-b"),
         }
         layers = [SimpleNamespace(uid="layer-a", show=True)]
+        bid_owner = object()
 
         class FakeProjectData:
+            def get_bid(self, _bid_ref):
+                return bid_owner
+
             def get_bid_conditions(self):
                 return conditions
 
@@ -1133,11 +1137,22 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             def set_layer_visible(self, layer_uid, show):
                 self.calls.append((layer_uid, show))
 
+            def get_layer_visibility(self, layer_uid):
+                return next(
+                    (
+                        bool(layer.show)
+                        for layer in layers
+                        if str(layer.uid) == str(layer_uid)
+                    ),
+                    None,
+                )
+
         loads = []
         layers_sidebar = FakeLayersSidebar()
         conditions_sidebar = FakeConditionsSidebar()
         summary_tab = FakeSummaryTab()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
@@ -1154,7 +1169,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             publish=lambda *_args, **_call_options: None
         )
         coordinator._deferred_persistence = SimpleNamespace(
-            schedule_layer_show=lambda _db_path, _layer_uid, _show, **_callbacks: None
+            schedule_layer_show=lambda _db_path, _layer_uid, _show, **_callbacks: True
         )
         coordinator.plan_view = None
         coordinator.opengl_viewer = None
@@ -1555,7 +1570,11 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=FakeWriteService(),
             project_read_service=None,
-            project_data=type("FakeProjectData", (), {})(),
+            project_data=type(
+                "FakeProjectData",
+                (),
+                {"get_bid_conditions": lambda self: conditions},
+            )(),
             ui_state_manager=ui_state,
             workspace_state_model=make_workspace_state_model(),
         )

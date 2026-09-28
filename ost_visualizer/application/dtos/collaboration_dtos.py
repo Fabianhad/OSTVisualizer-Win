@@ -2,7 +2,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from functools import total_ordering
 from typing import Any, Generic, Optional, TypeVar
@@ -262,10 +262,7 @@ def _canonical_mutation_value(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     if is_dataclass(value):
-        return {
-            item.name: _canonical_mutation_value(getattr(value, item.name))
-            for item in fields(value)
-        }
+        return _canonical_mutation_value(asdict(value))
     if isinstance(value, dict):
         return {
             str(key): _canonical_mutation_value(item)
@@ -513,6 +510,7 @@ class ProjectWritePayload:
             "swap_layers",
             "update_conditions",
             "update_bid_job_status",
+            "update_all_layers_show",
             "move_bids",
             "rename_layer",
             "save_bid_areas",

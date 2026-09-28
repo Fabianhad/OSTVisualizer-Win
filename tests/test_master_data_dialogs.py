@@ -22,6 +22,10 @@ from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.file_state import FileEntry
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+)
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.infrastructure.events.event_bus import EventBus
@@ -1671,9 +1675,14 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             def get_selected_bid_ref(self):
                 return bid_ref
 
+        hierarchy_entry = HierarchyFileEntry(file_path=bid_ref.file_path)
+
         class ProjectData:
             def get_area_uids_with_takeoff(self):
                 return set()
+
+            def get_hierarchy(self):
+                return HierarchyData(loaded_files=[hierarchy_entry])
 
         class ReadService:
             def get_bid_areas(self, file_path, bid_uid):
@@ -1806,11 +1815,13 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator._editable_master_data_file_path = lambda: database_id
         coordinator._project_write_service = WriteService()
         coordinator._project_read_service = SimpleNamespace()
+        hierarchy_entry = HierarchyFileEntry(file_path=database_id)
         coordinator.project_data = SimpleNamespace(
             get_job_status_snapshot=lambda _file_path: [
                 JobStatus(uid="status-1", name="Bidding", locked=False, sequence=1)
             ],
             get_used_job_status_uids=lambda _file_path: set(),
+            get_hierarchy=lambda: HierarchyData(loaded_files=[hierarchy_entry]),
         )
         coordinator.ui_state_manager = SimpleNamespace(
             selected_file_path=database_id,
@@ -3344,12 +3355,17 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 observed["move"] = (db_path, layer_uid, neighbor_uid)
                 return True
 
+        hierarchy_entry = HierarchyFileEntry(file_path="defaults.mdb")
+
         class ProjectData:
             def __init__(self):
                 self.current_file = None
 
             def set_current_file(self, file_path):
                 self.current_file = file_path
+
+            def get_hierarchy(self):
+                return HierarchyData(loaded_files=[hierarchy_entry])
 
         class AccessManager:
             allowed = True

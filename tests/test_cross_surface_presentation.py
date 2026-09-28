@@ -257,6 +257,7 @@ class CrossSurfacePresentationTests(unittest.TestCase):
         self.manager._window = self.detached
         self.addCleanup(self.manager.shutdown)
         self.coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        self.coordinator._is_cleaning_up = False
         self.coordinator.project_data = self.data
         self.coordinator.ui_state_manager = self.state
         self.coordinator.ui_access_manager = self.access
@@ -5618,6 +5619,7 @@ class SceneControlPresentationTests(unittest.TestCase):
         self,
     ):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.ui_state_manager = PresentationUiState()
         coordinator.project_data = SharedPageData()
         coordinator._icon_provider = FakeWindowIconProvider()
@@ -5674,6 +5676,7 @@ class SceneControlPresentationTests(unittest.TestCase):
 
     def test_page_deletion_reopen_rejects_pending_3d_content_and_recovers(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.ui_state_manager = PresentationUiState()
         coordinator.project_data = SharedPageData()
         pages = {}

@@ -20,6 +20,7 @@ from ....domain.entities.takeoff import (
     find_takeoff_parent_cycle_uids,
     find_takeoff_parent_page_mismatches,
 )
+from ....domain.services.uom_service import normalize_condition_uoms_for_system
 from ...database.bid_owned_identity import (
     CyclicBidOwnedReferenceError,
     IncoherentBidOwnedScopeError,
@@ -799,6 +800,14 @@ class BidDataReaderMixin:
         schema: IDatabaseSchemaInspector,
     ) -> BidConditions:
         bid_conditions: BidConditions = {}
+        metric = False
+        if schema.column_exists("Bids", "MeasureBase"):
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT [MeasureBase] FROM [Bids] WHERE [UID] = ?", bid_uid
+                )
+                measure_base_row = cursor.fetchone()
+            metric = bool(measure_base_row and int(measure_base_row[0] or 0) == 1)
         condition_select = ", ".join(
             [
                 "[UID]",
@@ -923,7 +932,7 @@ class BidDataReaderMixin:
                     if row.DisplayGridWhileDrawing is not None
                     else False
                 )
-                bid_conditions[uid] = Condition(
+                condition = Condition(
                     uid=uid,
                     name=name,
                     condition_type=condition_type,
@@ -966,6 +975,9 @@ class BidDataReaderMixin:
                     display_dimension=display_dimension,
                     display_name=display_name_flag,
                     display_grid_while_drawing=display_grid_while_drawing,
+                )
+                bid_conditions[uid] = normalize_condition_uoms_for_system(
+                    condition, metric
                 )
             return bid_conditions
 

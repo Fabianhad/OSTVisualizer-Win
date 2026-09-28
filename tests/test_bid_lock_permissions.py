@@ -1289,6 +1289,7 @@ class BidLockPermissionTests(unittest.TestCase):
     def _condition_structure_handler(self, allowed):
         access = _FakeAccess(allowed)
         write_service = _ConditionStructureWriteService()
+        folder = SimpleNamespace(name="Folder 1")
         coordinator = SimpleNamespace(
             ui_access_manager=access,
             conditions_sidebar=SimpleNamespace(window=lambda: None),
@@ -1302,9 +1303,7 @@ class BidLockPermissionTests(unittest.TestCase):
             project_write_service=write_service,
             project_read_service=None,
             project_data=SimpleNamespace(
-                get_bid_condition_folders=lambda: {
-                    "folder-1": SimpleNamespace(name="Folder 1")
-                }
+                get_bid_condition_folders=lambda: {"folder-1": folder}
             ),
             ui_state_manager=ui_state,
             workspace_state_model=make_workspace_state_model(),
