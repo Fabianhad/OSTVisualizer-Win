@@ -41,10 +41,10 @@ UOM_LABELS = {
     UOM_INCHES: "IN",
     UOM_LINEAR_FEET: "LF",
     UOM_LINEAR_YARDS: "LY",
-    UOM_SQUARE_INCHES: "SQ IN",
+    UOM_SQUARE_INCHES: "IN²",
     UOM_SQUARE_FEET: "SF",
     UOM_SQUARE_YARDS: "SY",
-    UOM_SQUARE_ROOFING: "ROOF",
+    UOM_SQUARE_ROOFING: "SQ",
     UOM_CUBIC_FEET: "CF",
     UOM_CUBIC_YARDS: "CY",
     UOM_MM: "mm",
@@ -113,8 +113,8 @@ _LENGTH_UOMS: List[Tuple[int, str]] = [
 _AREA_UOMS: List[Tuple[int, str]] = [
     (UOM_SQUARE_FEET, "SF"),
     (UOM_SQUARE_YARDS, "SY"),
-    (UOM_SQUARE_INCHES, "SQ IN"),
-    (UOM_SQUARE_ROOFING, "ROOF"),
+    (UOM_SQUARE_ROOFING, "SQ"),
+    (UOM_SQUARE_INCHES, "IN²"),
 ]
 _VOLUME_UOMS: List[Tuple[int, str]] = [
     (UOM_CUBIC_FEET, "CF"),

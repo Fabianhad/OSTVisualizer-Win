@@ -4266,7 +4266,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         name_label = next(item for item in text_items if item.data(3) == "display_name")
         self.assertIn("Area Label", name_label.toPlainText())
-        self.assertIn("144.00 SQ IN", dimension_label.toPlainText())
+        self.assertIn("144.00 IN²", dimension_label.toPlainText())
         name_center = name_label.mapToScene(name_label.boundingRect().center())
         dimension_center = dimension_label.mapToScene(
             dimension_label.boundingRect().center()

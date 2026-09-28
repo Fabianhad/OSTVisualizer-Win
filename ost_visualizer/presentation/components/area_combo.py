@@ -87,9 +87,20 @@ class AreaComboBox(TreePopupComboBoxBase):
 
     def _select_uid(self, uid: str, emit: bool) -> None:
         self._selected_uid = uid or ""
+        self._sync_popup_current_item()
         self._update_display_text()
         if emit and not self._block_signals:
             self.area_activated.emit(self._selected_uid)
+
+    def _sync_popup_current_item(self) -> None:
+        item = self._area_items.get(self._selected_uid)
+        index = item.index() if item is not None else QtCore.QModelIndex()
+        selection_model = self._tree.selectionModel()
+        selection_model.setCurrentIndex(
+            index,
+            QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+        )
+        selection_model.clearSelection()
 
     def _update_display_text(self) -> None:
         item = self._area_items.get(self._selected_uid)
@@ -119,9 +130,8 @@ class AreaComboBox(TreePopupComboBoxBase):
         self._block_signals = True
         self._model.clear()
         self._area_items.clear()
-        self._selected_uid = ""
+        self._select_uid("", emit=False)
         self._block_signals = False
-        self._update_display_text()
 
     def cleanup(self) -> None:
         self._tree.clicked.disconnect(self._on_tree_clicked)

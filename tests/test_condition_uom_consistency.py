@@ -359,8 +359,8 @@ class ConditionUomConsistencyTests(unittest.TestCase):
         )[condition.uid][0]
         self.assertEqual(condition.uom1, UOM_SQUARE_ROOFING)
         self.assertEqual(quantity, 1.0)
-        self.assertEqual(self._sidebar_texts(condition)[0], "1 ROOF")
-        self.assertEqual(self._properties_uom_texts(condition, metric=False)[0], "ROOF")
+        self.assertEqual(self._sidebar_texts(condition)[0], "1 SQ")
+        self.assertEqual(self._properties_uom_texts(condition, metric=False)[0], "SQ")
 
     def test_quantity_calculation_uses_normalized_linear_area_volume_uoms(self):
         takeoff = Takeoff(
