@@ -73,6 +73,10 @@ infrastructure ----------|
 Threading and events:
 
 - UI work must stay on the main Qt thread.
+- Dialog window-button helpers use an existing `QWindow` handle for native style
+  updates and Qt window hints before show. Never force `QWidget.winId()` on a
+  parented dialog: it promotes unrelated parent/sibling widgets to native windows
+  and can strand their platform cursor on a hovered text editor's I-beam.
 - Startup replaces the Windows platform's light-only Vista widget style with
   Fusion before creating any windows; keep the Windows 11 default style intact.
   Qt owns system theme detection, palettes, runtime palette propagation, and

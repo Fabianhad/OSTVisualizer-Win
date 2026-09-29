@@ -30,9 +30,12 @@ def _set_qt_window_button_hints(
     widget.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint, allow_maximize)
 
 
-def _remove_windows_style_bits(widget, bits: int) -> None:
+def _remove_windows_style_bits(widget: QtWidgets.QWidget, bits: int) -> None:
     try:
-        hwnd = int(widget.winId())
+        window = widget.windowHandle()
+        if window is None:
+            return
+        hwnd = int(window.winId())
         style = ctypes.windll.user32.GetWindowLongW(hwnd, _GWL_STYLE)
         ctypes.windll.user32.SetWindowLongW(hwnd, _GWL_STYLE, style & ~bits)
     except (AttributeError, OSError, RuntimeError, ValueError):

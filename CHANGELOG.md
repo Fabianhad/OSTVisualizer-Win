@@ -37,6 +37,8 @@
 
 ### Fixed
 
+- Opening Cover Sheet or other parented dialogs no longer leaves the I-beam
+  cursor stuck over Projects, buttons, and other unrelated controls on Windows.
 - Legacy Takeoff writes reject unsupported nondefault fields instead of silently
   losing parent, rotation, curve, negative quantity, or Bid Area state. Nested
   Backout vertex edits preserve their children. Parented Count/Linear paste and
