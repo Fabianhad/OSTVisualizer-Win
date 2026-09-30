@@ -431,6 +431,11 @@ class ConditionActionHandler:
         )
         if folder_owners == {}:
             return
+        folder_values = (
+            {uid: replace(folder) for uid, folder in folder_owners.items()}
+            if folder_owners is not None
+            else None
+        )
 
         def create_owner_is_current() -> bool:
             return self._bid_owner_is_current(bid_ref, bid_owner) and (
@@ -441,6 +446,22 @@ class ConditionActionHandler:
                     self._project_data.get_bid_condition_folders(),
                 )
             )
+
+        def advance_create_owner_after_save() -> bool:
+            if not self._bid_owner_is_current(bid_ref, bid_owner):
+                return False
+            if folder_owners is None or folder_values is None:
+                return True
+            current = self._project_data.get_bid_condition_folders()
+            if any(
+                current.get(uid) is None or current.get(uid) != folder_values[uid]
+                for uid in folder_owners
+            ):
+                return False
+            for uid in folder_owners:
+                folder_owners[uid] = current[uid]
+                folder_values[uid] = replace(current[uid])
+            return True
 
         uses_sql_queue = self._uses_sql_queue(bid_ref)
         cdn_types = (
@@ -572,6 +593,13 @@ class ConditionActionHandler:
                     bid_ref.file_path, bid_ref.bid_uid, spec
                 )
             if result.write_success and result.value:
+                if not advance_create_owner_after_save():
+                    return UpdateConditionResultDto(
+                        success=False,
+                        error=(
+                            "The active bid or authoritative Condition family changed."
+                        ),
+                    )
                 created_uid[0] = str(result.value)
                 created_refresh_failed[0] = result.refresh_failed
                 return UpdateConditionResultDto(success=True)
@@ -611,6 +639,17 @@ class ConditionActionHandler:
                         UpdateConditionResultDto(
                             success=False,
                             error="The committed condition result was incomplete.",
+                        )
+                    )
+                    return
+                if not advance_create_owner_after_save():
+                    completed(
+                        UpdateConditionResultDto(
+                            success=False,
+                            error=(
+                                "The active bid or authoritative Condition family "
+                                "changed."
+                            ),
                         )
                     )
                     return
@@ -1587,6 +1626,9 @@ class ConditionActionHandler:
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:
             return
+        bid_owner = self._capture_bid_owner(bid_ref)
+        if bid_owner is None:
+            return
         sidebar = self._coordinator.conditions_sidebar
         if not sidebar:
             return
@@ -1602,26 +1644,34 @@ class ConditionActionHandler:
         )
         if condition_owners == {}:
             return
+        condition_values = {
+            uid: replace(condition) for uid, condition in condition_owners.items()
+        }
 
         def dialog_owner_is_current() -> bool:
-            return self._resource_owners_are_current(
-                bid_ref,
-                condition_owners,
-                self._project_data.get_bid_conditions(),
+            return bool(
+                self._bid_owner_is_current(bid_ref, bid_owner)
+                and self._resource_owners_are_current(
+                    bid_ref,
+                    condition_owners,
+                    self._project_data.get_bid_conditions(),
+                )
             )
 
-        def advance_dialog_owner_after_save(condition_uid: str) -> bool:
-            if not self._is_current_bid(bid_ref):
+        def advance_dialog_owners_after_save(condition_uid: str) -> bool:
+            if not self._bid_owner_is_current(bid_ref, bid_owner):
                 return False
             current = self._project_data.get_bid_conditions()
             condition_uid = str(condition_uid)
-            replacement = current.get(condition_uid)
-            if replacement is None or any(
-                uid != condition_uid and current.get(uid) is not owner
-                for uid, owner in condition_owners.items()
+            if current.get(condition_uid) is None or any(
+                current.get(uid) is None
+                or (uid != condition_uid and current.get(uid) != condition_values[uid])
+                for uid in condition_owners
             ):
                 return False
-            condition_owners[condition_uid] = replacement
+            for uid in condition_owners:
+                condition_owners[uid] = current[uid]
+                condition_values[uid] = replace(current[uid])
             return True
 
         bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
@@ -1705,11 +1755,18 @@ class ConditionActionHandler:
                     cond_uid,
                     dto,
                 )
-                if result.success and advance_dialog_owner_after_save(cond_uid):
+                if result.success and advance_dialog_owners_after_save(cond_uid):
                     dialog.refresh_condition_data(
                         self._project_data.get_bid_conditions()
                     )
-            if result.success and dialog_owner_is_current():
+                elif result.success:
+                    result = UpdateConditionResultDto(
+                        success=False,
+                        error=(
+                            "The active bid or authoritative Condition family changed."
+                        ),
+                    )
+            if result.success:
                 self._coordinator.highlight_sidebar({cond_uid})
             return result
 
@@ -1755,11 +1812,17 @@ class ConditionActionHandler:
                 )
 
             def mutation_completed(success: bool, error=None) -> None:
-                if success and advance_dialog_owner_after_save(cond_uid):
-                    dialog.refresh_condition_data(
-                        self._project_data.get_bid_conditions()
-                    )
-                    self._coordinator.highlight_sidebar({cond_uid})
+                if success:
+                    success = advance_dialog_owners_after_save(cond_uid)
+                    if success:
+                        dialog.refresh_condition_data(
+                            self._project_data.get_bid_conditions()
+                        )
+                        self._coordinator.highlight_sidebar({cond_uid})
+                    else:
+                        error = (
+                            "The active bid or authoritative Condition family changed."
+                        )
                 completed(
                     UpdateConditionResultDto(
                         success=success,
@@ -1810,6 +1873,7 @@ class ConditionActionHandler:
 
         def _on_navigated(uid):
             if not dialog_owner_is_current():
+                dialog.reject()
                 return
             self._coordinator.highlight_sidebar({uid})
             if (

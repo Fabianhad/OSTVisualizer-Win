@@ -1,7 +1,7 @@
 import math
 import os
 import unittest
-from dataclasses import fields
+from dataclasses import fields, replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -3226,6 +3226,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 return ["c1"]
 
         class ProjectData:
+            bid = SimpleNamespace(measure_base=0)
+
             def is_current_bid_locked(self):
                 return False
 
@@ -3236,7 +3238,10 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 return []
 
             def get_current_bid(self):
-                return SimpleNamespace(measure_base=0)
+                return self.bid
+
+            def get_bid(self, _bid_ref):
+                return self.bid
 
         class ReadService:
             def get_cdn_types(self, _file_path):
@@ -3368,6 +3373,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 return ["c1"]
 
         class ProjectData:
+            bid = SimpleNamespace(measure_base=0)
+
             @staticmethod
             def is_current_bid_locked():
                 return False
@@ -3382,7 +3389,11 @@ class ConditionUiBehaviorTests(unittest.TestCase):
 
             @staticmethod
             def get_current_bid():
-                return SimpleNamespace(measure_base=0)
+                return ProjectData.bid
+
+            @staticmethod
+            def get_bid(_bid_ref):
+                return ProjectData.bid
 
         class ReadService:
             @staticmethod
@@ -3498,6 +3509,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 return ["c1", "c2"]
 
         class ProjectData:
+            bid = SimpleNamespace(measure_base=0)
+
             @staticmethod
             def is_current_bid_locked():
                 return False
@@ -3512,7 +3525,11 @@ class ConditionUiBehaviorTests(unittest.TestCase):
 
             @staticmethod
             def get_current_bid():
-                return SimpleNamespace(measure_base=0)
+                return ProjectData.bid
+
+            @staticmethod
+            def get_bid(_bid_ref):
+                return ProjectData.bid
 
             @staticmethod
             def get_cdn_types():
@@ -3793,11 +3810,13 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             def deleteLater():
                 pass
 
+        bid_owner = SimpleNamespace(measure_base=0)
         project_data = SimpleNamespace(
             is_current_bid_locked=lambda: False,
             get_bid_conditions=lambda: conditions[0],
             get_all_takeoffs=lambda: [],
-            get_current_bid=lambda: SimpleNamespace(measure_base=0),
+            get_current_bid=lambda: bid_owner,
+            get_bid=lambda _bid_ref: bid_owner,
         )
         coordinator = SimpleNamespace(
             ui_access_manager=SimpleNamespace(
@@ -3949,6 +3968,92 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             handler.on_create_requested("")
         self.assertFalse(save_results[0].success)
         self.assertEqual(writes, [])
+
+    def test_create_condition_in_folder_highlights_after_own_family_reconstruction(
+        self,
+    ):
+        bid_ref = BidRef("database", "1")
+        bid_owner = SimpleNamespace(measure_base=0)
+        folders = [{"f1": BidConditionFolder(uid="f1", name="Folder")}]
+        highlighted = []
+        save_results = []
+
+        class Sidebar(QtCore.QObject):
+            @staticmethod
+            def window():
+                return None
+
+        class Dialog:
+            def __init__(self, *args, save_fn, **kwargs):
+                self.save_fn = save_fn
+                self._dirty = False
+
+            @staticmethod
+            def set_apply_allowed(_allowed):
+                pass
+
+            @staticmethod
+            def deleteLater():
+                pass
+
+        def create_condition(*_args):
+            folders[0] = {uid: replace(folder) for uid, folder in folders[0].items()}
+            return SimpleNamespace(
+                write_success=True,
+                value="new-condition",
+                refresh_failed=False,
+            )
+
+        project_data = SimpleNamespace(
+            get_bid=lambda _bid_ref: bid_owner,
+            get_current_bid=lambda: bid_owner,
+            get_bid_condition_folders=lambda: folders[0],
+        )
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=Sidebar(),
+            main_window=SimpleNamespace(icon_provider=None),
+            event_bus=EventBus(),
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda uids: highlighted.append(set(uids)),
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _database_id: False,
+                create_condition_result=create_condition,
+            ),
+            project_read_service=SimpleNamespace(
+                get_cdn_types=lambda _file_path: {},
+                get_merged_bid_layers=lambda _file_path, _bid_uid: [],
+            ),
+            project_data=project_data,
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+
+        def execute(dialog, _event_bus):
+            save_results.append(
+                dialog.save_fn("__new__", UpdateConditionDto({"name": "New"}))
+            )
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "EditConditionDialog",
+            Dialog,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "exec_with_ost_blocking",
+            execute,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "delete_later_if_valid",
+            lambda _dialog: None,
+        ):
+            handler.on_create_requested("f1")
+        self.assertTrue(save_results[0].success)
+        self.assertEqual(highlighted, [{"new-condition"}])
 
     def test_condition_delete_confirmation_rejects_same_uid_replacement(self):
         original = Condition(uid="c1", name="Original", ref_no=1)

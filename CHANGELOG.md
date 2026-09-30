@@ -37,6 +37,10 @@
 
 ### Fixed
 
+- Edit Condition Properties now keeps its authoritative Condition target and
+  sidebar selection aligned after saving with Next or Previous, including MDB
+  family reloads and queued SQL projection. Creating a Condition inside a folder
+  likewise retains the owning folder across its own authoritative reconstruction.
 - Opening Cover Sheet or other parented dialogs no longer leaves the I-beam
   cursor stuck over Projects, buttons, and other unrelated controls on Windows.
 - Legacy Takeoff writes reject unsupported nondefault fields instead of silently

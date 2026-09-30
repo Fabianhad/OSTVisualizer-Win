@@ -59,11 +59,13 @@ class RepeatedEditorOwnershipTests(unittest.TestCase):
                 sidebar = QtWidgets.QWidget()
                 sidebar.collect_ordered_condition_uids = lambda: ["1"]
                 bid_ref = BidRef("sql-id" if sql else "test.mdb", "7")
+                bid_owner = SimpleNamespace(measure_base=0)
                 data = SimpleNamespace(
                     is_current_bid_locked=lambda: False,
                     get_bid_conditions=lambda: conditions,
                     get_all_takeoffs=lambda: [],
-                    get_current_bid=lambda: SimpleNamespace(measure_base=0),
+                    get_current_bid=lambda: bid_owner,
+                    get_bid=lambda _bid_ref: bid_owner,
                     get_cdn_types=lambda: {},
                     get_bid_layer_snapshot=lambda: [],
                     get_layer_uids_in_use=lambda: set(),
