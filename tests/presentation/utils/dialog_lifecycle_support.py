@@ -1,0 +1,140 @@
+import os
+import threading
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    EditLeaseHandle,
+    EditLeaseResult,
+    ResourceRef,
+)
+from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+)
+from ost_visualizer.infrastructure.events.event_bus import EventBus
+from ost_visualizer.presentation import main_window as main_window_module
+from ost_visualizer.presentation.components.progress_dialog import (
+    ProgressDialog,
+    ProgressReporter,
+)
+from ost_visualizer.presentation.coordinators import (
+    license_ui_coordinator as license_ui_coordinator_module,
+)
+from ost_visualizer.presentation.coordinators.event_coordinator import EventCoordinator
+from ost_visualizer.presentation.coordinators.license_ui_coordinator import (
+    LicenseUICoordinator,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
+from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.utils.dialog import BaseListDialog, exec_transient_menu
+from ost_visualizer.presentation.utils.messagebox import confirm_delete_conditions
+from ost_visualizer.presentation.utils.ost_blocking import exec_with_ost_blocking
+from ost_visualizer.presentation.utils.qt_message_notifier import QtMessageNotifier
+from ost_visualizer.presentation.utils.windows import set_fixed_width_auto_height
+from PySide6 import QtCore, QtWidgets
+from shiboken6 import delete
+
+
+def _app():
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication([])
+    return app
+
+
+def _painted_x_bounds(widget):
+    image = widget.grab().toImage()
+    background = image.pixelColor(0, 0)
+    min_x = image.width()
+    max_x = -1
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            color_delta = (
+                abs(color.red() - background.red())
+                + abs(color.green() - background.green())
+                + abs(color.blue() - background.blue())
+            )
+            if color.alpha() > 0 and color_delta > 12:
+                min_x = min(min_x, x)
+                max_x = max(max_x, x)
+    return min_x, max_x, image.width()
+
+
+class FakeEventBus:
+    def __init__(self):
+        self.subscriptions = []
+        self.unsubscriptions = []
+
+    def subscribe(self, event_type, callback):
+        self.subscriptions.append((event_type, callback))
+
+    def unsubscribe(self, event_type, callback):
+        self.unsubscriptions.append((event_type, callback))
+
+
+class FakeIconProvider:
+    def set_window_icon(self, _widget):
+        pass
+
+
+class FakeLicenseOrchestrator:
+    def __init__(self, view_model=None):
+        self._view_model = view_model or LicenseViewModelDto(has_license=False)
+
+    def get_view_model(self):
+        return self._view_model
+
+    def has_valid_license(self):
+        return False
+
+
+class FakeProgressDialog:
+    instances = []
+    result_code = QtWidgets.QDialog.DialogCode.Accepted
+
+    def __init__(
+        self,
+        filename,
+        task_fn,
+        parent=None,
+        reporter=None,
+        action_text="Processing",
+    ):
+        self.filename = filename
+        self.task_fn = task_fn
+        self.parent = parent
+        self.reporter = reporter
+        self.action_text = action_text
+        self.result = None
+        self.error = None
+        self.cleaned_up = False
+        self.deleted = False
+        self.exec_calls = 0
+        self.cleanup_calls = 0
+        self.delete_calls = 0
+        self.messages = []
+        if reporter is not None:
+            reporter.progress.connect(self.messages.append)
+        FakeProgressDialog.instances.append(self)
+
+    def exec(self):
+        self.exec_calls += 1
+        self.result = self.task_fn()
+        return self.result_code
+
+    def cleanup(self):
+        self.cleanup_calls += 1
+        self.cleaned_up = True
+
+    def deleteLater(self):
+        self.delete_calls += 1
+        self.deleted = True

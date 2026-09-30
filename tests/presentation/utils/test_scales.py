@@ -1,0 +1,23 @@
+"""Custom calibration labels retain precision and reject invalid scale ratios."""
+
+import unittest
+from ost_visualizer.presentation.utils.scales import format_custom_scale
+
+
+class FormatCustomScaleTests(unittest.TestCase):
+    def test_invalid_nonpositive_and_nonfinite_values_have_no_label(self):
+        for invalid in (None, "invalid", 0, -1, float("nan"), float("inf")):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(format_custom_scale(invalid, 12), "")
+                self.assertEqual(format_custom_scale(1, invalid), "")
+
+    def test_architectural_foot_and_general_ratio_are_distinct(self):
+        self.assertEqual(format_custom_scale(0.125, 12), '0.125" = 1\' 0"')
+        self.assertEqual(format_custom_scale(1, 12 + 1e-10), '1" = 1\' 0"')
+        self.assertEqual(format_custom_scale(1, 120), "1 : 120")
+        self.assertEqual(format_custom_scale("1.25", "1000"), "1.25 : 1000")
+
+    def test_small_custom_values_are_not_rounded_to_zero(self):
+        self.assertEqual(
+            format_custom_scale(0.000000123456789, 1), "1.23456789e-07 : 1"
+        )

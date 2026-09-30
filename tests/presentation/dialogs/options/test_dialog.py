@@ -1,0 +1,805 @@
+from tests.presentation.dialogs.options.preference_support import (
+    _app as _preferences_support__app,
+    _apply_button as _preferences_support__apply_button,
+    _reset_all_button as _preferences_support__reset_all_button,
+    _visible_texts as _preferences_support__visible_texts,
+)
+from tests.helpers.call_recorder import SingleCallRecorder
+from shiboken6 import delete
+from PySide6 import QtCore, QtGui, QtWidgets
+from ost_visualizer.presentation.utils.mcp_setup_config import (
+    build_claude_desktop_config,
+    build_codex_config_toml,
+    build_codex_mcp_add_command,
+)
+from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
+from ost_visualizer.presentation.config import (
+    COMPACT_SPACING,
+    OPTIONS_DIALOG_TITLE,
+    OPTIONS_GROUP_AUTO_ZOOM,
+    OPTIONS_GROUP_CONFIRMATIONS,
+    OPTIONS_GROUP_PREFERENCES,
+    OPTIONS_GROUP_SNAP_ANGLE,
+    OPTIONS_LABEL_RESET_ALL_SETTINGS,
+    OPTIONS_TAB_EXPORT,
+    OPTIONS_TAB_FONTS_COLORS,
+    OPTIONS_TAB_MCP_SETUP,
+    OPTIONS_TAB_OPTIONS,
+    OPTIONS_TAB_TAKEOFF_TOOLBAR,
+    OPTIONS_WINDOW_WIDTH,
+    RELAXED_SPACING,
+    TAB_INDEX_TAKEOFF,
+)
+from ost_visualizer.presentation.components import color_button as color_button_module
+from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.annotation_caption import (
+    ANNOTATION_CAPTION_ORDER,
+    DEFAULT_ANNOTATION_CAPTION_IDS,
+    AnnotationCaptionId,
+)
+from ost_visualizer.application.dtos.annotation_caption_dto import (
+    ANNOTATION_CAPTION_SPECS,
+)
+from unittest import mock
+from pathlib import Path
+import unittest
+import os
+from ost_visualizer.presentation.dialogs.options.fonts_colors_tab import (
+    COLOR_CATEGORIES,
+    COLOR_CATEGORY_INACTIVE_OBJECTS,
+    FONT_CATEGORIES,
+    FONT_CATEGORY_TEXT,
+    FontsColorsTab,
+)
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    apply_config_owned_annotation_defaults,
+    build_placed_annotation_spec,
+    set_annotation_styles_by_tool,
+)
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+class DialogPreferenceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _preferences_support__app()
+        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def test_options_group_boxes_use_explicit_density_spacing(self):
+        dialog = OptionsDialog(Config())
+        try:
+            options_tab = dialog._options_tab
+            options_layout = options_tab.layout()
+            lower_layout = options_layout.itemAt(1).layout()
+            lower_columns = tuple(
+                lower_layout.itemAt(index).layout()
+                for index in range(lower_layout.count())
+            )
+            self.assertEqual(options_layout.spacing(), RELAXED_SPACING)
+            self.assertEqual(lower_layout.spacing(), RELAXED_SPACING)
+            self.assertTrue(
+                all(column.spacing() == RELAXED_SPACING for column in lower_columns)
+            )
+            self.assertEqual(
+                {
+                    group.title(): group.layout().spacing()
+                    for group in options_tab.findChildren(QtWidgets.QGroupBox)
+                },
+                {
+                    OPTIONS_GROUP_PREFERENCES: RELAXED_SPACING,
+                    OPTIONS_GROUP_SNAP_ANGLE: COMPACT_SPACING,
+                    OPTIONS_GROUP_CONFIRMATIONS: COMPACT_SPACING,
+                    OPTIONS_GROUP_AUTO_ZOOM: COMPACT_SPACING,
+                },
+            )
+            export_tab = dialog._export_tab
+            self.assertEqual(export_tab.layout().spacing(), RELAXED_SPACING)
+            self.assertTrue(
+                all(
+                    group.layout().spacing() == COMPACT_SPACING
+                    for group in export_tab.findChildren(QtWidgets.QGroupBox)
+                )
+            )
+        finally:
+            dialog.close()
+            delete(dialog)
+
+    def test_options_dialog_loads_persisted_preferences(self):
+        dialog = OptionsDialog(
+            Config(
+                display_modes_synced=False,
+                display_mode_3d=Config.DISPLAY_MODE_ORIGINAL,
+                display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
+                grayscale_enabled=False,
+                roping_selection_method="inclusive",
+                display_page_index_with_sheet_name=True,
+                display_sheet_number_with_sheet_name=True,
+                hotlink_target="view",
+                show_toolbar_text=True,
+                disable_high_resolution_images=True,
+                enable_intelligent_paste=False,
+                enable_advanced_mouse_controls=False,
+                use_full_window_crosshairs=True,
+                crosshair_color="#123456",
+                crosshair_line_thickness=3,
+                allow_add_page_from_takeoff_tab=True,
+                mouse_unpressed_snap_angle=30,
+                mouse_pressed_snap_angle=45,
+                snap_to_grid_enabled=False,
+                snap_to_grid_threshold_px=12,
+                snap_to_pdf_lines_enabled=False,
+                snap_to_pdf_lines_threshold_px=13,
+                snap_to_takeoffs_enabled=False,
+                snap_to_takeoffs_threshold_px=14,
+                snap_to_right_angle_enabled=True,
+                snap_to_right_angle_threshold_px=15,
+                default_auto_zoom_level=150,
+                pdf_annotation_captions_enabled=True,
+                pdf_annotation_caption_ids=("area", "volume"),
+            )
+        )
+        self.assertFalse(dialog._display_modes_sync_check.isChecked())
+        self.assertTrue(dialog._display_mode_3d_original_radio.isChecked())
+        self.assertTrue(dialog._display_mode_2d_transparent_radio.isChecked())
+        self.assertFalse(dialog._grayscale_check.isChecked())
+        self.assertTrue(dialog._roping_inclusive_radio.isChecked())
+        self.assertTrue(dialog._page_index_check.isChecked())
+        self.assertTrue(dialog._sheet_number_check.isChecked())
+        self.assertTrue(dialog._hotlink_view_radio.isChecked())
+        self.assertFalse(dialog._hotlink_main_radio.isChecked())
+        self.assertTrue(dialog._hotlink_main_radio.isEnabled())
+        self.assertTrue(dialog._toolbar_text_check.isChecked())
+        self.assertTrue(dialog._disable_high_res_check.isChecked())
+        self.assertFalse(dialog._intelligent_paste_check.isChecked())
+        self.assertFalse(dialog._advanced_mouse_controls_check.isChecked())
+        self.assertTrue(dialog._full_window_crosshairs_check.isChecked())
+        self.assertEqual(dialog._crosshair_color_button.color().name(), "#123456")
+        self.assertEqual(dialog._crosshair_line_thickness_spin.value(), 3)
+        self.assertTrue(dialog._allow_add_page_from_takeoff_check.isChecked())
+        self.assertEqual(dialog._mouse_unpressed_snap_angle_combo.currentData(), 30)
+        self.assertEqual(dialog._mouse_pressed_snap_angle_combo.currentData(), 45)
+        self.assertFalse(dialog._snap_to_grid_check.isChecked())
+        self.assertEqual(dialog._snap_to_grid_threshold_spin.value(), 12)
+        self.assertFalse(dialog._snap_to_pdf_lines_check.isChecked())
+        self.assertEqual(dialog._snap_to_pdf_lines_threshold_spin.value(), 13)
+        self.assertFalse(dialog._snap_to_takeoffs_check.isChecked())
+        self.assertEqual(dialog._snap_to_takeoffs_threshold_spin.value(), 14)
+        self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
+        self.assertEqual(dialog._snap_to_right_angle_threshold_spin.value(), 15)
+        self.assertEqual(dialog._auto_zoom_spin.value(), 150)
+        self.assertTrue(dialog._caption_master_check.isChecked())
+        self.assertTrue(dialog._caption_checks[AnnotationCaptionId.AREA].isChecked())
+        self.assertTrue(dialog._caption_checks[AnnotationCaptionId.VOLUME].isChecked())
+        self.assertFalse(dialog._caption_checks[AnnotationCaptionId.LENGTH].isChecked())
+        self.assertTrue(
+            all(check.isEnabled() for check in dialog._caption_checks.values())
+        )
+        dialog.close()
+
+    def test_options_crosshair_color_preview_is_square_and_not_stylesheet_colored(self):
+        dialog = OptionsDialog(Config(crosshair_color="#123456"))
+        button = dialog._crosshair_color_button
+        self.assertEqual(button.minimumWidth(), button.minimumHeight())
+        self.assertEqual(button.maximumWidth(), button.maximumHeight())
+        self.assertEqual(button.styleSheet(), "")
+        button.set_color(QtGui.QColor("#abcdef"))
+        self.assertEqual(button.color().name(), "#abcdef")
+        self.assertEqual(button.styleSheet(), "")
+        dialog.close()
+
+    def test_options_dialog_does_not_show_auto_dimension_lines_preference(self):
+        dialog = OptionsDialog(Config())
+        labels = {
+            checkbox.text() for checkbox in dialog.findChildren(QtWidgets.QCheckBox)
+        }
+        self.assertNotIn("Enable auto dimension lines", labels)
+        self.assertNotIn("Show right angle line indicator", labels)
+        dialog.close()
+
+    def test_options_crosshair_color_picker_accept_updates_pending_color_only(self):
+        dialog = OptionsDialog(Config(crosshair_color="#123456"))
+        button = dialog._crosshair_color_button
+        created_dialogs = []
+
+        class FakeColorDialog:
+            def __init__(self, color, parent=None):
+                self.initial_color = color.name()
+                self.parent = parent
+                self.window_title = ""
+                self.stylesheet_calls = []
+                created_dialogs.append(self)
+
+            def isVisible(self):
+                return False
+
+            def setWindowFlag(self, *_args):
+                pass
+
+            def winId(self):
+                raise RuntimeError("no native window in test")
+
+            def setWindowTitle(self, title):
+                self.window_title = title
+
+            def setStyleSheet(self, stylesheet):
+                self.stylesheet_calls.append(stylesheet)
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def currentColor(self):
+                return QtGui.QColor("#abcdef")
+
+            def deleteLater(self):
+                pass
+
+        original_dialog = color_button_module.QtWidgets.QColorDialog
+        color_button_module.QtWidgets.QColorDialog = FakeColorDialog
+        try:
+            button._choose_color()
+        finally:
+            color_button_module.QtWidgets.QColorDialog = original_dialog
+        self.assertEqual(button.color().name(), "#abcdef")
+        self.assertEqual(dialog.get_config().crosshair_color, "#123456")
+        self.assertEqual(dialog._collect_widget_config().crosshair_color, "#abcdef")
+        self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+        self.assertEqual(created_dialogs[0].initial_color, "#123456")
+        self.assertIs(created_dialogs[0].parent, button)
+        self.assertEqual(created_dialogs[0].parent.styleSheet(), "")
+        self.assertEqual(created_dialogs[0].stylesheet_calls, [])
+        dialog.close()
+
+    def test_options_crosshair_color_picker_cancel_keeps_previous_color(self):
+        dialog = OptionsDialog(Config(crosshair_color="#123456"))
+        button = dialog._crosshair_color_button
+        changed = []
+        button.colorChanged.connect(lambda: changed.append(button.color().name()))
+
+        class FakeColorDialog:
+            def __init__(self, _color, parent=None):
+                self.parent = parent
+
+            def isVisible(self):
+                return False
+
+            def setWindowFlag(self, *_args):
+                pass
+
+            def winId(self):
+                raise RuntimeError("no native window in test")
+
+            def setWindowTitle(self, _title):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def currentColor(self):
+                return QtGui.QColor("#abcdef")
+
+            def deleteLater(self):
+                pass
+
+        original_dialog = color_button_module.QtWidgets.QColorDialog
+        color_button_module.QtWidgets.QColorDialog = FakeColorDialog
+        try:
+            button._choose_color()
+        finally:
+            color_button_module.QtWidgets.QColorDialog = original_dialog
+        self.assertEqual(button.color().name(), "#123456")
+        self.assertEqual(changed, [])
+        self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
+        dialog.close()
+
+    def test_options_color_picker_stops_when_button_is_destroyed(self):
+        dialog = OptionsDialog(Config(crosshair_color="#123456"))
+        button = dialog._crosshair_color_button
+
+        class DestroyingColorDialog(QtWidgets.QColorDialog):
+            def exec(self):
+                delete(self.parent())
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def currentColor(self):
+                raise AssertionError("destroyed color dialog must not be read")
+
+        with mock.patch.object(
+            color_button_module.QtWidgets,
+            "QColorDialog",
+            DestroyingColorDialog,
+        ):
+            button._choose_color()
+        dialog.close()
+
+    def test_repeated_options_color_picker_cancellation_releases_dialogs(self):
+        dialog = OptionsDialog(Config(crosshair_color="#123456"))
+        button = dialog._crosshair_color_button
+        real_color_dialog = QtWidgets.QColorDialog
+        try:
+            with (
+                mock.patch.object(
+                    color_button_module.QtWidgets,
+                    "QColorDialog",
+                    side_effect=lambda color, parent: real_color_dialog(color, parent),
+                ),
+                mock.patch.object(
+                    real_color_dialog,
+                    "exec",
+                    return_value=QtWidgets.QDialog.DialogCode.Rejected,
+                ),
+            ):
+                for _ in range(100):
+                    button._choose_color()
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.app.processEvents()
+            self.assertEqual(button.findChildren(real_color_dialog), [])
+        finally:
+            dialog.deleteLater()
+
+    def test_options_dialog_removes_inactive_unsupported_options(self):
+        dialog = OptionsDialog(Config())
+        texts = _preferences_support__visible_texts(dialog)
+        self.assertNotIn("Digitizer unpressed angle", texts)
+        self.assertNotIn("Digitizer pressed angle", texts)
+        self.assertNotIn("Turn on all quick start dialogs", texts)
+        self.assertNotIn("Turn on bid wizard", texts)
+        self.assertNotIn("Prompt to refresh worksheet before closing project", texts)
+        dialog.close()
+
+    def test_options_dialog_apply_button_starts_disabled(self):
+        dialog = OptionsDialog(Config())
+        apply_button = _preferences_support__apply_button(dialog)
+        self.assertIsNotNone(apply_button)
+        self.assertFalse(apply_button.isEnabled())
+        dialog.close()
+
+    def test_options_dialog_contains_reset_all_settings_button(self):
+        dialog = OptionsDialog(Config())
+        reset_button = _preferences_support__reset_all_button(dialog)
+        self.assertIsNotNone(reset_button)
+        self.assertEqual(reset_button.text(), OPTIONS_LABEL_RESET_ALL_SETTINGS)
+        dialog.close()
+
+    def test_options_dialog_enables_apply_for_implemented_changes(self):
+        dialog = OptionsDialog(Config())
+        apply_button = _preferences_support__apply_button(dialog)
+        dialog._disable_high_res_check.setChecked(True)
+        self.assertTrue(apply_button.isEnabled())
+        dialog.close()
+
+    def test_options_dialog_reset_all_settings_restores_defaults(self):
+        reset_callback = SingleCallRecorder(lambda: Config())
+        dialog = OptionsDialog(
+            Config(
+                show_toolbar_text=False,
+                display_mode_3d=Config.DISPLAY_MODE_SOLID,
+                display_mode_2d=Config.DISPLAY_MODE_SOLID,
+                grayscale_enabled=True,
+                disable_high_resolution_images=True,
+                default_auto_zoom_level=125,
+                snap_to_right_angle_enabled=False,
+            ),
+            reset_callback=reset_callback,
+        )
+        dialog._disable_high_res_check.setChecked(False)
+        self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+            return_value=True,
+        ) as confirm:
+            _preferences_support__reset_all_button(dialog).click()
+        reset_callback.assert_called_once(self, "Options reset click")
+        confirm.assert_called_once()
+        args = confirm.call_args.args
+        self.assertIs(args[0], dialog)
+        self.assertEqual(args[1], OPTIONS_LABEL_RESET_ALL_SETTINGS)
+        self.assertEqual(
+            args[2],
+            (
+                "This will reset all the program options and window settings\n"
+                "to the original defaults.\n"
+                "This cannot be undone. Do you want to reset these now?"
+            ),
+        )
+        self.assertEqual(dialog.get_config(), Config())
+        self.assertFalse(_preferences_support__apply_button(dialog).isEnabled())
+        self.assertTrue(dialog._toolbar_text_check.isChecked())
+        self.assertTrue(dialog._display_modes_sync_check.isChecked())
+        self.assertTrue(dialog._display_mode_3d_original_radio.isChecked())
+        self.assertTrue(dialog._display_mode_2d_original_radio.isChecked())
+        self.assertFalse(dialog._grayscale_check.isChecked())
+        self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
+        self.assertFalse(dialog._disable_high_res_check.isChecked())
+        self.assertEqual(dialog._auto_zoom_spin.value(), Config.DEFAULT_AUTO_ZOOM_LEVEL)
+        self.assertFalse(dialog._caption_master_check.isChecked())
+        self.assertFalse(
+            any(check.isChecked() for check in dialog._caption_checks.values())
+        )
+        dialog.close()
+
+    def test_options_dialog_reset_all_settings_no_keeps_pending_changes(self):
+        reset_callback = SingleCallRecorder(lambda: Config())
+        initial = Config(show_toolbar_text=False)
+        dialog = OptionsDialog(initial, reset_callback=reset_callback)
+        dialog._disable_high_res_check.setChecked(True)
+        self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+            return_value=False,
+        ):
+            _preferences_support__reset_all_button(dialog).click()
+        self.assertEqual(reset_callback.call_count, 0)
+        self.assertNotEqual(dialog.get_config(), Config())
+        self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+        self.assertTrue(dialog._disable_high_res_check.isChecked())
+        dialog.close()
+
+    def test_options_dialog_apply_failure_keeps_pending_changes(self):
+        initial = Config(disable_high_resolution_images=False)
+        dialog = OptionsDialog(
+            initial,
+            apply_callback=lambda _config: (_ for _ in ()).throw(
+                OSError("disk unavailable")
+            ),
+        )
+        dialog.show()
+        try:
+            dialog._disable_high_res_check.setChecked(True)
+            with mock.patch(
+                "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
+            ) as warning:
+                _preferences_support__apply_button(dialog).click()
+            self.assertTrue(dialog.isVisible())
+            self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+            self.assertEqual(dialog.get_config(), initial)
+            warning.assert_called_once_with(
+                dialog,
+                OPTIONS_DIALOG_TITLE,
+                "Failed to apply settings. Reopen Options and try again.",
+            )
+        finally:
+            dialog.close()
+
+    def test_options_dialog_ok_failure_does_not_accept(self):
+        dialog = OptionsDialog(
+            Config(),
+            apply_callback=lambda _config: (_ for _ in ()).throw(
+                OSError("disk unavailable")
+            ),
+        )
+        dialog._disable_high_res_check.setChecked(True)
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
+        ):
+            dialog.accept()
+        self.assertNotEqual(
+            dialog.result(),
+            QtWidgets.QDialog.DialogCode.Accepted,
+        )
+        self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+        dialog.close()
+
+    def test_options_dialog_uses_x_only_window_chrome(self):
+        dialog = OptionsDialog(Config())
+        flags = dialog.windowFlags()
+        self.assertFalse(bool(flags & QtCore.Qt.WindowType.WindowMinimizeButtonHint))
+        self.assertFalse(bool(flags & QtCore.Qt.WindowType.WindowMaximizeButtonHint))
+        self.assertEqual(dialog.minimumWidth(), OPTIONS_WINDOW_WIDTH)
+        self.assertEqual(dialog.maximumWidth(), OPTIONS_WINDOW_WIDTH)
+        self.assertEqual(dialog.minimumHeight(), dialog.maximumHeight())
+        dialog.close()
+
+    def test_options_dialog_contains_options_export_and_mcp_setup_tabs(self):
+        dialog = OptionsDialog(Config())
+        self.assertEqual(dialog._tabs.count(), 5)
+        self.assertEqual(dialog._tabs.tabText(0), OPTIONS_TAB_OPTIONS)
+        self.assertEqual(dialog._tabs.tabText(1), OPTIONS_TAB_TAKEOFF_TOOLBAR)
+        self.assertEqual(dialog._tabs.tabText(2), OPTIONS_TAB_FONTS_COLORS)
+        self.assertEqual(dialog._tabs.tabText(3), OPTIONS_TAB_EXPORT)
+        self.assertEqual(dialog._tabs.tabText(4), OPTIONS_TAB_MCP_SETUP)
+        dialog.close()
+
+    def test_export_tab_defaults_off_with_every_caption_unselected_and_disabled(self):
+        dialog = OptionsDialog(Config())
+        self.assertFalse(dialog._caption_master_check.isChecked())
+        self.assertEqual(len(dialog._caption_checks), len(ANNOTATION_CAPTION_SPECS))
+        for caption_id in ANNOTATION_CAPTION_ORDER:
+            spec = ANNOTATION_CAPTION_SPECS[caption_id]
+            check = dialog._caption_checks[caption_id]
+            self.assertEqual(check.text(), spec.title)
+            self.assertFalse(check.isChecked())
+            self.assertFalse(check.isEnabled())
+        dialog.close()
+
+    def test_export_tab_callout_defaults_preserve_html_and_leave_pdf_disabled(self):
+        dialog = OptionsDialog(Config())
+        self.assertTrue(dialog._html_elevation_callouts_check.isChecked())
+        self.assertFalse(dialog._pdf_elevation_callouts_check.isChecked())
+        self.assertTrue(dialog._html_elevation_callouts_check.isEnabled())
+        self.assertTrue(dialog._pdf_elevation_callouts_check.isEnabled())
+        self.assertTrue(dialog._elevation_callout_condition_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_top_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_bottom_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_cubic_yards_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertTrue(dialog._html_elevation_callout_color_button.isEnabled())
+        self.assertFalse(dialog._pdf_elevation_callout_color_button.isEnabled())
+        self.assertEqual(
+            dialog._html_elevation_callout_color_button.color().name(), "#ff0000"
+        )
+        self.assertEqual(
+            dialog._pdf_elevation_callout_color_button.color().name(), "#ff0000"
+        )
+        self.assertEqual(
+            dialog._html_elevation_callouts_check.text(),
+            "Include elevation callouts in HTML export",
+        )
+        self.assertEqual(
+            dialog._pdf_elevation_callouts_check.text(),
+            "Include elevation callouts in PDF export",
+        )
+        dialog.close()
+
+    def test_export_callout_options_ok_and_reset_use_existing_lifecycle(self):
+        saved = []
+        dialog = OptionsDialog(
+            Config(
+                html_elevation_callouts_enabled=False,
+                pdf_elevation_callouts_enabled=True,
+            ),
+            apply_callback=saved.append,
+            reset_callback=Config,
+        )
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+            return_value=True,
+        ):
+            _preferences_support__reset_all_button(dialog).click()
+        self.assertTrue(dialog._html_elevation_callouts_check.isChecked())
+        self.assertFalse(dialog._pdf_elevation_callouts_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertTrue(dialog._html_elevation_callout_color_button.isEnabled())
+        self.assertFalse(dialog._pdf_elevation_callout_color_button.isEnabled())
+        dialog._html_elevation_callouts_check.setChecked(False)
+        dialog._pdf_elevation_callouts_check.setChecked(True)
+        dialog._elevation_callout_cubic_yards_check.setChecked(False)
+        dialog.accept()
+        self.assertEqual(len(saved), 1)
+        self.assertFalse(saved[0].html_elevation_callouts_enabled)
+        self.assertTrue(saved[0].pdf_elevation_callouts_enabled)
+        self.assertFalse(saved[0].elevation_callout_include_cubic_yards)
+        dialog.close()
+
+    def test_export_callout_content_preserved_while_both_exports_disabled(self):
+        dialog = OptionsDialog(Config())
+        dialog._elevation_callout_condition_check.setChecked(False)
+        dialog._html_elevation_callouts_check.setChecked(False)
+        dialog._pdf_elevation_callouts_check.setChecked(False)
+        self.assertFalse(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertFalse(dialog._html_elevation_callout_color_button.isEnabled())
+        self.assertFalse(dialog._pdf_elevation_callout_color_button.isEnabled())
+        dialog._pdf_elevation_callouts_check.setChecked(True)
+        self.assertTrue(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertFalse(dialog._elevation_callout_condition_check.isChecked())
+        dialog.close()
+
+    def test_export_caption_selections_survive_master_disable_and_reenable(self):
+        dialog = OptionsDialog(Config())
+        dialog._caption_master_check.setChecked(True)
+        area_check = dialog._caption_checks[AnnotationCaptionId.AREA]
+        volume_check = dialog._caption_checks[AnnotationCaptionId.VOLUME]
+        area_check.setChecked(False)
+        volume_check.setChecked(True)
+        dialog._caption_master_check.setChecked(False)
+        self.assertFalse(area_check.isEnabled())
+        self.assertFalse(volume_check.isEnabled())
+        dialog._caption_master_check.setChecked(True)
+        self.assertFalse(area_check.isChecked())
+        self.assertTrue(volume_check.isChecked())
+        self.assertTrue(area_check.isEnabled())
+        dialog.close()
+
+    def test_mcp_setup_tab_contains_existing_setup_controls(self):
+        helper_path = Path("C:/Tools/ostv-mcp.exe")
+        dialog = OptionsDialog(Config(), mcp_helper_path=helper_path)
+        tab = dialog._mcp_setup_tab
+        texts = _preferences_support__visible_texts(dialog)
+        self.assertIn("Connect AI tools", texts)
+        self.assertIn("Claude Desktop or Cursor", texts)
+        self.assertIn("Codex", texts)
+        self.assertIn("Codex config.toml", texts)
+        self.assertIn("Codex CLI command", texts)
+        self.assertEqual(
+            tab.claude_config_edit.toPlainText(),
+            build_claude_desktop_config(helper_path),
+        )
+        self.assertEqual(
+            tab.codex_config_edit.toPlainText(),
+            build_codex_config_toml(helper_path),
+        )
+        self.assertEqual(
+            tab.codex_command_edit.toPlainText(),
+            build_codex_mcp_add_command(helper_path),
+        )
+        self.assertEqual(tab.copy_claude_button.text(), "Copy Setup JSON")
+        self.assertEqual(tab.copy_codex_config_button.text(), "Copy Codex TOML")
+        self.assertEqual(tab.copy_codex_button.text(), "Copy Setup Command")
+        dialog.close()
+
+    def test_mcp_setup_tab_copy_action_preserves_options_apply_state(self):
+        helper_path = Path("C:/Tools/ostv-mcp.exe")
+        dialog = OptionsDialog(Config(), mcp_helper_path=helper_path)
+        apply_button = _preferences_support__apply_button(dialog)
+        dialog._tabs.setCurrentWidget(dialog._mcp_setup_tab)
+        dialog._mcp_setup_tab.copy_codex_config_button.click()
+        self.assertEqual(
+            QtWidgets.QApplication.clipboard().text(),
+            build_codex_config_toml(helper_path),
+        )
+        dialog._mcp_setup_tab.copy_codex_button.click()
+        self.assertEqual(
+            QtWidgets.QApplication.clipboard().text(),
+            build_codex_mcp_add_command(helper_path),
+        )
+        self.assertIn("Copied to clipboard.", dialog._mcp_setup_tab.status_label.text())
+        self.assertFalse(apply_button.isEnabled())
+        dialog.close()
+
+    def test_options_dialog_result_path_runs_lifecycle_cleanup(self):
+        dialog = OptionsDialog(
+            Config(),
+            apply_callback=lambda _config: None,
+            reset_callback=lambda: Config(),
+        )
+        mcp_tab = dialog._mcp_setup_tab
+        cleanup_calls = []
+        mcp_tab.cleanup = lambda: cleanup_calls.append("mcp")
+        dialog.reject()
+        self.assertEqual(cleanup_calls, ["mcp"])
+        self.assertIsNone(dialog._tabs)
+        self.assertIsNone(dialog._options_tab)
+        self.assertIsNone(dialog._mcp_setup_tab)
+        self.assertIsNone(dialog._apply_callback)
+        self.assertIsNone(dialog._reset_callback)
+
+    def test_options_dialog_reset_failure_keeps_current_settings(self):
+        initial = Config(show_toolbar_text=False)
+        dialog = OptionsDialog(
+            initial,
+            reset_callback=lambda: (_ for _ in ()).throw(OSError("disk unavailable")),
+        )
+        dialog._disable_high_res_check.setChecked(True)
+        with (
+            mock.patch(
+                "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+                return_value=True,
+            ),
+            mock.patch(
+                "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
+            ) as warning,
+        ):
+            _preferences_support__reset_all_button(dialog).click()
+        self.assertEqual(dialog.get_config(), initial)
+        self.assertTrue(dialog._disable_high_res_check.isChecked())
+        self.assertTrue(_preferences_support__apply_button(dialog).isEnabled())
+        warning.assert_called_once_with(
+            dialog,
+            OPTIONS_LABEL_RESET_ALL_SETTINGS,
+            "Failed to reset settings. Reopen Options and try again.",
+        )
+        dialog.close()
+
+    def test_options_dialog_disabled_controls_do_not_enable_apply(self):
+        dialog = OptionsDialog(Config())
+        apply_button = _preferences_support__apply_button(dialog)
+        disabled_checks = [
+            check
+            for check in dialog.findChildren(QtWidgets.QCheckBox)
+            if not check.isEnabled()
+        ]
+        self.assertTrue(disabled_checks)
+        disabled_checks[0].click()
+        self.assertFalse(apply_button.isEnabled())
+        dialog.close()
+
+
+class OptionsDialogFontColorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
+            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
+
+    def tearDown(self):
+        set_annotation_styles_by_tool({}, Config())
+        self.app.processEvents()
+
+    def test_options_tab_order_rows_and_stable_ids(self):
+        dialog = OptionsDialog(Config())
+        try:
+            self.assertEqual(
+                [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())],
+                ["Options", "Takeoff Toolbar", "Fonts/Colors", "Export", "MCP Setup"],
+            )
+            tab = dialog._fonts_colors_tab
+            self.assertEqual(
+                [tab.font_list.item(i).text() for i in range(tab.font_list.count())],
+                ["Text", "Area Label", "Dimension Line", "Default Style Label"],
+            )
+            self.assertEqual(
+                [tab.color_list.item(i).text() for i in range(tab.color_list.count())],
+                [
+                    "Text",
+                    "Area Label",
+                    "Default Style Label",
+                    "Highlight",
+                    "Hot Link",
+                    "Inactive Objects",
+                ],
+            )
+            all_labels = {
+                *(label for _key, label in FONT_CATEGORIES),
+                *(label for _key, label in COLOR_CATEGORIES),
+            }
+            self.assertTrue(
+                {"Image Legend", "Legend", "Callout", "AutoName"}.isdisjoint(all_labels)
+            )
+            self.assertEqual(
+                tab.font_list.item(0).data(QtCore.Qt.ItemDataRole.UserRole),
+                FONT_CATEGORY_TEXT,
+            )
+            self.assertEqual(
+                tab.color_list.item(5).data(QtCore.Qt.ItemDataRole.UserRole),
+                COLOR_CATEGORY_INACTIVE_OBJECTS,
+            )
+        finally:
+            dialog.close()
+
+    def test_options_font_color_values_are_staged_through_apply(self):
+        applied = []
+        dialog = OptionsDialog(Config(), apply_callback=applied.append)
+        real_color_dialog = QtWidgets.QColorDialog
+        created_dialogs = []
+
+        def create_color_dialog(color, parent):
+            color_dialog = real_color_dialog(color, parent)
+            created_dialogs.append(color_dialog)
+            return color_dialog
+
+        try:
+            tab = dialog._fonts_colors_tab
+            tab.color_list.setCurrentRow(5)
+            with (
+                mock.patch(
+                    "ost_visualizer.presentation.dialogs.options.fonts_colors_tab."
+                    "QtWidgets.QColorDialog",
+                    side_effect=create_color_dialog,
+                ),
+                mock.patch.object(
+                    real_color_dialog,
+                    "exec",
+                    return_value=QtWidgets.QDialog.DialogCode.Accepted,
+                ),
+                mock.patch.object(
+                    real_color_dialog,
+                    "currentColor",
+                    return_value=QtGui.QColor("#123456"),
+                ),
+            ):
+                tab.change_color_button.click()
+            self.assertTrue(dialog._apply_button.isEnabled())
+            self.assertEqual(applied, [])
+            dialog._apply_button.click()
+            self.assertEqual(applied[-1].inactive_object_color, "#123456")
+            self.assertIs(created_dialogs[0].parent(), tab.change_color_button)
+            dialog.reject()
+            self.assertEqual(applied[-1].inactive_object_color, "#123456")
+        finally:
+            dialog.close()

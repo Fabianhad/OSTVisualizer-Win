@@ -1791,7 +1791,14 @@ class ConditionActionHandler:
                 )
                 return False
 
+            owners_reconciled = False
+
             def submit(active_lease, lease_completed) -> bool:
+                def committed(_result) -> None:
+                    nonlocal owners_reconciled
+                    owners_reconciled = advance_dialog_owners_after_save(cond_uid)
+                    lease_completed(True)
+
                 return self._submit_sql_condition_operation(
                     bid_ref,
                     ("edit_condition", str(cond_uid)),
@@ -1804,7 +1811,7 @@ class ConditionActionHandler:
                         callback,
                         edit_lease_handle=active_lease,
                     ),
-                    lambda _result: lease_completed(True),
+                    committed,
                     lambda result: lease_completed(
                         False,
                         result.message or "Failed to save condition.",
@@ -1812,8 +1819,10 @@ class ConditionActionHandler:
                 )
 
             def mutation_completed(success: bool, error=None) -> None:
+                ownership_rejected = False
                 if success:
-                    success = advance_dialog_owners_after_save(cond_uid)
+                    success = owners_reconciled and dialog_owner_is_current()
+                    ownership_rejected = not success
                     if success:
                         dialog.refresh_condition_data(
                             self._project_data.get_bid_conditions()
@@ -1827,7 +1836,7 @@ class ConditionActionHandler:
                     UpdateConditionResultDto(
                         success=success,
                         error=str(error or "") if not success else "",
-                        error_presented=not success,
+                        error_presented=not success and not ownership_rejected,
                     )
                 )
 
@@ -1888,7 +1897,7 @@ class ConditionActionHandler:
 
         def resolved(result: EditLeaseResult) -> None:
             try:
-                if result.granted and dialog_owner_is_current():
+                if result.granted and isValid(dialog) and dialog_owner_is_current():
                     exec_with_ost_blocking(dialog, self._coordinator.event_bus)
             finally:
                 if lease_session is not None:

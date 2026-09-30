@@ -29,11 +29,11 @@ Run PowerShell scripts from the repository root.
 Useful validation:
 
 ```powershell
-.\venv\Scripts\python.exe -m unittest discover -s tests -p "test_mcp*.py" -v
-.\venv\Scripts\python.exe -m unittest discover -s tests -v
+.\venv\Scripts\python.exe -m unittest discover -s tests/mcp_server -t . -v
+.\venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 python tools\check_architecture.py
 python tools\check_architecture.py --changed-only
-python -m unittest tests.test_plan_view_snap_helper
+python -m unittest tests.presentation.components.plan_view.components.test_placement_mode
 vulture ost_visualizer
 ```
 
@@ -417,6 +417,11 @@ Threading and events:
   Rejected Condition-family ownership/graph reconciliation announces its full
   authoritative fallback as an external database refresh, not the original
   narrow field edit; consumers must invalidate the replaced graph and history.
+  Condition editors advance their captured family owners at their own successful
+  authoritative save completion. SQL lease reacquisition is a separate boundary:
+  it must validate those exact owners, not adopt replacements that arrived while
+  waiting for the lease. Initial lease callbacks also require a live Qt dialog
+  before entering its modal loop.
   Scoped Area and Condition-folder reads require complete query results on both
   MDB and SQL; an error is not an empty family. Area-picker projection failure
   preserves the write-versus-refresh result and cannot assign a Page from stale
@@ -1071,7 +1076,7 @@ MCP ownership map:
 - `ost_visualizer/application/dtos/mcp_context_dtos.py` owns MCP DTOs plus protocol status/source constants.
 - `ost_visualizer/application/services/mcp_read_service.py` owns read-only query behavior and bounded result shaping.
 - `ost_visualizer/presentation/services/mcp_context_bridge.py` owns the GUI live-context bridge only.
-- `tests/test_mcp*.py` should cover public surface counts, status/source compatibility, registry filtering, and bounded outputs.
+- `tests/mcp_server/`, `tests/application/services/test_mcp_read_service.py`, and `tests/presentation/services/test_mcp_context_bridge.py` cover public surface counts, status/source compatibility, registry filtering, and bounded outputs.
 
 Expected public MCP counts should remain 38 tools, 1 resource, 4 resource templates, and 7 prompts unless a change intentionally updates the public surface.
 

@@ -25,6 +25,7 @@ foreach ($name in @(
 
 $python = Join-Path $PSScriptRoot "..\venv\Scripts\python.exe"
 $tests = Join-Path $PSScriptRoot "..\tests"
+$repository = Join-Path $PSScriptRoot ".."
 if (-not (Test-Path -LiteralPath $python)) {
     throw "The repository virtual environment is not configured."
 }
@@ -33,28 +34,28 @@ try {
     $env:OSTV_SQL_CLIENT_INTEGRATION = "1"
     $env:OSTV_SQL_DESTRUCTIVE_TESTS = "1"
     Remove-Item Env:\OSTV_SQL_TEST_PASSWORD -ErrorAction SilentlyContinue
-    & $python -m unittest discover -s $tests `
-        -p "test_sql_development_setup.py" -v
+    & $python -m unittest discover -s (Join-Path $tests "tools") -t $repository `
+        -p "test_manage_sql_development.py" -v
     if ($LASTEXITCODE -ne 0) {
         throw "SQL development setup guard tests failed."
     }
-    & $python -m unittest discover -s $tests `
-        -p "test_sql_integration_safety.py" -v
+    & $python -m unittest discover -s (Join-Path $tests "helpers\sql") -t $repository `
+        -p "test_integration_support.py" -v
     if ($LASTEXITCODE -ne 0) {
         throw "Disposable SQL safety tests failed."
     }
-    & $python -m unittest discover -s $tests `
-        -p "test_sql_collaboration_integration.py" -v
+    & $python -m unittest discover -s (Join-Path $tests "integration\sql") -t $repository `
+        -p "test_collaboration_acceptance.py" -v
     if ($LASTEXITCODE -ne 0) {
         throw "Disposable SQL integration tests failed."
     }
-    & $python -m unittest discover -s $tests `
-        -p "test_sql_environment_integration.py" -v
+    & $python -m unittest discover -s (Join-Path $tests "integration\sql") -t $repository `
+        -p "test_environment_acceptance.py" -v
     if ($LASTEXITCODE -ne 0) {
         throw "SQL development environment acceptance tests failed."
     }
-    & $python -m unittest discover -s $tests `
-        -p "test_sql_client_development_integration.py" -v
+    & $python -m unittest discover -s (Join-Path $tests "integration\sql") -t $repository `
+        -p "test_client_development_acceptance.py" -v
     if ($LASTEXITCODE -ne 0) {
         throw "Persistent SQL client environment tests failed."
     }

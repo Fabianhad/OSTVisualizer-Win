@@ -424,7 +424,7 @@ python tools/check_architecture.py
 Common validation commands:
 
 ```powershell
-.\venv\Scripts\python.exe -m unittest discover -s tests -v
+.\venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 python tools\check_architecture.py --changed-only
 git diff --check
 ```
