@@ -87,6 +87,9 @@ class LayersSidebarReactivationTests(unittest.TestCase):
                         self.assertEqual(sidebar.table.selectedItems(), [])
                     else:
                         self.assertEqual(sidebar._selected_uid, "40")
+                        self.assertEqual(
+                            sidebar.table.currentItem().text(1), "Updated 40"
+                        )
                 finally:
                     sidebar.close()
                     delete(sidebar)
@@ -118,6 +121,8 @@ class LayersSidebarReactivationTests(unittest.TestCase):
             self.app.processEvents()
             current = sidebar.table.currentItem()
             self.assertEqual(sidebar._selected_uid, "new")
+            self.assertEqual(current.text(1), "New")
+            self.assertGreater(sidebar.table.verticalScrollBar().value(), 30)
             self.assertTrue(
                 sidebar.table.viewport()
                 .rect()
@@ -160,6 +165,40 @@ class LayersSidebarInteractionTests(unittest.TestCase):
             self._click_checkbox(sidebar._checkboxes[0])
             self.assertFalse(sidebar._checkboxes[0].isChecked())
             self.assertEqual(calls, [("layer-1", False)])
+            self._click_checkbox(sidebar._checkboxes[0])
+            self.assertTrue(sidebar._checkboxes[0].isChecked())
+            self.assertEqual(calls, [("layer-1", False), ("layer-1", True)])
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_layers_sidebar_toggle_is_gated_by_interactive_state_and_callback(self):
+        sidebar = BidLayersSidebar(None)
+        calls = []
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1, show=True)])
+        try:
+            # No callback registered yet: the click only changes the checkbox.
+            self._click_checkbox(sidebar._checkboxes[0])
+            self.assertEqual(calls, [])
+            sidebar.set_toggle_callback(lambda uid, show: calls.append((uid, show)))
+            sidebar.set_interactive(False)
+            self.assertFalse(sidebar._checkboxes[0].isEnabled())
+            sidebar._checkboxes[0].clicked.emit()
+            self.assertEqual(calls, [])
+            sidebar.set_interactive(True)
+            self.assertTrue(sidebar._checkboxes[0].isEnabled())
+            sidebar._checkboxes[0].clicked.emit()
+            self.assertEqual(calls, [("layer-1", False)])
+            # Programmatic visibility projection updates the checkbox silently.
+            sidebar.set_layer_visible("layer-1", False)
+            self.assertFalse(sidebar._checkboxes[0].isChecked())
+            self.assertEqual(sidebar.get_layer_visibility("layer-1"), False)
+            sidebar.set_all_layers_visible(True)
+            self.assertEqual(sidebar.get_layer_visibility("layer-1"), True)
+            sidebar.set_layer_visibilities({"layer-1": False, "missing": True})
+            self.assertEqual(sidebar.get_layer_visibility("layer-1"), False)
+            self.assertIsNone(sidebar.get_layer_visibility("missing"))
+            self.assertEqual(calls, [("layer-1", False)])
         finally:
             sidebar.close()
             sidebar.deleteLater()
@@ -177,6 +216,60 @@ class LayersSidebarInteractionTests(unittest.TestCase):
             self.assertIsNotNone(sidebar._pending_new_item)
             self.assertEqual(sidebar._table.topLevelItemCount(), 1)
             self.assertEqual(sidebar._pending_new_after_sequence, 0)
+            added = []
+            sidebar.layer_added.connect(
+                lambda name, sequence: added.append((name, sequence))
+            )
+            sidebar._pending_new_item.setText(1, "  First  ")
+            self.assertEqual(added, [("First", 0)])
+            self.assertIsNone(sidebar._pending_new_item)
+            self.assertEqual(sidebar._table.topLevelItemCount(), 0)
+        finally:
+            sidebar.clear()
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_layers_sidebar_new_layer_is_added_after_selected_layer_unless_blank_or_duplicate(
+        self,
+    ):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers(
+            [self._layer("layer-1", "Layer 1", 1), self._layer("layer-2", "Layer 2", 2)]
+        )
+        sidebar.set_interactive(True)
+        added = []
+        sidebar.layer_added.connect(
+            lambda name, sequence: added.append((name, sequence))
+        )
+        try:
+            sidebar.set_pending_selection("layer-1")
+            sidebar._on_add_clicked()
+            self.assertEqual(sidebar._pending_new_after_sequence, 1)
+            pending = sidebar._pending_new_item
+            with patch(
+                "ost_visualizer.presentation.components.layers_sidebar.show_warning"
+            ) as warning:
+                pending.setText(1, "   ")
+                self.assertEqual(added, [])
+                self.assertIs(sidebar._pending_new_item, pending)
+                pending.setText(1, " layer 2 ")
+                self.assertEqual(added, [])
+                self.assertIs(sidebar._pending_new_item, pending)
+                self.assertEqual(warning.call_count, 1)
+                self.assertEqual(warning.call_args.args[1], "Duplicate Layer")
+            pending.setText(1, "Layer 1b")
+            self.assertEqual(added, [("Layer 1b", 1)])
+            self.assertIsNone(sidebar._pending_new_item)
+            self.assertEqual(sidebar._table.topLevelItemCount(), 2)
+            sidebar.clear()
+            sidebar.load_layers(
+                [
+                    self._layer("layer-1", "Layer 1", 1),
+                    self._layer("layer-2", "Layer 2", 5),
+                ]
+            )
+            sidebar._on_add_clicked()
+            self.assertEqual(sidebar._pending_new_after_sequence, 5)
         finally:
             sidebar.clear()
             sidebar.close()
@@ -222,6 +315,49 @@ class LayersSidebarInteractionTests(unittest.TestCase):
             sidebar.close()
             sidebar.deleteLater()
 
+    def test_layers_sidebar_inline_rename_rejects_duplicates_and_ignores_locked_rows(
+        self,
+    ):
+        sidebar = BidLayersSidebar(None)
+        locked = self._layer("layer-3", "Locked", 3)
+        locked.is_locked = True
+        template = self._layer("layer-4", "Template", 4)
+        template.is_template = True
+        sidebar.load_layers(
+            [
+                self._layer("layer-1", "Layer 1", 1),
+                self._layer("layer-2", "Layer 2", 2),
+                locked,
+                template,
+            ]
+        )
+        renamed = []
+        sidebar.layer_renamed.connect(
+            lambda layer_uid, name: renamed.append((layer_uid, name))
+        )
+        item = sidebar._table.topLevelItem(0)
+        try:
+            editable = QtCore.Qt.ItemFlag.ItemIsEditable
+            self.assertTrue(item.flags() & editable)
+            self.assertFalse(sidebar._table.topLevelItem(2).flags() & editable)
+            self.assertFalse(sidebar._table.topLevelItem(3).flags() & editable)
+            with patch(
+                "ost_visualizer.presentation.components.layers_sidebar.show_warning"
+            ) as warning:
+                item.setText(1, " layer 2 ")
+                self.assertEqual(warning.call_count, 1)
+                self.assertEqual(warning.call_args.args[1], "Duplicate Layer")
+            self.assertEqual(item.text(1), "Layer 1")
+            self.assertEqual(renamed, [])
+            item.setText(1, "Layer 1")
+            self.assertEqual(renamed, [])
+            sidebar._table.topLevelItem(2).setText(1, "Changed")
+            sidebar._table.topLevelItem(3).setText(1, "Changed")
+            self.assertEqual(renamed, [])
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
     def test_layers_sidebar_inline_rename_reverts_after_access_loss(self):
         sidebar = BidLayersSidebar(None)
         sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)])
@@ -232,9 +368,16 @@ class LayersSidebarInteractionTests(unittest.TestCase):
         item = sidebar._table.topLevelItem(0)
         try:
             sidebar.set_interactive(False)
+            self.assertEqual(
+                sidebar._table.editTriggers(),
+                QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers,
+            )
             item.setText(1, "Unauthorized rename")
             self.assertEqual(renamed, [])
             self.assertEqual(item.text(1), "Layer 1")
+            sidebar.set_interactive(True)
+            item.setText(1, "Authorized rename")
+            self.assertEqual(renamed, [("layer-1", "Authorized rename")])
         finally:
             sidebar.close()
             sidebar.deleteLater()
@@ -251,7 +394,9 @@ class LayersSidebarInteractionTests(unittest.TestCase):
             self.assertIsNotNone(sidebar._pending_new_item)
             sidebar.set_interactive(False)
             self.assertIsNone(sidebar._pending_new_item)
+            self.assertFalse(sidebar._pending_new_editor_connected)
             self.assertEqual(sidebar._table.topLevelItemCount(), 1)
+            self.assertFalse(sidebar._add_btn.isEnabled())
             self.assertEqual(added, [])
         finally:
             sidebar.close()

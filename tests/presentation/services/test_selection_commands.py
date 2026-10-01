@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
@@ -1214,20 +1215,40 @@ class SelectionCommandIdentityTests(unittest.TestCase):
                 "Incomplete results must not be selected"
             )
         )
+        for returned_uids in (["new-1"], [], ["new-1", "new-2", "new-3"]):
+            with self.subTest(returned_uids=returned_uids):
+                command = InsertTakeoffsCommand(
+                    uids=["old-1", "old-2"],
+                    bid_ref=BidRef("bid.mdb", "7"),
+                    specs=[object(), object()],
+                    write_svc=None,
+                    plan_view=plan_view,
+                    insert_takeoffs_fn=lambda _bid_ref, _specs, uids=returned_uids: (
+                        list(uids)
+                    ),
+                    delete_takeoffs_fn=lambda _db_path, _uids: True,
+                )
+                with self.assertRaisesRegex(
+                    ValueError,
+                    f"returned {len(returned_uids)} identities for 2 requested",
+                ):
+                    command.redo()
+                self.assertEqual(command._current_uids, ["old-1", "old-2"])
+
+    def test_takeoff_redo_with_complete_identity_result_rebinds_and_selects(self):
+        selected = []
         command = InsertTakeoffsCommand(
             uids=["old-1", "old-2"],
             bid_ref=BidRef("bid.mdb", "7"),
             specs=[object(), object()],
             write_svc=None,
-            plan_view=plan_view,
-            insert_takeoffs_fn=lambda _bid_ref, _specs: ["new-1"],
+            plan_view=SimpleNamespace(set_selected_uids=selected.append),
+            insert_takeoffs_fn=lambda _bid_ref, _specs: ["new-1", "new-2"],
             delete_takeoffs_fn=lambda _db_path, _uids: True,
         )
-        with self.assertRaisesRegex(
-            ValueError, "returned 1 identities for 2 requested"
-        ):
-            command.redo()
-        self.assertEqual(command._current_uids, ["old-1", "old-2"])
+        self.assertTrue(command.redo())
+        self.assertEqual(command._current_uids, ["new-1", "new-2"])
+        self.assertEqual(selected, [{"new-1", "new-2"}])
 
     def test_annotation_restore_rejects_incomplete_authoritative_result(self):
         saved = [_rect_annotation("old-1"), _rect_annotation("old-2")]
@@ -1239,18 +1260,52 @@ class SelectionCommandIdentityTests(unittest.TestCase):
                 "Incomplete results must not be selected"
             ),
         )
+        history = _command_annotation_history(["old-1", "old-2"])
         command = DeleteAnnotationsCommand(
-            history=_command_annotation_history(["old-1", "old-2"]),
+            history=history,
             saved_annotations=saved,
             bid_ref=BidRef("bid.mdb", "7"),
             plan_view=plan_view,
             insert_saved_annotations_fn=lambda _bid_ref, _saved: [saved[0]],
             delete_saved_annotations_fn=lambda _db_path, _saved: True,
         )
-        with self.assertRaisesRegex(
-            ValueError, "returned 1 annotations for 2 requested"
+        with mock.patch.object(
+            history,
+            "rebind",
+            side_effect=lambda _uids: self.fail(
+                "Incomplete results must not rebind history identities"
+            ),
         ):
-            command.undo()
+            with self.assertRaisesRegex(
+                ValueError, "returned 1 annotations for 2 requested"
+            ):
+                command.undo()
+
+    def test_annotation_restore_with_no_restored_rows_reports_failure_untouched(self):
+        saved = [_rect_annotation("old-1")]
+        history = _command_annotation_history(["old-1"])
+        plan_view = SimpleNamespace(
+            find_annotation_keys_by_uid_type=lambda _uids: self.fail(
+                "Failed restores must not be projected"
+            ),
+            set_selected_uids=lambda _uids: self.fail(
+                "Failed restores must not be selected"
+            ),
+        )
+        command = DeleteAnnotationsCommand(
+            history=history,
+            saved_annotations=saved,
+            bid_ref=BidRef("bid.mdb", "7"),
+            plan_view=plan_view,
+            insert_saved_annotations_fn=lambda _bid_ref, _saved: [],
+            delete_saved_annotations_fn=lambda _db_path, _saved: True,
+        )
+        with mock.patch.object(
+            history,
+            "rebind",
+            side_effect=lambda _uids: self.fail("Failed restores must not rebind"),
+        ):
+            self.assertFalse(command.undo())
 
     def test_annotation_redo_rejects_incomplete_authoritative_identity_result(self):
         plan_view = SimpleNamespace(
@@ -1261,8 +1316,9 @@ class SelectionCommandIdentityTests(unittest.TestCase):
                 "Incomplete results must not be selected"
             ),
         )
+        history = _command_annotation_history(["old-1", "old-2"])
         command = InsertAnnotationsCommand(
-            history=_command_annotation_history(["old-1", "old-2"]),
+            history=history,
             uids=["old-1", "old-2"],
             bid_ref=BidRef("bid.mdb", "7"),
             specs=[
@@ -1286,10 +1342,17 @@ class SelectionCommandIdentityTests(unittest.TestCase):
             insert_annotations_fn=lambda _bid_ref, _specs, _remap: ["new-1"],
             delete_annotations_fn=lambda _db_path, _uids, _specs: True,
         )
-        with self.assertRaisesRegex(
-            ValueError, "returned 1 identities for 2 requested"
+        with mock.patch.object(
+            history,
+            "rebind",
+            side_effect=lambda _uids: self.fail(
+                "Incomplete results must not rebind history identities"
+            ),
         ):
-            command.redo()
+            with self.assertRaisesRegex(
+                ValueError, "returned 1 identities for 2 requested"
+            ):
+                command.redo()
         self.assertEqual(command._current_uids, ["old-1", "old-2"])
 
 
@@ -1378,3 +1441,30 @@ class SelectionCommandsParentRemapTests(unittest.TestCase):
             ref_remap.takeoff_uids,
             {"source-takeoff": "redo-takeoff"},
         )
+        self.assertEqual(
+            takeoff_cmd.get_uid_remap(), {"source-takeoff": "redo-takeoff"}
+        )
+        self.assertEqual(write.calls[-1][1], "7")
+
+    def test_paste_annotation_redo_without_sibling_takeoff_has_empty_remap(self):
+        plan_view = FakePlanView()
+        ann_write = FakeAnnotationWriteService()
+        ann_cmd = PasteAnnotationsCommand(
+            history=_command_annotation_history(["initial-ann"], "hotlink"),
+            specs=[
+                InsertAnnotationSpec(
+                    page_uid="p1",
+                    annotation_type="hotlink",
+                    position=[],
+                    color="#000000",
+                    width=1.0,
+                    properties={"takeoff_uid": "source-takeoff"},
+                )
+            ],
+            new_uids=["initial-ann"],
+            bid_ref=BidRef(file_path="bid.mdb", bid_uid="7"),
+            write_svc=ann_write,
+            plan_view=plan_view,
+        )
+        self.assertTrue(ann_cmd.redo())
+        self.assertEqual(ann_write.insert_calls[-1][3].takeoff_uids, {})

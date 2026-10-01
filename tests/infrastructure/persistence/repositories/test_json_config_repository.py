@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -40,3 +41,23 @@ class ConfigRepositoryFontColorTests(unittest.TestCase):
                 sorted(path.name for path in Path(temp_dir).iterdir()),
                 ["config.json"],
             )
+            self.assertEqual(
+                json.loads(config_path.read_text(encoding="utf-8")),
+                expected.to_dict(),
+            )
+            self.assertNotEqual(expected, Config())
+            self.assertEqual(
+                JsonConfigRepository(config_path).load().default_area_label_color,
+                "#123456",
+            )
+
+    def test_config_repository_load_reports_missing_and_malformed_files(self):
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            repository = JsonConfigRepository(config_path)
+            with self.assertRaises(FileNotFoundError):
+                repository.load()
+            config_path.write_text("{broken", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Invalid JSON"):
+                repository.load()
+            self.assertEqual(config_path.read_text(encoding="utf-8"), "{broken")

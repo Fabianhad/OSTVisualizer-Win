@@ -20,6 +20,7 @@ from ost_visualizer.domain.entities.annotation import (
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
@@ -122,10 +123,37 @@ class _ViewerPlan:
         self.blocks_remote_projection = False
         self.last_refresh_payload = None
 
-    def refresh_current_page_overlays(self, **payload):
+    def refresh_current_page_overlays(
+        self,
+        page,
+        takeoffs,
+        conditions,
+        color_map,
+        bid_ref=None,
+        annotations=None,
+        page_area_selections=None,
+        hidden_layer_uids=None,
+        changed_takeoff_uids=None,
+        changed_annotation_uids=None,
+        changed_annotation_types=None,
+        force_overlay_refresh=False,
+    ):
         self.refresh_threads.append(threading.get_ident())
         self.refreshes += 1
-        self.last_refresh_payload = payload
+        self.last_refresh_payload = {
+            "page": page,
+            "takeoffs": takeoffs,
+            "conditions": conditions,
+            "color_map": color_map,
+            "bid_ref": bid_ref,
+            "annotations": annotations,
+            "page_area_selections": page_area_selections,
+            "hidden_layer_uids": hidden_layer_uids,
+            "changed_takeoff_uids": changed_takeoff_uids,
+            "changed_annotation_uids": changed_annotation_uids,
+            "changed_annotation_types": changed_annotation_types,
+            "force_overlay_refresh": force_overlay_refresh,
+        }
         return True
 
     def set_snap_settings(self, *_settings):
@@ -142,9 +170,27 @@ class _ViewerPlan:
 
 
 class ViewerRemotePlanUpdateTests(unittest.TestCase):
-    def _make_viewer(self):
+    def _barrier(self, database_id="sql-db", runtime_generation=2, is_current=True):
+        return RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=runtime_generation,
+            is_runtime_current=lambda _database_id, _generation: is_current,
+            on_complete=lambda _success: None,
+        )
+
+    def _request_takeoffs(self, viewer, completed, takeoff_uids, barrier=None):
+        return viewer.request_remote_plan_update(
+            database_id="sql-db",
+            runtime_generation=2,
+            bid_uid="bid-1",
+            resource_uids_by_family={"takeoffs": tuple(takeoff_uids)},
+            barrier=barrier or self._barrier(),
+            completion=completed.append,
+        )
+
+    def _make_viewer(self, pool=None):
         bridge = _QueuedBridge()
-        pool = _ThreadPool()
+        pool = _ThreadPool() if pool is None else pool
         preparation_threads = []
 
         class ColorService:
@@ -190,9 +236,15 @@ class ViewerRemotePlanUpdateTests(unittest.TestCase):
         self.assertEqual(viewer.plan_view.refreshes, 0)
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
-        self.assertNotEqual(preparation_threads, [caller_thread])
+        self.assertEqual(len(preparation_threads), 1)
+        self.assertNotEqual(preparation_threads[0], caller_thread)
         self.assertEqual(viewer.plan_view.refresh_threads, [caller_thread])
         self.assertEqual(viewer.plan_view.refreshes, 1)
+        payload = viewer.plan_view.last_refresh_payload
+        self.assertEqual(payload["color_map"], {"condition-1": "#000000"})
+        self.assertEqual(payload["changed_takeoff_uids"], ["takeoff-1"])
+        self.assertEqual(payload["bid_ref"], BidRef("sql-db", "bid-1"))
+        self.assertIs(payload["page"], viewer._project_data.page)
         self.assertEqual(completed, [True])
         viewer.cleanup()
 
@@ -297,6 +349,9 @@ class ViewerRemotePlanUpdateTests(unittest.TestCase):
             viewer.plan_view.last_refresh_payload["changed_annotation_types"],
             ["Text"],
         )
+        self.assertEqual(
+            viewer.plan_view.last_refresh_payload["changed_takeoff_uids"], []
+        )
         self.assertEqual(completed, [True])
         viewer.cleanup()
 
@@ -386,7 +441,154 @@ class ViewerRemotePlanUpdateTests(unittest.TestCase):
         callback(payload)
         self.assertEqual(completions["first"], [False])
         self.assertEqual(completions["current"], [True])
+        self.assertEqual(completions["superseded"], [False])
+        self.assertEqual(viewer.plan_view.refreshes, 1)
+        self.assertEqual(
+            viewer.plan_view.last_refresh_payload["changed_takeoff_uids"],
+            ["takeoff-3"],
+        )
+        self.assertEqual(
+            viewer.plan_view.last_refresh_payload["bid_ref"],
+            BidRef("other-db", "bid-2"),
+        )
+        self.assertEqual(bridge.callbacks, [])
+        self.assertEqual(pool.runnables, [])
         viewer.cleanup()
+
+    def test_pending_same_context_updates_coalesce_into_one_projection(self):
+        pool = _ManualThreadPool()
+        viewer, _state, bridge, _pool, _threads = self._make_viewer(pool)
+        completions = {"first": [], "second": [], "third": []}
+        self._request_takeoffs(viewer, completions["first"], ["takeoff-1"])
+        self._request_takeoffs(viewer, completions["second"], ["takeoff-2"])
+        self._request_takeoffs(viewer, completions["third"], ["takeoff-3"])
+        self.assertEqual(completions, {"first": [], "second": [], "third": []})
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        self.assertEqual(completions["first"], [False])
+        self.assertEqual(viewer.plan_view.refreshes, 0)
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        self.assertEqual(completions["second"], [True])
+        self.assertEqual(completions["third"], [True])
+        self.assertEqual(viewer.plan_view.refreshes, 1)
+        self.assertEqual(
+            viewer.plan_view.last_refresh_payload["changed_takeoff_uids"],
+            ["takeoff-2", "takeoff-3"],
+        )
+        self.assertEqual(pool.runnables, [])
+        viewer.cleanup()
+
+    def test_takeoff_coalescing_unions_changed_uids(self):
+        viewer, _state, _bridge, _pool, _threads = self._make_viewer()
+        previous = viewer._capture_plan_update(
+            "page-1", changed_takeoff_uids=["takeoff-b", "takeoff-a"]
+        )
+        current = viewer._capture_plan_update(
+            "page-1", changed_takeoff_uids=["takeoff-c", "takeoff-a"]
+        )
+        merged = viewer._coalesce_remote_plan_updates(previous, current)
+        self.assertEqual(
+            merged.changed_takeoff_uids, ("takeoff-a", "takeoff-b", "takeoff-c")
+        )
+        viewer.cleanup()
+
+    def test_stale_barrier_runtime_rejects_worker_result(self):
+        viewer, _state, bridge, pool, _threads = self._make_viewer()
+        completed = []
+        self.assertTrue(
+            self._request_takeoffs(
+                viewer, completed, ["takeoff-1"], self._barrier(is_current=False)
+            )
+        )
+        pool.finish()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        self.assertEqual(viewer.plan_view.refreshes, 0)
+        self.assertEqual(completed, [False])
+        viewer.cleanup()
+
+    def test_bid_switch_rejects_worker_result(self):
+        viewer, state, bridge, pool, _threads = self._make_viewer()
+        completed = []
+        self._request_takeoffs(viewer, completed, ["takeoff-1"])
+        pool.finish()
+        state.bid_ref = BidRef("sql-db", "bid-2")
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        self.assertEqual(viewer.plan_view.refreshes, 0)
+        self.assertEqual(completed, [False])
+        viewer.cleanup()
+
+    def test_local_plan_update_invalidates_in_flight_remote_result(self):
+        viewer, _state, bridge, pool, _threads = self._make_viewer()
+        completed = []
+        self._request_takeoffs(viewer, completed, ["takeoff-1"])
+        pool.finish()
+        viewer.update_plan_view("page-1")
+        self.assertEqual(viewer.plan_view.refreshes, 1)
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        self.assertEqual(viewer.plan_view.refreshes, 1)
+        self.assertEqual(completed, [False])
+        viewer.cleanup()
+
+    def test_request_rejects_runtime_generation_mismatch(self):
+        viewer, _state, _bridge, pool, _threads = self._make_viewer()
+        completed = []
+        self.assertFalse(
+            self._request_takeoffs(
+                viewer, completed, ["takeoff-1"], self._barrier(runtime_generation=3)
+            )
+        )
+        self.assertEqual(pool.threads, [])
+        self.assertEqual(completed, [])
+        viewer.cleanup()
+
+    def test_request_rejects_when_selected_bid_differs(self):
+        viewer, state, _bridge, pool, _threads = self._make_viewer()
+        state.bid_ref = BidRef("sql-db", "bid-2")
+        completed = []
+        self.assertFalse(self._request_takeoffs(viewer, completed, ["takeoff-1"]))
+        self.assertEqual(pool.threads, [])
+        self.assertEqual(completed, [])
+        viewer.cleanup()
+
+    def test_request_rejects_without_active_page_or_unknown_page(self):
+        viewer, state, _bridge, pool, _threads = self._make_viewer()
+        completed = []
+        state.active_page_uid = None
+        self.assertFalse(self._request_takeoffs(viewer, completed, ["takeoff-1"]))
+        state.active_page_uid = "missing-page"
+        self.assertFalse(self._request_takeoffs(viewer, completed, ["takeoff-1"]))
+        self.assertEqual(pool.threads, [])
+        self.assertEqual(completed, [])
+        viewer.cleanup()
+
+    def test_request_rejects_without_plan_view(self):
+        viewer, _state, _bridge, pool, _threads = self._make_viewer()
+        viewer.plan_view = None
+        completed = []
+        self.assertFalse(self._request_takeoffs(viewer, completed, ["takeoff-1"]))
+        self.assertEqual(pool.threads, [])
+        self.assertEqual(completed, [])
+        viewer.cleanup()
+
+    def test_cleanup_rejects_in_flight_remote_update_and_blocks_projection(self):
+        pool = _ManualThreadPool()
+        viewer, _state, bridge, _pool, _threads = self._make_viewer(pool)
+        plan_view = viewer.plan_view
+        completed = []
+        self._request_takeoffs(viewer, completed, ["takeoff-1"])
+        viewer.cleanup()
+        self.assertEqual(completed, [False])
+        pool.run_next()
+        for callback, payload in bridge.callbacks:
+            callback(payload)
+        self.assertEqual(plan_view.refreshes, 0)
+        self.assertEqual(completed, [False])
 
 
 class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
@@ -462,6 +664,8 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(set(color_map), {"primary", "secondary"})
         self.assertEqual(color_map["primary"].opacity, 0.5)
         self.assertEqual(color_map["secondary"].opacity, 0.5)
+        self.assertEqual(color_map["primary"].hex, "#996633")
+        self.assertEqual(color_map["secondary"].hex, "#996633")
 
     def test_same_loaded_page_passes_annotation_change_metadata(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
@@ -489,9 +693,11 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(plan_view.load_calls, 1)
         self.assertEqual(len(plan_view.prefetch_calls), 1)
         self.assertEqual(plan_view.prefetch_calls[0][0].uid, "page-1")
+        self.assertEqual(plan_view.load_options[0]["page"].uid, "page-1")
         self.assertEqual(
             plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
+        self.assertEqual(plan_view.snap_settings, [(2.0, 0)])
 
     def test_hidden_loaded_annotation_is_retained_for_later_layer_reveal(self):
         plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
@@ -540,6 +746,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(
             plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
+        self.assertEqual(plan_view.snap_settings, [(2.0, 0)])
 
     def test_missing_page_uses_one_canonical_clear_transition(self):
         plan_view = FakePlanView(current_page_uid="page-1")
@@ -551,6 +758,60 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
             coordinator._remote_update_generation,
             initial_generation + 1,
         )
+        self.assertEqual(plan_view.overlay_calls, 0)
+        self.assertEqual(plan_view.load_calls, 0)
+
+    def test_force_overlay_refresh_is_forwarded_only_when_requested(self):
+        plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
+        coordinator = self._make_coordinator(plan_view)
+        coordinator.update_plan_view("page-1")
+        coordinator.update_plan_view("page-1", force_overlay_refresh=True)
+        self.assertEqual(
+            [options["force_overlay_refresh"] for options in plan_view.overlay_options],
+            [False, True],
+        )
+
+    def test_update_for_active_page_falls_back_to_first_selected_page(self):
+        plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
+        coordinator = self._make_coordinator(plan_view)
+        coordinator._ui_state = SimpleNamespace(
+            active_page_uid=None,
+            place_condition_uids=[],
+            state=SimpleNamespace(display_mode_2d="condition", grayscale_enabled=False),
+            get_selected_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
+        )
+        coordinator._project_data.get_selected_page_uids = lambda: ["page-1"]
+        coordinator.update_plan_view_for_active(changed_takeoff_uids=["takeoff-1"])
+        self.assertEqual(plan_view.overlay_calls, 1)
+        self.assertEqual(
+            plan_view.overlay_options[0]["changed_takeoff_uids"], ["takeoff-1"]
+        )
+        self.assertEqual(plan_view.overlay_options[0]["page"].uid, "page-1")
+
+    def test_update_for_active_page_clears_without_active_or_selected_page(self):
+        plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
+        coordinator = self._make_coordinator(plan_view)
+        coordinator._ui_state = SimpleNamespace(active_page_uid=None)
+        coordinator._project_data.get_selected_page_uids = lambda: []
+        coordinator.update_plan_view_for_active()
+        self.assertEqual(plan_view.clear_calls, 1)
+        self.assertEqual(plan_view.overlay_calls, 0)
+        self.assertEqual(plan_view.load_calls, 0)
+
+    def test_license_plan_state_renders_when_allowed_and_clears_when_denied(self):
+        plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
+        coordinator = self._make_coordinator(plan_view)
+        allowed = []
+        coordinator._access = SimpleNamespace(
+            is_allowed=lambda feature: allowed.append(feature) or len(allowed) == 1
+        )
+        coordinator.update_license_plan_state()
+        self.assertEqual(plan_view.overlay_calls, 1)
+        self.assertEqual(plan_view.clear_calls, 0)
+        coordinator.update_license_plan_state()
+        self.assertEqual(plan_view.overlay_calls, 1)
+        self.assertEqual(plan_view.clear_calls, 1)
+        self.assertEqual(allowed, [Feature.VIEW_2D, Feature.VIEW_2D])
 
 
 class PageAreaProjectionTests(unittest.TestCase):
@@ -567,3 +828,25 @@ class PageAreaProjectionTests(unittest.TestCase):
         )
         self.assertTrue(viewer.update_page_area_selection("42"))
         self.assertEqual(calls, [selections])
+
+    def test_page_area_projection_skips_other_page_and_missing_plan_view(self):
+        calls = []
+        viewer = ViewerSyncCoordinator.__new__(ViewerSyncCoordinator)
+        viewer._project_data = SimpleNamespace(get_page_area_selections=lambda: {})
+        viewer.plan_view = SimpleNamespace(
+            current_page_uid="42",
+            refresh_page_area_selection=lambda value: calls.append(value) or True,
+        )
+        self.assertFalse(viewer.update_page_area_selection("43"))
+        self.assertEqual(calls, [])
+        viewer.plan_view = None
+        self.assertFalse(viewer.update_page_area_selection("42"))
+
+    def test_page_area_projection_reports_plan_view_refusal(self):
+        viewer = ViewerSyncCoordinator.__new__(ViewerSyncCoordinator)
+        viewer._project_data = SimpleNamespace(get_page_area_selections=lambda: {})
+        viewer.plan_view = SimpleNamespace(
+            current_page_uid="42",
+            refresh_page_area_selection=lambda _value: False,
+        )
+        self.assertFalse(viewer.update_page_area_selection("42"))

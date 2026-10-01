@@ -8,7 +8,10 @@ from ost_visualizer.application.dtos.mesh_geometry_dto import (
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer, ost_renderer
-from ost_visualizer.presentation.modes.cursor import CURSOR_MODE_DEFAULT
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_DEFAULT,
+    CURSOR_MODE_PAN,
+)
 from ost_visualizer.presentation.visualization.native_page_plane import (
     NativePageImagePlaneData,
 )
@@ -23,9 +26,6 @@ from tests.presentation.components.mesh_support import (
     FakePickingMeshRenderer as _mesh_support_FakePickingMeshRenderer,
 )
 from PySide6 import QtCore, QtWidgets
-from tests.integration.selection.area_routing_support import (
-    _app as _area_routing_support__app,
-)
 
 
 def _app():
@@ -172,6 +172,35 @@ class MeshViewRenderSurfaceTests(unittest.TestCase):
         self.assertIsNone(viewer._surface_window)
         self.assertIsNone(viewer._surface_screen)
 
+    def test_surface_notifications_move_to_the_new_top_level_window(self):
+        viewer, _renderer, _state = self._viewer()
+        first_screen = _Screen()
+        first_window = _Window(first_screen)
+        second_screen = _Screen()
+        second_window = _Window(second_screen)
+        current = {"window": first_window}
+        top_level = type(
+            "TopLevel",
+            (),
+            {
+                "isWindow": lambda _self: True,
+                "isVisible": lambda _self: True,
+                "windowHandle": lambda _self: current["window"],
+            },
+        )()
+        viewer._surface_window = None
+        viewer._surface_screen = None
+        viewer.window = lambda: top_level
+        OpenGLViewer._connect_surface_notifications(viewer)
+        current["window"] = second_window
+        OpenGLViewer._connect_surface_notifications(viewer)
+        self.assertEqual(first_window.screenChanged.callbacks, [])
+        self.assertEqual(first_screen.logicalDotsPerInchChanged.callbacks, [])
+        self.assertEqual(len(second_window.screenChanged.callbacks), 1)
+        self.assertEqual(len(second_screen.logicalDotsPerInchChanged.callbacks), 1)
+        self.assertIs(viewer._surface_window, second_window)
+        self.assertIs(viewer._surface_screen, second_screen)
+
     def test_invisible_top_level_does_not_request_native_window_handle(self):
         viewer, _renderer, _state = self._viewer()
         top_level = type(
@@ -190,6 +219,7 @@ class MeshViewRenderSurfaceTests(unittest.TestCase):
         viewer.window = lambda: top_level
         OpenGLViewer._connect_surface_notifications(viewer)
         self.assertIsNone(viewer._surface_window)
+        self.assertIsNone(viewer._surface_screen)
 
     def test_surface_metric_refresh_requests_are_coalesced_and_stop_after_cleanup(self):
         viewer, _renderer, _state = self._viewer()
@@ -229,7 +259,10 @@ class TestMeshViewLifecycle(unittest.TestCase):
 
     def _make_page_plane_viewer(self, textures):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
-        viewer.scene_content_changed = SimpleNamespace(emit=lambda: None)
+        viewer._scene_content_emits = []
+        viewer.scene_content_changed = SimpleNamespace(
+            emit=lambda: viewer._scene_content_emits.append(True)
+        )
         renderer = _mesh_support_FakeMeshRenderer(_mesh_support_FakeMeshScene([]))
         viewer._destroyed = False
         viewer._renderer = renderer
@@ -283,15 +316,35 @@ class TestMeshViewLifecycle(unittest.TestCase):
         )
 
     def test_mesh_buffer_length_mismatch_raises_clear_error(self):
-        with self.assertRaisesRegex(ValueError, "matching lengths"):
-            OpenGLViewer._validate_mesh_buffer_lengths(
-                [[0.0, 0.0, 0.0]],
-                [],
-                [[0, 1, 2]],
-                [{"color": "#ffffff", "opacity": 1.0}],
-                ["condition-1"],
-                ["takeoff-1"],
-            )
+        valid = {
+            "vertices_list": [[0.0, 0.0, 0.0]],
+            "normals_list": [[0.0, 0.0, 1.0]],
+            "indices_list": [[0, 1, 2]],
+            "colors": [{"color": "#ffffff", "opacity": 1.0}],
+            "condition_uids": ["condition-1"],
+            "takeoff_uids": ["takeoff-1"],
+        }
+        OpenGLViewer._validate_mesh_buffer_lengths(**valid)
+        OpenGLViewer._validate_mesh_buffer_lengths(
+            **{**valid, "condition_uids": None, "takeoff_uids": None}
+        )
+        for name in (
+            "normals_list",
+            "indices_list",
+            "colors",
+            "condition_uids",
+            "takeoff_uids",
+        ):
+            with self.subTest(buffer=name):
+                short_name = {
+                    "normals_list": "normals",
+                    "indices_list": "indices",
+                }.get(name, name)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    rf"matching lengths: vertices=1, {short_name}=0",
+                ):
+                    OpenGLViewer._validate_mesh_buffer_lengths(**{**valid, name: []})
 
     def test_cleanup_clears_external_callback_references(self):
         self._app()
@@ -317,11 +370,17 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertFalse(viewer._negative_check_fn(["uid"]))
         self.assertEqual((False, False), viewer._curved_check_fn(["uid"]))
         self.assertEqual({}, viewer._context_menu_conditions_fn())
+        self.assertTrue(viewer._destroyed)
+        self.assertIsNone(viewer._animation_timer)
+        self.assertIsNone(viewer._plan_texture_provider)
+        self.assertEqual(viewer._saved_camera_states, {})
+        self.assertFalse(viewer._pending_camera_reset)
         with patch(
-            "ost_visualizer.presentation.components.mesh_view.ost_renderer.Renderer",
-            side_effect=AssertionError("renderer must not restart after cleanup"),
-        ):
+            "ost_visualizer.presentation.components.mesh_view.ost_renderer.Renderer"
+        ) as renderer_class:
             self.assertFalse(viewer._ensure_renderer())
+        renderer_class.assert_not_called()
+        viewer.cleanup()
 
     def test_mesh_context_command_rejects_replaced_scene_generation(self):
         self._app()
@@ -334,15 +393,67 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._context_menu_action_state = lambda _key: {"enabled": True}
         menu = QtWidgets.QMenu()
         viewer._add_context_command(menu, "Delete", "delete")
+        menu.actions()[0].trigger()
+        self.assertEqual(triggered, ["delete"])
         viewer._latest_scene_generation = 2
         menu.actions()[0].trigger()
-        self.assertEqual(triggered, [])
+        self.assertEqual(triggered, ["delete"])
         viewer.cleanup()
 
     def test_mesh_context_action_rejects_edit_access_loss(self):
         app = self._app()
+        for revoke_access in (False, True):
+            with self.subTest(revoke_access=revoke_access):
+                viewer = OpenGLViewer(None, SimpleNamespace())
+                viewer._pick_enabled = True
+                viewer._selected_takeoff_uids = ["takeoff-1"]
+                viewer._selected_context_state_fn = lambda _uids: SimpleNamespace(
+                    takeoff_uids=["takeoff-1"],
+                    show_assign=True,
+                    show_negative=False,
+                    show_curved=False,
+                    all_negative=False,
+                    all_curved=False,
+                    reassign_geometry_type=None,
+                )
+                access = {"enabled": True}
+                viewer._context_menu_action_state = lambda _key: dict(access)
+                emitted = []
+                viewer.assign_to_area_requested.connect(
+                    lambda uids: emitted.append(list(uids))
+                )
+                menu_base = QtWidgets.QMenu
+
+                class RevokingMenu(menu_base):
+                    def exec(self, _pos):
+                        if revoke_access:
+                            access["enabled"] = False
+                        return next(
+                            action
+                            for action in self.actions()
+                            if action.text() == "Assign to Current Area"
+                        )
+
+                event = SimpleNamespace(
+                    globalPos=lambda: QtCore.QPoint(),
+                    accept=lambda: None,
+                )
+                with patch(
+                    "ost_visualizer.presentation.components.mesh_view.QtWidgets.QMenu",
+                    RevokingMenu,
+                ):
+                    viewer.contextMenuEvent(event)
+                app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+                app.processEvents()
+                self.assertEqual(emitted, [] if revoke_access else [["takeoff-1"]])
+                viewer.cleanup()
+
+    def test_mesh_context_action_rejects_scene_replaced_while_menu_is_open(self):
+        app = self._app()
         viewer = OpenGLViewer(None, SimpleNamespace())
         viewer._pick_enabled = True
+        viewer._current_bid_ref = BidRef("a.mdb", "bid-1")
+        viewer._latest_scene_generation = 1
         viewer._selected_takeoff_uids = ["takeoff-1"]
         viewer._selected_context_state_fn = lambda _uids: SimpleNamespace(
             takeoff_uids=["takeoff-1"],
@@ -353,15 +464,14 @@ class TestMeshViewLifecycle(unittest.TestCase):
             all_curved=False,
             reassign_geometry_type=None,
         )
-        access = {"enabled": True}
-        viewer._context_menu_action_state = lambda _key: dict(access)
+        viewer._context_menu_action_state = lambda _key: {"enabled": True}
         emitted = []
         viewer.assign_to_area_requested.connect(lambda uids: emitted.append(list(uids)))
         menu_base = QtWidgets.QMenu
 
-        class RevokingMenu(menu_base):
+        class ReplacingMenu(menu_base):
             def exec(self, _pos):
-                access["enabled"] = False
+                viewer._latest_scene_generation = 2
                 return next(
                     action
                     for action in self.actions()
@@ -374,7 +484,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         )
         with patch(
             "ost_visualizer.presentation.components.mesh_view.QtWidgets.QMenu",
-            RevokingMenu,
+            ReplacingMenu,
         ):
             viewer.contextMenuEvent(event)
         app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
@@ -391,8 +501,13 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._renderer = renderer
         with self.assertLogs(
             "ost_visualizer.presentation.components.mesh_view", level="ERROR"
-        ):
+        ) as logs:
             viewer.cleanup()
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            "Failed to shut down ost_renderer during cleanup",
+        )
         self.assertTrue(viewer._destroyed)
         self.assertIsNone(viewer._renderer)
         self.assertIsNone(viewer._animation_timer)
@@ -402,7 +517,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
         viewer._destroyed = False
         viewer._renderer = None
-        viewer._render_surface_size = None
+        viewer._render_surface_size = (640, 480)
         viewer._surface_window = None
         viewer._surface_screen = None
         viewer._pending_camera_reset = False
@@ -427,28 +542,49 @@ class TestMeshViewLifecycle(unittest.TestCase):
             self.assertFalse(OpenGLViewer._ensure_renderer(viewer))
         self.assertIsNone(viewer._renderer)
         self.assertIsNone(viewer._render_surface_size)
+        self.assertEqual(len(created), 1)
         self.assertEqual(created[0].shutdown_calls, 1)
+
+    def test_renderer_constructor_failure_leaves_viewer_without_renderer(self):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        viewer._destroyed = False
+        viewer._renderer = None
+        viewer._render_surface_size = None
+        viewer._surface_window = None
+        viewer._surface_screen = None
+        viewer._pending_camera_reset = True
+        viewer.winId = lambda: 123
+        with patch(
+            "ost_visualizer.presentation.components.mesh_view.ost_renderer.Renderer",
+            side_effect=RuntimeError("device lost"),
+        ), self.assertLogs(
+            "ost_visualizer.presentation.components.mesh_view", level="ERROR"
+        ):
+            self.assertFalse(OpenGLViewer._ensure_renderer(viewer))
+        self.assertIsNone(viewer._renderer)
+        self.assertTrue(viewer._pending_camera_reset)
 
     def test_scene_rebuild_drops_missing_selected_takeoffs_without_broadcasting(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
-        scene = _mesh_support_FakeMeshScene(["keep"])
+        scene = _mesh_support_FakeMeshScene(["other", "keep", "tail"])
         viewer._renderer = type("Renderer", (), {"scene": scene})()
         viewer._selected_takeoff_uids = ["keep", "deleted"]
         viewer.mesh_clicked = _mesh_support_FakeMeshSignal()
         OpenGLViewer._reconcile_selected_takeoffs_with_scene(viewer)
         self.assertEqual(viewer.get_selected_takeoff_uids(), ["keep"])
-        self.assertEqual(scene.selected, {0})
+        self.assertEqual(scene.selected, {1})
         self.assertEqual(viewer.mesh_clicked.emitted, [])
 
     def test_scene_rebuild_reapplies_valid_cached_selection(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
-        scene = _mesh_support_FakeMeshScene(["keep"])
+        scene = _mesh_support_FakeMeshScene(["stale", "keep-a", "other", "keep-b"])
+        scene.set_selected(0, True)
         viewer._renderer = type("Renderer", (), {"scene": scene})()
-        viewer._selected_takeoff_uids = ["keep"]
+        viewer._selected_takeoff_uids = ["keep-a", "keep-b"]
         viewer.mesh_clicked = _mesh_support_FakeMeshSignal()
         OpenGLViewer._reconcile_selected_takeoffs_with_scene(viewer)
-        self.assertEqual(viewer.get_selected_takeoff_uids(), ["keep"])
-        self.assertEqual(scene.selected, {0})
+        self.assertEqual(viewer.get_selected_takeoff_uids(), ["keep-a", "keep-b"])
+        self.assertEqual(scene.selected, {1, 3})
         self.assertEqual(viewer.mesh_clicked.emitted, [])
 
     def test_programmatic_clear_scene_does_not_broadcast_empty_mesh_selection(self):
@@ -469,13 +605,27 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._pending_camera_reset = False
         viewer._render_suspended = False
         viewer._zoom_reference_distance = 3.0
+        viewer._click_pos = QtCore.QPointF(1.0, 2.0)
+        viewer._last_mouse_pos = QtCore.QPointF(1.0, 2.0)
+        viewer._dragged = True
+        viewer._camera_moving = True
         viewer.mesh_clicked = _mesh_support_FakeMeshSignal()
         viewer.update = lambda: None
         OpenGLViewer.clear_scene(viewer)
+        self.assertIsNone(viewer._click_pos)
+        self.assertIsNone(viewer._last_mouse_pos)
+        self.assertFalse(viewer._dragged)
+        self.assertFalse(viewer._camera_moving)
         self.assertEqual(viewer.get_selected_takeoff_uids(), [])
         self.assertEqual(viewer.mesh_clicked.emitted, [])
         self.assertEqual(renderer.camera.reset_calls, 1)
         self.assertEqual(renderer.suspend_calls, 1)
+        self.assertTrue(scene.empty())
+        self.assertEqual(scene.scene_clear_calls, 1)
+        self.assertEqual(renderer.clear_plan_texture_calls, 1)
+        self.assertIsNone(viewer._current_bid_ref)
+        self.assertEqual(viewer._zoom_reference_distance, 0.0)
+        self.assertTrue(viewer._render_suspended)
 
     def test_same_bid_scene_update_preserves_camera_without_fit_or_reset(self):
         viewer, renderer = self._make_page_plane_viewer([self._page_texture("p2")])
@@ -493,6 +643,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(renderer.camera.show_object_calls, [])
         self.assertEqual(renderer.camera.reset_calls, 0)
         self.assertEqual(len(renderer.plan_texture_calls), 1)
+        self.assertEqual(viewer._scene_content_emits, [True])
 
     def test_page_texture_updates_preserve_camera_and_selected_visibility(self):
         viewer, renderer = self._make_page_plane_viewer(
@@ -509,6 +660,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
             [call[9] for call in renderer.plan_texture_calls], [False, True]
         )
         self.assertEqual(len(renderer.plan_texture_calls), 2)
+        self.assertEqual(viewer._scene_content_emits, [True, True])
         self.assertEqual(renderer.camera.show_object_calls, [])
         self.assertEqual(renderer.camera.reset_calls, 0)
 
@@ -566,6 +718,10 @@ class TestMeshViewLifecycle(unittest.TestCase):
         OpenGLViewer.update_plan_texture(viewer)
         self.assertEqual(self._camera_state(viewer, renderer), before)
         self.assertEqual(renderer.clear_plan_texture_calls, 1)
+        self.assertIsNone(viewer._current_plan_texture)
+        self.assertFalse(viewer._has_visible_plan_texture)
+        self.assertTrue(viewer._render_suspended)
+        self.assertEqual(viewer._scene_content_emits, [True])
         self.assertEqual(renderer.camera.show_object_calls, [])
         self.assertEqual(renderer.camera.reset_calls, 0)
 
@@ -585,6 +741,11 @@ class TestMeshViewLifecycle(unittest.TestCase):
         )
         self.assertEqual(len(renderer.camera.show_object_calls), 1)
         self.assertEqual(renderer.camera.reset_calls, 0)
+        self.assertTrue(viewer._camera_initialized_for_scene)
+        self.assertEqual(renderer.suspend_calls, 1)
+        self.assertEqual(renderer.resume_calls, 1)
+        self.assertFalse(viewer._render_suspended)
+        self.assertEqual(viewer._scene_content_emits, [True])
 
     def test_bid_load_hides_scene_and_defers_plan_until_authoritative_elevation(self):
         old_ref = BidRef("a.mdb", "bid-old")
@@ -598,10 +759,21 @@ class TestMeshViewLifecycle(unittest.TestCase):
             return self._page_texture("p-new")
 
         viewer._plan_texture_provider = build_texture
+        renderer.scene.takeoff_uids = ["old-takeoff"]
+        renderer.scene.condition_uids = ["old-condition"]
         OpenGLViewer.begin_scene_load(viewer, new_ref)
+        self.assertTrue(renderer.scene.empty())
+        self.assertEqual(renderer.scene.scene_clear_calls, 1)
+        self.assertEqual(renderer.clear_plan_texture_calls, 1)
+        self.assertIsNone(viewer._current_plan_texture)
+        self.assertFalse(viewer._has_visible_plan_texture)
+        self.assertEqual(viewer._displayed_scene_page_uids, ())
+        self.assertEqual(viewer._page_floor_elevations, {})
+        self.assertEqual(viewer._scene_content_emits, [True])
         OpenGLViewer.prepare_scene_refresh(viewer, new_ref, ["page-new"])
         OpenGLViewer.update_plan_texture(viewer)
         self.assertEqual(requested_elevations, [])
+        self.assertEqual(viewer._scene_content_emits, [True])
         self.assertTrue(viewer._scene_refresh_pending)
         self.assertTrue(viewer._render_suspended)
         self.assertEqual(renderer.clear_frame_calls, 1)
@@ -622,23 +794,30 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertFalse(viewer._scene_refresh_pending)
         self.assertEqual(len(renderer.camera.show_object_calls), 1)
         self.assertEqual(renderer.resume_calls, 1)
+        self.assertEqual(viewer._scene_content_emits, [True, True])
 
     def test_stale_bid_mesh_result_cannot_reveal_or_move_loading_scene(self):
         viewer, renderer = self._make_page_plane_viewer([])
         stale_ref = BidRef("a.mdb", "bid-stale")
         active_ref = BidRef("a.mdb", "bid-active")
+        previous_ref = viewer._current_bid_ref
         OpenGLViewer.begin_scene_load(viewer, active_ref)
         OpenGLViewer._do_apply_mesh_data(
             viewer,
-            [],
-            [],
-            [],
-            [],
+            [[0.0, 0.0, 0.0]],
+            [[0.0, 0.0, 1.0]],
+            [[0]],
+            ["#ffffff"],
             self._scene_identity(stale_ref, 4, ()),
             {},
+            ["condition-stale"],
+            ["takeoff-stale"],
         )
         self.assertEqual(viewer._loading_bid_ref, active_ref)
+        self.assertEqual(viewer._current_bid_ref, previous_ref)
         self.assertTrue(viewer._scene_refresh_pending)
+        self.assertTrue(renderer.scene.empty())
+        self.assertEqual(viewer._latest_scene_generation, 0)
         self.assertEqual(renderer.camera.show_object_calls, [])
         self.assertEqual(renderer.resume_calls, 0)
 
@@ -662,6 +841,8 @@ class TestMeshViewLifecycle(unittest.TestCase):
             {"page-new": 5.0},
         )
         self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertNotEqual(viewer._current_bid_ref, first_ref)
+        self.assertEqual(viewer._latest_scene_generation, 0)
         OpenGLViewer._do_apply_mesh_data(
             viewer,
             [],
@@ -732,6 +913,8 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(provider_calls, [{}])
         self.assertEqual(renderer.plan_texture_calls, [])
         self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(renderer.camera.reset_calls, 1)
+        self.assertFalse(viewer._camera_initialized_for_scene)
         self.assertTrue(viewer._render_suspended)
 
     def test_bid_with_no_mesh_or_plan_remains_suspended_without_camera_fit(self):
@@ -750,6 +933,8 @@ class TestMeshViewLifecycle(unittest.TestCase):
             {},
         )
         self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(renderer.camera.reset_calls, 1)
+        self.assertFalse(viewer._camera_initialized_for_scene)
         self.assertEqual(renderer.resume_calls, 0)
         self.assertTrue(viewer._render_suspended)
 
@@ -819,6 +1004,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(self._camera_state(viewer, renderer), camera_state)
         self.assertFalse(viewer._render_suspended)
         self.assertFalse(viewer._scene_refresh_pending)
+        self.assertEqual(viewer._scene_content_emits, [True])
 
     def test_failed_different_page_refresh_does_not_retain_stale_page_scene(self):
         viewer, renderer = self._make_page_plane_viewer([])
@@ -834,6 +1020,38 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(renderer.scene.scene_clear_calls, 1)
         self.assertEqual(renderer.clear_plan_texture_calls, 1)
         self.assertTrue(viewer._render_suspended)
+        self.assertTrue(viewer._scene_refresh_pending)
+        self.assertEqual(viewer._displayed_scene_page_uids, ())
+        self.assertEqual(viewer._page_floor_elevations, {})
+        self.assertEqual(viewer._scene_content_emits, [True])
+
+    def test_failed_same_page_refresh_without_renderable_content_stays_pending(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._current_plan_texture = None
+        viewer._has_visible_plan_texture = False
+        bid_ref = viewer._current_bid_ref
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer.apply_scene_failure(
+            viewer, self._scene_identity(bid_ref, 14, ("page-1",))
+        )
+        self.assertTrue(viewer._scene_refresh_pending)
+        self.assertEqual(renderer.scene.scene_clear_calls, 1)
+        self.assertEqual(renderer.clear_plan_texture_calls, 1)
+        self.assertTrue(viewer._render_suspended)
+        self.assertEqual(viewer._displayed_scene_page_uids, ())
+
+    def test_failed_scene_for_new_bid_drops_previous_selection_and_camera_state(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        new_ref = BidRef("a.mdb", "bid-new")
+        viewer._selected_takeoff_uids = ["takeoff-old"]
+        OpenGLViewer.prepare_scene_refresh(viewer, new_ref, ["page-new"])
+        OpenGLViewer.apply_scene_failure(
+            viewer, self._scene_identity(new_ref, 9, ("page-new",))
+        )
+        self.assertEqual(viewer.get_selected_takeoff_uids(), [])
+        self.assertFalse(viewer._camera_initialized_for_scene)
+        self.assertEqual(viewer._current_bid_ref, new_ref)
+        self.assertEqual(viewer._latest_scene_generation, 9)
         self.assertTrue(viewer._scene_refresh_pending)
 
     def test_duplicate_scene_generation_is_not_published_to_renderer_twice(self):
@@ -926,6 +1144,9 @@ class TestMeshViewLifecycle(unittest.TestCase):
         )
         self.assertTrue(renderer.scene.empty())
         self.assertIsNone(viewer._current_bid_ref)
+        self.assertIsNone(viewer._accepted_scene_bid_ref)
+        self.assertIsNone(viewer._requested_scene_page_uids)
+        self.assertEqual(viewer._latest_scene_generation, 0)
         self.assertFalse(viewer._camera_initialized_for_scene)
 
     def test_scene_clear_is_ignored_after_viewer_cleanup(self):
@@ -938,11 +1159,56 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(renderer.clear_plan_texture_calls, 0)
 
     def test_queued_animation_callback_is_ignored_after_viewer_cleanup(self):
+        class UntouchableRenderer:
+            @property
+            def camera(self):
+                raise AssertionError("destroyed viewer must not touch the renderer")
+
+        timer = _Timer()
+        timer.stop = lambda: self.fail("destroyed viewer must not touch the timer")
         viewer = OpenGLViewer.__new__(OpenGLViewer)
         viewer._destroyed = True
-        viewer._renderer = None
-        viewer._animation_timer = None
+        viewer._renderer = UntouchableRenderer()
+        viewer._animation_timer = timer
+        viewer.update = lambda: self.fail("destroyed viewer must not repaint")
         OpenGLViewer._on_animation_frame(viewer)
+
+    def test_animation_frame_repaints_only_while_camera_is_moving_or_coasting(self):
+        class Camera:
+            def __init__(self):
+                self.velocity = False
+
+            def has_velocity(self):
+                return self.velocity
+
+        class Timer:
+            def __init__(self):
+                self.stop_calls = 0
+
+            def stop(self):
+                self.stop_calls += 1
+
+        camera = Camera()
+        updates = []
+        timer = Timer()
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        viewer._destroyed = False
+        viewer._renderer = SimpleNamespace(camera=camera)
+        viewer._animation_timer = timer
+        viewer._camera_moving = False
+        viewer.update = lambda: updates.append(True)
+        OpenGLViewer._on_animation_frame(viewer)
+        self.assertEqual((timer.stop_calls, len(updates)), (1, 0))
+        viewer._camera_moving = True
+        OpenGLViewer._on_animation_frame(viewer)
+        self.assertEqual((timer.stop_calls, len(updates)), (1, 1))
+        viewer._camera_moving = False
+        camera.velocity = True
+        OpenGLViewer._on_animation_frame(viewer)
+        self.assertEqual((timer.stop_calls, len(updates)), (1, 2))
+        viewer._renderer = None
+        OpenGLViewer._on_animation_frame(viewer)
+        self.assertEqual((timer.stop_calls, len(updates)), (2, 2))
 
     def test_terminally_rejected_scene_does_not_initialize_renderer(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
@@ -1006,6 +1272,142 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertFalse(viewer._scene_refresh_pending)
         self.assertEqual(renderer.scene.takeoff_uids, ["takeoff-new"])
 
+    def test_scene_apply_clears_selection_for_new_bid_and_reconciles_for_same_bid(
+        self,
+    ):
+        for new_bid in (True, False):
+            with self.subTest(new_bid=new_bid):
+                viewer, renderer = self._make_page_plane_viewer([None])
+                viewer._selected_takeoff_uids = ["t1", "gone"]
+                bid_ref = BidRef("a.mdb", "bid-new" if new_bid else "bid-1")
+                OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+                OpenGLViewer._do_apply_mesh_data(
+                    viewer,
+                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                    [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+                    [[0], [0]],
+                    ["#ffffff", "#ffffff"],
+                    self._scene_identity(bid_ref, 5),
+                    {"page-1": 0.0},
+                    ["c0", "c1"],
+                    ["t0", "t1"],
+                )
+                if new_bid:
+                    self.assertEqual(viewer.get_selected_takeoff_uids(), [])
+                    self.assertEqual(renderer.scene.selected, set())
+                else:
+                    self.assertEqual(viewer.get_selected_takeoff_uids(), ["t1"])
+                    self.assertEqual(renderer.scene.selected, {1})
+                self.assertEqual(renderer.scene.takeoff_uids, ["t0", "t1"])
+                self.assertEqual(renderer.scene.condition_uids, ["c0", "c1"])
+                self.assertEqual(viewer.mesh_clicked.emitted, [])
+
+    def test_empty_geometry_entries_are_skipped_and_uids_stay_aligned(self):
+        viewer, renderer = self._make_page_plane_viewer([None])
+        bid_ref = BidRef("a.mdb", "bid-1")
+        OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [[], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            [[], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            [[], [0], []],
+            ["#ffffff", "#ffffff", "#ffffff"],
+            self._scene_identity(bid_ref, 5),
+            {"page-1": 0.0},
+            ["c0", "c1", "c2"],
+            ["t0", "t1", "t2"],
+        )
+        self.assertEqual(renderer.scene.takeoff_uids, ["t1"])
+        self.assertEqual(renderer.scene.condition_uids, ["c1"])
+
+    def test_scene_elevations_must_belong_to_request_and_be_finite(self):
+        for elevations, message in (
+            ({"other-page": 1.0}, "belong to the scene request"),
+            ({"page-1": float("nan")}, "must be finite"),
+            ({"page-1": float("inf")}, "must be finite"),
+        ):
+            with self.subTest(elevations=elevations):
+                viewer, renderer = self._make_page_plane_viewer([None])
+                renderer.scene.takeoff_uids = ["old-takeoff"]
+                bid_ref = BidRef("a.mdb", "bid-1")
+                OpenGLViewer.prepare_scene_refresh(viewer, bid_ref, ["page-1"])
+                with self.assertRaisesRegex(ValueError, message):
+                    OpenGLViewer._do_apply_mesh_data(
+                        viewer,
+                        [],
+                        [],
+                        [],
+                        [],
+                        self._scene_identity(bid_ref, 5),
+                        elevations,
+                    )
+                self.assertEqual(viewer._latest_scene_generation, 0)
+                self.assertTrue(viewer._scene_refresh_pending)
+                self.assertEqual(viewer._page_floor_elevations, {"page-1": 0.0})
+                self.assertEqual(renderer.scene.takeoff_uids, ["old-takeoff"])
+
+    def test_scene_load_does_not_save_uninitialized_or_invalid_camera_state(self):
+        valid = ((10.0, 20.0, 30.0), (1.0, 2.0, 3.0), 37.0)
+        for label, initialized, position, target, fov in (
+            ("uninitialized", False, *valid),
+            ("nan position", True, (float("nan"), 0.0, 1.0), valid[1], valid[2]),
+            ("zero distance", True, valid[1], valid[1], valid[2]),
+            ("fov too small", True, valid[0], valid[1], 1.0),
+            ("fov too large", True, valid[0], valid[1], 179.0),
+            ("valid", True, *valid),
+        ):
+            with self.subTest(label):
+                viewer, renderer = self._make_page_plane_viewer([])
+                viewer._camera_initialized_for_scene = initialized
+                camera = renderer.camera
+                camera.position = SimpleNamespace(
+                    x=position[0], y=position[1], z=position[2]
+                )
+                camera.target = SimpleNamespace(x=target[0], y=target[1], z=target[2])
+                camera.fov = fov
+                previous_ref = viewer._current_bid_ref
+                OpenGLViewer.begin_scene_load(viewer, BidRef("a.mdb", "bid-next"))
+                if label == "valid":
+                    self.assertEqual(
+                        viewer._saved_camera_states,
+                        {previous_ref: (*position, *target, fov)},
+                    )
+                else:
+                    self.assertEqual(viewer._saved_camera_states, {})
+
+    def test_show_event_resumes_renderer_only_for_accepted_renderable_scene(self):
+        class RenderingRenderer(_mesh_support_FakeMeshRenderer):
+            def __init__(self, scene):
+                super().__init__(scene)
+                self.render_calls = 0
+
+            def render(self):
+                self.render_calls += 1
+
+        self._app()
+        for label, pending, has_content, resumes in (
+            ("pending refresh", True, True, False),
+            ("no content", False, False, False),
+            ("accepted scene", False, True, True),
+        ):
+            with self.subTest(label):
+                viewer = OpenGLViewer(None, SimpleNamespace())
+                renderer = RenderingRenderer(
+                    _mesh_support_FakeMeshScene(["takeoff-1"] if has_content else [])
+                )
+                viewer._renderer = renderer
+                viewer._scene_refresh_pending = pending
+                viewer._render_suspended = True
+                viewer._surface_hidden = True
+                OpenGLViewer.showEvent(viewer, QtGui.QShowEvent())
+                self.assertFalse(viewer._surface_hidden)
+                self.assertEqual(viewer._render_suspended, not resumes)
+                self.assertEqual(renderer.resume_calls, 1 if resumes else 0)
+                self.assertEqual(renderer.render_calls, 1 if resumes else 0)
+                self.assertEqual(renderer.suspend_calls, 0 if resumes else 1)
+                viewer._renderer = None
+                viewer.cleanup()
+
     def test_camera_cache_can_evict_one_bid_or_one_database(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
         first = BidRef("C:/Projects/A.mdb", "bid-1")
@@ -1019,6 +1421,24 @@ class TestMeshViewLifecycle(unittest.TestCase):
             viewer, file_path="C:\\PROJECTS\\A.mdb"
         )
         self.assertEqual(set(viewer._saved_camera_states), {other})
+
+    def test_camera_cache_eviction_rejects_ambiguous_scope_and_ignores_empty_scope(
+        self,
+    ):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        first = BidRef("A.mdb", "bid-1")
+        state = (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 45.0)
+        viewer._saved_camera_states = {first: state}
+        with self.assertRaisesRegex(ValueError, "either bid_ref or file_path"):
+            OpenGLViewer.discard_saved_camera_states(
+                viewer, bid_ref=first, file_path="A.mdb"
+            )
+        OpenGLViewer.discard_saved_camera_states(viewer)
+        OpenGLViewer.discard_saved_camera_states(viewer, file_path="")
+        OpenGLViewer.discard_saved_camera_states(
+            viewer, bid_ref=BidRef("A.mdb", "missing")
+        )
+        self.assertEqual(viewer._saved_camera_states, {first: state})
 
     def test_page_recheck_after_empty_selection_accepts_current_bid_scene(self):
         bid_ref = BidRef("a.mdb", "bid-1")
@@ -1120,14 +1540,19 @@ class TestMeshViewLifecycle(unittest.TestCase):
         publish("page-a", "takeoff-a", 60)
         self.assertEqual(renderer.scene.takeoff_uids, ["takeoff-a"])
         camera_state = self._camera_state(viewer, renderer)
+        self.assertFalse(viewer._render_suspended)
+        suspend_calls = renderer.suspend_calls
         publish("", "", 61)
         self.assertTrue(renderer.scene.empty())
+        self.assertTrue(viewer._render_suspended)
+        self.assertEqual(renderer.suspend_calls, suspend_calls + 1)
         publish("page-b", "takeoff-b", 62)
         self.assertEqual(renderer.scene.takeoff_uids, ["takeoff-b"])
         publish("", "", 63)
         publish("page-a", "takeoff-a", 64)
         self.assertEqual(renderer.scene.takeoff_uids, ["takeoff-a"])
         self.assertEqual(self._camera_state(viewer, renderer), camera_state)
+        self.assertEqual(renderer.camera.reset_calls, 0)
 
     def test_two_3d_surfaces_keep_independent_saved_cameras(self):
         bid_ref = BidRef("a.mdb", "bid-1")
@@ -1192,9 +1617,27 @@ class TestMeshViewLifecycle(unittest.TestCase):
     def test_explicit_reset_view_still_fits_current_content(self):
         viewer, renderer = self._make_page_plane_viewer([])
         viewer._get_camera_distance = lambda: 123.0
+        zoom_changes = []
+        viewer.zoom_changed = SimpleNamespace(emit=zoom_changes.append)
         OpenGLViewer.reset_view(viewer)
         self.assertEqual(len(renderer.camera.show_object_calls), 1)
         self.assertEqual(viewer._zoom_reference_distance, 123.0)
+        self.assertEqual(zoom_changes, [1.0])
+
+    def test_reset_view_without_renderable_content_leaves_camera_untouched(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._has_visible_plan_texture = False
+        viewer._get_camera_distance = lambda: self.fail("no content to measure")
+        zoom_changes = []
+        viewer.zoom_changed = SimpleNamespace(emit=zoom_changes.append)
+        before = self._camera_state(viewer, renderer)
+        OpenGLViewer.reset_view(viewer)
+        self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(self._camera_state(viewer, renderer), before)
+        self.assertEqual(zoom_changes, [])
+        viewer._renderer = None
+        OpenGLViewer.reset_view(viewer)
+        self.assertEqual(zoom_changes, [])
 
     def test_user_mesh_pick_broadcasts_selected_takeoff(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
@@ -1228,7 +1671,61 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer.devicePixelRatioF = lambda: 1.25
         viewer.update = lambda: None
         OpenGLViewer._handle_pick(viewer, QtCore.QPoint(13, 17), additive=False)
-        self.assertEqual(renderer.pick_calls, [(16, 21)])
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(14, 19), additive=False)
+        self.assertEqual(renderer.pick_calls, [(16, 21), (17, 23)])
+
+    def _pick_viewer(self, takeoff_uids, pick_index, selected=()):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        scene = _mesh_support_FakeMeshScene(takeoff_uids)
+        for uid in selected:
+            scene.set_selected(takeoff_uids.index(uid), True)
+        renderer = _mesh_support_FakePickingMeshRenderer(scene, pick_index)
+        viewer._renderer = renderer
+        viewer._pick_enabled = True
+        viewer._selected_takeoff_uids = list(selected)
+        viewer._pending_mutation_uids = set()
+        viewer.mesh_clicked = _mesh_support_FakeMeshSignal()
+        viewer.width = lambda: 100
+        viewer.height = lambda: 100
+        viewer.devicePixelRatioF = lambda: 1.0
+        viewer.update = lambda: None
+        return viewer, scene, renderer
+
+    def test_pick_on_empty_space_clears_selection_unless_additive(self):
+        for pick_index in (-1, 5):
+            with self.subTest(pick_index=pick_index, additive=False):
+                viewer, scene, _renderer = self._pick_viewer(
+                    ["a", "b"], pick_index, selected=["a"]
+                )
+                OpenGLViewer._handle_pick(viewer, QtCore.QPoint(1, 1), additive=False)
+                self.assertEqual(viewer.get_selected_takeoff_uids(), [])
+                self.assertEqual(scene.selected, set())
+                self.assertEqual(viewer.mesh_clicked.emitted, [[]])
+        viewer, scene, _renderer = self._pick_viewer(["a", "b"], -1, selected=["a"])
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(1, 1), additive=True)
+        self.assertEqual(viewer.get_selected_takeoff_uids(), ["a"])
+        self.assertEqual(scene.selected, {0})
+        self.assertEqual(viewer.mesh_clicked.emitted, [])
+
+    def test_additive_pick_toggles_an_already_selected_takeoff_off(self):
+        viewer, scene, _renderer = self._pick_viewer(["a", "b"], 1, selected=["a", "b"])
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(1, 1), additive=True)
+        self.assertEqual(viewer.get_selected_takeoff_uids(), ["a"])
+        self.assertEqual(scene.selected, {0})
+        self.assertEqual(viewer.mesh_clicked.emitted, [["a"]])
+
+    def test_pick_ignores_disabled_picking_and_takeoffs_with_pending_mutations(self):
+        viewer, scene, renderer = self._pick_viewer(["a", "b"], 1, selected=["a"])
+        viewer._pick_enabled = False
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(1, 1), additive=False)
+        self.assertEqual(renderer.pick_calls, [])
+        viewer._pick_enabled = True
+        viewer._pending_mutation_uids = {"b"}
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(1, 1), additive=False)
+        self.assertEqual(renderer.pick_calls, [(1, 1)])
+        self.assertEqual(viewer.get_selected_takeoff_uids(), ["a"])
+        self.assertEqual(scene.selected, {0})
+        self.assertEqual(viewer.mesh_clicked.emitted, [])
 
     def test_mesh_shift_release_adds_to_existing_selection(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
@@ -1258,6 +1755,42 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(viewer.get_selected_takeoff_uids(), ["existing", "selected"])
         self.assertEqual(scene.selected, {0, 1})
         self.assertEqual(viewer.mesh_clicked.emitted, [["existing", "selected"]])
+
+    def test_mouse_release_after_a_drag_does_not_pick(self):
+        viewer, scene, renderer = self._pick_viewer(["a"], 0)
+        viewer._cursor_mode = CURSOR_MODE_DEFAULT
+        viewer._click_pos = QtCore.QPointF(1.0, 2.0)
+        viewer._dragged = True
+        viewer._last_mouse_pos = QtCore.QPointF(9.0, 9.0)
+        viewer._camera_moving = True
+        event = SimpleNamespace(
+            button=lambda: QtCore.Qt.MouseButton.LeftButton,
+            position=lambda: QtCore.QPointF(9.0, 9.0),
+            modifiers=lambda: QtCore.Qt.KeyboardModifier.NoModifier,
+            accept=lambda: None,
+        )
+        OpenGLViewer.mouseReleaseEvent(viewer, event)
+        self.assertEqual(renderer.pick_calls, [])
+        self.assertEqual(viewer.get_selected_takeoff_uids(), [])
+        self.assertEqual(scene.selected, set())
+        self.assertEqual(viewer.mesh_clicked.emitted, [])
+        self.assertIsNone(viewer._click_pos)
+        self.assertFalse(viewer._camera_moving)
+
+    def test_scene_load_cancels_pointer_interaction_started_on_previous_scene(self):
+        viewer, _renderer = self._make_page_plane_viewer([])
+        viewer._click_pos = QtCore.QPointF(1.0, 2.0)
+        viewer._last_mouse_pos = QtCore.QPointF(1.0, 2.0)
+        viewer._dragged = True
+        viewer._camera_moving = True
+        viewer._right_button_press_pos = QtCore.QPointF(3.0, 4.0)
+        OpenGLViewer.begin_scene_load(viewer, BidRef("a.mdb", "bid-2"))
+        self.assertIsNone(viewer._click_pos)
+        self.assertIsNone(viewer._last_mouse_pos)
+        self.assertFalse(viewer._dragged)
+        self.assertFalse(viewer._camera_moving)
+        self.assertIsNone(viewer._right_button_press_pos)
+        self.assertTrue(viewer._suppress_next_context_menu)
 
     def test_scene_replacement_cancels_click_started_on_previous_geometry(self):
         bid_ref = BidRef("a.mdb", "bid-1")
@@ -1362,6 +1895,23 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(renderer.resume_calls, 0)
         self.assertTrue(viewer._render_suspended)
 
+    def test_resume_rendering_requires_visible_surface_and_renderable_content(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._render_suspended = True
+        viewer._surface_hidden = True
+        OpenGLViewer.resume_rendering(viewer)
+        self.assertEqual(renderer.resume_calls, 0)
+        self.assertTrue(viewer._render_suspended)
+        viewer._surface_hidden = False
+        viewer._has_visible_plan_texture = False
+        OpenGLViewer.resume_rendering(viewer)
+        self.assertEqual(renderer.resume_calls, 0)
+        self.assertTrue(viewer._render_suspended)
+        viewer._has_visible_plan_texture = True
+        OpenGLViewer.resume_rendering(viewer)
+        self.assertEqual(renderer.resume_calls, 1)
+        self.assertFalse(viewer._render_suspended)
+
     def test_hidden_view_stays_suspended_when_same_scene_refresh_fails(self):
         viewer, renderer = self._make_page_plane_viewer([])
         authoritative_texture = viewer._current_plan_texture
@@ -1404,6 +1954,8 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertFalse(renderer.camera.has_velocity())
         self.assertEqual(self._camera_state(viewer, renderer)[:7], before)
         self.assertEqual(renderer.suspend_calls, 1)
+        self.assertTrue(viewer._surface_hidden)
+        self.assertTrue(viewer._render_suspended)
         viewer._renderer = None
         viewer.cleanup()
 
@@ -1454,6 +2006,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         ):
             OpenGLViewer.contextMenuEvent(viewer, event)
         self.assertEqual(accepted, [True])
+        self.assertFalse(viewer._suppress_next_context_menu)
 
     def test_orbit_keeps_fractional_qt_delta_in_logical_coordinates(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
@@ -1473,6 +2026,41 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(renderer.camera.rotate_calls, [(0.5, 0.25)])
         self.assertEqual(renderer.camera.pan_calls, [])
 
+    def test_drag_buttons_map_to_rotate_or_pan_by_cursor_mode(self):
+        left = QtCore.Qt.MouseButton.LeftButton
+        right = QtCore.Qt.MouseButton.RightButton
+        for cursor_mode, button, expected in (
+            (CURSOR_MODE_DEFAULT, left, "rotate"),
+            (CURSOR_MODE_DEFAULT, right, "pan"),
+            (CURSOR_MODE_PAN, left, "pan"),
+            (CURSOR_MODE_PAN, right, "rotate"),
+        ):
+            with self.subTest(cursor_mode=cursor_mode, button=button):
+                viewer = OpenGLViewer.__new__(OpenGLViewer)
+                renderer = _mesh_support_FakeMeshRenderer(
+                    _mesh_support_FakeMeshScene([])
+                )
+                viewer._renderer = renderer
+                viewer._cursor_mode = cursor_mode
+                viewer._last_mouse_pos = QtCore.QPointF(10.0, 20.0)
+                viewer._click_pos = None
+                viewer._right_button_press_pos = None
+                viewer.update = lambda: None
+                event = SimpleNamespace(
+                    position=lambda: QtCore.QPointF(14.0, 23.0),
+                    buttons=lambda button=button: button,
+                    accept=lambda: None,
+                    ignore=lambda: None,
+                )
+                OpenGLViewer.mouseMoveEvent(viewer, event)
+                if expected == "rotate":
+                    self.assertEqual(renderer.camera.rotate_calls, [(4.0, 3.0)])
+                    self.assertEqual(renderer.camera.pan_calls, [])
+                else:
+                    self.assertEqual(renderer.camera.pan_calls, [(4.0, 3.0)])
+                    self.assertEqual(renderer.camera.rotate_calls, [])
+                self.assertEqual(viewer._last_mouse_pos, QtCore.QPointF(14.0, 23.0))
+
 
 class MeshViewNativeSurfaceOwnerTests(unittest.TestCase):
     def test_native_surface_notifications_use_real_top_level_without_qt_warning(self):
@@ -1481,6 +2069,7 @@ class MeshViewNativeSurfaceOwnerTests(unittest.TestCase):
         def handler(_message_type, _context, message):
             messages.append(message)
 
+        app = _app()
         host = QtWidgets.QMainWindow()
         container = QtWidgets.QWidget(host)
         viewer = OpenGLViewer(container, SimpleNamespace())
@@ -1489,14 +2078,14 @@ class MeshViewNativeSurfaceOwnerTests(unittest.TestCase):
         previous = QtCore.qInstallMessageHandler(handler)
         try:
             host.show()
-            _area_routing_support__app().processEvents()
+            app.processEvents()
             viewer._connect_surface_notifications()
             self.assertIs(viewer._surface_window, host.windowHandle())
         finally:
             QtCore.qInstallMessageHandler(previous)
             viewer.cleanup()
             host.close()
-            _area_routing_support__app().processEvents()
+            app.processEvents()
         self.assertFalse(
             any("QWidgetWindow must be a top level window" in msg for msg in messages)
         )
@@ -1528,7 +2117,12 @@ class MeshViewNativeWindowTests(unittest.TestCase):
             self.assertTrue(
                 viewer.testAttribute(QtCore.Qt.WidgetAttribute.WA_NativeWindow)
             )
+            self.assertIsNotNone(window.windowHandle())
+            self.assertIsNotNone(viewer.windowHandle())
+            self.assertIsNot(viewer.windowHandle(), window.windowHandle())
+            self.assertIsNone(viewer_frame.windowHandle())
             self.assertIsNone(view_stack.windowHandle())
+            self.assertIsNone(viewer_container.windowHandle())
             self.assertIsNone(splitter.windowHandle())
         finally:
             viewer.cleanup()

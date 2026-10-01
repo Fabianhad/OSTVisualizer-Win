@@ -46,7 +46,7 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
         database_creator.pyodbc.connect = connect
         try:
             creator = database_creator.DatabaseCreator()
-            with self.assertRaises(RuntimeError):
+            with self.assertRaisesRegex(RuntimeError, "ddl failed"):
                 creator._create_schema("test.mdb")
         finally:
             database_creator.pyodbc.connect = original_connect
@@ -181,6 +181,56 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
             self.assertNotIn(str(first_path), script)
             self.assertNotIn(str(second_path), script)
 
+    def test_database_creator_blank_mdb_failures_raise_and_remove_script(self):
+        scripts = []
+
+        def failing_run(command, **_call_options):
+            scripts.append(Path(command[2]))
+            return subprocess.CompletedProcess(command, 1, "", "provider missing")
+
+        def silent_run(command, **_call_options):
+            scripts.append(Path(command[2]))
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "blank.mdb"
+            creator = database_creator.DatabaseCreator()
+            with patch.object(
+                database_creator.subprocess, "run", side_effect=failing_run
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, r"VBScript failed \(rc=1\): provider missing"
+                ):
+                    creator._create_blank_mdb(db_path)
+            with patch.object(
+                database_creator.subprocess, "run", side_effect=silent_run
+            ):
+                with self.assertRaisesRegex(RuntimeError, "MDB file was not created"):
+                    creator._create_blank_mdb(db_path)
+        self.assertEqual(len(scripts), 2)
+        for script_path in scripts:
+            self.assertFalse(script_path.exists())
+
+    def test_database_creator_create_database_removes_partial_file_on_failure(self):
+        class FailingCreator(database_creator.DatabaseCreator):
+            def _create_blank_mdb(self, db_path):
+                Path(db_path).touch()
+
+            def _create_schema(
+                self, db_path, progress_callback=None, *, seed_name=None
+            ):
+                raise RuntimeError("schema failed")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "partial.mdb"
+            creator = FailingCreator(logging.getLogger("test.database_creator.partial"))
+            with self.assertLogs(creator._logger, level="ERROR"):
+                self.assertFalse(creator.create_database(db_path, "Created"))
+            self.assertFalse(db_path.exists())
+            db_path.write_bytes(b"existing")
+            self.assertFalse(creator.create_database(db_path, "Created"))
+            self.assertEqual(db_path.read_bytes(), b"existing")
+
     def test_database_creator_reports_major_progress_stages(self):
         class FakeDatabaseCreator(database_creator.DatabaseCreator):
             def _create_blank_mdb(self, db_path):
@@ -225,9 +275,48 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
             ],
         )
 
+    def test_database_creator_schema_emits_every_stage_in_order_around_commits(self):
+        events = []
+        connection = Mock()
+        connection.commit.side_effect = lambda: events.append("commit")
+        engine = Mock()
+        creator = database_creator.DatabaseCreator()
+        with (
+            patch.object(database_creator.pyodbc, "connect", return_value=connection),
+            patch("win32com.client.Dispatch", return_value=engine),
+        ):
+            creator._create_schema(
+                "test.mdb",
+                progress_callback=events.append,
+                seed_name="Created",
+            )
+        self.assertEqual(
+            events,
+            [
+                "schema tables",
+                "commit",
+                "schema field metadata",
+                "schema indexes",
+                "schema relationships",
+                "default data",
+                "commit",
+            ],
+        )
+        connection.rollback.assert_not_called()
+        connection.close.assert_called_once()
+        executed = [
+            call.args[0]
+            for call in connection.cursor.return_value.execute.call_args_list
+        ]
+        table_count = len(database_creator._TABLE_DDL)
+        self.assertEqual(executed[:table_count], list(database_creator._TABLE_DDL))
+        self.assertIn("INSERT INTO [Settings]", executed[table_count])
+
     def test_database_creator_reuses_one_odbc_connection_for_schema_and_seed(self):
+        events = []
         connection = Mock()
         connection.cursor.return_value = Mock()
+        connection.commit.side_effect = lambda: events.append("commit")
         creator = database_creator.DatabaseCreator()
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "created.mdb"
@@ -244,6 +333,7 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
                 patch.object(
                     creator,
                     "_apply_reference_schema_metadata",
+                    side_effect=lambda *_args, **_kwargs: events.append("metadata"),
                 ),
                 patch.object(
                     database_creator.pyodbc,
@@ -254,6 +344,8 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
                 self.assertTrue(creator.create_database(db_path, "Created"))
         connect.assert_called_once()
         connection.close.assert_called_once()
+        connection.rollback.assert_not_called()
+        self.assertEqual(events, ["commit", "metadata", "commit"])
 
     def test_database_creator_seeds_default_layers_from_schema_contract(self):
         class FakeCursor:
@@ -308,6 +400,22 @@ class DatabaseCreatorPersistenceTests(unittest.TestCase):
                 (name, -1 if show else 0, -1 if locked else 0, sequence)
                 for name, show, locked, sequence in DEFAULT_LAYER_ROWS
             ],
+        )
+        settings_params = [
+            params
+            for sql, params in fake_connection.cursor_instance.calls
+            if "INSERT INTO [Settings]" in sql
+        ]
+        self.assertEqual(len(settings_params), 1)
+        self.assertEqual(settings_params[0][0], "Created")
+        schema_versions = [
+            params
+            for sql, params in fake_connection.cursor_instance.calls
+            if "INSERT INTO [SchemaRegistry]" in sql
+        ]
+        self.assertEqual(
+            schema_versions,
+            [(version,) for version in database_creator.get_reference_seed_data()[0]],
         )
         self.assertTrue(fake_connection.committed)
         self.assertTrue(fake_connection.closed)

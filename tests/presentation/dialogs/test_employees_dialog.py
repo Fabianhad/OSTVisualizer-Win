@@ -1,5 +1,8 @@
 import unittest
 from unittest.mock import Mock, patch
+from ost_visualizer.application.interfaces.i_window_icon_provider import (
+    IWindowIconProvider,
+)
 from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
 from PySide6 import QtWidgets
@@ -33,7 +36,7 @@ class EmployeeCreatedProjectionTests(unittest.TestCase):
         from ost_visualizer.presentation.dtos.employee_edit_dtos import EmployeeRecord
 
         parent = EmployeesDialog(
-            Mock(),
+            Mock(spec=IWindowIconProvider),
             make_workspace_state_model(),
             save_fn=lambda changes: {"new_1": "10"},
         )
@@ -44,6 +47,10 @@ class EmployeeCreatedProjectionTests(unittest.TestCase):
             parent._populate(select_uid="10")
             parent.refresh_employees([Employee("10", first_name="Renamed")])
             self.assertEqual(parent.tree.currentItem().text(1), "Renamed")
+            self.assertEqual(parent.tree.currentItem().data(0, parent._UID_ROLE), "10")
+            self.assertEqual(parent._employees[0].uid, "10")
+            self.assertFalse(parent._employees[0].is_new)
+            self.assertEqual(parent._employees[0].first_name, "Renamed")
         finally:
             parent.cleanup()
             delete(parent)
@@ -86,6 +93,15 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             menu_mode=True,
         )
 
+    def _button_column(self, dialog):
+        content_row = dialog.layout().itemAt(0).layout()
+        column = content_row.itemAt(1).layout()
+        return [
+            column.itemAt(index).widget().text()
+            for index in range(column.count())
+            if column.itemAt(index).widget() is not None
+        ]
+
     def test_employees_picker_keeps_select_and_cancel_buttons(self):
         dialog = self._employee_dialog()
         try:
@@ -93,6 +109,15 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             self.assertIsNotNone(dialog.btn_cancel)
             self.assertEqual(dialog.btn_cancel.text(), "Cancel")
             self.assertFalse(dialog.btn_select.isEnabled())
+            self.assertEqual(
+                self._button_column(dialog),
+                ["Select", "Cancel", "New", "Change", "Delete"],
+            )
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            self.assertTrue(dialog.btn_select.isEnabled())
+            dialog.btn_select.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.get_result().selected_uid, "emp-1")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -107,17 +132,49 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             self.assertEqual(dialog.btn_new.text(), "New")
             self.assertEqual(dialog.btn_change.text(), "Change")
             self.assertEqual(dialog.btn_delete.text(), "Delete")
+            self.assertEqual(
+                self._button_column(dialog), ["OK", "New", "Change", "Delete"]
+            )
+            dialog.btn_select.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertIsNone(dialog.get_result().selected_uid)
         finally:
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
 
     def test_employees_dialog_does_not_accept_when_save_returns_false(self):
-        dialog = self._employee_dialog_with_save(lambda _changes: False)
+        save_calls = []
+        dialog = self._employee_dialog_with_save(
+            lambda changes: save_calls.append(changes) or False
+        )
         try:
             dialog.accept()
             self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
             self.assertFalse(dialog._save_done)
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual(
+                [employee.uid for employee in save_calls[0]["updated"]], ["emp-1"]
+            )
+            self.assertEqual(save_calls[0]["new"], [])
+            self.assertEqual(save_calls[0]["deleted_uids"], [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employees_dialog_accepts_after_successful_save_once(self):
+        save_calls = []
+        dialog = self._employee_dialog_with_save(
+            lambda changes: save_calls.append(changes) or {}
+        )
+        try:
+            dialog.accept()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertTrue(dialog._save_done)
+            self.assertEqual(len(save_calls), 1)
+            dialog.done(QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(len(save_calls), 1)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -146,6 +203,9 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             DestroyingDetailDialog,
         ):
             dialog._open_detail_dialog(dialog._employees, 0)
+        self.assertIsNone(dialog._active_detail_dialog)
+        self.assertEqual([employee.uid for employee in dialog._employees], ["emp-1"])
+        self.assertEqual(dialog._employees[0].first_name, "Ava")
 
     def test_employee_detail_new_employee_saves_immediately_and_selects_real_uid(self):
         save_calls = []
@@ -180,10 +240,39 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             self.assertTrue(dialog.btn_select.isEnabled())
             self.assertEqual(dialog._employees[-1].uid, "emp-2")
             self.assertFalse(dialog._employees[-1].is_new)
+            self.assertEqual(dialog.tree.topLevelItemCount(), 2)
+            self.assertEqual(current_item.text(0), "2")
+            self.assertEqual(current_item.text(1), "Mia Ray")
         finally:
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_employee_detail_new_employee_save_failure_keeps_list_unchanged(self):
+        for label, save_result in (("false", False), ("missing_map", {})):
+            with self.subTest(save_result=label):
+                dialog = self._employee_dialog_with_save(
+                    lambda _changes, result=save_result: result
+                )
+                try:
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.employees_dialog."
+                        "EmployeeDetailDialog",
+                        self._employee_detail_dialog_stub(),
+                    ), patch(
+                        "ost_visualizer.presentation.dialogs.employees_dialog."
+                        "show_warning"
+                    ) as warning:
+                        dialog._on_new_with_first_name("Mia")
+                    warning.assert_called_once_with(
+                        dialog, "Employees", "Failed to create employee."
+                    )
+                    self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+                    self.assertEqual([e.uid for e in dialog._employees], ["emp-1"])
+                finally:
+                    dialog.close()
+                    dialog.cleanup()
+                    dialog.deleteLater()
 
     def test_employee_detail_new_employee_remains_after_reopen_from_saved_source(self):
         saved_employees = []
@@ -224,6 +313,8 @@ class EmployeesDialogEditingTests(unittest.TestCase):
                 reopened.tree.topLevelItem(0).data(0, reopened._UID_ROLE), "emp-2"
             )
             self.assertEqual(reopened.tree.currentItem().text(1), "Mia Ray")
+            self.assertEqual(reopened.tree.currentItem().text(0), "2")
+            self.assertEqual([e.uid for e in saved_employees], ["emp-2"])
         finally:
             reopened.close()
             reopened.cleanup()
@@ -246,6 +337,8 @@ class EmployeesDialogEditingTests(unittest.TestCase):
                 dialog._on_new_with_first_name("Mia")
             self.assertEqual(save_calls, [])
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+            self.assertEqual([e.uid for e in dialog._employees], ["emp-1"])
+            self.assertIsNone(dialog._active_detail_dialog)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -266,7 +359,32 @@ class EmployeesDialogEditingTests(unittest.TestCase):
                 dialog._on_change()
             self.assertEqual(dialog._employees[0].first_name, "Ava")
             self.assertEqual(dialog._employees[0].last_name, "Lee")
+            self.assertEqual(dialog._employees[0].employee_no, "1")
             self.assertEqual(dialog.tree.topLevelItem(0).text(1), "Ava Lee")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_detail_accept_applies_edits_to_existing_employee(self):
+        dialog = self._employee_dialog()
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog."
+                "EmployeeDetailDialog",
+                self._employee_detail_dialog_stub(),
+            ):
+                dialog._on_change()
+            self.assertEqual(dialog._employees[0].uid, "emp-1")
+            self.assertEqual(dialog._employees[0].first_name, "Mia")
+            self.assertEqual(dialog._employees[0].last_name, "Ray")
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+            self.assertEqual(dialog.tree.topLevelItem(0).text(0), "2")
+            self.assertEqual(dialog.tree.topLevelItem(0).text(1), "Mia Ray")
+            self.assertEqual(
+                dialog.tree.currentItem().data(0, dialog._UID_ROLE), "emp-1"
+            )
         finally:
             dialog.close()
             dialog.cleanup()
@@ -291,6 +409,7 @@ class EmployeesDialogEditingTests(unittest.TestCase):
                 dialog._on_new_with_first_name("Mia")
             dialog.accept()
             self.assertTrue(dialog._operation_pending)
+            self.assertEqual(len(callbacks), 1)
             with patch(
                 "ost_visualizer.presentation.dialogs.employees_dialog.show_warning"
             ) as warning:
@@ -302,6 +421,40 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             warning.assert_called_once_with(
                 dialog, "Employees", "Failed to create employee."
             )
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_async_create_success_maps_uid_and_accepts(self):
+        callbacks = []
+        submitted = []
+        dialog = _master_data_support_MasterEmployeesDialog(
+            _master_data_support_FakeIconProvider(),
+            employees=[],
+            save_async_fn=lambda changes, completed: (
+                submitted.append(changes) or callbacks.append(completed) or True
+            ),
+            menu_mode=True,
+        )
+        try:
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog."
+                "EmployeeDetailDialog",
+                self._employee_detail_dialog_stub(),
+            ):
+                dialog._on_new_with_first_name("Mia")
+            dialog.accept()
+            self.assertEqual([e.uid for e in submitted[0]["new"]], ["new_0"])
+            self.assertEqual(submitted[0]["updated"], [])
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+            callbacks[0](True, {"new_0": "emp-9"})
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertFalse(dialog._operation_pending)
+            self.assertTrue(dialog._save_done)
+            self.assertEqual(dialog._employees[0].uid, "emp-9")
+            self.assertFalse(dialog._employees[0].is_new)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -325,6 +478,11 @@ class EmployeesDialogEditingTests(unittest.TestCase):
             self.assertFalse(dialog._interactive)
             self.assertFalse(dialog.btn_new.isEnabled())
             self.assertFalse(dialog.btn_select.isEnabled())
+            self.assertFalse(dialog._operation_pending)
+            self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            dialog.set_interactive(True)
+            self.assertTrue(dialog.btn_new.isEnabled())
+            self.assertTrue(dialog.btn_select.isEnabled())
         finally:
             dialog.close()
             dialog.cleanup()

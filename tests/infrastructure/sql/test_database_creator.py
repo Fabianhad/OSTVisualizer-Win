@@ -108,18 +108,52 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
     def test_sql_database_seed_writes_are_explicitly_qualified_to_dbo(self):
+        class _RecordingCursor(_cleanup_support__CreationCursor):
+            def __init__(self):
+                super().__init__()
+                self.recorded = []
+
+            def execute(self, sql, *params):
+                self.recorded.append((sql, params))
+                return super().execute(sql, *params)
+
         creator = SqlDatabaseCreator(_cleanup_support__CreationManager())
-        cursor = _cleanup_support__CreationCursor()
+        cursor = _RecordingCursor()
         creator._insert_seed_data(cursor, "OSTV_TEST")
         seed_statements = [
-            sql
-            for sql in cursor.executed
+            (sql, params)
+            for sql, params in cursor.recorded
             if sql.lstrip().upper().startswith("INSERT INTO")
         ]
-        self.assertGreaterEqual(len(seed_statements), 4)
-        self.assertTrue(
-            all("INSERT INTO [dbo].[" in sql for sql in seed_statements),
-            seed_statements,
+        self.assertEqual(len(seed_statements), len(cursor.recorded))
+        tables = [
+            re.match(r"INSERT INTO \[dbo\]\.\[(\w+)\]", sql).group(1)
+            for sql, _params in seed_statements
+        ]
+        self.assertEqual(
+            tables,
+            ["Settings", "BidProjects"]
+            + ["BidLayers"] * len(creator._default_layers)
+            + ["SchemaRegistry"] * len(creator._schema_versions),
+        )
+        settings_sql, settings_params = seed_statements[0]
+        self.assertEqual(settings_params, ("OSTV_TEST",))
+        column_count = settings_sql[: settings_sql.index(") VALUES")].count("[") - 2
+        values = settings_sql[settings_sql.index("VALUES (") + 8 : -1]
+        self.assertEqual(len(values.split(", ")), column_count)
+        layer_params = [
+            params for sql, params in seed_statements if "[BidLayers]" in sql
+        ]
+        self.assertEqual(
+            layer_params,
+            [
+                (name, bool(show), bool(locked), sequence)
+                for name, show, locked, sequence in creator._default_layers
+            ],
+        )
+        self.assertEqual(
+            [params for sql, params in seed_statements if "[SchemaRegistry]" in sql],
+            [(version,) for version in creator._schema_versions],
         )
 
     def test_schema_validation_failure_rolls_back_before_commit(self):
@@ -128,13 +162,16 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         creator._inspector.inspect_connection = (
             lambda _connection: _cleanup_support__empty_inventory()
         )
-        with self.assertRaisesRegex(Exception, "validation failed"):
+        with self.assertRaisesRegex(
+            SqlInfrastructureError, "initialization validation failed"
+        ) as raised:
             creator.initialize_blank_database(
                 SqlServerDatabaseLocation(
                     server="localhost", database="OSTV_TEST_AUDIT"
                 ),
                 application_version="test",
             )
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
         self.assertTrue(
@@ -150,7 +187,7 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         creator._inspector.inspect_connection = (
             lambda _connection: _cleanup_support__empty_inventory()
         )
-        with self.assertRaisesRegex(Exception, "validation failed"):
+        with self.assertRaisesRegex(SqlInfrastructureError, "validation failed"):
             creator.initialize_blank_database(
                 SqlServerDatabaseLocation(
                     server="localhost", database="OSTV_TEST_AUDIT"
@@ -164,6 +201,18 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         )
         self.assertIn("IF NOT EXISTS", disable_statement)
         self.assertIn("s.[name]=N'ostv'", disable_statement)
+        self.assertLess(
+            disable_statement.index("IF NOT EXISTS"),
+            disable_statement.index("SET CHANGE_TRACKING = OFF"),
+        )
+        self.assertIn("sp_getapplock", disable_statement)
+        # Snapshot isolation was already on, so this creator does not own it.
+        self.assertFalse(
+            any(
+                "ALLOW_SNAPSHOT_ISOLATION OFF" in statement
+                for statement in manager.lease.cursor_value.executed
+            )
+        )
 
     def test_failed_creator_restores_snapshot_isolation_it_enabled(self):
         manager = _cleanup_support__CreationManager()
@@ -183,9 +232,7 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
                 side_effect=RuntimeError("schema initialization failed"),
             ),
             patch.object(creator, "_disable_database_change_tracking") as disable_ct,
-            patch.object(
-                creator, "_disable_snapshot_isolation", create=True
-            ) as disable_snapshot,
+            patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot,
         ):
             with self.assertRaisesRegex(RuntimeError, "initialization failed"):
                 creator.initialize_blank_database(
@@ -195,6 +242,59 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
         disable_ct.assert_called_once_with(location, "")
+        disable_snapshot.assert_called_once_with(location, "")
+
+    def test_failed_creator_leaves_preexisting_database_settings_untouched(self):
+        manager = _cleanup_support__CreationManager()
+        creator = SqlDatabaseCreator(manager)
+        location = SqlServerDatabaseLocation(
+            server="localhost", database="OSTV_TEST_AUDIT"
+        )
+        with (
+            patch.object(creator, "_validate_blank_candidate"),
+            patch.object(creator, "_ensure_snapshot_isolation", return_value=False),
+            patch.object(
+                creator, "_ensure_database_change_tracking", return_value=False
+            ),
+            patch.object(
+                creator,
+                "_insert_seed_data",
+                side_effect=RuntimeError("schema initialization failed"),
+            ),
+            patch.object(creator, "_disable_database_change_tracking") as disable_ct,
+            patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "initialization failed"):
+                creator.initialize_blank_database(
+                    location,
+                    application_version="test",
+                )
+        self.assertEqual(manager.lease.rollbacks, 1)
+        disable_ct.assert_not_called()
+        disable_snapshot.assert_not_called()
+
+    def test_change_tracking_enable_failure_still_restores_snapshot_isolation(self):
+        creator = SqlDatabaseCreator(_cleanup_support__CreationManager())
+        location = SqlServerDatabaseLocation(
+            server="localhost", database="OSTV_TEST_AUDIT"
+        )
+        cleanup_error = SqlInfrastructureError(
+            SqlErrorDetails(SqlErrorCode.CONNECTION_FAILED, "cleanup failed")
+        )
+        with (
+            patch.object(creator, "_validate_blank_candidate"),
+            patch.object(creator, "_ensure_snapshot_isolation", return_value=True),
+            patch.object(
+                creator,
+                "_ensure_database_change_tracking",
+                side_effect=cleanup_error,
+            ),
+            patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot,
+        ):
+            with self.assertRaises(SqlInfrastructureError) as raised:
+                creator.initialize_blank_database(location, application_version="test")
+        # The enabling failure is the primary error; snapshot cleanup still ran.
+        self.assertIs(raised.exception, cleanup_error)
         disable_snapshot.assert_called_once_with(location, "")
 
     def test_failed_creator_cleanup_does_not_replace_initialization_error(self):
@@ -258,13 +358,15 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
                 application_version="1.0",
             )
         self.assertEqual(raised.exception.details.code, SqlErrorCode.TIMEOUT)
-        self.assertIn("container was created", str(raised.exception).casefold())
-        self.assertTrue(
-            any(
-                "CREATE DATABASE [OSTV_TEST]" in sql
-                for sql in manager.lease.cursor_value.executed
-            )
-        )
+        self.assertTrue(raised.exception.retryable)
+        self.assertIs(raised.exception.__cause__, original)
+        message = str(raised.exception)
+        self.assertTrue(message.startswith("initialization timed out"))
+        self.assertIn("container was created", message.casefold())
+        self.assertIn("No automatic drop was attempted", message)
+        executed = manager.lease.cursor_value.executed
+        self.assertTrue(any("CREATE DATABASE [OSTV_TEST]" in sql for sql in executed))
+        self.assertFalse(any("DROP DATABASE" in sql for sql in executed))
 
     def test_snapshot_enable_verification_failure_restores_owned_setting(self):
         class _SnapshotVerificationCursor(_cleanup_support__CreationCursor):
@@ -287,8 +389,16 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         with patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot:
             with self.assertRaisesRegex(
                 SqlInfrastructureError, "snapshot isolation could not be enabled"
-            ):
+            ) as raised:
                 creator._ensure_snapshot_isolation(location, "")
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
+        self.assertEqual(
+            sum(
+                "ALLOW_SNAPSHOT_ISOLATION ON" in sql
+                for sql in manager.lease.cursor_value.executed
+            ),
+            1,
+        )
         disable_snapshot.assert_called_once_with(location, "")
 
     def test_snapshot_verification_driver_failure_restores_owned_setting(self):
@@ -312,14 +422,19 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
             server="localhost", database="OSTV_TEST_AUDIT"
         )
         with patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot:
-            with self.assertRaises(SqlInfrastructureError):
+            with self.assertRaises(SqlInfrastructureError) as raised:
                 creator._ensure_snapshot_isolation(location, "")
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.CONNECTION_FAILED)
         disable_snapshot.assert_called_once_with(location, "")
 
     def test_exception_note_helper_uses_base_exception_contract(self):
         modern_exception = RuntimeError("initialization failed")
         _add_exception_note(modern_exception, "cleanup failed")
-        self.assertIn("cleanup failed", modern_exception.__notes__)
+        _add_exception_note(modern_exception, "second cleanup failed")
+        self.assertEqual(
+            modern_exception.__notes__, ["cleanup failed", "second cleanup failed"]
+        )
+        self.assertEqual(str(modern_exception), "initialization failed")
 
     def test_snapshot_cleanup_failure_preserves_verification_error(self):
         class _SnapshotVerificationCursor(_cleanup_support__CreationCursor):
@@ -353,13 +468,31 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         )
 
     def test_blank_sql_database_creation_applies_client_roles_transactionally(self):
+        class _RecordingCursor(_cleanup_support__CreationCursor):
+            def __init__(self):
+                super().__init__()
+                self.recorded = []
+
+            def execute(self, sql, *params):
+                self.recorded.append((sql, params))
+                return super().execute(sql, *params)
+
         manager = _cleanup_support__CreationManager()
+        cursor = _RecordingCursor()
+        manager.lease.cursor_value = cursor
+        original_commit = manager.lease.commit
+
+        def commit():
+            cursor.recorded.append(("<COMMIT>", ()))
+            original_commit()
+
+        manager.lease.commit = commit
         creator = SqlDatabaseCreator(manager)
         creator._inspector.inspect_connection = lambda _lease: SimpleNamespace(
             database_guid="00000000-0000-0000-0000-000000000001"
         )
         creator._validator.validate = lambda _inventory: SqlSchemaValidationReport()
-        creator.initialize_blank_database(
+        result = creator.initialize_blank_database(
             SqlServerDatabaseLocation(
                 server="localhost",
                 database="OSTV_TEST_AUDIT",
@@ -372,6 +505,34 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         self.assertIn("ALTER ROLE [db_datawriter] ADD MEMBER", statements)
         self.assertEqual(manager.lease.commits, 1)
         self.assertEqual(manager.lease.rollbacks, 0)
+        sql_text = [sql for sql, _params in cursor.recorded]
+        commit_index = sql_text.index("<COMMIT>")
+        self.assertEqual(commit_index, len(sql_text) - 1)
+        permission_index = next(
+            index
+            for index, sql in enumerate(sql_text)
+            if "ALTER ROLE [db_datareader] ADD MEMBER" in sql
+        )
+        schema_index = next(
+            index
+            for index, sql in enumerate(sql_text)
+            if sql.startswith("CREATE TABLE [dbo]")
+        )
+        lock_index = next(
+            index for index, sql in enumerate(sql_text) if "sp_getapplock" in sql
+        )
+        self.assertLess(lock_index, schema_index)
+        self.assertLess(schema_index, permission_index)
+        self.assertLess(permission_index, commit_index)
+        self.assertEqual(cursor.recorded[permission_index][1], ("OSTV_CLIENT",))
+        self.assertEqual(
+            cursor.schema_record, (SQL_SCHEMA_V1.version, SQL_SCHEMA_V1.checksum)
+        )
+        self.assertEqual(
+            result.location.database_guid, "00000000-0000-0000-0000-000000000001"
+        )
+        self.assertEqual(result.location.database, "OSTV_TEST_AUDIT")
+        self.assertEqual(result.schema_version, SQL_SCHEMA_V1.version)
 
     def test_schema_creation_rolls_back_failed_canonical_validation(self):
         manager = _cleanup_support__CreationManager()
@@ -382,15 +543,145 @@ class DatabaseCreatorSqlCleanupTests(unittest.TestCase):
         creator._validator.validate = lambda _inventory: SqlSchemaValidationReport(
             ("ostv.SchemaMigrations.Checksum",),
         )
-        with self.assertRaisesRegex(Exception, "validation failed"):
+        with self.assertRaises(SqlInfrastructureError) as raised:
             creator.initialize_blank_database(
                 SqlServerDatabaseLocation(
                     server="localhost", database="OSTV_TEST_AUDIT"
                 ),
                 application_version="test",
             )
+        self.assertEqual(
+            str(raised.exception),
+            "SQL database initialization validation failed: Schema mismatch: "
+            "ostv.SchemaMigrations.Checksum",
+        )
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
+
+
+class DatabaseCreatorPreconditionTests(unittest.TestCase):
+    class _Cursor(_cleanup_support__CreationCursor):
+        table_count = 0
+        tracking_row = None
+        snapshot_state = 1
+
+        def fetchone(self):
+            if "COUNT(*) FROM sys.tables" in self._last_sql:
+                return (self.table_count,)
+            if "retention_period" in self._last_sql:
+                return self.tracking_row
+            if "snapshot_isolation_state" in self._last_sql:
+                return (self.snapshot_state,)
+            return super().fetchone()
+
+    def _creator(self, **attributes):
+        manager = _cleanup_support__CreationManager()
+        cursor = self._Cursor()
+        for name, value in attributes.items():
+            setattr(cursor, name, value)
+        manager.lease.cursor_value = cursor
+        return SqlDatabaseCreator(manager), manager
+
+    LOCATION = SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+
+    def test_non_blank_database_is_rejected_before_any_change(self):
+        creator, manager = self._creator(table_count=3)
+        with self.assertRaisesRegex(SqlInfrastructureError, "not blank") as raised:
+            creator.initialize_blank_database(self.LOCATION, application_version="test")
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
+        executed = manager.lease.cursor_value.executed
+        self.assertFalse(any(sql.startswith("ALTER DATABASE") for sql in executed))
+        self.assertFalse(any(sql.startswith("CREATE") for sql in executed))
+        self.assertEqual(manager.lease.commits, 0)
+
+    def test_database_populated_after_preflight_is_rejected_inside_the_lock(self):
+        creator, manager = self._creator(table_count=2)
+        with patch.object(creator, "_validate_blank_candidate"):
+            with self.assertRaisesRegex(SqlInfrastructureError, "not blank"):
+                creator.initialize_blank_database(
+                    self.LOCATION, application_version="test"
+                )
+        executed = manager.lease.cursor_value.executed
+        self.assertTrue(any("sp_getapplock" in sql for sql in executed))
+        self.assertFalse(any(sql.startswith("CREATE") for sql in executed))
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_initialization_requires_valid_database_name_before_connecting(self):
+        class _NeverConnects:
+            def connection(self, _request, *, autocommit=False):
+                raise AssertionError("must not connect")
+
+        creator = SqlDatabaseCreator(_NeverConnects())
+        for name in ("", "master", "x" * 76):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    creator.initialize_blank_database(
+                        SqlServerDatabaseLocation(server="localhost", database=name),
+                        application_version="test",
+                    )
+
+    def test_change_tracking_is_enabled_with_canonical_retention_when_absent(self):
+        creator, manager = self._creator(tracking_row=None)
+        self.assertTrue(creator._ensure_database_change_tracking(self.LOCATION, ""))
+        self.assertEqual(
+            manager.lease.cursor_value.executed[-1],
+            "ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON "
+            "(CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)",
+        )
+
+    def test_canonical_existing_change_tracking_is_not_owned_or_altered(self):
+        creator, manager = self._creator(tracking_row=(7, "DAYS", 1))
+        self.assertFalse(creator._ensure_database_change_tracking(self.LOCATION, ""))
+        self.assertFalse(
+            any(
+                sql.startswith("ALTER DATABASE")
+                for sql in manager.lease.cursor_value.executed
+            )
+        )
+
+    def test_noncanonical_existing_change_tracking_is_rejected_unchanged(self):
+        for row in ((3, "DAYS", 1), (7, "HOURS", 1), (7, "DAYS", 0)):
+            with self.subTest(row=row):
+                creator, manager = self._creator(tracking_row=row)
+                with self.assertRaisesRegex(
+                    SqlInfrastructureError, "seven-day retention"
+                ) as raised:
+                    creator._ensure_database_change_tracking(self.LOCATION, "")
+                self.assertEqual(
+                    raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH
+                )
+                self.assertFalse(
+                    any(
+                        sql.startswith("ALTER DATABASE")
+                        for sql in manager.lease.cursor_value.executed
+                    )
+                )
+
+    def test_existing_snapshot_isolation_is_not_owned_or_altered(self):
+        creator, manager = self._creator(snapshot_state=1)
+        self.assertFalse(creator._ensure_snapshot_isolation(self.LOCATION, ""))
+        self.assertFalse(
+            any(
+                sql.startswith("ALTER DATABASE")
+                for sql in manager.lease.cursor_value.executed
+            )
+        )
+
+    def test_unresolvable_database_target_is_a_connection_failure(self):
+        class _NoRowCursor(_cleanup_support__CreationCursor):
+            def fetchone(self):
+                return None
+
+        manager = _cleanup_support__CreationManager()
+        manager.lease.cursor_value = _NoRowCursor()
+        creator = SqlDatabaseCreator(manager)
+        with patch.object(creator, "_disable_snapshot_isolation") as disable:
+            with self.assertRaises(SqlInfrastructureError) as raised:
+                creator._ensure_snapshot_isolation(self.LOCATION, "")
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.CONNECTION_FAILED)
+        # Nothing was enabled by this call, so nothing is rolled back.
+        disable.assert_not_called()
 
 
 class DatabaseCreatorSqlCreationHandoffTests(unittest.TestCase):
@@ -540,9 +831,29 @@ class DatabaseCreatorSqlCreationHandoffTests(unittest.TestCase):
         connections = self._connections(
             client=replace(_creation_handoff_support__CLIENT, sid=b"creator-sid")
         )
-        with self.assertRaisesRegex(SqlInfrastructureError, "different logins"):
+        with self.assertRaisesRegex(
+            SqlInfrastructureError, "different logins"
+        ) as raised:
+            self._create(connections)
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.PERMISSION_DENIED)
+        self.assertEqual(len(connections.requests), 2)
+
+    def test_runtime_login_on_a_different_server_is_rejected_before_create(self):
+        connections = self._connections(
+            client=replace(
+                _creation_handoff_support__CLIENT, server_name="other-server"
+            )
+        )
+        with self.assertRaisesRegex(SqlInfrastructureError, "same SQL Server"):
             self._create(connections)
         self.assertEqual(len(connections.requests), 2)
+        self.assertFalse(
+            any(
+                sql.startswith("CREATE DATABASE")
+                for lease in connections.leases
+                for sql, _ in lease.statements
+            )
+        )
 
     def test_creator_without_permission_fails_before_runtime_or_create(self):
         connections = _creation_handoff_support__Connections(
@@ -551,6 +862,16 @@ class DatabaseCreatorSqlCreationHandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(SqlInfrastructureError, "Cannot create a database"):
             self._create(connections)
         self.assertEqual(len(connections.requests), 1)
+
+    def test_incomplete_creator_identity_fails_before_runtime_or_create(self):
+        for row in (None, (1, b"", "test-server"), (1, b"creator-sid", "")):
+            with self.subTest(row=row):
+                connections = _creation_handoff_support__Connections([row])
+                with self.assertRaisesRegex(
+                    SqlInfrastructureError, "Cannot create a database"
+                ):
+                    self._create(connections)
+                self.assertEqual(len(connections.requests), 1)
 
     def test_provisioning_failure_retains_initialized_database_and_returns_no_result(
         self,
@@ -562,6 +883,8 @@ class DatabaseCreatorSqlCreationHandoffTests(unittest.TestCase):
             self._create(connections)
         self.assertIn("database was retained", str(raised.exception))
         self.assertIn("no connection was saved", str(raised.exception))
+        self.assertIn("login changed during creation", str(raised.exception))
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.PERMISSION_DENIED)
         self.assertEqual(connections.leases[3].commits, 0)
         self.assertEqual(connections.leases[3].rollbacks, 1)
         self.assertEqual(len(connections.requests), 4)
@@ -579,9 +902,12 @@ class DatabaseCreatorSqlCreationHandoffTests(unittest.TestCase):
         connections = self._connections(final_snapshot=snapshot)
         with self.assertRaisesRegex(
             SqlInfrastructureError, "Runtime permission verification failed"
-        ):
+        ) as raised:
             self._create(connections)
+        self.assertIn("database was retained", str(raised.exception))
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.PERMISSION_DENIED)
         self.assertEqual(connections.leases[3].commits, 1)
+        self.assertEqual(len(connections.requests), 5)
 
     def test_unsupported_name_never_connects(self):
         for method in ("create_database", "create_database_for_client"):
@@ -612,9 +938,16 @@ class DatabaseCreatorCreationPermissionAndNameTests(unittest.TestCase):
 
             def permission_row():
                 sql = lease.statements[-1][0]
-                expressions = set(re.findall(r"HAS_PERMS_BY_NAME\([^)]*\)", sql))
-                self.assertEqual(expressions, alternatives)
-                return (int(grant in expressions), b"creator-sid", "test-server")
+                condition = re.search(
+                    r"CASE WHEN (.*) THEN 1 ELSE 0 END, SUSER_SID\(\)", sql
+                ).group(1)
+                self.assertNotIn(" AND ", condition)
+                terms = condition.split(" OR ")
+                self.assertEqual({term[: -len("=1")] for term in terms}, alternatives)
+                self.assertTrue(all(term.endswith("=1") for term in terms))
+                # Any single effective permission is sufficient on its own.
+                allowed = any(term == f"{grant}=1" for term in terms)
+                return (int(allowed), b"creator-sid", "test-server")
 
             lease.fetchone = permission_row
             with (
@@ -699,6 +1032,12 @@ class DatabaseCreatorCreationServerBoundaryTests(unittest.TestCase):
                 self.assertNotIn("DROP DATABASE", sql)
                 if boundary in ("creator_auth", "runtime_auth", "create"):
                     initialize.assert_not_called()
+                    if boundary == "runtime_auth":
+                        self.assertTrue(
+                            str(raised.exception).startswith(
+                                "Normal-use authentication preflight failed."
+                            )
+                        )
                 elif boundary == "schema":
                     self.assertIn("container was created", str(raised.exception))
                 else:
@@ -777,6 +1116,18 @@ class DatabaseCreatorCreationServerBoundaryTests(unittest.TestCase):
                             else creator_password
                         )
                         self.assertEqual(request.password, expected_password)
+                        self.assertEqual(
+                            request.location.username,
+                            (
+                                credentials.username
+                                if index in (1, 4)
+                                else location.username
+                            ),
+                        )
+                        self.assertEqual(
+                            request.database_override,
+                            "master" if index < 3 else None,
+                        )
                         self.assertEqual(
                             (
                                 request.location.server,

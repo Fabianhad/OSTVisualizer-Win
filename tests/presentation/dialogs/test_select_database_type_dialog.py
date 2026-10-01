@@ -56,8 +56,14 @@ class SelectDatabaseTypeDialogSqlDialogTests(unittest.TestCase):
             )
             self.assertTrue(dialog.access_radio.isChecked())
             self.assertEqual(dialog.selected_backend(), DatabaseBackend.ACCESS)
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
             dialog.sql_server_radio.setChecked(True)
+            self.assertFalse(dialog.access_radio.isChecked())
             self.assertEqual(dialog.selected_backend(), DatabaseBackend.SQL_SERVER)
+            dialog.button_box.button(
+                QtWidgets.QDialogButtonBox.StandardButton.Ok
+            ).click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         finally:
             dialog.cleanup()
             dialog.deleteLater()

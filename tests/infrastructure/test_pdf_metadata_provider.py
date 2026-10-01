@@ -64,12 +64,25 @@ class PdfMetadataProviderTests(unittest.TestCase):
             renderer_factory=FailingRenderer,
         )
         with tempfile.NamedTemporaryFile(suffix=".pdf") as pdf_file:
-            with self.assertLogs(logger, level="WARNING") as captured:
-                result = provider.get_page_info(pdf_file.name, 0)
-        self.assertEqual(result.status, "unavailable")
-        output = "\n".join(captured.output)
-        self.assertIn("RuntimeError", output)
-        self.assertNotIn(pdf_file.name, output)
+            readers = (
+                ("page info", provider.get_page_info),
+                ("text runs", provider.get_text_runs),
+                ("vector segments", provider.get_vector_segments),
+            )
+            for label, read in readers:
+                with self.subTest(read=label):
+                    with self.assertLogs(logger, level="WARNING") as captured:
+                        result = read(pdf_file.name, 0)
+                    if label == "page info":
+                        self.assertEqual(result.status, "unavailable")
+                    else:
+                        self.assertEqual(result, [])
+                    self.assertEqual(len(captured.records), 1)
+                    output = "\n".join(captured.output)
+                    self.assertIn("RuntimeError", output)
+                    self.assertNotIn(pdf_file.name, output)
+                    self.assertNotIn(os.path.basename(pdf_file.name), output)
+                    self.assertNotIn("failed", captured.records[0].getMessage())
 
     def test_pdf_metadata_cache_key_includes_file_signature(self):
         provider = NativePdfMetadataProvider(renderer_factory=RecordingRenderer)
@@ -89,6 +102,23 @@ class PdfMetadataProviderTests(unittest.TestCase):
         self.assertIs(first, first_again)
         self.assertIs(first, negative_index)
         self.assertNotEqual(first.effective_width_pts, second.effective_width_pts)
+        self.assertEqual(RecordingRenderer.page_info_calls, [0, 0])
+
+    def test_pdf_metadata_cache_key_includes_modification_time(self):
+        provider = NativePdfMetadataProvider(renderer_factory=RecordingRenderer)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_file:
+            pdf_file.write(b"same-size")
+            path = pdf_file.name
+        try:
+            first = provider.get_page_info(path, 0)
+            original_mtime_ns = os.stat(path).st_mtime_ns
+            os.utime(path, ns=(original_mtime_ns, original_mtime_ns + 2_000_000_000))
+            second = provider.get_page_info(path, 0)
+        finally:
+            os.unlink(path)
+        self.assertIsNot(first, second)
+        self.assertEqual(first.effective_width_pts, 101.0)
+        self.assertEqual(second.effective_width_pts, 102.0)
         self.assertEqual(RecordingRenderer.page_info_calls, [0, 0])
 
     def test_pdf_metadata_caches_are_bounded_lru(self):
@@ -118,6 +148,31 @@ class PdfMetadataProviderTests(unittest.TestCase):
             [key[0] for key in provider._segments_cache.keys()],
             ["a.pdf", "c.pdf"],
         )
+
+    def test_pdf_metadata_lru_evicts_least_recently_used_file_and_rereads_it(self):
+        provider = NativePdfMetadataProvider(renderer_factory=RecordingRenderer)
+        provider.MAX_CACHE_ENTRIES = 2
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for name in ("a.pdf", "b.pdf", "c.pdf"):
+                path = os.path.join(directory, name)
+                with open(path, "wb") as handle:
+                    handle.write(name.encode())
+                paths.append(path)
+            path_a, path_b, path_c = paths
+            info_a = provider.get_page_info(path_a, 0)
+            provider.get_page_info(path_b, 0)
+            self.assertIs(provider.get_page_info(path_a, 0), info_a)
+            provider.get_page_info(path_c, 0)
+            self.assertEqual(len(RecordingRenderer.page_info_calls), 3)
+            self.assertIs(provider.get_page_info(path_a, 0), info_a)
+            self.assertEqual(len(RecordingRenderer.page_info_calls), 3)
+            provider.get_page_info(path_b, 0)
+            self.assertEqual(len(RecordingRenderer.page_info_calls), 4)
+            self.assertEqual(
+                [key[0] for key in provider._page_info_cache.keys()],
+                [path_a, path_b],
+            )
 
 
 if __name__ == "__main__":

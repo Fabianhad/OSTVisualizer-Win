@@ -9,6 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import create_autospec, patch
 import pyodbc
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    ResourceRef,
+)
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.mdb.components.import_operations import (
     ImportOperationsMixin,
@@ -39,6 +43,26 @@ from tests.helpers.mdb.import_export_support import (
 
 
 class OstImporterRelationshipTests(unittest.TestCase):
+    def _mutation_importer(self, value):
+        calls = []
+
+        def import_ost_data(target_db_path, raw_data, transform_fn, target_project_uid):
+            calls.append((target_db_path, target_project_uid, transform_fn))
+            return value
+
+        importer = OstImporter(SimpleNamespace(import_ost_data=import_ost_data))
+        return importer, calls
+
+    @staticmethod
+    def _mutation_recorder():
+        records = []
+        recorder = SimpleNamespace(
+            record=lambda resource, operation, *, changed_fields=(), payload="": records.append(
+                (resource, operation)
+            )
+        )
+        return recorder, records
+
     def test_sql_import_mutation_records_every_authoritative_family(self):
         value = {
             "project_uids": {"target": "9"},
@@ -52,10 +76,7 @@ class OstImporterRelationshipTests(unittest.TestCase):
             "table_uid_maps": {},
             "global_uid_maps": {},
         }
-        writer = SimpleNamespace(
-            import_ost_data=lambda _target_db_path, _raw_data, _transform_fn, _target_project_uid=None: value
-        )
-        importer = OstImporter(writer)
+        importer, calls = self._mutation_importer(value)
         raw_data = RawBidData(
             bid_row={"UID": "1"},
             global_tables={
@@ -65,35 +86,95 @@ class OstImporterRelationshipTests(unittest.TestCase):
                 "PayClasses": [{"UID": "4"}],
             },
         )
-        records = []
-        recorder = SimpleNamespace(
-            record=lambda resource, operation, *, changed_fields=(), payload="": records.append(
-                (resource, operation)
-            )
-        )
+        recorder, records = self._mutation_recorder()
         with patch.object(importer, "_validated_raw_data", return_value=raw_data):
             result = importer.import_ost_mutation(
                 "source.ost", "database", "9", recorder
             )
         self.assertIs(result, value)
+        self.assertEqual([(call[0], call[1]) for call in calls], [("database", "9")])
+        self.assertEqual(calls[0][2].__func__, OstImporter._transform)
         self.assertEqual(
-            {resource.resource_type for resource, _operation in records},
-            {
-                "bid",
-                "project_bids",
-                "conditions_collection",
-                "areas_collection",
-                "pages_collection",
-                "layers_collection",
-                "takeoffs_collection",
-                "annotations_collection",
-                "cover_sheet",
-                "condition_types_collection",
-                "job_statuses_collection",
-                "employees_collection",
-                "pay_classes_collection",
-            },
+            records,
+            [
+                (ResourceRef("bid", "10", 10), ChangeOperation.CREATE),
+                (ResourceRef("project_bids", "9"), ChangeOperation.UPDATE),
+                *(
+                    (ResourceRef(resource_type, "10", 10), ChangeOperation.BULK_REFRESH)
+                    for resource_type in (
+                        "conditions_collection",
+                        "areas_collection",
+                        "pages_collection",
+                        "layers_collection",
+                        "takeoffs_collection",
+                        "annotations_collection",
+                        "cover_sheet",
+                    )
+                ),
+                *(
+                    (
+                        ResourceRef(resource_type, "database"),
+                        ChangeOperation.BULK_REFRESH,
+                    )
+                    for resource_type in (
+                        "condition_types_collection",
+                        "job_statuses_collection",
+                        "employees_collection",
+                        "pay_classes_collection",
+                    )
+                ),
+            ],
         )
+
+    def test_sql_import_mutation_omits_absent_global_families_and_orphan_project(self):
+        value = {"bid_uids": {"1": "10"}}
+        importer, calls = self._mutation_importer(value)
+        raw_data = RawBidData(
+            bid_row={"UID": "1"},
+            global_tables={"CdnTypes": [], "Employees": [{"UID": "3"}]},
+        )
+        recorder, records = self._mutation_recorder()
+        with patch.object(importer, "_validated_raw_data", return_value=raw_data):
+            importer.import_ost_mutation("source.ost", "database", None, recorder)
+        self.assertEqual(calls[0][1], None)
+        self.assertEqual(
+            [
+                (resource.resource_type, resource.resource_id)
+                for resource, _op in records
+            ],
+            [
+                ("bid", "10"),
+                ("project_bids", "orphan"),
+                ("conditions_collection", "10"),
+                ("areas_collection", "10"),
+                ("pages_collection", "10"),
+                ("layers_collection", "10"),
+                ("takeoffs_collection", "10"),
+                ("annotations_collection", "10"),
+                ("cover_sheet", "10"),
+                ("employees_collection", "database"),
+            ],
+        )
+
+    def test_sql_import_mutation_rejects_non_authoritative_writer_results(self):
+        raw_data = RawBidData(bid_row={"UID": "1"})
+        for value, message in (
+            (True, "did not return authoritative identities"),
+            ({}, "exactly one imported bid"),
+            ({"bid_uids": {"1": "10", "2": "11"}}, "exactly one imported bid"),
+            ({"bid_uids": ["10"]}, "exactly one imported bid"),
+        ):
+            with self.subTest(value=value):
+                importer, _calls = self._mutation_importer(value)
+                recorder, records = self._mutation_recorder()
+                with patch.object(
+                    importer, "_validated_raw_data", return_value=raw_data
+                ):
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        importer.import_ost_mutation(
+                            "source.ost", "database", "9", recorder
+                        )
+                self.assertEqual(records, [])
 
     def test_ost_import_restores_database_column_name_for_copy_timestamp(self):
         xml = '<XML_ROOT><Bid UID="1" CopyTimestamp="2026 7 19 0 39 2"/></XML_ROOT>'
@@ -103,6 +184,23 @@ class OstImporterRelationshipTests(unittest.TestCase):
             raw_data = OstImporter(object())._parse_ost_xml(str(ost_path))
         self.assertEqual(raw_data.bid_row["CopyTimeStamp"], "2026 7 19 0 39 2")
         self.assertNotIn("CopyTimestamp", raw_data.bid_row)
+        self.assertEqual(raw_data.bid_row["UID"], "1")
+
+    def test_ost_import_without_bid_element_fails_before_writer(self):
+        writer = _import_export_support__CapturingImportWriter()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "no_bid.ost"
+            ost_path.write_text("<XML_ROOT/>", encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ):
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+            with self.assertRaisesRegex(ValueError, "No Bid element"):
+                OstImporter(writer)._parse_ost_xml(str(ost_path))
+        self.assertFalse(writer.called)
 
     def test_ost_import_rejects_multiple_bid_settings_rows(self):
         xml = """
@@ -125,12 +223,23 @@ class OstImporterRelationshipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             ost_path = Path(temp_dir) / "duplicate_settings.ost"
             ost_path.write_text(xml, encoding="utf-8")
-            self.assertFalse(
-                OstImporter(writer).import_ost(str(ost_path), "target.mdb")
-            )
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn(
+            "BidSettings has 2 rows for Bids.UID=1; expected at most 1",
+            logs.output[0],
+        )
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM BidSettings").fetchone()[0],
             0,
+        )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
         )
 
     def test_ost_import_skips_orphaned_takeoffs_and_cascading_children(self):
@@ -194,6 +303,7 @@ class OstImporterRelationshipTests(unittest.TestCase):
         self.assertIsNone(parent_uids["Primary"])
         self.assertEqual(parent_uids["Valid Child"], takeoff_uids["Primary"])
         self.assertEqual(len(logs.output), 1)
+        self.assertIn("Skipping 3 invalid takeoff(s)", logs.output[0])
         self.assertIn("missing-parent roots", logs.output[0])
         self.assertIn("BidTakeoffs.UID=32 ParentUID=999", logs.output[0])
         self.assertIn("skipped dependent descendants", logs.output[0])
@@ -239,6 +349,8 @@ class OstImporterRelationshipTests(unittest.TestCase):
             "SELECT UID, ParentUID, Name FROM BidTakeoffs ORDER BY Name"
         ).fetchall()
         by_name = {name: (uid, parent_uid) for uid, parent_uid, name in rows}
+        self.assertEqual(sorted(by_name), ["Child", "Parent"])
+        self.assertIsNone(by_name["Parent"][1])
         self.assertEqual(by_name["Child"][1], by_name["Parent"][0])
 
     def test_ost_import_rejects_duplicate_takeoff_uid_before_remapping(self):
@@ -300,17 +412,30 @@ class OstImporterRelationshipTests(unittest.TestCase):
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
         self.assertIn("BidPages.UID=20 occurs 2 times", logs.output[0])
-        self.assertEqual(writer.takeoffs, ())
+        self.assertFalse(writer.called)
 
     def test_ost_import_rejects_malformed_bid_owned_uid_before_backend_remapping(self):
-        for table, element in (
-            ("BidLayers", '<BidLayer UID="0" BidUID="1" Name="Layer"/>'),
+        for table, element, expected in (
+            (
+                "BidLayers",
+                '<BidLayer UID="0" BidUID="1" Name="Layer"/>',
+                "BidLayers.UID=0 has malformed UID=0",
+            ),
             (
                 "BidConditionFolders",
                 '<BidConditionFolder UID="   " BidUID="1" Name="Folder"/>',
+                "BidConditionFolders.UID=    has malformed UID=   ",
             ),
-            ("BidZones", '<BidZone BidUID="1" Name="Zone"/>'),
-            ("BidTypAreas", '<BidTypArea UID="not-a-uid" BidUID="1"/>'),
+            (
+                "BidZones",
+                '<BidZone BidUID="1" Name="Zone"/>',
+                "BidZones.UID=<no UID> has malformed UID=<missing>",
+            ),
+            (
+                "BidTypAreas",
+                '<BidTypArea UID="not-a-uid" BidUID="1"/>',
+                "BidTypAreas.UID=not-a-uid has malformed UID=not-a-uid",
+            ),
         ):
             with self.subTest(table=table):
                 xml = f"""
@@ -331,8 +456,7 @@ class OstImporterRelationshipTests(unittest.TestCase):
                         self.assertFalse(
                             OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                         )
-                self.assertIn(f"{table}.UID=", logs.output[0])
-                self.assertIn("has malformed UID=", logs.output[0])
+                self.assertIn(expected, logs.output[0])
                 self.assertFalse(writer.called)
 
     def test_ost_import_rejects_malformed_bid_and_annotation_uids(self):
@@ -415,7 +539,7 @@ class OstImporterRelationshipTests(unittest.TestCase):
                             OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                         )
                 self.assertIn(expected_diagnostic, logs.output[0])
-                self.assertEqual(writer.takeoffs, ())
+                self.assertFalse(writer.called)
 
     def test_ost_import_rejects_takeoff_parent_cycle(self):
         xml = """
@@ -448,7 +572,11 @@ class OstImporterRelationshipTests(unittest.TestCase):
                 self.assertFalse(
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
-        self.assertIn("participates in a ParentUID cycle", logs.output[0])
+        self.assertIn(
+            "BidTakeoffs.UID=30 participates in a ParentUID cycle; "
+            "BidTakeoffs.UID=31 participates in a ParentUID cycle",
+            logs.output[0],
+        )
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
         )
@@ -476,7 +604,9 @@ class OstImporterRelationshipTests(unittest.TestCase):
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
         self.assertIn(
-            "BidAreas.UID=7 participates in a ParentUID cycle", logs.output[0]
+            "BidAreas.UID=7 participates in a ParentUID cycle; "
+            "BidAreas.UID=8 participates in a ParentUID cycle",
+            logs.output[0],
         )
         self.assertFalse(writer.called)
 
@@ -507,7 +637,10 @@ class OstImporterRelationshipTests(unittest.TestCase):
                 self.assertFalse(
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
-        self.assertIn("BidConditionUID=<missing>", logs.output[0])
+        self.assertIn(
+            "BidTakeoffs.UID=30 BidConditionUID=<missing> missing BidConditions.UID",
+            logs.output[0],
+        )
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
         )
@@ -696,6 +829,9 @@ class OstImporterRelationshipTests(unittest.TestCase):
             connection.execute("SELECT EmployeeUID FROM BidEmployees").fetchone()[0],
             70,
         )
+        self.assertEqual(
+            connection.execute("SELECT UID FROM Employees").fetchall(), [(70,)]
+        )
 
     def test_ost_import_remaps_bid_settings_selected_page_to_imported_page(self):
         xml = """
@@ -869,12 +1005,23 @@ class OstImporterRelationshipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             ost_path = Path(temp_dir) / "import.ost"
             ost_path.write_text(xml, encoding="utf-8")
-            self.assertFalse(
-                OstImporter(writer).import_ost(str(ost_path), "target.mdb")
-            )
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn(
+            "BidSettings.UID=30 BidPageSelectedUID=not-a-uid missing BidPages.UID",
+            logs.output[0],
+        )
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM BidSettings").fetchone()[0],
             0,
+        )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
         )
 
     def test_ost_import_drops_only_stale_named_views_and_their_hotlinks(self):
@@ -1005,3 +1152,143 @@ class OstImporterRelationshipTests(unittest.TestCase):
             "SELECT COUNT(*) FROM BidHotLinks"
         ).fetchone()[0]
         self.assertEqual((bid_count, named_view_count, hotlink_count), (0, 0, 0))
+
+    def test_ost_transform_remaps_internal_global_and_null_references(self):
+        raw_data = RawBidData(
+            bid_row={
+                "UID": "1",
+                "BidProjectUID": "3",
+                "EstimatorUID": "7",
+                "PrManagerUID": "8",
+                "JobStatusUID": "5",
+                "JobName": "0",
+            },
+            bid_tables={
+                "BidPages": [
+                    {"UID": "20", "BidUID": "1", "MasterPageUID": "0"},
+                    {"UID": "21", "BidUID": "1", "MasterPageUID": "20"},
+                ],
+                "BidSettings": [
+                    {"UID": "30", "BidUID": "1", "BidPageSelectedUID": "21"},
+                    {"UID": "31", "BidUID": "1", "BidPageSelectedUID": "0"},
+                    {"UID": "32", "BidUID": "1", "BidPageSelectedUID": "999"},
+                ],
+                "BidConditions": [
+                    {"UID": "40", "BidUID": "1", "CdnTypeUID": "4"},
+                    {"UID": "41", "BidUID": "1", "CdnTypeUID": "77"},
+                ],
+                "BidEmployees": [
+                    {"UID": "50", "BidUID": "1", "EmployeeUID": "7"},
+                    {"UID": "51", "BidUID": "1", "EmployeeUID": "8"},
+                ],
+            },
+            page_tables={
+                "BidTakeoffs": [
+                    {
+                        "UID": "60",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidConditionUID": "40",
+                        "ParentUID": "0",
+                    },
+                    {
+                        "UID": "61",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidConditionUID": "40",
+                        "ParentUID": "60",
+                    },
+                ]
+            },
+        )
+        remapped = OstImporter(None)._transform(
+            raw_data,
+            100,
+            {"4": "400"},
+            {"5": "500"},
+            {"7": "700"},
+            {},
+        )
+        self.assertEqual(
+            remapped.bid_row,
+            {
+                "UID": "101",
+                "BidProjectUID": "NULL",
+                "EstimatorUID": "700",
+                "PrManagerUID": "NULL",
+                "JobStatusUID": "500",
+                "JobName": "0",
+            },
+        )
+        pages = remapped.bid_tables["BidPages"]
+        self.assertEqual(
+            [(row["UID"], row["BidUID"], row["MasterPageUID"]) for row in pages],
+            [("102", "101", "NULL"), ("103", "101", "102")],
+        )
+        self.assertEqual(
+            [row["BidPageSelectedUID"] for row in remapped.bid_tables["BidSettings"]],
+            ["103", "NULL", "NULL"],
+        )
+        self.assertEqual(
+            [row["CdnTypeUID"] for row in remapped.bid_tables["BidConditions"]],
+            ["400", "77"],
+        )
+        self.assertEqual(
+            [row["EmployeeUID"] for row in remapped.bid_tables["BidEmployees"]],
+            ["700", "NULL"],
+        )
+        takeoffs = remapped.page_tables["BidTakeoffs"]
+        self.assertEqual(
+            [(row["UID"], row["BidPageUID"], row["ParentUID"]) for row in takeoffs],
+            [("111", "102", "NULL"), ("112", "102", "111")],
+        )
+        self.assertEqual(
+            [row["BidConditionUID"] for row in takeoffs],
+            [remapped.bid_tables["BidConditions"][0]["UID"]] * 2,
+        )
+        self.assertEqual(raw_data.bid_row["UID"], "1")
+
+    def test_ost_remap_row_maps_or_nulls_master_data_references_per_field(self):
+        importer = OstImporter(None)
+        remapped = importer._remap_row(
+            {
+                "UID": "5",
+                "JobStatusUID": "6",
+                "PayClassUID": "9",
+                "EmployeeUID": "8",
+                "CdnTypeUID": "11",
+                "OCRUID": "12",
+                "Note": "0",
+            },
+            {"5": "105"},
+            {},
+            {"11": "111"},
+            {"6": "206"},
+            {},
+            {"9": "309"},
+        )
+        self.assertEqual(
+            remapped,
+            {
+                "UID": "105",
+                "JobStatusUID": "206",
+                "PayClassUID": "309",
+                "EmployeeUID": "NULL",
+                "CdnTypeUID": "111",
+                "OCRUID": "NULL",
+                "Note": "0",
+            },
+        )
+        unmapped = importer._remap_row(
+            {"JobStatusUID": "7", "PayClassUID": "10", "CdnTypeUID": "13"},
+            {},
+            {},
+            {},
+            {"6": "206"},
+            {},
+            {"9": "309"},
+        )
+        self.assertEqual(
+            unmapped,
+            {"JobStatusUID": "NULL", "PayClassUID": "NULL", "CdnTypeUID": "13"},
+        )

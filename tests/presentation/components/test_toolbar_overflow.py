@@ -14,19 +14,10 @@ from tests.presentation.builders.component_widget_support import (
     _AllowPageSettingsAccess as _component_widget_support__AllowPageSettingsAccess,
 )
 import os
-import tempfile
-from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from ost_visualizer.application.services.config_service import ConfigService
-from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
-from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.infrastructure.persistence.repositories.json_config_repository import (
-    JsonConfigRepository,
-)
 from ost_visualizer.presentation.components.toolbar_overflow import add_overflow_widget
 from shiboken6 import delete, isValid
-import tests.presentation.components.test_toolbar_overflow as component_tests
 from tests.presentation.components.toolbar_visibility_support import (
     register_test_fonts as _toolbar_visibility_support_register_test_fonts,
 )
@@ -55,6 +46,7 @@ class ToolbarOverflowTests(unittest.TestCase):
         self.assertIsNotNone(extension)
         self.assertTrue(extension.isVisible())
         observed = []
+        failures = []
 
         def inspect_and_close():
             menus = [
@@ -62,13 +54,20 @@ class ToolbarOverflowTests(unittest.TestCase):
                 for widget in self.app.topLevelWidgets()
                 if isinstance(widget, QtWidgets.QMenu) and widget.isVisible()
             ]
-            self.assertEqual(len(menus), 1)
-            observed.append(callback(menus[0]))
-            menus[0].close()
+            try:
+                self.assertEqual(len(menus), 1)
+                observed.append(callback(menus[0]))
+            except BaseException as error:
+                failures.append(error)
+            finally:
+                for menu in menus:
+                    menu.close()
 
         QtCore.QTimer.singleShot(0, inspect_and_close)
         extension.click()
         self.app.processEvents()
+        if failures:
+            raise failures[0]
         self.assertEqual(len(observed), 1)
         return observed[0]
 
@@ -191,7 +190,62 @@ class ToolbarOverflowTests(unittest.TestCase):
             return combo is not None and combo.isVisible()
 
         self.assertFalse(self._use_extension_menu(toolbar, hidden_inspect))
+        visibility_action.setVisible(True)
+        self.app.processEvents()
+        self.assertEqual(self._use_extension_menu(toolbar, inspect), ("Two", False))
+        source.setEnabled(True)
+        source.setCurrentIndex(0)
+        self.app.processEvents()
+        self.assertEqual(self._use_extension_menu(toolbar, inspect), ("One", True))
         host.close()
+
+    def test_overflow_combo_resyncs_items_and_editable_text_from_source(self):
+        source = QtWidgets.QComboBox()
+        source.setEditable(True)
+        source.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        source.addItems(["50%", "100%"])
+        source.setCurrentIndex(1)
+        submitted = []
+        activations = []
+        overflow = SyncedComboOverflowWidget(
+            source,
+            "Zoom",
+            activations.append,
+            on_text_submitted=submitted.append,
+        )
+        self.assertTrue(overflow.combo.isEditable())
+        self.assertEqual(
+            [overflow.combo.itemText(i) for i in range(overflow.combo.count())],
+            ["50%", "100%"],
+        )
+        self.assertEqual(overflow.combo.currentText(), "100%")
+        source.addItem("200%")
+        self.assertEqual(overflow.combo.count(), 3)
+        self.assertEqual(overflow.combo.itemText(2), "200%")
+        source.setCurrentText("75%")
+        self.assertEqual(overflow.combo.currentText(), "75%")
+        overflow.combo.lineEdit().setText("33%")
+        overflow.combo.lineEdit().returnPressed.emit()
+        self.assertEqual(submitted, ["33%"])
+        self.assertEqual(overflow.combo.currentText(), "75%")
+        source.clear()
+        self.assertEqual(overflow.combo.count(), 0)
+        self.assertEqual(activations, [])
+        overflow.deleteLater()
+        source.deleteLater()
+
+    def test_overflow_combo_without_text_callback_ignores_return_key(self):
+        source = QtWidgets.QComboBox()
+        source.setEditable(True)
+        source.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        source.addItems(["50%", "100%"])
+        overflow = SyncedComboOverflowWidget(source, "Zoom", lambda _index: None)
+        overflow.combo.lineEdit().setText("33%")
+        overflow.combo.lineEdit().returnPressed.emit()
+        self.assertEqual(overflow.combo.currentText(), "33%")
+        self.assertEqual(source.currentText(), "50%")
+        overflow.deleteLater()
+        source.deleteLater()
 
     def test_overflow_action_button_uses_the_canonical_action_once(self):
         host, toolbar = self._overflow_toolbar()
@@ -275,8 +329,8 @@ class ToolbarOverflowTests(unittest.TestCase):
         overflow.area_combo.activated.emit(area_index)
         self.assertEqual(source.scale_combo.currentIndex(), scale_index)
         self.assertEqual(source.area_combo.get_current_area_uid(), "a2")
-        self.assertEqual(len(scale_requests), 1)
-        self.assertEqual(len(area_requests), 1)
+        self.assertEqual(scale_requests, [("example.mdb", "page-1", 1.0, 120.0)])
+        self.assertEqual(area_requests, [("example.mdb", "page-1", "a2")])
         self.assertEqual(overflow.area_combo.currentData(), "a2")
         presentation_updates = []
         source.presentation_state_changed.connect(
@@ -359,22 +413,13 @@ class ToolbarOverflowTests(unittest.TestCase):
 
 
 class TakeoffToolbarPreferencesTests(unittest.TestCase):
-    _overflow_toolbar = component_tests.ToolbarOverflowTests._overflow_toolbar
-    _use_extension_menu = component_tests.ToolbarOverflowTests._use_extension_menu
+    _overflow_toolbar = ToolbarOverflowTests._overflow_toolbar
+    _use_extension_menu = ToolbarOverflowTests._use_extension_menu
 
     @classmethod
     def setUpClass(cls):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         _toolbar_visibility_support_register_test_fonts()
-
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.path = Path(temporary.name) / "config.json"
-        self.repository = JsonConfigRepository(self.path)
-        self.model = ConfigAggregate(self.repository)
-        self.bus = EventBus()
-        self.service = ConfigService(self.model, self.bus)
 
     def test_overflow_hide_show_cycles_reuse_command_without_duplicate_signals(self):
         host, toolbar = self._overflow_toolbar()

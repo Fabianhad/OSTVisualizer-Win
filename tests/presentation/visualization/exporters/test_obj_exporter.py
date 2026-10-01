@@ -34,10 +34,33 @@ class OBJExporterTests(unittest.TestCase):
                         {"c": condition},
                         "solid",
                     )
-                    self.assertIn("f 1 3 2\n", path.read_text())
+                    self.assertEqual(
+                        path.read_text(),
+                        "# Created by OST Visualizer\n"
+                        "mtllib model.mtl\n\n"
+                        "# Condition\n"
+                        "g red\n"
+                        "usemtl red\n"
+                        "v 0.000000 0.000000 0.000000\n"
+                        "v 1.000000 0.000000 0.000000\n"
+                        "v 0.000000 0.000000 -1.000000\n"
+                        "f 1 3 2\n\n",
+                    )
                 self.assertEqual(generate.call_count, 2)
                 generate.assert_called_with(positive, condition)
-            self.assertIn("mtllib model.mtl", path.read_text())
-            self.assertIn(
-                "Kd 1.000000 0.000000 0.000000", path.with_suffix(".mtl").read_text()
+            self.assertEqual(
+                path.with_suffix(".mtl").read_text(),
+                "# Created by OST Visualizer\n"
+                "# Display Mode: solid\n"
+                "# Materials: 1\n\n"
+                "newmtl red\n"
+                "# Condition\n"
+                "Kd 1.000000 0.000000 0.000000\n"
+                "Ka 0.200000 0.200000 0.200000\n"
+                "Ks 0.500000 0.500000 0.500000\n"
+                "Ns 20.000000\n"
+                "Ni 1.000000\n"
+                "d 1.000000\n"
+                "illum 2\n\n",
             )
+        colors.hex_to_rgb.assert_called_with("#ff0000")

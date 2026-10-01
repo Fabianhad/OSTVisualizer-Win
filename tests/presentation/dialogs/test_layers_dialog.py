@@ -2,6 +2,9 @@ import os
 import unittest
 from dataclasses import replace
 from unittest.mock import Mock, patch
+from ost_visualizer.application.interfaces.i_window_icon_provider import (
+    IWindowIconProvider,
+)
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
 from PySide6 import QtWidgets
@@ -51,7 +54,7 @@ class LayersDialogRepeatedSaveTests(unittest.TestCase):
             return True
 
         dialog = LayersDialog(
-            Mock(),
+            Mock(spec=IWindowIconProvider),
             make_workspace_state_model(),
             layers=layers,
             reload_fn=lambda: layers,
@@ -67,6 +70,8 @@ class LayersDialogRepeatedSaveTests(unittest.TestCase):
                 self.assertIs(dialog._layers[0], layers[0])
                 self.assertEqual(dialog._layers[0].name, name)
             self.assertEqual(len(saved), 2)
+            self.assertEqual([layer.name for layer in saved], ["Second", "Third"])
+            self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Third")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -131,6 +136,44 @@ class LayersDialogInteractionTests(unittest.TestCase):
             self.assertEqual(dialog.tree.topLevelItemCount(), 0)
             self.assertIsNone(dialog._pending_new_item)
             self.assertTrue(dialog._is_interactive)
+            self.assertTrue(dialog.btn_new.isEnabled())
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_layer_async_create_success_reloads_and_selects_created_uid(self):
+        persisted = [self._layer("layer-1", "Layer 1", 1)]
+        async_calls = []
+
+        def insert_async(name, sequence, completed):
+            async_calls.append((name, sequence))
+            persisted.append(self._layer("layer-2", name, 2))
+            completed(True, "layer-2")
+            return True
+
+        dialog = _master_data_support_MasterLayersDialog(
+            _master_data_support_FakeIconProvider(),
+            layers=list(persisted),
+            insert_fn=lambda _name, _sequence: self.fail("sync insert must not run"),
+            insert_async_fn=insert_async,
+            reload_fn=lambda: list(persisted),
+        )
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(2, "Layer 2")
+            dialog.tree.blockSignals(False)
+            dialog._on_item_changed(item, 2)
+            self.assertEqual(async_calls, [("Layer 2", 1)])
+            self.assertEqual(dialog.tree.topLevelItemCount(), 2)
+            self.assertEqual(
+                dialog.tree.currentItem().data(0, dialog._UID_ROLE), "layer-2"
+            )
+            self.assertIsNone(dialog._pending_new_item)
+            self.assertTrue(dialog._is_interactive)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -149,8 +192,24 @@ class LayersDialogInteractionTests(unittest.TestCase):
             self.assertFalse(dialog.btn_select.isEnabled())
             self.assertIsNotNone(dialog.btn_cancel)
             self.assertEqual(dialog.btn_cancel.text(), "Cancel")
-            self.assertIn("Select", button_texts)
-            self.assertIn("Cancel", button_texts)
+            self.assertEqual(
+                button_texts,
+                [
+                    "Select",
+                    "Cancel",
+                    "Check All",
+                    "Uncheck All",
+                    "New",
+                    "Delete",
+                    "Move Up",
+                    "Move Down",
+                ],
+            )
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            self.assertTrue(dialog.btn_select.isEnabled())
+            dialog.btn_select.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.selected_name(), "Layer 1")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -176,12 +235,60 @@ class LayersDialogInteractionTests(unittest.TestCase):
             dialog._on_item_changed(item, 2)
             self.assertEqual(item.text(2), "Layer 1")
             self.assertEqual(rename_calls, [])
+            dialog._on_new()
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+            self.assertIsNone(dialog._pending_new_item)
+            dialog._on_show_changed("layer-1", False)
+            self.assertTrue(dialog._layers[0].show)
+            self.assertFalse(dialog._checkboxes[0].isEnabled())
+            self.assertFalse(dialog.btn_new.isEnabled())
+            self.assertFalse(dialog.btn_check_all.isEnabled())
+            with patch(
+                "ost_visualizer.presentation.dialogs.layers_dialog."
+                "confirm_multi_delete"
+            ) as confirm_delete:
+                dialog._on_delete()
+            confirm_delete.assert_not_called()
             dialog.set_interactive(True)
+            self.assertTrue(dialog._checkboxes[0].isEnabled())
+            self.assertTrue(dialog.btn_new.isEnabled())
             self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
             self.assertEqual(
                 dialog.tree.editTriggers(),
                 QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked,
             )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_layers_dialog_rename_rejects_duplicate_and_empty_names_without_write(self):
+        rename_calls = []
+        dialog = _master_data_support_MasterLayersDialog(
+            _master_data_support_FakeIconProvider(),
+            layers=[
+                self._layer("layer-1", "Layer 1", 1),
+                self._layer("layer-2", "Layer 2", 2),
+            ],
+            reload_fn=lambda: [],
+            update_name_fn=lambda uid, name: rename_calls.append((uid, name)) or True,
+        )
+        try:
+            item = dialog.tree.topLevelItem(1)
+            for typed, expect_warning in (("layer 1", True), ("   ", False)):
+                dialog._set_item_text(item, typed)
+                with patch(
+                    "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
+                ) as warning:
+                    dialog._on_item_changed(item, 2)
+                if expect_warning:
+                    warning.assert_called_once_with(
+                        dialog, "Duplicate Layer", "Layer layer 1 already exists."
+                    )
+                else:
+                    warning.assert_not_called()
+                self.assertEqual(item.text(2), "Layer 2")
+                self.assertEqual(rename_calls, [])
         finally:
             dialog.close()
             dialog.cleanup()
@@ -203,6 +310,20 @@ class LayersDialogInteractionTests(unittest.TestCase):
             self.assertIn("OK", button_texts)
             self.assertNotIn("Select", button_texts)
             self.assertNotIn("Cancel", button_texts)
+            self.assertEqual(
+                button_texts,
+                [
+                    "OK",
+                    "Check All",
+                    "Uncheck All",
+                    "New",
+                    "Delete",
+                    "Move Up",
+                    "Move Down",
+                ],
+            )
+            dialog.btn_select.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -227,6 +348,16 @@ class LayersDialogInteractionTests(unittest.TestCase):
             self.assertTrue(dialog.btn_delete.isEnabled())
             self.assertFalse(dialog.btn_move_up.isEnabled())
             self.assertTrue(dialog.btn_move_down.isEnabled())
+            self.assertEqual(
+                [
+                    dialog.tree.topLevelItem(row).text(2)
+                    for row in range(dialog.tree.topLevelItemCount())
+                ],
+                ["Default 1", "Default 2"],
+            )
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(1))
+            self.assertTrue(dialog.btn_move_up.isEnabled())
+            self.assertFalse(dialog.btn_move_down.isEnabled())
         finally:
             dialog.close()
             dialog.cleanup()
@@ -261,17 +392,27 @@ class LayersDialogInteractionTests(unittest.TestCase):
                         ("Layer 2", "layer-2"),
                     ],
                 ),
-                patch("ost_visualizer.presentation.dialogs.layers_dialog.show_warning"),
+                patch(
+                    "ost_visualizer.presentation.dialogs.layers_dialog.show_warning"
+                ) as warning,
             ):
                 dialog._on_delete()
             self.assertEqual(delete_many_calls, [["layer-1", "layer-2"]])
             self.assertEqual(reload_calls, ["reload"])
+            warning.assert_not_called()
+            self.assertEqual(dialog.tree.topLevelItemCount(), 0)
         finally:
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
 
     def test_layers_dialog_write_exceptions_report_once_and_restore_values(self):
+        titles = {
+            "rename": "Rename Layer",
+            "visibility": "Layer Visibility",
+            "all_visibility": "Layer Visibility",
+            "move": "Move Layer",
+        }
         for operation in ("rename", "visibility", "all_visibility", "move"):
             with self.subTest(operation=operation):
                 layers = [
@@ -309,7 +450,8 @@ class LayersDialogInteractionTests(unittest.TestCase):
                     self.assertEqual(len(writes), 1)
                     self.assertEqual(warning.call_count, 1)
                     self.assertEqual(
-                        warning.call_args.args[2], "Database write rejected"
+                        warning.call_args.args[1:],
+                        (titles[operation], "Database write rejected"),
                     )
                     self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Original")
                     self.assertEqual(
@@ -402,6 +544,13 @@ class LayersDialogInteractionTests(unittest.TestCase):
                 ["3"],
             )
             self.assertIsNone(dialog.tree.currentItem())
+            self.assertEqual(
+                [
+                    dialog.tree.topLevelItem(row).data(0, dialog._UID_ROLE)
+                    for row in range(dialog.tree.topLevelItemCount())
+                ],
+                ["4", "3", "1"],
+            )
             self.assertTrue(dialog.btn_select.isEnabled())
             self.assertFalse(dialog._checkboxes[-1].isChecked())
         finally:
@@ -513,8 +662,16 @@ class LayersDialogInteractionTests(unittest.TestCase):
             self.assertEqual(reload_calls, ["reload"])
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
             self.assertEqual(dialog.tree.topLevelItem(0).text(2), "Layer 2")
-            self.assertEqual(len(warnings), 1)
-            self.assertIn("Some layers were deleted", warnings[0][2])
+            self.assertEqual(
+                warnings,
+                [
+                    (
+                        dialog,
+                        "Delete Layer",
+                        "Some layers were deleted, but one or more deletes failed.",
+                    )
+                ],
+            )
         finally:
             dialog.close()
             dialog.cleanup()
@@ -555,8 +712,16 @@ class LayersDialogInteractionTests(unittest.TestCase):
             ):
                 dialog._on_delete()
             self.assertEqual(reload_calls, ["reload"])
-            self.assertEqual(len(warnings), 1)
-            self.assertIn("refresh failed", warnings[0][2])
+            self.assertEqual(
+                warnings,
+                [
+                    (
+                        dialog,
+                        "Delete Layer",
+                        "Layers were deleted, but the refresh failed.",
+                    )
+                ],
+            )
         finally:
             dialog.close()
             dialog.cleanup()

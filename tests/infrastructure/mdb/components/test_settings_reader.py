@@ -1,3 +1,4 @@
+from ost_visualizer.domain.entities.cover_sheet import CoverSheetPage
 from ost_visualizer.infrastructure.mdb.schema_compatibility import MdbSchemaInspector
 from types import SimpleNamespace
 from contextlib import contextmanager
@@ -49,6 +50,9 @@ import os
 from PySide6 import QtCore, QtGui, QtWidgets
 from tests.presentation.dialogs.cover_sheet.path_support import (
     _app as _path_support__app,
+)
+from ost_visualizer.infrastructure.database.bid_owned_identity import (
+    CyclicBidOwnedReferenceError,
 )
 from ost_visualizer.infrastructure.database.settings_cardinality import (
     GlobalSettingsCardinalityError,
@@ -131,10 +135,41 @@ class SettingsReaderPersistenceTests(unittest.TestCase):
             "PrManagerUID INTEGER, JobSiteManagerUID INTEGER)"
         )
         conn.execute("INSERT INTO Bids VALUES (1, 10, 20, 30)")
+        conn.execute("INSERT INTO Bids VALUES (2, 10, NULL, 40)")
+        conn.execute("INSERT INTO Bids VALUES (3, NULL, NULL, NULL)")
         used = SettingsReaderMixin._parse_used_employee_uids(
             _SqliteMdbOps(conn), _SqliteConnectionWrapper(conn)
         )
-        self.assertEqual(used, {"10", "20", "30"})
+        self.assertEqual(used, {"10", "20", "30", "40"})
+
+    def test_used_employee_uids_ignore_absent_role_columns_and_table(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE Bids (UID INTEGER PRIMARY KEY, EstimatorUID INTEGER)"
+        )
+        conn.execute("INSERT INTO Bids VALUES (1, 10)")
+        ops = _SqliteMdbOps(conn)
+        self.assertEqual(
+            SettingsReaderMixin._parse_used_employee_uids(
+                ops, _SqliteConnectionWrapper(conn)
+            ),
+            {"10"},
+        )
+        conn.execute("DROP TABLE Bids")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        self.assertEqual(
+            SettingsReaderMixin._parse_used_employee_uids(
+                ops, _SqliteConnectionWrapper(conn)
+            ),
+            set(),
+        )
+        conn.execute("DROP TABLE Bids")
+        self.assertEqual(
+            SettingsReaderMixin._parse_used_employee_uids(
+                ops, _SqliteConnectionWrapper(conn)
+            ),
+            set(),
+        )
 
     def test_cover_sheet_reader_rejects_duplicate_employee_and_pay_class_uids(self):
         class Reader(SettingsReaderMixin, _SqliteMdbOps):
@@ -174,6 +209,25 @@ class SettingsReaderPersistenceTests(unittest.TestCase):
                     reader._parse_employees_and_pay_classes(
                         _SqliteConnectionWrapper(conn)
                     )
+
+    def test_cover_sheet_reader_accepts_same_uid_in_distinct_master_tables(self):
+        class Reader(SettingsReaderMixin, _SqliteMdbOps):
+            def _select_all_unfiltered(self, connection, table):
+                return MdbReader._select_all_unfiltered(self, connection, table)
+
+            def _select_all_columns(self, schema, table):
+                return MdbReader._select_all_columns(self, schema, table)
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Employees (UID INTEGER, FirstName TEXT)")
+        conn.execute("CREATE TABLE PayClasses (UID INTEGER, Name TEXT)")
+        conn.execute("INSERT INTO Employees VALUES (7, 'Ada')")
+        conn.execute("INSERT INTO PayClasses VALUES (7, 'Journeyman')")
+        employees, pay_classes = Reader(conn)._parse_employees_and_pay_classes(
+            _SqliteConnectionWrapper(conn)
+        )
+        self.assertEqual([(e.uid, e.first_name) for e in employees], [("7", "Ada")])
+        self.assertEqual([(p.uid, p.name) for p in pay_classes], [("7", "Journeyman")])
 
 
 class OptionalTextCompatibilityTests(unittest.TestCase):
@@ -227,6 +281,21 @@ class LayerUsageReaderTests(unittest.TestCase):
             reader.get_layer_uids_in_use("bid.mdb", "7"),
             {"101", "201", "301"},
         )
+
+    def test_layer_uids_in_use_skips_missing_tables_and_layerless_columns(self):
+        connection = _FakeConnection(
+            columns_by_table={
+                "BidConditions": {"BidUID", "BidLayerUID"},
+                "BidTexts": {"BidUID"},
+            },
+            rows_by_table={
+                "BidConditions": [SimpleNamespace(BidUID=7, BidLayerUID=101)],
+                "BidTexts": [SimpleNamespace(BidUID=7)],
+            },
+        )
+        reader = _LayerUsageReader(connection)
+        self.assertEqual(reader.get_layer_uids_in_use("bid.mdb", "7"), {"101"})
+        self.assertEqual(reader.get_layer_uids_in_use("bid.mdb", "8"), set())
 
 
 class SettingsReaderCoverSheetPathTests(unittest.TestCase):
@@ -282,7 +351,7 @@ class SettingsReaderCoverSheetPathTests(unittest.TestCase):
                         OverlayImagePath=None,
                         Index1=3,
                         MultiPageCount=7,
-                        Show=0,
+                        Show=2,
                         BidPageFolderUID=None,
                     )
                 ]
@@ -306,8 +375,27 @@ class SettingsReaderCoverSheetPathTests(unittest.TestCase):
                 return False
 
         connection = Connection()
-        _folders, pages = Reader()._query_cover_sheet_pages(connection, "7")
-        self.assertEqual(pages[0].multi_page_count, 7)
+        folders, pages = Reader()._query_cover_sheet_pages(connection, "7")
+        self.assertEqual(folders, {})
+        self.assertEqual(
+            pages,
+            [
+                CoverSheetPage(
+                    uid="1",
+                    sheet_no="A1",
+                    name="Plan",
+                    width=42.0,
+                    height=30.0,
+                    scale_factor1=0.125,
+                    scale_factor2=12.0,
+                    image_path="plan.pdf",
+                    overlay_image_path="",
+                    index=3,
+                    show_mode=2,
+                    multi_page_count=7,
+                )
+            ],
+        )
         self.assertIn("[MultiPageCount]", connection.cursors[-1].query)
 
     def test_cover_sheet_reader_rejects_page_folder_cycle(self):
@@ -329,8 +417,9 @@ class SettingsReaderCoverSheetPathTests(unittest.TestCase):
                 return fallback
 
         class Cursor:
-            def __init__(self):
+            def __init__(self, folder_rows):
                 self.query = ""
+                self.folder_rows = folder_rows
 
             def __enter__(self):
                 return self
@@ -343,15 +432,15 @@ class SettingsReaderCoverSheetPathTests(unittest.TestCase):
 
             def fetchall(self):
                 if "FROM [BidPageFolders]" in self.query:
-                    return [
-                        SimpleNamespace(UID=7, Name="A", ParentUID=8),
-                        SimpleNamespace(UID=8, Name="B", ParentUID=7),
-                    ]
+                    return self.folder_rows
                 return []
 
         class Connection:
+            def __init__(self, folder_rows):
+                self.folder_rows = folder_rows
+
             def cursor(self):
-                return Cursor()
+                return Cursor(self.folder_rows)
 
         class Reader(SettingsReaderMixin):
             @staticmethod
@@ -362,8 +451,33 @@ class SettingsReaderCoverSheetPathTests(unittest.TestCase):
             def _record_caught_read_error(_error):
                 return False
 
-        with self.assertRaisesRegex(RuntimeError, "ParentUID cycle"):
-            Reader()._query_cover_sheet_pages(Connection(), "7")
+        cycles = {
+            "two-node": [
+                SimpleNamespace(UID=7, Name="A", ParentUID=8),
+                SimpleNamespace(UID=8, Name="B", ParentUID=7),
+            ],
+            "self-parent": [SimpleNamespace(UID=9, Name="C", ParentUID=9)],
+        }
+        for label, rows in cycles.items():
+            with self.subTest(cycle=label):
+                with self.assertRaisesRegex(
+                    CyclicBidOwnedReferenceError,
+                    rf"BidPageFolders\.UID={rows[0].UID} participates in a "
+                    "ParentUID cycle",
+                ):
+                    Reader()._query_cover_sheet_pages(Connection(rows), "7")
+        folders, pages = Reader()._query_cover_sheet_pages(
+            Connection(
+                [
+                    SimpleNamespace(UID=7, Name="A", ParentUID=None),
+                    SimpleNamespace(UID=8, Name="B", ParentUID=7),
+                ]
+            ),
+            "7",
+        )
+        self.assertEqual(pages, [])
+        self.assertEqual(list(folders), ["7"])
+        self.assertEqual(list(folders["7"].subfolders), ["8"])
 
 
 class SettingsReaderCompatibilityTests(unittest.TestCase):
@@ -379,8 +493,19 @@ class SettingsReaderCompatibilityTests(unittest.TestCase):
                 return Schema()
 
         defaults = Reader()._parse_settings_defaults(object())
-        self.assertEqual(defaults["next_bid_no"], 1)
-        self.assertEqual(defaults["scale_factor1"], 0.125)
+        self.assertEqual(
+            defaults,
+            {
+                "scale_style": 1,
+                "scale_factor1": 0.125,
+                "scale_factor2": 12.0,
+                "page_width": 42.0,
+                "page_height": 30.0,
+                "measure_base": 0,
+                "takeoff_increments": 1.0,
+                "next_bid_no": 1,
+            },
+        )
 
     def test_settings_reader_rejects_multiple_global_settings_rows(self):
         class Cursor:
@@ -501,5 +626,68 @@ class SettingsReaderCompatibilityTests(unittest.TestCase):
                 "measure_base": 0,
                 "takeoff_increments": 1.0,
                 "next_bid_no": 9,
+            },
+        )
+
+    def test_settings_reader_returns_persisted_values_from_one_row(self):
+        class Cursor:
+            def __init__(self):
+                self._rows = iter(
+                    (
+                        SimpleNamespace(
+                            ScaleStyle=3,
+                            ScaleFactor1=0.5,
+                            ScaleFactor2=24.0,
+                            PageWidth=36.0,
+                            PageHeight=24.0,
+                            MeasureBase=2,
+                            TakeoffIncrements=0.5,
+                            NextBidNo=15,
+                        ),
+                        None,
+                    )
+                )
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def execute(_sql, *_params):
+                pass
+
+            def fetchone(self):
+                return next(self._rows)
+
+        class Schema:
+            @staticmethod
+            def optional_table_missing(_table):
+                return False
+
+            @staticmethod
+            def optional_column(_table, column, _default):
+                return f"[{column}]"
+
+        class Reader(MdbReader):
+            @staticmethod
+            def _schema(_connection):
+                return Schema()
+
+        defaults = Reader()._parse_settings_defaults(
+            SimpleNamespace(cursor=lambda: Cursor()),
+        )
+        self.assertEqual(
+            defaults,
+            {
+                "scale_style": 3,
+                "scale_factor1": 0.5,
+                "scale_factor2": 24.0,
+                "page_width": 36.0,
+                "page_height": 24.0,
+                "measure_base": 2,
+                "takeoff_increments": 0.5,
+                "next_bid_no": 15,
             },
         )

@@ -1048,10 +1048,15 @@ class MenuController:
         if lease_session is None:
             execute_dialog()
             return
+
+        def release_denied_lease() -> None:
+            lease_session.close()
+            delete_later_if_valid(dialog)
+
         lease_session.bind_dialog(dialog)
         lease_session.request_initial(
             lambda result: (
-                execute_dialog() if result.granted else delete_later_if_valid(dialog)
+                execute_dialog() if result.granted else release_denied_lease()
             )
         )
 

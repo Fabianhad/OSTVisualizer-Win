@@ -7,6 +7,9 @@ from tests.helpers.mdb.operations import (
     _SqliteSchema,
 )
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
+    ACCESS_BULK_CHUNK_SIZE,
+)
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
     TakeoffOperationsMixin,
@@ -109,9 +112,13 @@ class MdbWriterPersistenceTests(unittest.TestCase):
             (("30", "rect"),),
         )
         emitted_sql = "\n".join(statements).upper()
+        self.assertIn("BIDTAKEOFFS", emitted_sql)
+        self.assertIn("BIDANNOTATIONRECTS", emitted_sql)
         self.assertNotIn("OPENJSON", emitted_sql)
         self.assertNotIn("SET NOCOUNT", emitted_sql)
-        with self.assertRaisesRegex(Exception, "does not belong to Bids.UID=1"):
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, "does not belong to Bids.UID=1"
+        ):
             MdbWriter.verify_plan_items_exist(
                 ops,
                 "large.mdb",
@@ -119,12 +126,38 @@ class MdbWriterPersistenceTests(unittest.TestCase):
                 ("20",),
                 (),
             )
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, "BidAnnotationRects has no row for UID 31"
+        ):
+            MdbWriter.verify_plan_items_exist(
+                ops, "large.mdb", "1", (), (("31", "rect"),)
+            )
+        with self.assertRaisesRegex(
+            MissingBidOwnedUidError, "annotation changed or was deleted"
+        ):
+            MdbWriter.verify_plan_items_exist(
+                ops, "large.mdb", "1", (), (("30", "not-an-annotation-type"),)
+            )
 
 
 class MdbWriterSqlCleanupTests(unittest.TestCase):
     def test_access_preconnection_validation_retains_established_false_result(self):
         writer = MdbWriter()
-        self.assertFalse(writer.delete_takeoffs("example.mdb", ["not-a-uid"]))
+        with patch.object(
+            writer,
+            "_connection",
+            side_effect=AssertionError("invalid UIDs must not open a connection"),
+        ) as connection:
+            self.assertFalse(writer.delete_takeoffs("example.mdb", ["not-a-uid"]))
+            self.assertFalse(writer.save_takeoffs_area("example.mdb", ["10"], "bad"))
+            self.assertFalse(
+                writer.save_takeoffs_condition("example.mdb", ["10"], "bad")
+            )
+            self.assertFalse(
+                writer.save_takeoffs_area("example.mdb", ["not-a-uid"], "20")
+            )
+            self.assertTrue(writer.delete_takeoffs("example.mdb", []))
+        connection.assert_not_called()
 
     def test_access_annotation_row_error_rolls_back_the_batch(self):
         writer = MdbWriter(conn_manager=_cleanup_support__WriterManager())
@@ -145,10 +178,28 @@ class MdbWriterSqlCleanupTests(unittest.TestCase):
                 writer,
                 "_execute_annotation_insert",
                 side_effect=RuntimeError("access row failure"),
-            ),
+            ) as insert,
         ):
             result = writer.insert_annotations("example.mdb", "1", [spec])
         self.assertEqual(result, [])
+        insert.assert_called_once()
+        self.assertEqual(insert.call_args.args[3:7], ("rect", 1, 1, 10))
+        self.assertEqual(writer._conn_manager.lease.commits, 0)
+        self.assertEqual(writer._conn_manager.lease.rollbacks, 1)
+
+    def test_access_unsupported_annotation_type_rolls_back_without_inserting(self):
+        writer = MdbWriter(conn_manager=_cleanup_support__WriterManager())
+        spec = InsertAnnotationSpec(
+            page_uid="10",
+            annotation_type="not-an-annotation-type",
+            position=[1.0, 2.0, 3.0, 4.0],
+            color="#ff0000",
+            width=1.0,
+        )
+        with patch.object(writer, "_execute_annotation_insert") as insert:
+            result = writer.insert_annotations("example.mdb", "1", [spec])
+        self.assertEqual(result, [])
+        insert.assert_not_called()
         self.assertEqual(writer._conn_manager.lease.commits, 0)
         self.assertEqual(writer._conn_manager.lease.rollbacks, 1)
 
@@ -164,13 +215,40 @@ class MdbWriterSqlCleanupTests(unittest.TestCase):
         ) as update:
             result = writer.save_takeoffs_area("example.mdb", ["10"], "20")
         self.assertTrue(result)
+        self.assertEqual(
+            [call.args for call in update.call_args_list],
+            [
+                ("example.mdb", [10], "BidAreaUID", 20, ACCESS_BULK_CHUNK_SIZE),
+                ("example.mdb", [10], "BidAreaUID", 20, 1),
+            ],
+        )
+
+    def test_access_takeoff_write_does_not_retry_other_errors_and_reports_failed_retry(
+        self,
+    ):
+        writer = MdbWriter()
+        with patch.object(
+            writer,
+            "_run_selected_takeoffs_value_update",
+            side_effect=pyodbc.Error("42000", "syntax error"),
+        ) as update:
+            self.assertFalse(writer.save_takeoffs_area("example.mdb", ["10"], "20"))
+        self.assertEqual(update.call_count, 1)
+        with patch.object(
+            writer,
+            "_run_selected_takeoffs_value_update",
+            side_effect=[
+                pyodbc.Error("HY001", "System resource exceeded"),
+                pyodbc.Error("HY001", "System resource exceeded"),
+            ],
+        ) as update:
+            self.assertFalse(writer.save_takeoffs_area("example.mdb", ["10"], "20"))
         self.assertEqual(update.call_count, 2)
 
 
 class PageScaleTransactionTests(unittest.TestCase):
-    def test_malformed_legend_rolls_back_earlier_geometry_updates(self):
+    def _rescale(self, legend_value):
         from contextlib import contextmanager
-        from xml.etree.ElementTree import ParseError
         from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 
         class Schema:
@@ -201,7 +279,7 @@ class PageScaleTransactionTests(unittest.TestCase):
                 return (1.0, 128.0)
 
             def fetchall(self):
-                value = b"<Legends" if self.table == "BidLegends" else b"1;2\n"
+                value = legend_value if self.table == "BidLegends" else b"1;2\n"
                 return [SimpleNamespace(UID=7, Position=value)]
 
             def commit(self):
@@ -219,16 +297,48 @@ class PageScaleTransactionTests(unittest.TestCase):
             def connection(self, path, *, autocommit):
                 yield connection
 
+            @staticmethod
+            def use_committed_writer_for_reads(_path):
+                pass
+
         writer = MdbWriter(conn_manager=Manager())
-        with self.assertRaises(ParseError):
+        error = None
+        try:
             with writer._connection("fixture.mdb") as conn:
                 writer._rescale_page_content_for_scale_change(
                     conn, Schema(), 3, 1, 256, rescale_overlay=False
                 )
+        except Exception as exc:
+            error = exc
+        return connection, error
+
+    def test_malformed_legend_rolls_back_earlier_geometry_updates(self):
+        from xml.etree.ElementTree import ParseError
+
+        connection, error = self._rescale(b"<Legends")
+        self.assertIsInstance(error, ParseError)
         self.assertEqual(connection.attempted, 1)
         self.assertEqual(connection.rollbacks, 1)
         self.assertEqual(connection.pending, [])
         self.assertEqual(connection.committed, [])
+
+    def test_page_scale_rescale_commits_geometry_and_legend_together(self):
+        connection, error = self._rescale(
+            b'<Legends dX="10" dY="20"><Legend dX="1"/></Legends>'
+        )
+        self.assertIsNone(error)
+        self.assertEqual(connection.rollbacks, 0)
+        self.assertEqual(connection.pending, [])
+        self.assertEqual(len(connection.committed), 2)
+        position, takeoff_uid = connection.committed[0]
+        self.assertEqual(takeoff_uid, 7)
+        self.assertEqual(bytes(position).decode("utf-8").strip(), "2;4")
+        legend, legend_uid = connection.committed[1]
+        self.assertEqual(legend_uid, 7)
+        self.assertEqual(
+            bytes(legend).decode("utf-8"),
+            '<Legends dX="20" dY="40"><Legend dX="2" /></Legends>',
+        )
 
 
 class PlanPropertyOwnershipTests(unittest.TestCase):
@@ -310,6 +420,13 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
             MdbWriter.verify_plan_items_exist(
                 self.ops, "database.mdb", "7", ("10", "11", "12"), ()
             )
+        self.assertEqual(self.snapshot(), before)
+
+    def test_preflight_accepts_selection_that_includes_the_child_takeoff(self):
+        before = self.snapshot()
+        MdbWriter.verify_plan_items_exist(
+            self.ops, "database.mdb", "7", ("10", "11", "12", "13"), ()
+        )
         self.assertEqual(self.snapshot(), before)
 
     def takeoffs(self):

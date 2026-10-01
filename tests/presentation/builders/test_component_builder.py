@@ -32,13 +32,47 @@ class ComponentBuilderLayoutTests(unittest.TestCase):
             QtCore.QEvent.Type.Resize,
             QtCore.QEvent.Type.LayoutRequest,
         ):
-            sync_filter.eventFilter(watched, QtCore.QEvent(event_type))
+            consumed = sync_filter.eventFilter(watched, QtCore.QEvent(event_type))
+            self.assertIs(consumed, False)
         self.assertEqual(calls, [])
         self.app.processEvents()
         self.assertEqual(calls, ["sync"])
         sync_filter.eventFilter(
             watched, QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest)
         )
+        self.assertEqual(calls, ["sync"])
+        self.app.processEvents()
+        self.assertEqual(calls, ["sync", "sync"])
+        self.app.processEvents()
+        self.assertEqual(calls, ["sync", "sync"])
+
+    def test_plan_toolbar_layout_filter_ignores_unrelated_events(self):
+        calls = []
+        watched = QtCore.QObject()
+        sync_filter = _PlanToolbarLayoutSyncFilter(lambda: calls.append("sync"))
+        for event_type in (
+            QtCore.QEvent.Type.Hide,
+            QtCore.QEvent.Type.Move,
+            QtCore.QEvent.Type.Paint,
+            QtCore.QEvent.Type.MouseMove,
+            QtCore.QEvent.Type.Timer,
+        ):
+            consumed = sync_filter.eventFilter(watched, QtCore.QEvent(event_type))
+            self.assertIs(consumed, False)
+        self.app.processEvents()
+        self.assertEqual(calls, [])
+
+    def test_plan_toolbar_layout_filter_syncs_when_installed_on_a_real_widget(self):
+        calls = []
+        host = QtWidgets.QWidget()
+        self.addCleanup(delete, host)
+        sync_filter = _PlanToolbarLayoutSyncFilter(lambda: calls.append("sync"), host)
+        host.installEventFilter(sync_filter)
+        host.resize(200, 100)
+        host.show()
+        self.app.processEvents()
+        self.assertEqual(calls, ["sync"])
+        host.resize(300, 150)
         self.app.processEvents()
         self.assertEqual(calls, ["sync", "sync"])
 
@@ -48,17 +82,53 @@ class ComponentBuilderLayoutTests(unittest.TestCase):
         sync_filter = _PlanToolbarLayoutSyncFilter(lambda: calls.append("stale"), owner)
         sync_filter.eventFilter(owner, QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest))
         delete(owner)
+        self.assertFalse(isValid(sync_filter))
         self.app.processEvents()
         self.assertEqual(calls, [])
 
     def test_plan_ribbon_toolbar_honors_preferred_vertical_docked_height(self):
         host = QtWidgets.QMainWindow()
+        self.addCleanup(delete, host)
         toolbar = _PlanRibbonToolBar(host)
         toolbar.setOrientation(QtCore.Qt.Orientation.Vertical)
         host.addToolBar(QtCore.Qt.ToolBarArea.RightToolBarArea, toolbar)
+        self.assertFalse(toolbar.isFloating())
+        baseline_hint = toolbar.sizeHint()
+        baseline_minimum = toolbar.minimumSizeHint()
+        self.assertLess(baseline_hint.height(), 240)
+        self.assertLess(baseline_minimum.height(), 240)
         toolbar.set_preferred_docked_height(240)
-        self.assertGreaterEqual(toolbar.sizeHint().height(), 240)
-        self.assertGreaterEqual(toolbar.minimumSizeHint().height(), 240)
+        self.assertEqual(toolbar.sizeHint().height(), 240)
+        self.assertEqual(toolbar.minimumSizeHint().height(), 240)
+        self.assertEqual(toolbar.sizeHint().width(), baseline_hint.width())
+        toolbar.set_preferred_docked_height(-5)
+        self.assertEqual(toolbar.sizeHint(), baseline_hint)
+        self.assertEqual(toolbar.minimumSizeHint(), baseline_minimum)
+        toolbar.set_preferred_docked_height(240)
+        toolbar.set_preferred_docked_height(0)
+        self.assertEqual(toolbar.sizeHint(), baseline_hint)
+
+    def test_plan_ribbon_toolbar_ignores_preferred_height_unless_vertical_and_docked(
+        self,
+    ):
+        host = QtWidgets.QMainWindow()
+        self.addCleanup(delete, host)
+        docked_horizontal = _PlanRibbonToolBar(host)
+        host.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, docked_horizontal)
+        floating_vertical = _PlanRibbonToolBar()
+        self.addCleanup(delete, floating_vertical)
+        floating_vertical.setOrientation(QtCore.Qt.Orientation.Vertical)
+        self.assertTrue(floating_vertical.isFloating())
+        for name, toolbar in (
+            ("docked horizontal", docked_horizontal),
+            ("floating vertical", floating_vertical),
+        ):
+            with self.subTest(toolbar=name):
+                baseline_hint = toolbar.sizeHint()
+                baseline_minimum = toolbar.minimumSizeHint()
+                toolbar.set_preferred_docked_height(500)
+                self.assertEqual(toolbar.sizeHint(), baseline_hint)
+                self.assertEqual(toolbar.minimumSizeHint(), baseline_minimum)
 
     def _view_selector(
         self,
@@ -167,6 +237,15 @@ class ComponentBuilderLayoutTests(unittest.TestCase):
         self.assertFalse(ui.toolbar.isVisible())
         self.assertEqual(ui.view_stack.currentIndex(), 1)
         self.assertEqual(changes, [0, 1])
+        ui.view_3d_action.setEnabled(True)
+        self.assertTrue(ui.toolbar.isVisible())
+        self.assertEqual(ui.view_stack.currentIndex(), 1)
+        self.assertEqual(changes, [0, 1])
+        ui.view_3d_action.setVisible(False)
+        ui.view_3d_action.setEnabled(False)
+        self.assertFalse(ui.toolbar.isVisible())
+        self.assertEqual(ui.view_stack.currentIndex(), 1)
+        self.assertEqual(changes, [0, 1])
         ui.host.close()
 
     def test_view_selector_refresh_is_idempotent_and_preserves_valid_selection(self):
@@ -181,6 +260,7 @@ class ComponentBuilderLayoutTests(unittest.TestCase):
         ui.view_3d_action.setVisible(False)
         for _ in range(5):
             ui.controller.refresh()
+        self.assertFalse(ui.toolbar.isVisible())
         self.assertEqual(ui.view_stack.currentIndex(), 1)
         self.assertEqual(changes, [])
         ui.host.close()
@@ -210,6 +290,12 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
         self.addCleanup(lambda: delete(reference))
         native_action = reference.addAction("Select")
         native_button = reference.widgetForAction(native_action)
+        self.assertTrue(native_button.autoRaise())
+        self.assertEqual(native_button.focusPolicy(), QtCore.Qt.FocusPolicy.NoFocus)
+        self.assertEqual(
+            native_button.toolButtonStyle(),
+            QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly,
+        )
         for key in (
             "select_tool",
             "place_tool",
@@ -219,8 +305,12 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
             "zoom_in",
             "zoom_out",
         ):
-            button = self.toolbar.widgetForAction(self.item(key))
+            action = self.item(key)
+            button = self.toolbar.widgetForAction(action)
             with self.subTest(key=key):
+                self.assertIsInstance(button, QtWidgets.QToolButton)
+                self.assertIsNotNone(button.defaultAction())
+                self.assertEqual(button.defaultAction().text(), action.text())
                 self.assertEqual(button.autoRaise(), native_button.autoRaise())
                 self.assertEqual(button.focusPolicy(), native_button.focusPolicy())
                 self.assertEqual(

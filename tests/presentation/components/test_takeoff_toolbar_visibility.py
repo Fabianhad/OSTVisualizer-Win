@@ -12,6 +12,9 @@ from ost_visualizer.presentation.utils.plan_tool_registry import (
 )
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 from shiboken6 import delete, isValid
+from ost_visualizer.presentation.components.takeoff_toolbar_visibility import (
+    TakeoffToolbarVisibilityController,
+)
 import tests.integration.surfaces.test_presentation as cross_surface
 from tests.presentation.components.toolbar_visibility_support import (
     register_test_fonts as _toolbar_visibility_support_register_test_fonts,
@@ -77,6 +80,7 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
             self.assertFalse(self.item("line_annotation_tool").isVisible())
             self.assertTrue(command.isVisible())
         self.controller.apply_hidden_items(())
+        self.assertTrue(self.item("line_annotation_tool").isVisible())
         self.assertFalse(command.isEnabled())
         self.assertTrue(command.isChecked())
         self.assertEqual(triggered, [])
@@ -124,9 +128,18 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
         rest = tuple(
             s.key for s in TAKEOFF_TOOLBAR_ITEMS if s.group != "Page navigation"
         )
-        for hidden in (navigation, rest, navigation + rest):
+        self.controller.apply_hidden_items((navigation[0], rest[0]))
+        self.assertTrue(spacer.isVisible())
+        self.assertFalse(self.toolbar.isHidden())
+        self.controller.apply_hidden_items(navigation[:-1] + rest[:-1])
+        self.assertTrue(spacer.isVisible())
+        self.assertFalse(self.toolbar.isHidden())
+        for hidden in (navigation, rest):
             self.controller.apply_hidden_items(hidden)
             self.assertFalse(spacer.isVisible())
+            self.assertFalse(self.toolbar.isHidden())
+        self.controller.apply_hidden_items(navigation + rest)
+        self.assertFalse(spacer.isVisible())
         self.assertTrue(self.toolbar.isHidden())
         self.controller.apply_hidden_items(())
         self.assertFalse(self.toolbar.isHidden())
@@ -171,3 +184,22 @@ class TakeoffToolbarVisibilityTests(unittest.TestCase):
         command.setVisible(False)
         command.setVisible(True)
         self.assertFalse(self.item("dimension_tool").isVisible())
+        self.controller.apply_hidden_items(())
+        self.assertTrue(self.item("dimension_tool").isVisible())
+        command.setVisible(False)
+        self.controller.apply_hidden_items(("dimension_tool",))
+        self.controller.apply_hidden_items(())
+        self.assertFalse(self.item("dimension_tool").isVisible())
+
+    def test_constructor_rejects_bindings_that_differ_from_the_item_catalog(self):
+        actions = {
+            spec.key: QtWidgets.QWidgetAction(self.toolbar)
+            for spec in TAKEOFF_TOOLBAR_ITEMS
+        }
+        spacer = QtWidgets.QWidgetAction(self.toolbar)
+        reordered = dict(reversed(list(actions.items())))
+        missing = dict(list(actions.items())[:-1])
+        for label, bindings in (("reordered", reordered), ("missing", missing)):
+            with self.subTest(bindings=label):
+                with self.assertRaises(ValueError):
+                    TakeoffToolbarVisibilityController(self.toolbar, bindings, spacer)

@@ -790,6 +790,9 @@ class InputHandlerMixin:
                                 self._update_cursor(vp_pos)
                                 self._press_changed_selection = True
                                 _can_start_drag = True
+                if _can_start_drag and not self._editing_enabled:
+                    event.accept()
+                    return
                 if _can_start_drag:
                     if not self.request_geometry_edit_lease(set(self._selected_uids)):
                         self._clear_drag_tracking(restore_preview=True)

@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.aggregates.workspace_state_aggregate import (
@@ -64,7 +65,7 @@ class PersistentHeaderTests(unittest.TestCase):
         state = WorkspaceState()
         state.header_layouts["ordinary_table"] = HeaderLayoutState(
             widths={"name": 240, "removed": 400},
-            order=["removed", "quantity", "number"],
+            order=["removed", "quantity", "number", "name"],
             sort_column="removed",
             sort_descending=True,
         )
@@ -91,11 +92,53 @@ class PersistentHeaderTests(unittest.TestCase):
             [header.logicalIndex(i) for i in range(4)],
             [3, 0, 1, 2],
         )
-        self.assertEqual(header.sectionSize(2), 240)
+        self.assertEqual(
+            [header.sectionSize(logical) for logical in range(4)],
+            [80, 90, 240, 120],
+        )
         self.assertEqual(header.sortIndicatorSection(), 0)
         self.assertEqual(
             header.sortIndicatorOrder(), QtCore.Qt.SortOrder.AscendingOrder
         )
+        self.assertEqual(
+            self.model.state.header_layouts["ordinary_table"],
+            HeaderLayoutState(
+                widths={"name": 240, "removed": 400},
+                order=["removed", "quantity", "number", "name"],
+                sort_column="removed",
+                sort_descending=True,
+            ),
+        )
+        header.resizeSection(0, 100)
+        self.assertEqual(
+            self.model.state.header_layouts["ordinary_table"],
+            HeaderLayoutState(
+                widths={"number": 100, "added": 90, "name": 240, "quantity": 120},
+                order=["quantity", "number", "added", "name"],
+                sort_column="number",
+                sort_descending=False,
+            ),
+        )
+        del controller
+        tree.deleteLater()
+
+    def test_new_leading_column_is_placed_before_next_known_neighbor(self):
+        state = WorkspaceState()
+        state.header_layouts["ordinary_table"] = HeaderLayoutState(
+            order=["quantity", "number"]
+        )
+        self.model.update_state(state)
+        tree = self._tree()
+        controller = PersistentHeaderController(
+            tree,
+            "ordinary_table",
+            ("first", "number", "quantity"),
+            self.model,
+            sorting=False,
+            movable=True,
+        )
+        header = tree.header()
+        self.assertEqual([header.logicalIndex(i) for i in range(3)], [2, 0, 1])
         del controller
         tree.deleteLater()
 
@@ -126,8 +169,107 @@ class PersistentHeaderTests(unittest.TestCase):
         self.assertEqual(repository.saves, 3)
         controller.restore()
         self.assertEqual(repository.saves, 3)
+        self.assertEqual(
+            model.state.header_layouts["ordinary_table"],
+            HeaderLayoutState(
+                widths={"number": 80, "name": 245, "quantity": 120},
+                order=["quantity", "number", "name"],
+                sort_column="name",
+                sort_descending=True,
+            ),
+        )
+        self.assertEqual(repository.load().header_layouts, model.state.header_layouts)
         del controller
         tree.deleteLater()
+
+    def test_explicit_restore_applies_changed_stored_layout_without_persisting(self):
+        repository = _header_support__CountingWorkspaceStateRepository(WorkspaceState())
+        model = WorkspaceStateAggregate(repository)
+        tree = self._tree()
+        controller = PersistentHeaderController(
+            tree,
+            "ordinary_table",
+            ("number", "name", "quantity"),
+            model,
+            sorting=True,
+            movable=True,
+            default_sort_column="number",
+        )
+        header = tree.header()
+        state = model.state
+        state.header_layouts["ordinary_table"] = HeaderLayoutState(
+            widths={"name": 300, "quantity": 5000},
+            order=["name", "quantity", "number"],
+            sort_column="quantity",
+            sort_descending=True,
+        )
+        model.update_state(state)
+        self.assertEqual(repository.saves, 1)
+        controller.restore()
+        self.assertEqual(repository.saves, 1)
+        self.assertEqual([header.logicalIndex(i) for i in range(3)], [1, 2, 0])
+        self.assertEqual(header.sectionSize(1), 300)
+        self.assertEqual(header.sectionSize(2), 120)
+        self.assertEqual(header.sortIndicatorSection(), 2)
+        self.assertEqual(
+            header.sortIndicatorOrder(), QtCore.Qt.SortOrder.DescendingOrder
+        )
+        del controller
+        tree.deleteLater()
+
+    def test_failed_workspace_save_is_ignored_for_user_changes(self):
+        repository = _header_support__CountingWorkspaceStateRepository(WorkspaceState())
+        model = WorkspaceStateAggregate(repository)
+        tree = self._tree()
+        controller = PersistentHeaderController(
+            tree,
+            "ordinary_table",
+            ("number", "name", "quantity"),
+            model,
+            sorting=True,
+            movable=True,
+            default_sort_column="number",
+        )
+        try:
+            with mock.patch.object(
+                WorkspaceStateAggregate, "update_state", side_effect=OSError("disk")
+            ):
+                tree.header().resizeSection(1, 245)
+            self.assertEqual(tree.header().sectionSize(1), 245)
+        finally:
+            del controller
+            tree.deleteLater()
+
+    def test_invalid_semantic_columns_are_rejected(self):
+        tree = self._tree()
+        try:
+            for keys in (
+                ("number", "name"),
+                ("number", "name", "name"),
+                ("number", "", "quantity"),
+            ):
+                with self.subTest(keys=keys):
+                    with self.assertRaises(ValueError):
+                        PersistentHeaderController(
+                            tree,
+                            "ordinary_table",
+                            keys,
+                            self.model,
+                            sorting=True,
+                            movable=True,
+                        )
+            with self.assertRaises(ValueError):
+                PersistentHeaderController(
+                    tree,
+                    "ordinary_table",
+                    ("number", "name", "quantity"),
+                    self.model,
+                    sorting=True,
+                    movable=True,
+                    default_sort_column="missing",
+                )
+        finally:
+            tree.deleteLater()
 
     def test_restore_and_model_reset_reapply_state_without_persisting(self):
         state = WorkspaceState()
@@ -184,6 +326,13 @@ class PersistentHeaderTests(unittest.TestCase):
         )
         row_order = [tree.topLevelItem(i).text(0) for i in range(2)]
         tree.header().moveSection(tree.header().visualIndex(2), 0)
+        self.assertEqual([tree.header().logicalIndex(i) for i in range(3)], [2, 0, 1])
         self.assertEqual([tree.topLevelItem(i).text(0) for i in range(2)], row_order)
+        self.assertEqual(row_order, ["2", "1"])
+        self.assertFalse(tree.isSortingEnabled())
+        self.assertFalse(tree.header().isSortIndicatorShown())
+        layout = self.model.state.header_layouts["visual_order_only"]
+        self.assertEqual(layout.order, ["quantity", "number", "name"])
+        self.assertIsNone(layout.sort_column)
         del controller
         tree.deleteLater()

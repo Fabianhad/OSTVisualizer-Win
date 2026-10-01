@@ -5,6 +5,9 @@ from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
 from ost_visualizer.domain.services.uom_service import calculate_polygon_area
+from ost_visualizer.presentation.visualization.core.geometry.takeoff_geometry import (
+    compute_takeoff_footprint_vertices,
+)
 from ost_visualizer.presentation.visualization.meshing.mesh_factory import MeshFactory
 from tests.presentation.visualization.meshing.page_flip_support import (
     PAGE_HEIGHT_POINTS as _page_flip_support_PAGE_HEIGHT_POINTS,
@@ -17,6 +20,28 @@ from ost_visualizer.domain.entities import shape as shapes
 from tests.presentation.visualization.renderers.threejs.export_support import (
     _IdentityMeshCoordinateSystem as _export_support__IdentityMeshCoordinateSystem,
 )
+
+
+def _footprint(mesh):
+    return sorted(
+        (round(v[0], 6), round(v[1], 6), round(v[2], 6)) for v in mesh.vertices
+    )
+
+
+def _signed_volume(mesh):
+    total = 0.0
+    for a, b, c in mesh.faces:
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = (
+            mesh.vertices[a],
+            mesh.vertices[b],
+            mesh.vertices[c],
+        )
+        total += (
+            ax * (by * cz - bz * cy)
+            - ay * (bx * cz - bz * cx)
+            + az * (bx * cy - by * cx)
+        ) / 6.0
+    return total
 
 
 class MeshFactoryPageFlipTests(unittest.TestCase):
@@ -39,6 +64,15 @@ class MeshFactoryPageFlipTests(unittest.TestCase):
         self.assertEqual(baseline_takeoff.position, baseline_position)
         self.assertEqual(flipped_takeoff.position, flipped_position)
         self.assertEqual(toggled_off_takeoff.position, toggled_off_position)
+        # A flip mirrors about the page width (10 in): x' = -10 - x, y and z unchanged.
+        self.assertEqual(
+            _footprint(flipped),
+            sorted((round(-10.0 - x, 6), y, z) for x, y, z in _footprint(baseline)),
+        )
+        self.assertEqual(_footprint(toggled_off), _footprint(baseline))
+        # Mirroring must not turn the shell inside out.
+        self.assertAlmostEqual(_signed_volume(flipped), _signed_volume(baseline))
+        self.assertAlmostEqual(_signed_volume(baseline), -1.25)
 
     def test_vertical_and_combined_flips_mirror_asymmetric_area_mesh(self):
         baseline_takeoff, baseline_position, baseline = _page_flip_support__area_mesh()
@@ -59,6 +93,21 @@ class MeshFactoryPageFlipTests(unittest.TestCase):
         )
         self.assertEqual(vertical_takeoff.position, vertical_position)
         self.assertEqual(combined_takeoff.position, combined_position)
+        # y mirrors about the page height (5 in): y' = 5 - y; x mirrors as x' = -10 - x.
+        base_footprint = _footprint(baseline)
+        self.assertEqual(
+            _footprint(vertical),
+            sorted((x, round(5.0 - y, 6), z) for x, y, z in base_footprint),
+        )
+        self.assertEqual(
+            _footprint(combined),
+            sorted(
+                (round(-10.0 - x, 6), round(5.0 - y, 6), z)
+                for x, y, z in base_footprint
+            ),
+        )
+        for mirrored in (vertical, combined):
+            self.assertAlmostEqual(_signed_volume(mirrored), _signed_volume(baseline))
         self.assertEqual(
             calculate_polygon_area(
                 list(zip(baseline_position[::2], baseline_position[1::2]))
@@ -97,3 +146,30 @@ class ThreejsExportLayerTests(unittest.TestCase):
         y_values = [vertex[1] for vertex in mesh.vertices]
         self.assertAlmostEqual(max(x_values) - min(x_values), 35.0)
         self.assertAlmostEqual(max(y_values) - min(y_values), 35.0)
+        # Square footprints ignore depth, are centred on the takeoff point, and
+        # the 175% display size also scales the height (10 * 1.75).
+        self.assertEqual(
+            sorted(set(_footprint(mesh))),
+            [
+                (-7.5, 2.5, 0.0),
+                (-7.5, 2.5, 17.5),
+                (-7.5, 37.5, 0.0),
+                (-7.5, 37.5, 17.5),
+                (27.5, 2.5, 0.0),
+                (27.5, 2.5, 17.5),
+                (27.5, 37.5, 0.0),
+                (27.5, 37.5, 17.5),
+            ],
+        )
+        footprint_2d = compute_takeoff_footprint_vertices(
+            takeoff, condition, None, 0.1, 0.1
+        )
+        self.assertEqual(
+            (
+                min(x for x, _y in footprint_2d),
+                max(x for x, _y in footprint_2d),
+                min(y for _x, y in footprint_2d),
+                max(y for _x, y in footprint_2d),
+            ),
+            (min(x_values), max(x_values), min(y_values), max(y_values)),
+        )

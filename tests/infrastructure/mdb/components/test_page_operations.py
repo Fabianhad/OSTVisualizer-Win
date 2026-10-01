@@ -58,7 +58,6 @@ from tests.presentation.dialogs.cover_sheet.path_support import (
     _PageScaleOps as _path_support__PageScaleOps,
     _ScaleConnection as _path_support__ScaleConnection,
     _ScaleCursor as _path_support__ScaleCursor,
-    _app as _path_support__app,
 )
 from collections import namedtuple
 from contextlib import contextmanager
@@ -128,20 +127,82 @@ class PageOperationsPersistenceTests(unittest.TestCase):
             ),
             6,
         )
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*) FROM BidPages "
+                "WHERE Rotation=90 AND FlipX=-1 AND FlipY=0 AND Invert=-1 "
+                "AND Bitonal=0"
+            ).fetchone()[0],
+            row_count,
+        )
+
+    def test_page_image_adjustment_normalizes_rotation_and_leaves_other_pages_untouched(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidPages ("
+            "UID INTEGER, BidUID INTEGER, Rotation INTEGER, FlipX INTEGER, "
+            "FlipY INTEGER, Invert INTEGER, Bitonal INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, 1, ?, ?, 0, 0, 0)",
+            ((1, 0, 0), (2, 0, 0), (3, 180, -1), (4, 270, -1)),
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertTrue(
+            ops.save_page_image_adjustments(
+                "bid.mdb", ["1", "2"], 450, False, True, False, True
+            )
+        )
+        self.assertTrue(
+            ops.save_page_image_adjustments(
+                "bid.mdb", ["4"], 45, False, False, False, False
+            )
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, Rotation, FlipX, FlipY, Invert, Bitonal "
+                "FROM BidPages ORDER BY UID"
+            ).fetchall(),
+            [
+                (1, 90, 0, -1, 0, -1),
+                (2, 90, 0, -1, 0, -1),
+                (3, 180, -1, 0, 0, 0),
+                (4, 0, 0, 0, 0, 0),
+            ],
+        )
 
 
 class PageOperationsCoverSheetPathTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = _path_support__app()
-
-    def tearDown(self):
-        self.app.processEvents()
-
     def test_page_scale_save_uses_shared_content_rescale(self):
         ops = _path_support__PageScaleOps(old_sf1=0.125, old_sf2=12.0)
         self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.25, 12.0))
         self.assertEqual(ops.rescale_calls, [(11, 0.5)])
+        self.assertEqual(
+            [
+                args
+                for query, args in ops.conn.cursor_obj.calls
+                if query.startswith("UPDATE [BidPages] SET [ScaleFactor1]")
+            ],
+            [(0.25, 12.0, 11)],
+        )
+        self.assertIsNone(ops.conn.exit_args[-1][0])
+
+    def test_page_scale_save_with_unchanged_calibration_skips_content_rescale(self):
+        ops = _path_support__PageScaleOps(old_sf1=0.125, old_sf2=12.0)
+        self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.125, 12.0))
+        self.assertEqual(ops.rescale_calls, [])
+        self.assertEqual(
+            [
+                args
+                for query, args in ops.conn.cursor_obj.calls
+                if query.startswith("UPDATE [BidPages] SET [ScaleFactor1]")
+            ],
+            [(0.125, 12.0, 11)],
+        )
 
     def test_page_scale_save_rejects_invalid_overlay_calibration(self):
         cases = (
@@ -165,6 +226,13 @@ class PageOperationsCoverSheetPathTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(ops.rescale_calls, [])
+                self.assertFalse(
+                    any(
+                        query.startswith("UPDATE [BidPages] SET [ScaleFactor1]")
+                        for query, _args in ops.conn.cursor_obj.calls
+                    )
+                )
+                self.assertIs(ops.conn.exit_args[-1][0], ValueError)
 
     def test_page_scale_change_rescales_overlay_rect_and_offsets(self):
         ops = _path_support__OverlayScaleOps()
@@ -184,12 +252,43 @@ class PageOperationsCoverSheetPathTests(unittest.TestCase):
                 )
             ],
         )
+        self.assertEqual(
+            [
+                args
+                for query, args in ops.conn.cursor_obj.calls
+                if query.startswith("UPDATE [BidPages] SET [ScaleFactor1]")
+            ],
+            [(0.125, 12.0, 11)],
+        )
 
     def test_page_scale_change_preserves_native_empty_overlay_marker(self):
         ops = _path_support__OverlayScaleOps(overlay_rect="*")
         self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.125, 12.0))
         self.assertEqual(ops.position_rescales, [(11, 1.5)])
         self.assertEqual(ops.updates, [])
+
+    def test_page_scale_change_leaves_absent_or_zero_size_overlay_rect_untouched(self):
+        for overlay_rect in (None, "", "0.0,0.0,0.0,0.0", "5,5,0,100", "5,5,100,0"):
+            with self.subTest(overlay_rect=overlay_rect):
+                ops = _path_support__OverlayScaleOps(overlay_rect=overlay_rect)
+                self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.125, 12.0))
+                self.assertEqual(ops.position_rescales, [(11, 1.5)])
+                self.assertEqual(ops.updates, [])
+
+    def test_page_scale_change_rejects_malformed_overlay_rect_before_any_write(self):
+        for overlay_rect in ("0,0,2688", "0,0,abc,1920", "0,0,-1,1920"):
+            with self.subTest(overlay_rect=overlay_rect):
+                ops = _path_support__OverlayScaleOps(overlay_rect=overlay_rect)
+                self.assertFalse(ops.save_page_scale("bid.mdb", "11", 0.125, 12.0))
+                self.assertEqual(ops.position_rescales, [])
+                self.assertEqual(ops.updates, [])
+                self.assertFalse(
+                    any(
+                        query.startswith("UPDATE [BidPages] SET [ScaleFactor1]")
+                        for query, _args in ops.conn.cursor_obj.calls
+                    )
+                )
+                self.assertIs(ops.conn.exit_args[-1][0], ValueError)
 
     def test_page_scale_position_failure_aborts_scale_update(self):
         ops = _path_support__FailingPositionScaleOps(old_sf1=0.125, old_sf2=12.0)
@@ -274,6 +373,39 @@ class PageOperationsCoverSheetPathTests(unittest.TestCase):
         )
         self.assertEqual(ops.updates, [])
 
+    def test_saving_same_overlay_image_with_other_case_preserves_rectangle(self):
+        ops = _path_support__PageOverlayOps(
+            current_overlay_path=r"c:\ocs documents\ost\OVERLAY.PDF"
+        )
+        self.assertTrue(
+            ops.save_page_overlay_image(
+                "bid.mdb",
+                "11",
+                r"C:\OCS Documents\OST\overlay.pdf",
+            )
+        )
+        self.assertEqual(ops.updates, [])
+
+    def test_replacing_overlay_with_different_image_resets_overlay_owned_state(self):
+        ops = _path_support__PageOverlayOps(
+            current_overlay_path=r"C:\Plans\old_overlay.pdf"
+        )
+        self.assertTrue(
+            ops.save_page_overlay_image("bid.mdb", "11", r"C:\Plans\replacement.pdf")
+        )
+        self.assertEqual(
+            ops.updates[0]["values"],
+            {
+                "OverlayImagePath": r"C:\Plans\replacement.pdf",
+                "OverlayRect": "0.000000,0.000000,4032.000000,2880.000000",
+                "OverlayOffsetX": 0.0,
+                "OverlayOffsetY": 0.0,
+                "OverlayRotation": 0.0,
+                "OverlayResized": 0,
+                "DeskewRotationOverlay": 0.0,
+            },
+        )
+
     def test_saving_overlay_rect_mirrors_native_translation_fields(self):
         ops = _path_support__PageOverlayOps()
         self.assertTrue(
@@ -309,6 +441,24 @@ class PageOperationsCoverSheetPathTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(ops.updates, [])
+                self.assertIs(ops.conn.exit_args[-1][0], ValueError)
+
+    def test_saving_overlay_rect_rejects_invalid_rectangle_before_opening_database(
+        self,
+    ):
+        for overlay_rect in (
+            (0.0, 0.0, -1.0, 100.0),
+            (0.0, 0.0, 100.0, -1.0),
+            (0.0, 0.0, float("nan"), 100.0),
+            (0.0, 0.0, 100.0),
+        ):
+            with self.subTest(overlay_rect=overlay_rect):
+                ops = _path_support__PageOverlayOps()
+                self.assertFalse(
+                    ops.save_page_overlay_rect("bid.mdb", "11", overlay_rect)
+                )
+                self.assertEqual(ops.updates, [])
+                self.assertEqual(ops.conn.enter_count, 0)
 
     def test_saving_overlay_rect_rejects_missing_page(self):
         ops = _path_support__PageOverlayOps(page_exists=False)
@@ -320,41 +470,59 @@ class PageOperationsCoverSheetPathTests(unittest.TestCase):
             )
         )
         self.assertEqual(ops.updates, [])
+        self.assertIs(ops.conn.exit_args[-1][0], ValueError)
 
 
 class PageOperationsRelationshipTests(unittest.TestCase):
+    @staticmethod
+    def _page_area_connection(settings_rows):
+        connection = sqlite3.connect(":memory:")
+        _import_export_support__create_import_schema(connection)
+        connection.execute("INSERT INTO Bids (UID, JobName) VALUES (1, 'Bid')")
+        connection.execute(
+            "INSERT INTO BidPages (UID, BidUID, Name) VALUES (20, 1, 'Sheet')"
+        )
+        connection.executemany(
+            "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (?, 1, ?)",
+            ((10, "Area 1"), (11, "Area 2"), (12, "Area 3")),
+        )
+        connection.executemany(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (?, 20, ?, ?)",
+            settings_rows,
+        )
+        return connection
+
+    @staticmethod
+    def _page_settings(connection):
+        return connection.execute(
+            "SELECT UID, BidAreaUID, BidAreaSelected FROM BidPageSettings "
+            "WHERE BidPageUID=20 ORDER BY UID"
+        ).fetchall()
+
     def test_page_area_save_retains_highest_uid_when_duplicates_tie(self):
-        class _Cursor:
-            def __init__(self):
-                self.executed = []
+        connection = self._page_area_connection(((30, 10, 2), (31, 12, 2), (32, 10, 0)))
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        self.assertTrue(writer.save_page_area("target.mdb", "20", "11"))
+        self.assertEqual(self._page_settings(connection), [(31, 11, 2), (32, 10, 0)])
 
-            def execute(self, sql, *params):
-                self.executed.append((sql, params))
-                return self
+    def test_page_area_save_prefers_exact_selection_value_over_other_selected_rows(
+        self,
+    ):
+        connection = self._page_area_connection(((40, 10, 1), (41, 12, 2)))
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        self.assertTrue(writer.save_page_area("target.mdb", "20", "11"))
+        self.assertEqual(self._page_settings(connection), [(41, 11, 2)])
 
-            @staticmethod
-            def fetchall():
-                return [
-                    SimpleNamespace(UID=31, BidAreaSelected=2),
-                    SimpleNamespace(UID=30, BidAreaSelected=2),
-                ]
+    def test_page_area_save_unassigned_replaces_selection_with_null_area_marker(self):
+        connection = self._page_area_connection(((50, 10, 2), (51, 12, 1), (52, 10, 0)))
+        writer = _import_export_support__SqliteMdbWriter(connection)
+        self.assertTrue(writer.save_page_area("target.mdb", "20", "0"))
+        self.assertEqual(self._page_settings(connection), [(51, None, 1), (52, 10, 0)])
 
-        cursor = _Cursor()
-        _import_export_support__SqliteMdbWriter(
-            sqlite3.connect(":memory:")
-        )._replace_page_area_selection(
-            cursor,
-            SimpleNamespace(column_exists=lambda _table, _column: True),
-            20,
-            11,
-            2,
-        )
-        update = next(
-            params for sql, params in cursor.executed if sql.startswith("UPDATE")
-        )
-        self.assertEqual(update[-1], 31)
-
-    def test_save_page_area_handles_duplicate_selected_settings_rows(self):
+    def test_save_page_area_replaces_selection_without_violating_unique_selected_index(
+        self,
+    ):
         connection = sqlite3.connect(":memory:")
         _import_export_support__create_import_schema(
             connection, unique_page_selected=True
@@ -375,15 +543,15 @@ class PageOperationsRelationshipTests(unittest.TestCase):
         )
         connection.execute(
             "INSERT INTO BidPageSettings "
-            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (2, 20, 11, 2)"
+            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (2, 20, 10, 2)"
         )
         writer = _import_export_support__SqliteMdbWriter(connection)
         self.assertTrue(writer.save_page_area("target.mdb", "20", "11"))
         rows = connection.execute(
-            "SELECT BidAreaUID, BidAreaSelected FROM BidPageSettings "
+            "SELECT UID, BidAreaUID, BidAreaSelected FROM BidPageSettings "
             "WHERE BidPageUID=20 ORDER BY UID"
         ).fetchall()
-        self.assertEqual(rows, [(11, 2)])
+        self.assertEqual(rows, [(2, 11, 2)])
 
     def test_save_page_area_rejects_area_from_another_bid(self):
         connection = sqlite3.connect(":memory:")
@@ -400,14 +568,27 @@ class PageOperationsRelationshipTests(unittest.TestCase):
         connection.execute(
             "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (10, 2, 'Other')"
         )
-        connection.commit()
-        self.assertFalse(
-            _import_export_support__SqliteMdbWriter(connection).save_page_area(
-                "target.mdb", "20", "10"
-            )
+        connection.execute(
+            "INSERT INTO BidAreas (UID, BidUID, Name) VALUES (11, 1, 'Own')"
         )
+        connection.execute(
+            "INSERT INTO BidPageSettings "
+            "(UID, BidPageUID, BidAreaUID, BidAreaSelected) VALUES (1, 20, 11, 2)"
+        )
+        connection.commit()
+        with self.assertLogs("test", level="ERROR") as logs:
+            self.assertFalse(
+                _import_export_support__SqliteMdbWriter(connection).save_page_area(
+                    "target.mdb", "20", "10"
+                )
+            )
+        self.assertIn("BidAreas.UID=10 does not belong to Bids.UID=1", logs.output[0])
         self.assertEqual(
-            connection.execute("SELECT * FROM BidPageSettings").fetchall(), []
+            connection.execute(
+                "SELECT UID, BidPageUID, BidAreaUID, BidAreaSelected "
+                "FROM BidPageSettings"
+            ).fetchall(),
+            [(1, 20, 11, 2)],
         )
 
     def test_save_page_area_normalizes_duplicate_physical_uids(self):
@@ -442,12 +623,12 @@ class PageOperationsRelationshipTests(unittest.TestCase):
                 "target.mdb", "20", "11"
             )
         )
-        selected_rows = connection.execute(
+        rows = connection.execute(
             "SELECT UID, BidAreaUID, BidAreaSelected FROM BidPageSettings "
-            "WHERE BidPageUID=20 AND BidAreaSelected > 0"
+            "WHERE BidPageUID=20"
         ).fetchall()
-        self.assertEqual(len(selected_rows), 1)
-        self.assertEqual(selected_rows[0][1:], (11, 2))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][1:], (11, 2))
 
     def test_clear_page_area_preserves_nonselected_page_settings_rows(self):
         connection = sqlite3.connect(":memory:")
@@ -491,10 +672,7 @@ class PageScalePositionSerializationTests(unittest.TestCase):
         ops._rescale_page_positions(
             cursor, _scale_position_support__Schema("BidTexts"), page_uid=3, factor=0.5
         )
-        self.assertEqual(
-            cursor.updates,
-            [(serialize_position_for_table("BidTexts", [0.5, 1.0, 1.5, 2.0]), 7)],
-        )
+        self.assertEqual(cursor.updates, [("0.5;1.0;1.5;2.0\n", 7)])
 
     def test_page_scale_rescale_writes_binary_payload_for_binary_position_tables(self):
         ops = _scale_position_support__PageOps()
@@ -508,15 +686,7 @@ class PageScalePositionSerializationTests(unittest.TestCase):
             page_uid=3,
             factor=0.5,
         )
-        self.assertEqual(
-            cursor.updates,
-            [
-                (
-                    serialize_position_for_table("BidTakeoffs", [0.5, 1.0, 1.5, 2.0]),
-                    7,
-                )
-            ],
-        )
+        self.assertEqual(cursor.updates, [(b"0.5;1;1.5;2\n", 7)])
 
     def test_legend_xml_coordinates_rescale_without_changing_metadata(self):
         import xml.etree.ElementTree as ET
@@ -540,7 +710,12 @@ class PageScalePositionSerializationTests(unittest.TestCase):
         self.assertIsInstance(scaled, bytes)
         self.assertEqual(uid, 11641)
         before, after = ET.fromstring(payload), ET.fromstring(scaled)
+        self.assertEqual(
+            [element.tag for element in after.iter()],
+            [element.tag for element in before.iter()],
+        )
         for old, new in zip(before.iter(), after.iter()):
+            self.assertEqual(set(new.attrib), set(old.attrib))
             for key, value in old.attrib.items():
                 if key in ("dX", "dY"):
                     self.assertAlmostEqual(
@@ -548,6 +723,11 @@ class PageScalePositionSerializationTests(unittest.TestCase):
                     )
                 else:
                     self.assertEqual(new.attrib[key], value)
+        self.assertEqual(
+            after.attrib, {"dX": "61.608", "dY": "2045.358", "Visible": "255"}
+        )
+        self.assertEqual(after.find("Legend").attrib["dX"], "61.608")
+        self.assertEqual(after.find("Legend").attrib["dY"], "61.608")
 
     def test_invalid_legend_xml_rejects_scale_instead_of_partially_rewriting_it(self):
         from xml.etree.ElementTree import ParseError
@@ -614,7 +794,14 @@ class PageScalePositionSerializationTests(unittest.TestCase):
                     BidAnnotation("7", kind, position=scaled).stored_rotation_rad,
                     BidAnnotation("7", kind, position=position).stored_rotation_rad,
                 )
-                self.assertEqual(scaled[1], position[1] * 2)
+                rotation_index = 0 if kind == "ink" else 4
+                self.assertEqual(
+                    scaled,
+                    [
+                        value if index == rotation_index else value * 2
+                        for index, value in enumerate(position)
+                    ],
+                )
 
     def test_large_coordinate_round_trip_retains_three_decimal_precision(self):
         payload = b"123456.789;987654.321\n"
@@ -669,8 +856,13 @@ class PageScalePositionSerializationTests(unittest.TestCase):
                     cursor, _scale_position_support__Schema(table), 3, 2.0
                 )
                 self.assertEqual(cursor.updates, [])
-                self.assertEqual(len(ops.logger.warnings), 1)
-                self.assertIn(table, ops.logger.warnings[0])
+                self.assertEqual(
+                    ops.logger.warnings,
+                    [
+                        f"Skipping page-scale rescale for {table} UID 7 "
+                        "because Position is not numeric"
+                    ],
+                )
                 self.assertEqual(cursor.rows[0].Position, payload)
 
     def test_page_scale_rescale_skips_unparseable_position_payload(self):
@@ -682,6 +874,10 @@ class PageScalePositionSerializationTests(unittest.TestCase):
             cursor, _scale_position_support__Schema("BidTexts"), page_uid=3, factor=0.5
         )
         self.assertEqual(cursor.updates, [])
-        self.assertEqual(len(ops.logger.warnings), 1)
-        self.assertIn("BidTexts", ops.logger.warnings[0])
-        self.assertIn("8", ops.logger.warnings[0])
+        self.assertEqual(
+            ops.logger.warnings,
+            [
+                "Skipping page-scale rescale for BidTexts UID 8 "
+                "because Position is not numeric"
+            ],
+        )

@@ -58,3 +58,43 @@ class IdentityAllocationPersistenceTests(unittest.TestCase):
                     ),
                     9,
                 )
+
+    def test_uid_allocation_ignores_empty_zero_null_and_lower_references(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, MasterPageUID INTEGER)")
+        ops = _SqliteDuplicateOps(conn)
+        cursor = _SqliteCursorWrapper(conn)
+        self.assertEqual(
+            ops._next_uid_preserving_references(cursor, ops._schema_ref, "BidPages"), 1
+        )
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, ?)", ((3, 0), (4, None), (5, 2))
+        )
+        self.assertEqual(
+            ops._next_uid_preserving_references(cursor, ops._schema_ref, "BidPages"), 6
+        )
+
+    def test_bulk_uid_allocation_returns_contiguous_range_past_references(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, MasterPageUID INTEGER)")
+        conn.execute("INSERT INTO BidPages VALUES (7, 12)")
+        ops = _SqliteDuplicateOps(conn)
+        cursor = _SqliteCursorWrapper(conn)
+        self.assertEqual(
+            list(
+                ops._next_uids_preserving_references(
+                    cursor, ops._schema_ref, "BidPages", 3
+                )
+            ),
+            [13, 14, 15],
+        )
+        for count in (0, -2):
+            with self.subTest(count=count):
+                self.assertEqual(
+                    list(
+                        ops._next_uids_preserving_references(
+                            cursor, ops._schema_ref, "BidPages", count
+                        )
+                    ),
+                    [],
+                )

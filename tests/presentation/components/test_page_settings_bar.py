@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
@@ -43,6 +43,8 @@ class PageAreaContinuationTests(unittest.TestCase):
             "unprojected_replacement",
             "close",
             "same_page_projection",
+            "area_projection_replaced",
+            "selected_area_missing",
         ):
             for accepted in (False, True):
                 with self.subTest(transition=transition, accepted=accepted):
@@ -53,7 +55,7 @@ class PageAreaContinuationTests(unittest.TestCase):
                         BidArea("b", "bid", "", "B", 1),
                     ]
                     pages = {"page": SimpleNamespace(uid="page")}
-                    load = Mock(return_value=areas)
+                    load = Mock(side_effect=lambda *_args: list(areas))
                     bar = PageSettingsBar(
                         Mock(),
                         Mock(),
@@ -77,6 +79,8 @@ class PageAreaContinuationTests(unittest.TestCase):
                             pages["page"] = SimpleNamespace(uid="page")
                         elif transition == "same_page_projection":
                             bar.load_page("page", 1, 1, "a")
+                        elif transition == "area_projection_replaced":
+                            bar.load_bid_areas(BidRef("db", "bid"), areas=areas)
                         elif transition == "replacement":
                             pages["page"] = SimpleNamespace(uid="page")
                             bar.load_page("page", 2, 3, "b")
@@ -90,6 +94,12 @@ class PageAreaContinuationTests(unittest.TestCase):
                             bar.set_interactive(False)
                         if transition != "clear":
                             bar.area_combo.set_current_area_uid("b")
+                        if accepted:
+                            child._selected_uid = (
+                                "missing"
+                                if transition == "selected_area_missing"
+                                else "a"
+                            )
                         load.reset_mock()
                         return (
                             QtWidgets.QDialog.DialogCode.Accepted
@@ -107,7 +117,12 @@ class PageAreaContinuationTests(unittest.TestCase):
                             load.call_count,
                             (
                                 1
-                                if transition in ("current", "same_page_projection")
+                                if transition
+                                in (
+                                    "current",
+                                    "same_page_projection",
+                                    "selected_area_missing",
+                                )
                                 else 0
                             ),
                         )
@@ -118,6 +133,14 @@ class PageAreaContinuationTests(unittest.TestCase):
                         ):
                             self.assertEqual(bar.get_current_area_uid(), "b")
                         if transition not in ("current", "same_page_projection"):
+                            changes.assert_not_called()
+                        elif accepted:
+                            self.assertEqual(bar.get_current_area_uid(), "a")
+                            self.assertEqual(
+                                changes.call_args_list, [call("db", "page", "a")]
+                            )
+                        else:
+                            self.assertEqual(bar.get_current_area_uid(), "b")
                             changes.assert_not_called()
                     finally:
                         delete(bar)
@@ -153,6 +176,8 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.bar.custom_scale_requested.connect(
             lambda *args: custom_requests.append(args)
         )
+        index_changes = []
+        self.bar.scale_combo.currentIndexChanged.connect(index_changes.append)
         initial_count = self.bar.scale_combo.count()
         for _ in range(12):
             self.bar.load_page("custom-1", 0.26, 12.0, "")
@@ -160,6 +185,7 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.assertEqual(self.bar.scale_combo.count(), initial_count)
         self.assertEqual(scale_requests, [])
         self.assertEqual(custom_requests, [])
+        self.assertEqual(index_changes, [])
         self.bar.load_page("custom-2", 0.3751, 12.0, "")
         self.assertEqual(self.bar.scale_combo.currentText(), '0.3751" = 1\' 0"')
         self.assertEqual(self.bar.scale_combo.count(), initial_count)
@@ -192,6 +218,11 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.bar.scale_combo.blockSignals(True)
         self.bar.clear_bid()
         self.assertTrue(self.bar.scale_combo.signalsBlocked())
+        self.assertEqual(
+            self.bar.scale_combo.itemText(self.bar.scale_combo.count() - 1),
+            "Custom scale",
+        )
+        self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
         self.bar.scale_combo.blockSignals(False)
         self.bar.load_page("custom", 0.26, 12.0, "")
         self.assertEqual(self.bar.scale_combo.currentText(), '0.26" = 1\' 0"')
@@ -210,6 +241,14 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
             self.assertTrue(self.bar.area_combo.signalsBlocked())
         finally:
             self.bar.area_combo.blockSignals(False)
+        self.bar.load_bid_areas(
+            BidRef("db.mdb", "bid-1"),
+            areas=[BidArea("area-1", "bid-1", "", "Area 1", 0)],
+        )
+        self.bar.load_page("page-1", 1.0, 1.0, "area-1")
+        self.bar.clear_bid()
+        self.assertFalse(self.bar.area_combo.signalsBlocked())
+        self.assertFalse(self.bar.scale_combo.signalsBlocked())
 
     def test_area_usage_is_owned_and_cleared_with_bid_state(self):
         bid_usage = {"area-1"}
@@ -245,6 +284,7 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
         self.bar.set_interactive(True)
         self.bar.clear_page()
         self.assertEqual(self.bar._bid_ref, bid_ref)
+        self.assertIn("area-1", self.bar.area_combo._area_items)
         self.assertIsNone(self.bar._page_uid)
         self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
         self.assertEqual(self.bar.area_combo.get_current_area_uid(), "")
@@ -259,11 +299,21 @@ class PageSettingsScaleDisplayTests(unittest.TestCase):
             (None, 12.0),
             (0.0, 12.0),
             (0.26, 0.0),
+            (-0.26, 12.0),
+            (0.26, -12.0),
             (float("nan"), 12.0),
+            (0.26, float("inf")),
+            ("not-a-number", 12.0),
         ):
-            self.bar.load_page("invalid", sf1, sf2, "")
-            self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
-            self.assertEqual(self.bar.scale_combo.currentText(), "")
+            with self.subTest(sf1=sf1, sf2=sf2):
+                self.bar.load_page("invalid", sf1, sf2, "")
+                self.assertEqual(self.bar.scale_combo.currentIndex(), -1)
+                self.assertEqual(self.bar.scale_combo.currentText(), "")
+                self.assertEqual(self.bar._current_scale_index, -1)
+                self.assertEqual(
+                    self.bar.scale_combo.itemText(self.bar.scale_combo.count() - 1),
+                    "Custom scale",
+                )
 
 
 class MasterDataDialogButtonModeTests(unittest.TestCase):
@@ -308,6 +358,95 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(custom_requests, [("db.mdb", "page-1")])
         finally:
             bar.deleteLater()
+
+    def test_page_settings_custom_scale_activation_restores_previous_scale(self):
+        bar = _master_data_support_MasterPageSettingsBar(
+            _master_data_support_FakeIconProvider(),
+            event_bus=EventBus(),
+            refresh_areas_fn=lambda _file_path: None,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
+        )
+        bar.load_bid_areas(BidRef("db.mdb", "bid-1"), areas=[])
+        bar.load_page("page-1", 0.125, 12.0, "")
+        bar.set_interactive(True)
+        scale_requests = []
+        custom_requests = []
+        bar.scale_change_requested.connect(
+            lambda *args: scale_requests.append(tuple(args))
+        )
+        bar.custom_scale_requested.connect(
+            lambda *args: custom_requests.append(tuple(args))
+        )
+        try:
+            custom_index = bar.scale_combo.count() - 1
+            previous_index = bar.scale_combo.currentIndex()
+            self.assertEqual(bar.scale_combo.currentText(), '1/8" = 1\' 0"')
+            bar.scale_combo.setCurrentIndex(custom_index)
+            bar.scale_combo.activated.emit(custom_index)
+            self.assertEqual(bar.scale_combo.currentIndex(), previous_index)
+            self.assertEqual(custom_requests, [("db.mdb", "page-1")])
+            self.assertEqual(scale_requests, [])
+        finally:
+            bar.deleteLater()
+
+    def test_page_settings_scale_and_area_activation_are_ignored_when_not_editable(
+        self,
+    ):
+        for blocker in ("access", "not_interactive", "no_page", "no_bid"):
+            with self.subTest(blocker=blocker):
+                allowed = {"value": blocker != "access"}
+                bar = _master_data_support_MasterPageSettingsBar(
+                    _master_data_support_FakeIconProvider(),
+                    event_bus=EventBus(),
+                    refresh_areas_fn=lambda _file_path: None,
+                    ui_access_manager=SimpleNamespace(
+                        is_allowed=lambda _feature: allowed["value"]
+                    ),
+                    get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
+                )
+                scale_requests = []
+                custom_requests = []
+                area_requests = []
+                bar.scale_change_requested.connect(
+                    lambda *args: scale_requests.append(tuple(args))
+                )
+                bar.custom_scale_requested.connect(
+                    lambda *args: custom_requests.append(tuple(args))
+                )
+                bar.area_change_requested.connect(
+                    lambda *args: area_requests.append(tuple(args))
+                )
+                try:
+                    if blocker != "no_bid":
+                        bar.load_bid_areas(
+                            BidRef("db.mdb", "bid-1"),
+                            areas=[BidArea("area-1", "bid-1", "", "Area 1", 0)],
+                        )
+                    if blocker != "no_page":
+                        bar.load_page("page-1", 1.0, 1.0, "")
+                    bar.set_interactive(blocker != "not_interactive")
+                    custom_index = bar.scale_combo.count() - 1
+                    bar.scale_combo.activated.emit(0)
+                    bar.scale_combo.activated.emit(custom_index)
+                    bar.area_combo.area_activated.emit("area-1")
+                    self.assertEqual(scale_requests, [])
+                    self.assertEqual(custom_requests, [])
+                    self.assertEqual(area_requests, [])
+                    allowed["value"] = True
+                    if blocker == "access":
+                        bar.load_bid_areas(
+                            BidRef("db.mdb", "bid-1"),
+                            areas=[BidArea("area-1", "bid-1", "", "Area 1", 0)],
+                        )
+                        bar.load_page("page-1", 1.0, 1.0, "")
+                        bar.set_interactive(True)
+                        bar.area_combo.area_activated.emit("area-1")
+                        self.assertEqual(
+                            area_requests, [("db.mdb", "page-1", "area-1")]
+                        )
+                finally:
+                    bar.deleteLater()
 
     @classmethod
     def setUpClass(cls):
@@ -426,6 +565,8 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             finally:
                 page_settings_bar.BidAreaPickerDialog = old_dialog
                 page_settings_bar.exec_with_ost_blocking = old_exec
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual(save_calls[0][:2], ("db.mdb", "bid-1"))
             self.assertEqual(
                 save_calls[0][3]["publish_database_refreshed_after_write"], False
             )
@@ -434,7 +575,8 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(area_events[0]["database_id"], "db.mdb")
             self.assertEqual(area_events[0]["bid_uid"], "bid-1")
             self.assertTrue(area_events[0]["local_completion"])
-            self.assertIn(("db.mdb", "bid-1"), load_calls)
+            self.assertTrue(area_events[0]["page_controls_projected"])
+            self.assertEqual(load_calls, [("db.mdb", "bid-1")] * 2)
             self.assertEqual(workspace_models, [bar._workspace_state_model])
             self.assertEqual(bar.area_combo.get_current_area_uid(), "area-2")
             self.assertEqual(area_changes, [("db.mdb", "page-1", "area-2")])
@@ -527,10 +669,11 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
         bar.load_page("page-1", 1.0, 1.0, "")
         bar.set_interactive(True)
+        picker_cleanups = []
 
         class DestroyingPicker(QtWidgets.QDialog):
             def __init__(self, *_args, parent=None, **_kwargs):
-                super().__init__(parent)
+                super().__init__(None)
 
             def get_selected_uid(self):
                 raise AssertionError("destroyed area picker must not be read")
@@ -539,7 +682,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 raise AssertionError("destroyed area picker must not be read")
 
             def cleanup(self):
-                pass
+                picker_cleanups.append(True)
 
         def execute(picker, _event_bus):
             delete(bar)
@@ -558,6 +701,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             ),
         ):
             bar._on_area_browse()
+        self.assertEqual(picker_cleanups, [True])
 
     def test_page_settings_area_picker_uses_async_save_without_sync_refresh(self):
         async_calls = []
@@ -637,7 +781,171 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 page_settings_bar.exec_with_ost_blocking = old_exec
             self.assertEqual(len(async_calls), 1)
             self.assertEqual(async_calls[0][0], BidRef("sql-database", "bid-1"))
+            self.assertEqual(
+                async_calls[0][1], {"new": [{"uid": "new-0", "name": "Area 2"}]}
+            )
             self.assertEqual(sync_calls, [])
             self.assertEqual(refresh_calls, [])
+            self.assertEqual(bar.area_combo.get_current_area_uid(), "area-2")
+        finally:
+            bar.deleteLater()
+
+    def test_page_settings_area_picker_uses_sync_save_when_database_is_not_async(self):
+        captured = {}
+        sync_calls = []
+        async_calls = []
+
+        class CapturingPicker:
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                used_uids_fn=None,
+                on_saved_fn=None,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
+                captured["save_fn"] = save_fn
+                captured["save_async_fn"] = save_async_fn
+
+            def get_selected_uid(self):
+                return None
+
+            def has_saved_changes(self):
+                return False
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        def exec_picker(picker, _event_bus):
+            return QtWidgets.QDialog.DialogCode.Rejected
+
+        bar = _master_data_support_MasterPageSettingsBar(
+            _master_data_support_FakeIconProvider(),
+            event_bus=EventBus(),
+            load_areas_fn=lambda _file_path, _bid_uid: [],
+            save_areas_fn=lambda *args, **kwargs: sync_calls.append((args, kwargs)),
+            save_areas_async_fn=lambda *args: async_calls.append(args),
+            uses_async_areas_fn=lambda file_path: file_path == "sql-database",
+            refresh_areas_fn=lambda *_args: [],
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
+        )
+        bar.load_bid_areas(BidRef("local.mdb", "bid-1"))
+        bar.load_page("page-1", 1.0, 1.0, "")
+        bar.set_interactive(True)
+        try:
+            with (
+                patch(
+                    "ost_visualizer.presentation.components.page_settings_bar."
+                    "BidAreaPickerDialog",
+                    CapturingPicker,
+                ),
+                patch(
+                    "ost_visualizer.presentation.components.page_settings_bar."
+                    "exec_with_ost_blocking",
+                    exec_picker,
+                ),
+            ):
+                bar._on_area_browse()
+            self.assertIsNotNone(captured["save_fn"])
+            self.assertIsNone(captured["save_async_fn"])
+            self.assertEqual(async_calls, [])
+        finally:
+            bar.deleteLater()
+
+    def test_page_settings_area_picker_refresh_failure_warns_and_keeps_area(self):
+        area_events = []
+        event_bus = EventBus()
+        event_bus.subscribe(
+            AppEvents.REMOTE_AREAS_CHANGED, lambda **event: area_events.append(event)
+        )
+        captured = {}
+        results = []
+
+        class CapturingPicker:
+            def __init__(
+                self,
+                icon_provider,
+                workspace_state_model,
+                parent=None,
+                bid_areas=None,
+                save_fn=None,
+                used_uids=None,
+                used_uids_fn=None,
+                on_saved_fn=None,
+                bid_ref=None,
+                *,
+                save_async_fn=None,
+            ):
+                captured["save_fn"] = save_fn
+                captured["on_saved_fn"] = on_saved_fn
+
+            def get_selected_uid(self):
+                return "area-2"
+
+            def has_saved_changes(self):
+                return True
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        def exec_picker(picker, _event_bus):
+            results.append(captured["save_fn"](SimpleNamespace(deleted_uids=[])))
+            captured["on_saved_fn"]()
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        bar = _master_data_support_MasterPageSettingsBar(
+            _master_data_support_FakeIconProvider(),
+            event_bus=event_bus,
+            load_areas_fn=lambda _file_path, _bid_uid: [
+                BidArea("area-1", "bid-1", "", "Area 1", 0)
+            ],
+            save_areas_fn=lambda *args, **kwargs: {"new_0": "area-2"},
+            refresh_areas_fn=lambda *_args: None,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            get_page_fn=lambda uid, pages={}: pages.setdefault(uid, object()),
+        )
+        area_changes = []
+        bar.area_change_requested.connect(lambda *args: area_changes.append(args))
+        bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
+        bar.load_page("page-1", 1.0, 1.0, "area-1")
+        bar.set_interactive(True)
+        try:
+            with (
+                patch(
+                    "ost_visualizer.presentation.components.page_settings_bar."
+                    "BidAreaPickerDialog",
+                    CapturingPicker,
+                ),
+                patch(
+                    "ost_visualizer.presentation.components.page_settings_bar."
+                    "exec_with_ost_blocking",
+                    exec_picker,
+                ),
+                patch(
+                    "ost_visualizer.presentation.components.page_settings_bar."
+                    "show_warning"
+                ) as warning,
+            ):
+                bar._on_area_browse()
+            warning.assert_called_once()
+            self.assertEqual(warning.call_args.args[1], "Bid Areas")
+            self.assertTrue(results[0].write_success)
+            self.assertFalse(results[0].reload_success)
+            self.assertEqual(area_events, [])
+            self.assertEqual(area_changes, [])
+            self.assertEqual(bar.area_combo.get_current_area_uid(), "area-1")
         finally:
             bar.deleteLater()

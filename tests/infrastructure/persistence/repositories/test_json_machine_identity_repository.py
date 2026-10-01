@@ -36,6 +36,10 @@ class JsonMachineIdentityRepositoryTests(unittest.TestCase):
         self.assertEqual(reopened.load(), self.identity)
         self.assertEqual(reopened.create_if_absent(replacement), self.identity)
         self.assertEqual(reopened.load(), self.identity)
+        self.assertEqual(
+            self.repository._initialized_marker_path.read_text(encoding="ascii"),
+            "initialized\n",
+        )
 
     def test_missing_previously_initialized_record_is_not_first_run(self):
         self.repository.create_if_absent(self.identity)
@@ -75,6 +79,27 @@ class JsonMachineIdentityRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "disappeared during initialization"):
                 self.repository.create_if_absent(self.identity)
         self.assertFalse(self.path.exists())
+        self.assertFalse(self.repository._initialized_marker_path.exists())
+
+    def test_loading_an_unmarked_record_pins_it_so_later_loss_is_a_failure(self):
+        self.repository.create_if_absent(self.identity)
+        self.repository._initialized_marker_path.unlink()
+        self.assertEqual(self.repository.load(), self.identity)
+        self.assertTrue(self.repository._initialized_marker_path.exists())
+        self.path.unlink()
+        with self.assertRaisesRegex(
+            OSError, "pinned machine identity record is missing"
+        ):
+            self.repository.load()
+
+    def test_malformed_unmarked_record_fails_instead_of_reading_as_first_run(self):
+        self.path.write_text("{broken", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Invalid JSON"):
+            self.repository.load()
+        with self.assertRaisesRegex(ValueError, "Invalid JSON"):
+            self.repository.create_if_absent(self.identity)
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "{broken")
+        self.assertFalse(self.repository._initialized_marker_path.exists())
 
     def test_marked_record_reread_preserves_failure_without_reinitializing(self):
         self.repository.create_if_absent(self.identity)

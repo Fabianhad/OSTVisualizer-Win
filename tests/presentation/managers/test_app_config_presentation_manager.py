@@ -30,9 +30,21 @@ class AppConfigPresentationManagerPreferenceTests(unittest.TestCase):
         config = SimpleNamespace(show_toolbar_text=True)
         toolbars = [QtWidgets.QToolBar(), QtWidgets.QToolBar()]
         cover_sheet_button = QtWidgets.QToolButton()
+        untouched_button = QtWidgets.QToolButton()
+        # QToolBar defaults to icon-only, so start from a different style to
+        # prove the manager actively resets the workspace toolbars.
+        for toolbar in toolbars:
+            toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        untouched_button.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+        )
         window.get_workspace_toolbars = lambda: toolbars
         window.get_toolbar_text_buttons = lambda: [cover_sheet_button]
         manager.apply_toolbar_text(window, config)
+        self.assertEqual(
+            untouched_button.toolButtonStyle(),
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon,
+        )
         self.assertTrue(
             all(
                 toolbar.toolButtonStyle()

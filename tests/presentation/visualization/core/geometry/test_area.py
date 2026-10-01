@@ -29,10 +29,32 @@ class AreaSlopeBehaviorTests(unittest.TestCase):
             run=1,
             rotation=math.pi,
         )
+        _bv, top_quarter_turn, _bh, _th, _has_slope = calc_area_mesh_verts(
+            vertices,
+            thickness=1,
+            rise=1,
+            run=1,
+            rotation=math.pi / 2,
+        )
         self.assertTrue(has_slope)
+        # Slope = abs(rise) / abs(run) = 1 over a 10 unit span starting at thickness 1.
+        self.assertEqual(
+            [point[2] for point in top_positive],
+            [1.0, 11.0, 11.0, 1.0],
+        )
         self.assertEqual(
             [point[2] for point in top_negative],
             [point[2] for point in top_positive],
         )
         self.assertLess(top_positive[0][2], top_positive[1][2])
         self.assertGreater(top_rotated[0][2], top_rotated[1][2])
+        self.assertEqual(
+            [round(point[2], 9) for point in top_rotated], [11.0, 1.0, 1.0, 11.0]
+        )
+        self.assertEqual(
+            [point[:2] for point in top_rotated],
+            [[0, 0], [10, 0], [10, 10], [0, 10]],
+        )
+        self.assertEqual(
+            [round(point[2], 9) for point in top_quarter_turn], [11.0, 11.0, 1.0, 1.0]
+        )

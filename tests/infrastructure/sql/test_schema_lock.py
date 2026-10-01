@@ -27,23 +27,37 @@ class SchemaTransactionLockTests(unittest.TestCase):
             ),
         ):
             with self.subTest(resource=resource):
-                cursor = Mock()
+                cursor = Mock(spec=["execute", "fetchone"])
                 cursor.fetchone.return_value = (0,)
                 acquire(cursor, *args)
                 cursor.execute.assert_called_once()
                 query, captured = cursor.execute.call_args.args
+                self.assertIn("sys.sp_getapplock", query)
+                self.assertIn("@LockMode=N'Exclusive'", query)
                 self.assertIn("@LockOwner=N'Transaction'", query)
+                self.assertNotIn("COMMIT", query.upper())
                 self.assertEqual(captured, resource)
-                cursor.commit.assert_not_called()
+                cursor.fetchone.assert_called_once_with()
+
+    def test_lock_granted_after_waiting_is_accepted(self):
+        # sp_getapplock returns 1 when the lock is granted after waiting.
+        for acquire, args in (
+            (acquire_schema_transaction_lock, ()),
+            (acquire_operation_transaction_lock, ("operation-1",)),
+        ):
+            with self.subTest(acquire=acquire.__name__):
+                cursor = Mock(spec=["execute", "fetchone"])
+                cursor.fetchone.return_value = (1,)
+                acquire(cursor, *args)
 
     def test_missing_or_rejected_lock_results_fail_closed(self):
         for acquire, args in (
             (acquire_schema_transaction_lock, ()),
             (acquire_operation_transaction_lock, ("operation-1",)),
         ):
-            for result in (None, (-1,), (-3,)):
+            for result in (None, (-1,), (-2,), (-3,), (-999,)):
                 with self.subTest(acquire=acquire.__name__, result=result):
-                    cursor = Mock()
+                    cursor = Mock(spec=["execute", "fetchone"])
                     cursor.fetchone.return_value = result
                     with self.assertRaises(SqlInfrastructureError) as raised:
                         acquire(cursor, *args)
@@ -58,12 +72,14 @@ class ResourceTransactionLockTests(unittest.TestCase):
         )
 
     def test_resources_use_one_ordered_request_without_committing(self):
-        cursor = Mock()
+        cursor = Mock(spec=["execute", "fetchall"])
         cursor.fetchall.return_value = [(0, 0), (1, 1)]
         acquire_resource_transaction_locks(cursor, self.resources)
         cursor.execute.assert_called_once()
         query, payload = cursor.execute.call_args.args
         self.assertIn("@LockOwner=N'Transaction'", query)
+        self.assertIn("ORDER BY [Ordinal]", query)
+        self.assertNotIn("COMMIT", query.upper())
         self.assertEqual(
             json.loads(payload),
             [
@@ -75,20 +91,27 @@ class ResourceTransactionLockTests(unittest.TestCase):
                 {"ordinal": 1, "resource": "OSTV:takeoff:19", "mode": "Exclusive"},
             ],
         )
-        cursor.commit.assert_not_called()
 
     def test_invalid_mode_is_rejected_before_any_query(self):
-        cursor = Mock()
-        with self.assertRaises(ValueError):
-            acquire_resource_transaction_locks(
-                cursor, ((self.resources[0][0], "invalid"),)
-            )
+        cursor = Mock(spec=["execute", "fetchall"])
+        for mode in ("invalid", "shared", ""):
+            with self.subTest(mode=mode):
+                with self.assertRaises(ValueError):
+                    acquire_resource_transaction_locks(
+                        cursor, (self.resources[0], (self.resources[1][0], mode))
+                    )
         cursor.execute.assert_not_called()
 
     def test_partial_and_failed_result_sets_cannot_count_as_success(self):
-        for rows in ([], [(0, 0)], [(0, 0), (1, -1)]):
+        for rows in (
+            [],
+            [(0, 0)],
+            [(0, 0), (1, -1)],
+            [(0, -1), (1, 0)],
+            [(0, 0), (1, 0), (2, 0)],
+        ):
             with self.subTest(rows=rows):
-                cursor = Mock()
+                cursor = Mock(spec=["execute", "fetchall"])
                 cursor.fetchall.return_value = rows
                 with self.assertRaises(SqlInfrastructureError) as raised:
                     acquire_resource_transaction_locks(cursor, self.resources)

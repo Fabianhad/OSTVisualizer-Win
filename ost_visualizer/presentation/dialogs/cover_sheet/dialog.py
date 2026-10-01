@@ -1530,7 +1530,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             new_item = self._create_new_page_item(
                 new_uid,
                 folder_uid,
-                str(next_sheet_no),
+                f"{next_sheet_no:05d}",
                 f"{filename} ({page_number})",
                 parent_item,
                 insertion_index=insertion_index,
@@ -1864,7 +1864,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 item = self._create_new_page_item(
                     new_uid,
                     folder_uid,
-                    str(next_sheet_no),
+                    f"{next_sheet_no:05d}",
                     page_name,
                     parent_item,
                     insertion_index=insertion_index,

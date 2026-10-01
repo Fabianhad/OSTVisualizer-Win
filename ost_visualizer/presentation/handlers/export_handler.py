@@ -456,7 +456,7 @@ class ExportHandler:
             logger.error(
                 "%s export worker raised: %s", format_name, worker_error, exc_info=True
             )
-        error_msg = result.error_message if result else None
+        error_msg = result.error_message if result is not None else None
         if not error_msg:
             logger.error("%s export failed: no result", format_name)
         show_critical(

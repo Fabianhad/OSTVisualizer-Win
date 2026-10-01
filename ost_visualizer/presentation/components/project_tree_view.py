@@ -34,7 +34,7 @@ _BID_COLUMN_COUNT = 11
 _RIGHT_ALIGNED_BID_COLS = frozenset({0, 6, 7})
 _UNASSIGNED_STATUS_LABEL = "(unassigned)"
 _NO_STATUS_UID_KEY_KIND = "legacy-label"
-_BID_STATUS_UID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
+_BID_STATUS_UID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
 
 
 def _same_file_path(left: Optional[str], right: Optional[str]) -> bool:

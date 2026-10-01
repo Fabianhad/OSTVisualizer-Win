@@ -1,3 +1,7 @@
+from ost_visualizer.infrastructure.database.bid_owned_identity import (
+    BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE,
+    IncoherentBidOwnedScopeError,
+)
 from tests.helpers.mdb.operations import (
     _ParameterLimitedSqliteConnectionWrapper,
     _ParameterLimitedSqliteCursorWrapper,
@@ -160,10 +164,48 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
             ).fetchone()[0]
         )
         self.assertEqual(
-            conn.execute("SELECT COUNT(*) FROM BidLayers").fetchone()[0], 1
+            conn.execute("SELECT UID, Sequence FROM BidLayers").fetchall(),
+            [(31, 1)],
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidAnnotationRects").fetchall(), [(20,)]
         )
 
-    def test_layer_insert_reserves_dangling_layer_reference_uid(self):
+    def test_delete_layer_refuses_template_and_locked_layers_without_mutation(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidLayers (UID INTEGER PRIMARY KEY, BidUID INTEGER, "
+            "Sequence INTEGER, IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE BidAnnotationRects (UID INTEGER PRIMARY KEY, "
+            "BidLayerUID INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, 1, ?, ?, ?)",
+            ((30, 1, -1, 0), (31, 2, 0, -1), (32, 3, 0, 0)),
+        )
+        conn.execute("INSERT INTO BidAnnotationRects VALUES (20, 30)")
+        conn.execute("INSERT INTO BidAnnotationRects VALUES (21, 31)")
+        ops = _SqliteMdbOps(conn)
+        self.assertFalse(ops.delete_layer("bid.mdb", "30"))
+        self.assertFalse(ops.delete_layer("bid.mdb", "31"))
+        self.assertEqual(
+            conn.execute("SELECT UID, Sequence FROM BidLayers ORDER BY UID").fetchall(),
+            [(30, 1), (31, 2), (32, 3)],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, BidLayerUID FROM BidAnnotationRects ORDER BY UID"
+            ).fetchall(),
+            [(20, 30), (21, 31)],
+        )
+
+    def test_layer_insert_reserves_dangling_layer_reference_uid_and_shifts_later_sequences(
+        self,
+    ):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER)")
         conn.execute("INSERT INTO Bids VALUES (1)")
@@ -177,14 +219,22 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
             "(UID INTEGER, BidUID INTEGER, BidLayerUID INTEGER)"
         )
         conn.execute("INSERT INTO BidLayers VALUES (7, 1, 'Existing', -1, 1, 0, 0)")
+        conn.execute("INSERT INTO BidLayers VALUES (6, 1, 'Below', -1, 2, 0, 0)")
         conn.execute("INSERT INTO BidComments VALUES (70, 1, 8)")
         self.assertEqual(
             _SqliteDuplicateOps(conn).insert_layer("malformed.mdb", "1", "New", 1),
             "9",
         )
         self.assertEqual(
-            conn.execute("SELECT UID FROM BidLayers ORDER BY UID").fetchall(),
-            [(7,), (9,)],
+            conn.execute(
+                "SELECT UID, BidUID, Name, Show, Sequence, IsTemplate, IsLocked "
+                "FROM BidLayers ORDER BY UID"
+            ).fetchall(),
+            [
+                (6, 1, "Below", -1, 3, 0, 0),
+                (7, 1, "Existing", -1, 1, 0, 0),
+                (9, 1, "New", -1, 2, 0, 0),
+            ],
         )
         self.assertEqual(
             conn.execute(
@@ -238,6 +288,86 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
             [(100, -1), (101, 0), (102, 0)],
         )
 
+    def test_swap_layer_sequence_exchanges_sequences_and_rejects_cross_bid_pair(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
+        conn.execute(
+            "CREATE TABLE BidLayers (UID INTEGER, BidUID INTEGER, Sequence INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, ?, ?)",
+            [(10, 7, 1), (11, 7, 2), (12, 7, 3), (20, 8, 1)],
+        )
+        ops = _SqliteMdbOps(conn)
+        self.assertTrue(ops.swap_layer_sequence("bid.mdb", "10", "12"))
+        self.assertEqual(
+            conn.execute("SELECT UID, Sequence FROM BidLayers ORDER BY UID").fetchall(),
+            [(10, 3), (11, 2), (12, 1), (20, 1)],
+        )
+        with self.assertRaises(IncoherentBidOwnedScopeError):
+            ops.swap_layer_sequence("bid.mdb", "10", "20")
+        self.assertEqual(
+            conn.execute("SELECT UID, Sequence FROM BidLayers ORDER BY UID").fetchall(),
+            [(10, 3), (11, 2), (12, 1), (20, 1)],
+        )
+
+    def test_bulk_layer_visibility_updates_captured_shared_layer_but_not_uncaptured_bid_layer(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
+        conn.execute(
+            "CREATE TABLE BidLayers ("
+            "UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER, "
+            "IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (100, None, "Shared", -1, -1, -1),
+                (101, 7, "Captured", -1, 0, 0),
+                (102, 7, "Uncaptured", -1, 0, 0),
+                (201, 8, "Other bid", -1, 0, 0),
+            ],
+        )
+        self.assertTrue(
+            _SqliteDuplicateOps(conn).update_all_layers_show(
+                "fixture.mdb", "7", False, ["100", "101"]
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(100, 0), (101, 0), (102, -1), (201, -1)],
+        )
+
+    def test_uncaptured_bulk_layer_visibility_updates_own_and_shared_layers_only(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
+        conn.execute(
+            "CREATE TABLE BidLayers ("
+            "UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER, "
+            "IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (100, None, "Shared", -1, -1, -1),
+                (101, 7, "Bid 7", -1, 0, 0),
+                (201, 8, "Bid 8", -1, 0, 0),
+                (202, 8, "Bid 8 template only", -1, -1, 0),
+            ],
+        )
+        self.assertTrue(
+            _SqliteDuplicateOps(conn).update_all_layers_show("fixture.mdb", "7", False)
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
+            [(100, 0), (101, 0), (201, -1), (202, -1)],
+        )
+
     def test_bulk_layer_visibility_rejects_ineligible_uid_before_any_write(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER)")
@@ -261,6 +391,34 @@ class LayerOperationsPersistenceTests(unittest.TestCase):
         self.assertEqual(
             conn.execute("SELECT UID, Show FROM BidLayers ORDER BY UID").fetchall(),
             [(101, -1), (201, -1)],
+        )
+
+    def test_bulk_layer_visibility_rejects_ineligible_uid_in_later_chunk_before_any_write(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", [(7,), (8,)])
+        conn.execute(
+            "CREATE TABLE BidLayers ("
+            "UID INTEGER, BidUID INTEGER, Show INTEGER, "
+            "IsTemplate INTEGER, IsLocked INTEGER)"
+        )
+        own_uids = list(range(1000, 1000 + BID_OWNED_IDENTITY_QUERY_CHUNK_SIZE + 5))
+        conn.executemany(
+            "INSERT INTO BidLayers VALUES (?, 7, -1, 0, 0)",
+            ((uid,) for uid in own_uids),
+        )
+        conn.execute("INSERT INTO BidLayers VALUES (2000, 8, -1, 0, 0)")
+        captured = [str(uid) for uid in own_uids] + ["2000"]
+        self.assertFalse(
+            _SqliteDuplicateOps(conn).update_all_layers_show(
+                "fixture.mdb", "7", False, captured
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidLayers WHERE Show = 0").fetchone()[0],
+            0,
         )
 
     def test_large_bulk_layer_visibility_stays_within_parameter_limits(self):
@@ -372,7 +530,11 @@ class LayerOperationsTests(unittest.TestCase):
     def test_bid_layer_swap_updates_non_template_rows(self):
         operations = _LayerOperations()
         self.assertTrue(operations.swap_layer_sequence("bid.mdb", "10", "11"))
-        updates = operations.cursor.executions[3:]
+        updates = [
+            execution
+            for execution in operations.cursor.executions
+            if execution[0].startswith("UPDATE [BidLayers] SET [Sequence]")
+        ]
         self.assertEqual(
             updates,
             [

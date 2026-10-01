@@ -58,6 +58,10 @@ class AreasDialogRepeatedSaveTests(unittest.TestCase):
             item.setText(0, "Second")
             dialog.tree.blockSignals(False)
             self.assertTrue(dialog._live_save())
+            self.assertEqual(
+                [(area.uid, area.name, area.bid_uid) for area in changes[0].new],
+                [("new_0", "Second", "7")],
+            )
             self.assertEqual(item.data(0, dialog._UID_ROLE), "42")
             dialog.tree.blockSignals(True)
             item.setText(0, "Third")
@@ -67,6 +71,8 @@ class AreasDialogRepeatedSaveTests(unittest.TestCase):
             self.assertEqual(changes[1].new, [])
             self.assertEqual(changes[1].updated[0].uid, "42")
             self.assertEqual(changes[1].updated[0].name, "Third")
+            self.assertEqual(len(changes[1].updated), 1)
+            self.assertEqual(changes[1].updated[0].bid_uid, "7")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -99,10 +105,23 @@ class AreaDialogEditingTests(unittest.TestCase):
                 button.text() for button in dialog.findChildren(QtWidgets.QPushButton)
             ]
             self.assertEqual(dialog.btn_ok.text(), "OK")
-            self.assertNotIn("Select", button_texts)
-            self.assertNotIn("Cancel", button_texts)
+            self.assertEqual(
+                button_texts,
+                [
+                    "OK",
+                    "New",
+                    "Delete",
+                    "Indent >>",
+                    "<< Outdent",
+                    "Move Up",
+                    "Move Down",
+                ],
+            )
+            self.assertTrue(dialog.btn_ok.isEnabled())
             self.assertEqual(dialog.btn_new.text(), "New")
             self.assertEqual(dialog.btn_delete.text(), "Delete")
+            dialog.btn_ok.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -135,8 +154,13 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertEqual(item.text(0), "Main")
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
             self.assertEqual(save_calls, [])
+            self.assertFalse(dialog._save_controller.pending)
+            self.assertEqual(dialog._deleted_uids, [])
             dialog.set_interactive(True)
             self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertTrue(dialog.flush_pending_save())
+            self.assertEqual(save_calls, [])
+            self.assertEqual(item.text(0), "Main")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -154,6 +178,9 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertFalse(dialog.btn_select.isEnabled())
             dialog._on_select()
             self.assertIsNone(dialog.get_selected_uid())
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+            dialog.set_interactive(True)
+            self.assertTrue(dialog.btn_select.isEnabled())
         finally:
             dialog.close()
             dialog.cleanup()
@@ -167,13 +194,51 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertEqual(dialog.btn_select.text(), "Select")
             self.assertEqual(dialog.btn_cancel.text(), "Cancel")
             self.assertFalse(dialog.btn_select.isEnabled())
+            self.assertEqual(
+                [
+                    button.text()
+                    for button in dialog.findChildren(QtWidgets.QPushButton)
+                ],
+                [
+                    "Select",
+                    "Cancel",
+                    "New",
+                    "Delete",
+                    "Indent >>",
+                    "<< Outdent",
+                    "Move Up",
+                    "Move Down",
+                ],
+            )
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            self.assertTrue(dialog.btn_select.isEnabled())
+            dialog.btn_select.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.get_selected_uid(), "area-1")
         finally:
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+        cancelled = _master_data_support_MasterBidAreaPickerDialog(
+            _master_data_support_FakeIconProvider(), bid_areas=[self._area()]
+        )
+        try:
+            cancelled.tree.setCurrentItem(cancelled.tree.topLevelItem(0))
+            cancelled.btn_cancel.click()
+            self.assertEqual(cancelled.result(), QtWidgets.QDialog.DialogCode.Rejected)
+            self.assertIsNone(cancelled.get_selected_uid())
+        finally:
+            cancelled.close()
+            cancelled.cleanup()
+            cancelled.deleteLater()
 
     def test_bid_area_picker_forwards_async_and_existing_constructor_arguments(self):
-        async_save = lambda _changes, _completed: True
+        async_calls = []
+
+        def async_save(changes, completed):
+            async_calls.append((changes, completed))
+            return True
+
         saved = []
         used_uids = {"area-1"}
         dialog = _master_data_support_MasterBidAreaPickerDialog(
@@ -189,6 +254,27 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertIsNotNone(dialog._on_saved_fn)
             dialog._on_saved_fn()
             self.assertEqual(saved, ["saved"])
+            saved.clear()
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog._set_item_name(item, "Area 2")
+            dialog._on_item_changed(item, 0)
+            self.assertTrue(dialog.flush_pending_save())
+            self.assertEqual(len(async_calls), 1)
+            changes, completed = async_calls[0]
+            self.assertEqual([area.name for area in changes.new], ["Area 2"])
+            self.assertEqual(saved, [])
+            completed(True, {"new_0": "area-2"})
+            self.assertEqual(saved, ["saved"])
+            self.assertEqual(item.data(0, dialog._UID_ROLE), "area-2")
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog."
+                "confirm_multi_delete",
+                return_value=None,
+            ) as confirm:
+                dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+                dialog._on_delete()
+            self.assertEqual(confirm.call_args.args[3], used_uids)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -213,6 +299,33 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
             self.assertEqual(dialog.get_selected_uid(), "area-2")
             self.assertEqual(len(save_calls), 1)
+            self.assertEqual(
+                [(area.uid, area.name) for area in save_calls[0].new],
+                [("new_0", "Area 2")],
+            )
+            self.assertEqual(
+                dialog.tree.topLevelItem(0).data(0, dialog._UID_ROLE), "area-2"
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_area_picker_select_new_area_stays_open_when_uid_map_missing(self):
+        dialog = _master_data_support_MasterBidAreaPickerDialog(
+            _master_data_support_FakeIconProvider(),
+            bid_areas=[],
+            save_fn=lambda _changes: {},
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog._set_item_name(item, "Area 2")
+            dialog._on_item_changed(item, 0)
+            dialog._on_select()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+            self.assertFalse(dialog.has_saved_changes())
+            self.assertEqual(item.data(0, dialog._UID_ROLE), "new_0")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -236,6 +349,7 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertEqual(item.data(0, dialog._UID_ROLE), "new_0")
             self.assertIn("new_0", dialog._new_uids)
             self.assertEqual(saved, [])
+            self.assertFalse(dialog.has_saved_changes())
         finally:
             dialog.close()
             dialog.cleanup()
@@ -243,10 +357,11 @@ class AreaDialogEditingTests(unittest.TestCase):
 
     def test_bid_areas_dialog_applies_new_uid_map_on_save(self):
         saved = []
+        save_calls = []
         dialog = _master_data_support_MasterBidAreasDialog(
             _master_data_support_FakeIconProvider(),
             bid_areas=[],
-            save_fn=lambda _changes: {"new_0": "area-2"},
+            save_fn=lambda changes: save_calls.append(changes) or {"new_0": "area-2"},
             on_saved_fn=lambda: saved.append("saved"),
         )
         try:
@@ -259,6 +374,9 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertEqual(item.data(0, dialog._UID_ROLE), "area-2")
             self.assertNotIn("new_0", dialog._new_uids)
             self.assertEqual(saved, ["saved"])
+            self.assertTrue(dialog.has_saved_changes())
+            self.assertTrue(dialog._live_save())
+            self.assertEqual(len(save_calls), 1)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -286,6 +404,7 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertEqual(item.data(0, dialog._UID_ROLE), "area-2")
             self.assertNotIn("new_0", dialog._new_uids)
             self.assertEqual(saved, [])
+            self.assertTrue(dialog.has_saved_changes())
         finally:
             dialog.close()
             dialog.cleanup()
@@ -306,7 +425,11 @@ class AreaDialogEditingTests(unittest.TestCase):
             dialog.tree.blockSignals(False)
             self.assertTrue(dialog._live_save())
             self.assertEqual(len(save_calls), 1)
-            self.assertEqual([area.uid for area in save_calls[0].new], ["new_0"])
+            self.assertEqual(
+                [(area.uid, area.name, area.sequence) for area in save_calls[0].new],
+                [("new_0", "Area 2", 1)],
+            )
+            self.assertEqual(save_calls[0].deleted_uids, [])
             self.assertEqual(save_calls[0].updated, [])
         finally:
             dialog.close()
@@ -328,12 +451,15 @@ class AreaDialogEditingTests(unittest.TestCase):
             dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
             dialog._on_move_down()
             self.assertEqual(save_calls, [])
+            self.assertTrue(dialog._save_controller.pending)
             self.assertTrue(dialog.flush_pending_save())
             self.assertEqual(len(save_calls), 1)
             self.assertEqual(
                 [(area.uid, area.sequence) for area in save_calls[0].updated],
                 [("area-2", 0), ("area-1", 1)],
             )
+            self.assertEqual(save_calls[0].new, [])
+            self.assertEqual(save_calls[0].deleted_uids, [])
             self.assertTrue(dialog.has_saved_changes())
         finally:
             dialog.close()
@@ -362,7 +488,10 @@ class AreaDialogEditingTests(unittest.TestCase):
             )
             self.assertEqual(item.text(0), "")
             self.assertEqual(save_calls, [])
+            self.assertFalse(dialog._save_controller.pending)
             self.assertIn("new_0", dialog._new_uids)
+            self.assertTrue(dialog.flush_pending_save())
+            self.assertEqual(save_calls, [])
         finally:
             dialog.close()
             dialog.cleanup()
@@ -398,6 +527,9 @@ class AreaDialogEditingTests(unittest.TestCase):
             )
             self.assertEqual(item.text(0), "Secondary")
             self.assertEqual(save_calls, [])
+            self.assertFalse(dialog._save_controller.pending)
+            self.assertTrue(dialog.flush_pending_save())
+            self.assertEqual(save_calls, [])
         finally:
             dialog.close()
             dialog.cleanup()
@@ -419,6 +551,55 @@ class AreaDialogEditingTests(unittest.TestCase):
             warning.assert_not_called()
             self.assertEqual(save_calls, [])
             self.assertEqual(item.text(0), "Main")
+            self.assertFalse(dialog._save_controller.pending)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_confirmed_delete_saves_deleted_uid_and_blocks_used_areas(
+        self,
+    ):
+        save_calls = []
+        dialog = _master_data_support_MasterBidAreasDialog(
+            _master_data_support_FakeIconProvider(),
+            bid_areas=[
+                self._area(),
+                BidArea("area-2", "bid-1", "", "Area 2", 2),
+            ],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+            used_uids_fn=lambda: {"area-2"},
+        )
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(1))
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog."
+                "confirm_multi_delete",
+                return_value=None,
+            ) as confirm:
+                dialog._on_delete()
+            confirm.assert_called_once_with(
+                dialog, "Delete Bid Area", [("Area 2", "area-2")], {"area-2"}
+            )
+            self.assertEqual(dialog.tree.topLevelItemCount(), 2)
+            self.assertFalse(dialog._save_controller.pending)
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog."
+                "confirm_multi_delete",
+                return_value=[("Main", "area-1")],
+            ):
+                dialog._on_delete()
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+            self.assertEqual(save_calls, [])
+            self.assertTrue(dialog.flush_pending_save())
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual(save_calls[0].deleted_uids, ["area-1"])
+            self.assertEqual(save_calls[0].new, [])
+            self.assertEqual(
+                [(area.uid, area.sequence) for area in save_calls[0].updated],
+                [("area-2", 0)],
+            )
         finally:
             dialog.close()
             dialog.cleanup()
@@ -475,6 +656,9 @@ class AreaDialogEditingTests(unittest.TestCase):
             warning.assert_not_called()
             self.assertEqual(item.text(0), "Main")
             self.assertEqual(save_calls, [])
+            self.assertFalse(dialog._save_controller.pending)
+            self.assertTrue(dialog.flush_pending_save())
+            self.assertEqual(save_calls, [])
         finally:
             dialog.close()
             dialog.cleanup()
@@ -497,7 +681,10 @@ class AreaDialogEditingTests(unittest.TestCase):
             dialog.tree.blockSignals(True)
             item.setText(0, "Level 1")
             dialog.tree.blockSignals(False)
-            self.assertTrue(dialog._live_save())
+            dialog._on_item_changed(item, 0)
+            self.assertEqual(save_calls, [])
+            self.assertTrue(dialog._save_controller.pending)
+            self.assertTrue(dialog.flush_pending_save())
             self.assertEqual(len(save_calls), 1)
             self.assertEqual(save_calls[0].updated[0].name, "Level 1")
             dialog.tree.blockSignals(True)
@@ -528,6 +715,10 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertEqual(save_calls, [])
             dialog.cleanup()
             self.assertEqual(len(save_calls), 1)
+            self.assertEqual(
+                [(area.uid, area.name) for area in save_calls[0].new],
+                [("new_0", "Area 2")],
+            )
             self.assertTrue(dialog.has_saved_changes())
         finally:
             dialog.close()
@@ -554,6 +745,9 @@ class AreaDialogEditingTests(unittest.TestCase):
             self.assertFalse(dialog.flush_pending_save())
             self.assertEqual(len(async_calls), 1)
             self.assertEqual(sync_calls, [])
+            self.assertTrue(dialog._save_controller.pending)
+            self.assertTrue(dialog.btn_ok.isEnabled())
+            self.assertTrue(dialog.btn_new.isEnabled())
         finally:
             dialog.close()
             dialog.cleanup()

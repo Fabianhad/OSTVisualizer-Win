@@ -38,10 +38,25 @@ from ost_visualizer.domain.entities.workspace_state import (
     HeaderLayoutState,
     WorkspaceState,
 )
+from ost_visualizer.presentation.managers.detached_page_view_manager import (
+    _DetachedPlanIdentity,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import (
     PlanSurfaceAccessState,
+    UIAccessManager,
+)
+from ost_visualizer.presentation.windows.components.window import (
+    DetachedPageViewWindow,
 )
 from PySide6 import QtCore, QtWidgets
+from tests.presentation.managers.surface_access_support import (
+    _Capabilities as _surface_access_support__Capabilities,
+    _EventBus as _surface_access_support__EventBus,
+    _License as _surface_access_support__License,
+    _ProjectData as _surface_access_support__ProjectData,
+    _TransactionMonitor as _surface_access_support__TransactionMonitor,
+    _UiState as _surface_access_support__UiState,
+)
 from tests.presentation.windows.detached_lifecycle_support import (
     FakeConstructedWindow as _detached_support_FakeConstructedWindow,
     FakeSignal as _detached_support_FakeSignal,
@@ -388,16 +403,43 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
             is_runtime_current=lambda _database_id, _generation: True,
             on_complete=lambda _success: None,
         )
+        other_database_barrier = RemoteProjectionBarrier(
+            database_id="other-db",
+            runtime_generation=2,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        other_generation_barrier = RemoteProjectionBarrier(
+            database_id="sql-db",
+            runtime_generation=3,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        same_context_barrier = RemoteProjectionBarrier(
+            database_id="sql-db",
+            runtime_generation=2,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
 
-        def snapshot(page_uid, view_uid="view-1"):
+        def snapshot(
+            page_uid="page-1",
+            view_uid="view-1",
+            database_id="sql-db",
+            bid_uid="bid-1",
+            surface_id="detached:test",
+            snapshot_barrier=barrier,
+            update_generation=1,
+        ):
             return SimpleNamespace(
                 identity=SimpleNamespace(
-                    database_id="sql-db",
-                    bid_uid="bid-1",
+                    database_id=database_id,
+                    bid_uid=bid_uid,
                     page_uid=page_uid,
                     view_uid=view_uid,
-                    surface_id="detached:test",
-                    barrier=barrier,
+                    surface_id=surface_id,
+                    update_generation=update_generation,
+                    barrier=snapshot_barrier,
                 )
             )
 
@@ -406,9 +448,43 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
                 snapshot("page-1"), snapshot("page-1")
             )
         )
+        self.assertTrue(
+            DetachedPageViewManager._can_coalesce_remote_page_data(
+                snapshot(), snapshot(update_generation=9)
+            )
+        )
+        self.assertTrue(
+            DetachedPageViewManager._can_coalesce_remote_page_data(
+                snapshot(), snapshot(snapshot_barrier=same_context_barrier)
+            )
+        )
+        different_contexts = {
+            "page": snapshot("page-2"),
+            "view": snapshot(view_uid="view-2"),
+            "database": snapshot(database_id="other-db"),
+            "bid": snapshot(bid_uid="bid-2"),
+            "surface": snapshot(surface_id="detached:other"),
+            "barrier database": snapshot(snapshot_barrier=other_database_barrier),
+            "barrier runtime generation": snapshot(
+                snapshot_barrier=other_generation_barrier
+            ),
+        }
+        for label, current in different_contexts.items():
+            with self.subTest(different=label):
+                self.assertFalse(
+                    DetachedPageViewManager._can_coalesce_remote_page_data(
+                        snapshot(), current
+                    )
+                )
+        unidentified = SimpleNamespace(identity=None)
         self.assertFalse(
             DetachedPageViewManager._can_coalesce_remote_page_data(
-                snapshot("page-1"), snapshot("page-2")
+                unidentified, snapshot()
+            )
+        )
+        self.assertFalse(
+            DetachedPageViewManager._can_coalesce_remote_page_data(
+                snapshot(), unidentified
             )
         )
 
@@ -470,9 +546,147 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
             resource_uids_by_family={"takeoffs": ("takeoff-1",)},
             barrier=barrier,
         )
-        submissions[0][1](True)
-        barrier.seal()
         self.assertEqual(len(submissions), 1)
+        snapshot, completion = submissions[0]
+        self.assertEqual(snapshot[0], "snapshot")
+        identity = snapshot[1]
+        self.assertEqual(
+            (
+                identity.database_id,
+                identity.bid_uid,
+                identity.page_uid,
+                identity.view_uid,
+                identity.surface_id,
+                identity.update_generation,
+            ),
+            ("sql-db", "bid-1", "page-1", "detached-view", "detached:test", 1),
+        )
+        self.assertIs(identity.barrier, barrier)
+        barrier.seal()
+        self.assertEqual(completed, [])
+        completion(True)
+        self.assertEqual(completed, [True])
+
+    def test_failed_detached_projection_fails_the_shared_barrier(self) -> None:
+        manager, submissions, view = self._projection_manager()
+        completed = []
+        barrier = self._projection_barrier(completed.append)
+        self._request_projection(manager, view, barrier)
+        barrier.seal()
+        submissions[0][1](False)
+        self.assertEqual(completed, [False])
+
+    def _projection_manager(self, window=object()):
+        view = SimpleNamespace(
+            uid="detached-view",
+            bid_ref=BidRef("sql-db", "bid-1"),
+            target_page_uid="page-1",
+        )
+        submissions = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = window
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(get_page=lambda _page_uid: object())
+        manager._remote_update_generation = 0
+        manager._remote_surface_id = "detached:test"
+        manager._capture_page_data = lambda _view, identity: ("snapshot", identity)
+        manager._remote_plan_pipeline = SimpleNamespace(
+            submit=lambda snapshot, completion: submissions.append(
+                (snapshot, completion)
+            )
+        )
+        return manager, submissions, view
+
+    @staticmethod
+    def _projection_barrier(on_complete, runtime_generation=2):
+        return RemoteProjectionBarrier(
+            database_id="sql-db",
+            runtime_generation=runtime_generation,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=on_complete,
+        )
+
+    @staticmethod
+    def _request_projection(manager, view, barrier, **overrides):
+        request = {
+            "database_id": "sql-db",
+            "bid_uid": "bid-1",
+            "runtime_generation": 2,
+            "families": ("takeoffs",),
+            "condition_uids": (),
+            "condition_changed_fields": None,
+            "condition_change_operations": (),
+            "areas_changed": False,
+            "resource_uids_by_family": {},
+            "barrier": barrier,
+        }
+        request.update(overrides)
+        manager._on_remote_plan_projection_requested(**request)
+
+    def test_detached_projection_ignores_requests_for_other_targets(self) -> None:
+        requests = {
+            "other database": {"database_id": "other-db"},
+            "other bid": {"bid_uid": "bid-2"},
+            "stale runtime generation": {"runtime_generation": 1},
+            "unrelated family": {"families": ("master_data",)},
+            "family on other page": {
+                "affected_page_uids_by_family": {"takeoffs": ("page-2",)}
+            },
+        }
+        for label, overrides in requests.items():
+            with self.subTest(request=label):
+                manager, submissions, view = self._projection_manager()
+                completed = []
+                barrier = self._projection_barrier(completed.append)
+                self._request_projection(manager, view, barrier, **overrides)
+                barrier.seal()
+                self.assertEqual(submissions, [])
+                self.assertEqual(completed, [True])
+
+    def test_detached_projection_ignores_requests_while_window_is_closed(self) -> None:
+        manager, submissions, view = self._projection_manager(window=None)
+        completed = []
+        barrier = self._projection_barrier(completed.append)
+        self._request_projection(manager, view, barrier, areas_changed=True)
+        barrier.seal()
+        self.assertEqual(submissions, [])
+        self.assertEqual(completed, [True])
+
+    def test_detached_projection_accepts_area_and_condition_plan_changes(self) -> None:
+        requests = {
+            "areas": {"families": (), "areas_changed": True},
+            "condition field": {
+                "families": (),
+                "condition_changed_fields": ("name",),
+            },
+        }
+        for label, overrides in requests.items():
+            with self.subTest(request=label):
+                manager, submissions, view = self._projection_manager()
+                barrier = self._projection_barrier(lambda _success: None)
+                self._request_projection(manager, view, barrier, **overrides)
+                self.assertEqual(len(submissions), 1)
+        manager, submissions, view = self._projection_manager()
+        barrier = self._projection_barrier(lambda _success: None)
+        self._request_projection(
+            manager,
+            view,
+            barrier,
+            families=(),
+            condition_changed_fields=("notes",),
+        )
+        self.assertEqual(submissions, [])
+
+    def test_detached_projection_without_capturable_page_registers_nothing(
+        self,
+    ) -> None:
+        manager, submissions, view = self._projection_manager()
+        manager._capture_page_data = lambda _view, _identity: None
+        completed = []
+        barrier = self._projection_barrier(completed.append)
+        self._request_projection(manager, view, barrier)
+        barrier.seal()
+        self.assertEqual(submissions, [])
         self.assertEqual(completed, [True])
 
 
@@ -518,6 +732,49 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 window_factory=lambda **_kwargs: None,
             )
         self.assertEqual(event_bus.subscriptions, [])
+        self.assertEqual(event_bus.attempts, 4)
+
+    def test_detached_manager_constructor_reports_rollback_failures_with_the_cause(
+        self,
+    ):
+        class FailingEventBus:
+            def __init__(self):
+                self.attempts = 0
+                self.unsubscribed = []
+
+            def subscribe(self, _event_type, _callback):
+                self.attempts += 1
+                if self.attempts == 3:
+                    raise RuntimeError("subscription failed")
+
+            def unsubscribe(self, event_type, _callback):
+                self.unsubscribed.append(event_type)
+                raise RuntimeError("unsubscribe failed")
+
+        event_bus = FailingEventBus()
+        with self.assertRaises(ExceptionGroup) as raised:
+            DetachedPageViewManager(
+                event_bus,
+                _detached_support_FakeWindowIconProvider(),
+                repository=object(),
+                project_data=object(),
+                config_model=Config(),
+                coord_factory=object(),
+                color_service=object(),
+                infrastructure_provider=SimpleNamespace(
+                    get_thread_callback_bridge=lambda: object()
+                ),
+                ui_access_manager=object(),
+                window_factory=lambda **_kwargs: None,
+            )
+        self.assertEqual(
+            [str(error) for error in raised.exception.exceptions],
+            ["subscription failed", "unsubscribe failed", "unsubscribe failed"],
+        )
+        self.assertEqual(
+            event_bus.unsubscribed,
+            [AppEvents.PAGE_METADATA_CHANGED, AppEvents.DATABASE_REFRESHED],
+        )
 
     def _make_opening_manager(self, access_manager, on_construct=None):
         calls = []
@@ -619,6 +876,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             )
             self.assertEqual(stale_result, "")
             self.assertIsNone(manager.get_window())
+            self.assertFalse(manager.has_active_view_lifecycle())
             self.assertTrue(windows[-1].closed)
             self.assertNotIn("show_when_page_ready", windows[-1]._calls)
         current_result = manager.open_view(bid_ref, "page-1")
@@ -641,6 +899,26 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertNotEqual(replacement_result, "")
         self.assertEqual(sum(not window.closed for window in windows), 1)
+
+    def test_shutdown_during_window_construction_discards_the_new_window(self):
+        def shut_down_while_constructing(manager, _window):
+            manager.event_bus = None
+            manager._remote_plan_pipeline = None
+            manager._refresh_signaler = None
+            manager.shutdown()
+
+        manager, windows, _calls, bid_ref = self._make_opening_manager(
+            _detached_support_FakePlanSurfaceAccessManager(
+                _detached_support__full_plan_surface_access()
+            ),
+            shut_down_while_constructing,
+        )
+        self.assertEqual(manager.open_view(bid_ref, "page-1"), "")
+        self.assertEqual(len(windows), 1)
+        self.assertTrue(windows[0].closed)
+        self.assertNotIn("show_when_page_ready", windows[0]._calls)
+        self.assertIsNone(manager.get_window())
+        self.assertFalse(manager.has_active_view_lifecycle())
 
     def test_new_bid_open_wins_over_reentrant_old_bid_completion(self):
         construction_count = [0]
@@ -717,6 +995,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def test_create_window_defers_first_show_until_after_manager_setup(self):
         calls = []
         factory_options = []
+        windows = []
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager.icon_provider = object()
         manager.event_bus = object()
@@ -732,9 +1011,13 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._infrastructure_provider = SimpleNamespace(
             create_plan_view_renderers=lambda _coord_system, _color_service: object()
         )
-        manager._window_factory = lambda **window_options: factory_options.append(
-            window_options
-        ) or _detached_support_FakeConstructedWindow(calls)
+
+        def construct_window(**window_options):
+            factory_options.append(window_options)
+            windows.append(_detached_support_FakeConstructedWindow(calls))
+            return windows[-1]
+
+        manager._window_factory = construct_window
         manager._annotation_write_service = None
         manager._write_service = None
         manager.parent_window = None
@@ -758,10 +1041,23 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             bid_ref=view.bid_ref,
         )
         geometry = QtCore.QByteArray(b"geometry")
-        manager._create_window(view, 0, geometry, False)
+        self.assertTrue(manager._create_window(view, 0, geometry, False))
         self.assertEqual(factory_options[0]["initial_geometry"], geometry)
         self.assertFalse(factory_options[0]["initial_is_maximized"])
         self.assertNotIn("coord_system", factory_options[0])
+        self.assertIs(manager._window, windows[0])
+        self.assertIsNotNone(manager._window_undo_service)
+        self.assertEqual(
+            manager._ui_access_manager.listeners, [manager._refresh_access_state]
+        )
+        self.assertEqual(
+            windows[0].area_placement_state_changed.connected,
+            [manager._on_window_area_placement_changed],
+        )
+        self.assertEqual(
+            windows[0].inline_text_edit_state_changed.connected,
+            [manager._on_window_inline_text_edit_changed],
+        )
         self.assertEqual(
             calls,
             [
@@ -1005,10 +1301,22 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         def fail_create_window(*_args):
             raise RuntimeError("boom")
 
+        working_create_window = manager._create_window
         manager._create_window = fail_create_window
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(RuntimeError, "boom"):
             manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
         self.assertFalse(manager._opening)
+        manager._create_window = working_create_window
+        self.assertEqual(
+            manager.open_view(BidRef("job.ost", "bid-1"), "page-1"), "view-1"
+        )
+        self.assertFalse(manager._opening)
+
+    def test_open_view_does_not_report_a_window_superseded_during_creation(self):
+        manager, calls = self._manager_for_initial_state_tests()
+        manager._create_window = lambda *_args: False
+        self.assertEqual(manager.open_view(BidRef("job.ost", "bid-1"), "page-1"), "")
+        self.assertEqual(calls, [])
 
     def test_hotlink_open_uses_saved_normal_annotation_window_state(self):
         state = WorkspaceState().detached_windows.annotation_view
@@ -1070,6 +1378,29 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertFalse(calls[0][2])
         self.assertFalse(calls[0][3])
 
+    def test_explicit_maximized_request_does_not_borrow_saved_geometry(self):
+        state = WorkspaceState().detached_windows.annotation_view
+        state.geometry_b64 = _detached_support__encoded_geometry(b"saved-hotlink")
+        state.is_maximized = False
+        manager, calls = self._manager_for_initial_state_tests(lambda: state)
+        manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-2",
+            initial_is_maximized=True,
+        )
+        self.assertIsNone(calls[0][1])
+        self.assertTrue(calls[0][2])
+        self.assertFalse(calls[0][3])
+        self.assertEqual(calls[0][4], "unknown")
+
+    def test_saved_window_geometry_decoding_rejects_malformed_values(self):
+        decode = DetachedPageViewManager._decode_window_geometry
+        self.assertIsNone(decode(None))
+        encoded = _detached_support__encoded_geometry(b"abc")
+        self.assertEqual(bytes(decode(encoded)), b"abc")
+        self.assertTrue(decode("geometry-" + chr(233)).isEmpty())
+        self.assertTrue(decode(12345).isEmpty())
+
     def test_bring_to_front_does_not_maximize_windowed_minimized_window(self):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = _detached_support_FakeDetachedWindow(
@@ -1089,6 +1420,23 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.bring_to_front()
         self.assertEqual(manager._window.show_maximized_calls, 1)
         self.assertEqual(manager._window.show_normal_calls, 0)
+        self.assertEqual(manager._window.raise_calls, 1)
+        self.assertEqual(manager._window.activate_calls, 1)
+
+    def test_bring_to_front_only_raises_a_visible_window_and_ignores_closed_manager(
+        self,
+    ):
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = _detached_support_FakeDetachedWindow(
+            minimized=False, maximized=True
+        )
+        manager.bring_to_front()
+        self.assertEqual(manager._window.show_normal_calls, 0)
+        self.assertEqual(manager._window.show_maximized_calls, 0)
+        self.assertEqual(manager._window.raise_calls, 1)
+        self.assertEqual(manager._window.activate_calls, 1)
+        manager._window = None
+        manager.bring_to_front()
 
     def test_refresh_window_updates_navigation_before_page_content(self):
         calls = []
@@ -1142,8 +1490,52 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             request=lambda: calls.append("refresh")
         )
         manager._on_database_refreshed(file_path="other.mdb")
+        self.assertEqual(calls, [])
         manager._on_database_refreshed(file_path="file.mdb")
         self.assertEqual(calls, ["refresh"])
+        manager._on_database_refreshed()
+        self.assertEqual(calls, ["refresh", "refresh"])
+        manager._window = None
+        manager._on_database_refreshed(file_path="file.mdb")
+        self.assertEqual(calls, ["refresh", "refresh"])
+
+    def test_database_refresh_invalidates_page_images_unless_sources_are_unchanged(
+        self,
+    ):
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p1",
+        )
+        current_bid_ref = [view.bid_ref]
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = object()
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: current_bid_ref[0],
+            get_page=lambda _uid: Page(
+                uid="p1",
+                name="Page",
+                image_path="page.png",
+                overlay_image_path="overlay.png",
+            ),
+        )
+        manager._refresh_signaler = SimpleNamespace(request=lambda: None)
+        with patch(
+            "ost_visualizer.presentation.managers.detached_page_view_manager."
+            "invalidate_source_files"
+        ) as invalidate:
+            manager._on_database_refreshed(file_path="file.mdb")
+            invalidate.assert_called_once_with(("page.png", "overlay.png"))
+            invalidate.reset_mock()
+            manager._on_database_refreshed(
+                file_path="file.mdb", image_sources_unchanged=True
+            )
+            invalidate.assert_not_called()
+            current_bid_ref[0] = BidRef("file.mdb", "other-bid")
+            manager._on_database_refreshed(file_path="file.mdb")
+            invalidate.assert_not_called()
 
     def test_external_access_refresh_clears_matching_detached_undo_history(self):
         calls = []
@@ -1276,9 +1668,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.event_bus = None
         manager._register_access_listener()
         access.set_area_placement_active(True, surface_id=manager._remote_surface_id)
+        self.assertEqual(len(access.listeners), 1)
         manager.shutdown()
         self.assertEqual(access.listeners, [])
         self.assertEqual(access.interactions, {})
+        self.assertIsNone(manager._ui_access_manager)
+        self.assertFalse(manager._access_listener_registered)
 
     def test_shutdown_continues_after_independent_cleanup_failures(self):
         calls = []
@@ -1347,8 +1742,22 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._write_service = object()
         manager._annotation_write_service = object()
         manager._saved_window_state_provider = object()
-        with self.assertLogs(manager.logger, level="ERROR"):
+        with self.assertLogs(manager.logger, level="ERROR") as logs:
             manager.shutdown()
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "Failed to unregister detached-view access listener",
+                f"Failed to unsubscribe {AppEvents.DATABASE_REFRESHED} during "
+                "detached-view manager shutdown",
+                "Failed to clean up the remote plan pipeline during "
+                "detached-view manager shutdown",
+                "Failed to clean up the refresh signaler during "
+                "detached-view manager shutdown",
+                "Failed to close the detached window during "
+                "detached-view manager shutdown",
+            ],
+        )
         self.assertEqual(len(event_bus.calls), 13)
         self.assertIn(AppEvents.FILE_UNLOADED, event_bus.calls)
         self.assertIn(("access-clear", "detached-plan:test"), calls)
@@ -1395,10 +1804,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         access.set_text_annotation_edit_active(
             True, surface_id=manager._remote_surface_id
         )
+        self.assertEqual(len(access.listeners), 1)
+        self.assertEqual(access.interactions, {"detached-plan:test": (False, True)})
         manager.close_view()
         self.assertIs(manager._ui_access_manager, access)
         self.assertEqual(access.listeners, [])
         self.assertEqual(access.interactions, {})
+        self.assertFalse(manager._opening)
+        manager._register_access_listener()
+        self.assertEqual(len(access.listeners), 1)
+        manager._unregister_access_listener()
+        self.assertEqual(access.listeners, [])
 
     def test_detached_context_uses_target_page_and_surface_identity(self):
         access = _detached_support_FakePlanSurfaceAccessManager(
@@ -1426,6 +1842,33 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(context.surface_id, "detached-plan:one")
         self.assertEqual(context.bid_ref, view.bid_ref)
         self.assertEqual(context.database_id, "file.mdb")
+        self.assertTrue(context.annotation_layer_visible)
+
+    def test_detached_context_reports_hidden_annotation_layer(self):
+        access = _detached_support_FakePlanSurfaceAccessManager()
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="detached-page",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._ui_access_manager = access
+        manager._remote_surface_id = "detached-plan:one"
+        page = Page(uid="detached-page", name="Detached")
+        for hidden, expected in (({"annotation-layer"}, False), ({"other"}, True)):
+            with self.subTest(hidden_layer_uids=hidden):
+                manager._get_access_state(
+                    view,
+                    PageViewDto(
+                        page=page,
+                        bid_ref=view.bid_ref,
+                        hidden_layer_uids=hidden,
+                        annotation_layer_uid="annotation-layer",
+                    ),
+                )
+                self.assertEqual(access.contexts[-1].annotation_layer_visible, expected)
+        self.assertEqual(len(access.contexts), 2)
 
     def test_detached_interaction_signal_updates_its_surface_only(self):
         calls = []
@@ -1451,9 +1894,37 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._access_listener_registered = False
         manager._register_access_listener()
         manager._on_window_area_placement_changed(True)
-        self.assertEqual(access.interactions["detached-plan:test"], (True, False))
+        self.assertEqual(access.interactions, {"detached-plan:test": (True, False)})
         self.assertEqual(calls, [_detached_support__full_plan_surface_access()])
         manager._unregister_access_listener()
+
+    def test_detached_text_edit_signal_updates_its_surface_only(self):
+        access = _detached_support_FakePlanSurfaceAccessManager()
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = object()
+        manager._ui_access_manager = access
+        manager._remote_surface_id = "detached-plan:test"
+        manager._on_window_inline_text_edit_changed(True)
+        self.assertEqual(access.interactions, {"detached-plan:test": (False, True)})
+        manager._on_window_inline_text_edit_changed(False)
+        self.assertEqual(access.interactions, {})
+
+    def test_interaction_signals_are_ignored_without_an_open_window_or_access_owner(
+        self,
+    ):
+        access = _detached_support_FakePlanSurfaceAccessManager()
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = None
+        manager._ui_access_manager = access
+        manager._remote_surface_id = "detached-plan:test"
+        manager._on_window_area_placement_changed(True)
+        manager._on_window_inline_text_edit_changed(True)
+        self.assertEqual(access.interactions, {})
+        manager._window = object()
+        manager._ui_access_manager = None
+        manager._on_window_area_placement_changed(True)
+        manager._on_window_inline_text_edit_changed(True)
+        self.assertEqual(access.interactions, {})
 
     def test_takeoff_refresh_isolated_to_matching_bid_without_navigation_rebuild(self):
         calls = []
@@ -1535,6 +2006,32 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(queries, [("p1",), ("p2",)])
 
+    def test_takeoff_event_for_another_page_updates_only_its_indicator(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p2",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            set_page_has_takeoffs=lambda uid, value: calls.append(
+                ("indicator", uid, value)
+            )
+        )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: view.bid_ref,
+            has_takeoffs_for_pages=lambda uids: uids == ["p9"],
+        )
+        manager._get_page_data = lambda _view: self.fail("another page is not shown")
+        manager._apply_window_page = lambda _view, _data: self.fail(
+            "another page must not refresh the displayed page"
+        )
+        manager._on_takeoffs_changed(page_uid="p9")
+        self.assertEqual(calls, [("indicator", "p9", True)])
+
     def test_refresh_window_retargets_deleted_active_page(self):
         calls = []
         view = AnnotationView(
@@ -1593,6 +2090,51 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ],
         )
 
+    def test_missing_target_retargeting_keeps_existing_pages_and_clears_empty_bids(
+        self,
+    ):
+        updates = []
+        pages = [Page(uid="p1", name="Page 1"), Page(uid="p2", name="Page 2")]
+        bid = SimpleNamespace(folders={}, pages_without_folder=pages)
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p2",
+            target_named_view_uid="named-view-1",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(
+            update_view=lambda updated: updates.append(
+                (updated.target_page_uid, updated.target_named_view_uid)
+            )
+        )
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: view.bid_ref,
+            get_bid=lambda _bid_ref: bid,
+        )
+
+        def target():
+            return view.target_page_uid, view.target_named_view_uid
+
+        self.assertFalse(manager._retarget_missing_active_page(view))
+        self.assertEqual(target(), ("p2", "named-view-1"))
+        view.target_page_uid = "deleted-page"
+        self.assertTrue(manager._retarget_missing_active_page(view))
+        self.assertEqual(target(), ("p1", None))
+        pages.clear()
+        self.assertTrue(manager._retarget_missing_active_page(view))
+        self.assertEqual(target(), ("", None))
+        self.assertFalse(manager._retarget_missing_active_page(view))
+        self.assertEqual(updates, [("p1", None), ("", None)])
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: view.bid_ref,
+            get_bid=lambda _bid_ref: None,
+        )
+        view.target_page_uid = "deleted-page"
+        self.assertFalse(manager._retarget_missing_active_page(view))
+        self.assertEqual(updates, [("p1", None), ("", None)])
+
     def test_refresh_window_does_not_retarget_missing_page_for_inactive_bid(self):
         calls = []
         view = AnnotationView(
@@ -1644,7 +2186,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             request=lambda: calls.append("refresh")
         )
         manager._on_layer_visibility_changed(file_path="bid.mdb", bid_uid="bid-1")
+        self.assertEqual(calls, ["refresh"])
         manager._on_layer_visibility_changed(file_path="other.mdb", bid_uid="bid-1")
+        manager._on_layer_visibility_changed(file_path="bid.mdb", bid_uid="bid-2")
+        self.assertEqual(calls, ["refresh"])
+        manager._window = None
+        manager._on_layer_visibility_changed(file_path="bid.mdb", bid_uid="bid-1")
         self.assertEqual(calls, ["refresh"])
 
     def test_annotation_change_refresh_uses_target_page_uid(self):
@@ -1662,6 +2209,15 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._on_annotations_changed(page_uid="p1")
         manager._on_annotations_changed(page_uid="p2")
         self.assertEqual(calls, ["refresh"])
+        manager._on_annotations_changed(page_uids=["p2", "p1"])
+        self.assertEqual(calls, ["refresh", "refresh"])
+        manager._on_annotations_changed(page_uids=["p2", "p3"])
+        self.assertEqual(calls, ["refresh", "refresh"])
+        manager._on_annotations_changed()
+        self.assertEqual(calls, ["refresh", "refresh", "refresh"])
+        manager._window = None
+        manager._on_annotations_changed(page_uid="p1")
+        self.assertEqual(calls, ["refresh", "refresh", "refresh"])
 
     def test_remote_bid_content_refreshes_matching_detached_view(self):
         calls = []
@@ -1682,6 +2238,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._on_remote_bid_content_changed(
             database_id="other-db", bid_uid="bid-1", families=["takeoffs"]
         )
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db", bid_uid="other-bid", families=["takeoffs"]
+        )
+        self.assertEqual(calls, [])
         manager._on_remote_bid_content_changed(
             database_id="sql-db", bid_uid="bid-1", families=["takeoffs"]
         )
@@ -1710,12 +2270,63 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             local_completion=True,
             defer_plan_projection=True,
         )
+        self.assertEqual(calls, [])
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            families=["takeoffs"],
+            local_completion=True,
+        )
+        self.assertEqual(calls, ["refresh"])
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            families=["takeoffs"],
+            defer_plan_projection=True,
+        )
+        self.assertEqual(calls, ["refresh", "undo"])
         manager._on_remote_bid_content_changed(
             database_id="sql-db",
             bid_uid="bid-1",
             families=["takeoffs"],
         )
-        self.assertEqual(calls, ["undo", "refresh"])
+        self.assertEqual(calls, ["refresh", "undo", "undo", "refresh"])
+
+    def test_local_completion_keeps_active_detached_interaction_unlike_remote_change(
+        self,
+    ):
+        calls = []
+        view = SimpleNamespace(
+            bid_ref=BidRef("sql-db", "bid-1"),
+            target_page_uid="page-1",
+            target_named_view_uid=None,
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            plan_view=SimpleNamespace(
+                has_active_remote_projection_blocker=lambda: True
+            ),
+            prepare_for_authoritative_refresh=lambda: calls.append("cancel"),
+        )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = None
+        manager._refresh_signaler = SimpleNamespace(
+            request=lambda: calls.append("refresh")
+        )
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            families=["takeoffs"],
+            local_completion=True,
+        )
+        self.assertEqual(calls, ["refresh"])
+        calls.clear()
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            families=["takeoffs"],
+        )
+        self.assertEqual(calls, ["cancel", "refresh"])
 
     def test_combined_remote_annotation_layer_change_refreshes_detached_view_once(self):
         calls = []
@@ -1839,6 +2450,47 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertIsNone(view.target_named_view_uid)
         self.assertEqual(repository_updates, [None])
 
+    def test_remote_annotation_change_keeps_existing_named_view_target(self):
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="sql-db",
+            target_page_uid="page-1",
+            target_named_view_uid="named-view-1",
+        )
+        named_view = BidAnnotation(
+            uid="named-view-1",
+            annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            page_uid="page-1",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 5.0, 0.0, 5.0],
+        )
+        repository_updates = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            plan_view=SimpleNamespace(
+                has_active_remote_projection_blocker=lambda: False
+            )
+        )
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: view,
+            update_view=lambda updated: repository_updates.append(updated),
+        )
+        manager.project_data = SimpleNamespace(
+            get_page_annotations=lambda page_uid: (
+                [named_view] if page_uid == "page-1" else []
+            )
+        )
+        manager._window_undo_service = None
+        manager._update_window_navigation = lambda _view: None
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            families=(CollaborationResourceFamily.ANNOTATIONS.value,),
+            defer_plan_projection=True,
+        )
+        self.assertEqual(view.target_named_view_uid, "named-view-1")
+        self.assertEqual(repository_updates, [])
+
     def test_remote_annotation_projection_skips_unaffected_detached_page(self):
         view = AnnotationView(
             uid="view-1",
@@ -1950,6 +2602,16 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(calls[-1], "refresh")
         self.assertEqual(calls.count("refresh"), 4)
+        refresh_count = calls.count("refresh")
+        manager._on_conditions_changed(
+            database_id="sql-db", bid_uid="bid-1", changed_fields=["notes"]
+        )
+        manager._on_conditions_changed(
+            database_id="sql-db", bid_uid="bid-1", defer_plan_projection=True
+        )
+        manager._on_conditions_changed(database_id="other-db", bid_uid="bid-1")
+        manager._on_conditions_changed(database_id="sql-db", bid_uid="other-bid")
+        self.assertEqual(calls.count("refresh"), refresh_count)
 
     def test_local_area_completion_preserves_detached_interaction_and_undo(self):
         calls = []
@@ -1974,6 +2636,92 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             local_completion=True,
         )
         self.assertEqual(calls, ["refresh"])
+
+    def test_remote_area_change_cancels_detached_interaction_before_undo_and_refresh(
+        self,
+    ):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
+        blocked = [True]
+
+        def cancel():
+            blocked[0] = False
+            calls.append("cancel")
+
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            plan_view=SimpleNamespace(
+                has_active_remote_projection_blocker=lambda: blocked[0]
+            ),
+            prepare_for_authoritative_refresh=cancel,
+        )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
+        manager._refresh_signaler = SimpleNamespace(
+            request=lambda: calls.append("refresh")
+        )
+        manager._on_remote_areas_changed(
+            database_id="other-db",
+            bid_uid="bid-1",
+        )
+        self.assertEqual(calls, [])
+        manager._on_remote_areas_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+        )
+        self.assertEqual(calls, ["cancel", "undo", "refresh"])
+        calls.clear()
+        manager._on_remote_areas_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            defer_plan_projection=True,
+        )
+        self.assertEqual(calls, ["undo"])
+        calls.clear()
+        blocked[0] = True
+        manager._on_conditions_changed(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            changed_fields=["notes"],
+            invalidates_undo=True,
+        )
+        self.assertEqual(calls, ["undo"])
+
+    def test_deleted_bid_areas_clear_undo_only_for_the_displayed_bid(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
+        manager._on_bid_areas_deleted("sql-db", "other-bid", ["area-1"])
+        manager._on_bid_areas_deleted("other-db", "bid-1", ["area-1"])
+        manager._on_bid_areas_deleted("sql-db", "bid-1", [])
+        self.assertEqual(calls, [])
+        manager._on_bid_areas_deleted("sql-db", "bid-1", ["area-1"])
+        self.assertEqual(calls, ["undo"])
+        manager._window_undo_service = None
+        manager._on_bid_areas_deleted("sql-db", "bid-1", ["area-1"])
+
+    def test_deleted_annotation_lifetimes_are_forwarded_to_detached_undo_history(self):
+        calls = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window_undo_service = SimpleNamespace(
+            invalidate_deleted_annotation_lifetimes=lambda **event: calls.append(event)
+        )
+        event = {
+            "database_id": "sql-db",
+            "bid_uid": "bid-1",
+            "identities": ("identity-1",),
+            "history_owner": "main-plan",
+        }
+        manager._on_annotation_lifetimes_deleted(**event)
+        self.assertEqual(calls, [event])
+        manager._window_undo_service = None
+        manager._on_annotation_lifetimes_deleted(**event)
 
     def test_detached_page_navigation_cancels_interaction_before_retarget(self):
         calls = []
@@ -2012,6 +2760,72 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ],
         )
 
+    def _navigation_manager(self, view, calls, current_bid_ref=None):
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: view,
+            update_view=lambda _view: calls.append("repository"),
+        )
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: current_bid_ref
+        )
+        manager._window = SimpleNamespace(
+            prepare_for_authoritative_refresh=lambda: calls.append("cancel"),
+            set_access_state=lambda _state: calls.append("access"),
+            load_view=lambda _view, _page_data, navigation_source: calls.append(
+                ("load", navigation_source)
+            ),
+        )
+        manager._get_page_data = lambda _view: object()
+        manager._get_access_state = lambda _view, _page_data: object()
+        return manager
+
+    def test_named_view_selection_cancels_interaction_before_retarget(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1", bid_uid="bid-1", file_path="file.mdb", target_page_uid="p1"
+        )
+        manager = self._navigation_manager(view, calls)
+        manager._on_window_named_view_selected("p2", "named-view-1")
+        self.assertEqual(
+            (view.target_page_uid, view.target_named_view_uid), ("p2", "named-view-1")
+        )
+        self.assertEqual(
+            calls, ["cancel", "repository", "access", ("load", "named_view_combo")]
+        )
+
+    def test_navigate_to_view_retargets_to_current_bid_and_loads_as_hotlink(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1", bid_uid="old-bid", file_path="old.mdb", target_page_uid="p1"
+        )
+        manager = self._navigation_manager(
+            view, calls, current_bid_ref=BidRef("new.mdb", "new-bid")
+        )
+        manager.navigate_to_view("p2", "named-view-1")
+        self.assertEqual(
+            (view.bid_ref, view.target_page_uid, view.target_named_view_uid),
+            (BidRef("new.mdb", "new-bid"), "p2", "named-view-1"),
+        )
+        self.assertEqual(calls, ["cancel", "repository", "access", ("load", "hotlink")])
+
+    def test_navigation_requests_are_ignored_without_window_or_active_view(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1", bid_uid="bid-1", file_path="file.mdb", target_page_uid="p1"
+        )
+        closed = self._navigation_manager(view, calls)
+        closed._window = None
+        closed.navigate_to_view("p2", "named-view-1")
+        closed._on_window_page_selected("p2")
+        closed._on_window_named_view_selected("p2", "named-view-1")
+        no_view = self._navigation_manager(None, calls)
+        no_view.navigate_to_view("p2", "named-view-1")
+        no_view._on_window_page_selected("p2")
+        no_view._on_window_named_view_selected("p2", "named-view-1")
+        self.assertEqual(calls, [])
+        self.assertEqual(view.target_page_uid, "p1")
+
     def test_failed_detached_scale_save_refreshes_window_state(self):
         calls = []
         bid_ref = BidRef("file.mdb", "bid-1")
@@ -2044,6 +2858,91 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._ui_access_manager.state = PlanSurfaceAccessState()
         manager._on_window_scale_changed("page-1", 0.5, 12.0)
         self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
+
+    def _scale_manager(self, write_service, logged=None):
+        bid_ref = BidRef("file.mdb", "bid-1")
+        view = SimpleNamespace(
+            file_path="file.mdb",
+            bid_ref=bid_ref,
+            target_page_uid="page-1",
+        )
+        refreshes = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._write_service = write_service
+        manager._remote_surface_id = "detached-plan:test"
+        manager._ui_access_manager = _detached_support_FakePlanSurfaceAccessManager(
+            PlanSurfaceAccessState(can_edit_page_settings=True)
+        )
+        manager._window = SimpleNamespace(
+            page_data=PageViewDto(
+                page=Page(uid="page-1", name="Page 1"), bid_ref=bid_ref
+            )
+        )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
+        manager._refresh_window = lambda: refreshes.append("refresh")
+        manager.logger = SimpleNamespace(
+            exception=lambda message, *_args: (
+                logged.append(message) if logged is not None else None
+            )
+        )
+        return manager, view, refreshes
+
+    def test_successful_detached_scale_save_does_not_refresh(self):
+        saves = []
+        write_service = SimpleNamespace(
+            queue_page_setting_if_sql=lambda *_args, **_kwargs: None,
+            save_page_scale=lambda *args: saves.append(args) or True,
+        )
+        manager, _view, refreshes = self._scale_manager(write_service)
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        self.assertEqual(saves, [("file.mdb", "page-1", 0.25, 12.0)])
+        self.assertEqual(refreshes, [])
+
+    def test_detached_scale_change_for_another_page_or_database_is_not_saved(self):
+        write_service = SimpleNamespace(
+            queue_page_setting_if_sql=lambda *_args, **_kwargs: self.fail(
+                "scale for a page that is not displayed must not be queued"
+            ),
+            save_page_scale=lambda *_args: self.fail(
+                "scale for a page that is not displayed must not be saved"
+            ),
+        )
+        manager, view, refreshes = self._scale_manager(write_service)
+        manager._on_window_scale_changed("page-2", 0.25, 12.0)
+        view.file_path = ""
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        manager._write_service = None
+        view.file_path = "file.mdb"
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        manager._write_service = write_service
+        manager._window = None
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        self.assertEqual(refreshes, [])
+
+    def test_detached_scale_save_exception_is_logged_and_refreshes_window(self):
+        logged = []
+
+        def fail_to_queue(*_args, **_kwargs):
+            raise RuntimeError("queue failed")
+
+        write_service = SimpleNamespace(
+            queue_page_setting_if_sql=fail_to_queue,
+            save_page_scale=lambda *_args: self.fail("save must not follow a failure"),
+        )
+        manager, _view, refreshes = self._scale_manager(write_service, logged)
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        self.assertEqual(logged, ["Failed to save page scale from detached view"])
+        self.assertEqual(refreshes, ["refresh"])
+
+    def test_detached_scale_rejected_by_queue_refreshes_window(self):
+        write_service = SimpleNamespace(
+            queue_page_setting_if_sql=lambda *_args, **_kwargs: False,
+            save_page_scale=lambda *_args: self.fail("queue rejection is final"),
+        )
+        manager, _view, refreshes = self._scale_manager(write_service)
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        self.assertEqual(refreshes, ["refresh"])
 
     def test_detached_sql_scale_uses_queued_page_setting_path(self):
         calls = []
@@ -2108,6 +3007,46 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             )
         )
         self.assertEqual(calls[-1], ("refresh",))
+        refreshing = {
+            MutationOutcomeStatus.REJECTED,
+            MutationOutcomeStatus.CONFLICT,
+            MutationOutcomeStatus.FAILED_BEFORE_COMMIT,
+            MutationOutcomeStatus.CANCELLED_BEFORE_START,
+        }
+        for status in MutationOutcomeStatus:
+            with self.subTest(outcome_status=status):
+                calls.clear()
+                callbacks[0](
+                    QueuedMutationResult(
+                        database_id="sql-database",
+                        runtime_generation=1,
+                        operation_id=str(uuid.uuid4()),
+                        outcome_status=status,
+                    )
+                )
+                self.assertEqual(calls, [("refresh",)] if status in refreshing else [])
+        calls.clear()
+        view.target_page_uid = "page-2"
+        callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-database",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(calls, [])
+        view.target_page_uid = "page-1"
+        manager._window = None
+        callbacks[0](
+            QueuedMutationResult(
+                database_id="sql-database",
+                runtime_generation=1,
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.REJECTED,
+            )
+        )
+        self.assertEqual(calls, [])
 
     def test_deferred_remote_page_deletion_retargets_before_projection(self):
         view = AnnotationView(
@@ -2171,8 +3110,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(
             [page_uid for page_uid, _callback in submitted], [replacement.uid]
         )
-        submitted[0][1](True)
+        self.assertEqual(manager._remote_update_generation, 1)
         barrier.seal()
+        self.assertEqual(completed, [])
+        submitted[0][1](True)
         self.assertEqual(completed, [True])
 
     def test_deferred_deletion_of_last_page_clears_detached_window(self):
@@ -2247,45 +3188,70 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
         manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
         page_data = PageViewDto(page=Page(uid="page-1", name="Page 1"), bid_ref=bid_ref)
+        projected = PlanSurfaceAccessState(
+            can_place_annotations=True,
+            can_edit_annotations=True,
+            can_edit_page_settings=False,
+        )
         manager._ui_access_manager = _detached_support_FakePlanSurfaceAccessManager(
-            PlanSurfaceAccessState(
-                can_place_annotations=True,
-                can_edit_annotations=True,
-                can_edit_page_settings=False,
-            )
+            projected
         )
         state = manager._get_access_state(view, page_data)
+        self.assertEqual(state, projected)
         self.assertTrue(state.can_place_annotations)
         self.assertTrue(state.can_edit_annotations)
         self.assertFalse(state.can_edit_page_settings)
 
+    def _real_access_manager(self, current_bid_ref):
+        access = UIAccessManager(
+            _surface_access_support__EventBus(),
+            _surface_access_support__License(),
+            _surface_access_support__TransactionMonitor(),
+            _surface_access_support__ProjectData(current_bid_ref),
+            _surface_access_support__UiState(current_bid_ref),
+            _surface_access_support__Capabilities(),
+        )
+        self.addCleanup(access.cleanup)
+        return access
+
     def test_detached_view_cannot_write_after_active_database_switch(self):
-        calls = []
         old_ref = BidRef("old.mdb", "old-bid")
-        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
-        manager._remote_surface_id = "detached-plan:test"
-        manager.repository = SimpleNamespace(
-            get_active_view=lambda: SimpleNamespace(
-                file_path=old_ref.file_path,
-                bid_ref=old_ref,
-                target_page_uid="page-1",
-            )
+        writes = []
+        write_service = SimpleNamespace(
+            queue_page_setting_if_sql=lambda *_args, **_kwargs: writes.append("queue"),
+            save_page_scale=lambda *_args: writes.append("write") or True,
         )
-        manager.project_data = SimpleNamespace(
-            get_current_bid_ref=lambda: BidRef("new.mdb", "new-bid"),
+        view = SimpleNamespace(
+            file_path=old_ref.file_path,
+            bid_ref=old_ref,
+            target_page_uid="page-1",
         )
-        manager._ui_access_manager = _detached_support_FakePlanSurfaceAccessManager()
         page_data = PageViewDto(page=Page(uid="page-1", name="Page 1"), bid_ref=old_ref)
-        manager._window = SimpleNamespace(page_data=page_data)
-        manager._write_service = SimpleNamespace(
-            save_page_scale=lambda *_args: calls.append("write") or True
-        )
-        view = manager.repository.get_active_view()
-        self.assertEqual(
-            manager._get_access_state(view, page_data), PlanSurfaceAccessState()
-        )
-        manager._on_window_scale_changed("page-1", 1.0, 1.0)
-        self.assertEqual(calls, [])
+        for current_ref, expected_writes in (
+            (BidRef("new.mdb", "new-bid"), []),
+            (BidRef("old.mdb", "new-bid"), []),
+            (old_ref, ["queue", "write"]),
+        ):
+            with self.subTest(current_bid_ref=current_ref):
+                writes.clear()
+                manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+                manager._remote_surface_id = "detached-plan:test"
+                manager.logger = logging.getLogger("test.detached_scale_access")
+                manager.repository = SimpleNamespace(get_active_view=lambda: view)
+                manager.project_data = SimpleNamespace(
+                    get_current_bid_ref=lambda: current_ref
+                )
+                manager._ui_access_manager = self._real_access_manager(current_ref)
+                manager._window = SimpleNamespace(page_data=page_data)
+                manager._write_service = write_service
+                manager._refresh_window = lambda: None
+                state = manager._get_access_state(view, page_data)
+                if expected_writes:
+                    self.assertTrue(state.can_edit_page_settings)
+                else:
+                    self.assertEqual(state, PlanSurfaceAccessState())
+                manager._on_window_scale_changed("page-1", 1.0, 1.0)
+                self.assertEqual(writes, expected_writes)
 
     def test_open_existing_detached_view_rebuilds_navigation_before_load(self):
         calls = []
@@ -2342,6 +3308,54 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ],
         )
 
+    def test_open_existing_detached_view_without_named_view_is_not_a_hotlink(self):
+        calls = []
+        existing_view = SimpleNamespace(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            bid_ref=BidRef("file.mdb", "bid-1"),
+            target_page_uid="old-page",
+            update_view_target=lambda page_uid, named_view_uid=None: calls.append(
+                ("target", page_uid, named_view_uid)
+            ),
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._opening = False
+        manager._window = SimpleNamespace(
+            set_access_state=lambda state: calls.append("access"),
+            load_view=lambda view, data, navigation_source="unknown": calls.append(
+                ("load", navigation_source)
+            ),
+        )
+        manager._ui_access_manager = _detached_support_FakePlanSurfaceAccessManager()
+        manager._remote_surface_id = "detached-plan:test"
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: existing_view,
+            update_view=lambda view: calls.append("repo"),
+        )
+        manager._update_window_navigation = lambda view: calls.append("navigation")
+        manager._get_page_data = lambda view: PageViewDto(
+            page=Page(uid="page-2", name="Page 2"), bid_ref=view.bid_ref
+        )
+        manager.bring_to_front = lambda: calls.append("front")
+        manager._notify_visibility_changed = lambda: calls.append("notify")
+        self.assertEqual(
+            manager.open_view(BidRef("file.mdb", "bid-1"), "page-2"), "view-1"
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("target", "page-2", None),
+                "repo",
+                "navigation",
+                "access",
+                ("load", "unknown"),
+                "front",
+                "notify",
+            ],
+        )
+
 
 class PageAreaProjectionTests(unittest.TestCase):
     def test_detached_area_refresh_uses_overlay_only_for_matching_page(self):
@@ -2356,6 +3370,18 @@ class PageAreaProjectionTests(unittest.TestCase):
         )
         manager._get_page_data = lambda current: ("page-data", current)
         manager.refresh_page_area_selection("41")
+        manager.refresh_page_area_selection("42")
+        self.assertEqual(calls, [("page-data", view)])
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("areas.mdb", "other-bid")
+        )
+        manager.refresh_page_area_selection("42")
+        self.assertEqual(calls, [("page-data", view)])
+        manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
+        manager.repository = SimpleNamespace(get_active_view=lambda: None)
+        manager.refresh_page_area_selection("42")
+        manager._window = None
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
         manager.refresh_page_area_selection("42")
         self.assertEqual(calls, [("page-data", view)])
 
@@ -2393,7 +3419,7 @@ class RefreshScopeTests(unittest.TestCase):
             )
         )
         manager.project_data = self.fixture.data
-        manager._window = Mock()
+        manager._window = Mock(spec=DetachedPageViewWindow)
         manager._get_page_data = Mock()
         manager._on_page_metadata_changed("test.mdb", "7", ("42",), ("name",))
         manager._window.refresh_page_labels.assert_called_once_with(
@@ -2401,6 +3427,58 @@ class RefreshScopeTests(unittest.TestCase):
         )
         manager._window.update_page_scale.assert_not_called()
         manager._get_page_data.assert_not_called()
+
+    def _metadata_manager(self, target_page_uid, bid_ref=None):
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: SimpleNamespace(
+                bid_ref=self.fixture.bid_ref, target_page_uid=target_page_uid
+            )
+        )
+        manager.project_data = (
+            self.fixture.data
+            if bid_ref is None
+            else SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
+        )
+        manager._window = Mock(spec=DetachedPageViewWindow)
+        manager._get_page_data = Mock(return_value="page-data")
+        return manager
+
+    def test_scale_event_updates_only_the_displayed_detached_page(self):
+        manager = self._metadata_manager("42")
+        manager._on_page_metadata_changed("test.mdb", "7", ("42",), ("scale",))
+        manager._window.update_page_scale.assert_called_once_with("page-data")
+        manager._window.refresh_page_labels.assert_not_called()
+        other_page = self._metadata_manager("other")
+        other_page._on_page_metadata_changed("test.mdb", "7", ("42",), ("scale",))
+        other_page._window.update_page_scale.assert_not_called()
+        other_page._window.refresh_page_labels.assert_not_called()
+
+    def test_name_and_scale_event_updates_labels_and_scale(self):
+        manager = self._metadata_manager("42")
+        manager._on_page_metadata_changed("test.mdb", "7", ("42",), ("name", "scale"))
+        manager._window.refresh_page_labels.assert_called_once_with(
+            [self.fixture.original]
+        )
+        manager._window.update_page_scale.assert_called_once_with("page-data")
+
+    def test_metadata_event_for_another_bid_or_closed_window_is_ignored(self):
+        other_bid = self._metadata_manager("42")
+        other_bid._on_page_metadata_changed("test.mdb", "8", ("42",), ("scale",))
+        other_database = self._metadata_manager("42")
+        other_database._on_page_metadata_changed("other.mdb", "7", ("42",), ("scale",))
+        not_current = self._metadata_manager(
+            "42", bid_ref=BidRef("test.mdb", "other-bid")
+        )
+        not_current._on_page_metadata_changed("test.mdb", "7", ("42",), ("name",))
+        for manager in (other_bid, other_database, not_current):
+            manager._window.refresh_page_labels.assert_not_called()
+            manager._window.update_page_scale.assert_not_called()
+        closed = self._metadata_manager("42")
+        window = closed._window
+        closed._window = None
+        closed._on_page_metadata_changed("test.mdb", "7", ("42",), ("scale",))
+        window.update_page_scale.assert_not_called()
 
 
 class DetachedWindowChaosHarnessTests(unittest.TestCase):
@@ -2420,3 +3498,332 @@ class DetachedWindowChaosHarnessTests(unittest.TestCase):
         harness.run_sequence(["delete_active_page", "refresh_window"])
         self.assertNotIn("p1", [page.uid for page in harness.pages])
         self.assertEqual(harness.view.target_page_uid, "p2")
+        self.assertEqual(harness.repository.update_calls, [("p2", None)])
+        self.assertEqual(harness.window.page_updates, ["p2", "p2"])
+
+
+class DetachedPlanProjectionTests(unittest.TestCase):
+    """Snapshot capture, preparation, staleness and application of detached pages."""
+
+    def setUp(self):
+        self.bid_ref = BidRef("sql-db", "bid-1")
+        self.view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="sql-db",
+            target_page_uid="p2",
+            target_named_view_uid="named-2",
+        )
+        self.pages = [
+            Page(uid="p1", name="Page 1"),
+            Page(uid="p2", name="Page 2"),
+        ]
+        self.takeoffs = [SimpleNamespace(uid="t1", page_uid="p2")]
+        self.conditions = {"c1": SimpleNamespace(uid="c1")}
+        self.named_view = BidAnnotation(
+            uid="named-2",
+            annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            page_uid="p2",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 5.0, 0.0, 5.0],
+            properties={"Text": "Detail"},
+        )
+        self.other_named_view = BidAnnotation(
+            uid="named-1",
+            annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            page_uid="p1",
+            position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0, 0.0, 4.0],
+        )
+        self.annotations = {
+            "p1": [self.other_named_view],
+            "p2": [self.named_view],
+        }
+        self.current_bid_ref = [self.bid_ref]
+        self.runtime_current = [True]
+        self.window_blocked = [False]
+        self.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: self.current_bid_ref[0],
+            get_page=lambda uid: next(
+                (page for page in self.pages if page.uid == uid), None
+            ),
+            get_page_takeoffs=lambda _uid: list(self.takeoffs),
+            get_page_annotations=lambda uid: list(self.annotations.get(uid, [])),
+            get_bid_conditions=lambda: dict(self.conditions),
+            get_all_pages=lambda: list(self.pages),
+            get_page_area_selections=lambda: {"p2": "area-1"},
+            get_hidden_layer_uids=lambda: ["hidden-layer"],
+            get_annotation_layer_uid=lambda: "annotation-layer",
+            get_bid=lambda _bid_ref: SimpleNamespace(
+                folders={}, pages_without_folder=list(self.pages)
+            ),
+            get_all_takeoffs=lambda: list(self.takeoffs),
+        )
+        self.color_calls = []
+
+        def get_color_mapping(conditions, takeoffs, display_mode, grayscale):
+            self.color_calls.append((conditions, takeoffs, display_mode, grayscale))
+            return "hierarchy", {"c1": [1, 2, 3]}
+
+        config = Config()
+        config.display_mode_2d = "outline"
+        config.grayscale_enabled = True
+        self.manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        self.manager.project_data = self.project_data
+        self.manager.config_model = config
+        self.manager._color_service = SimpleNamespace(
+            get_color_mapping=get_color_mapping
+        )
+        self.manager._remote_update_generation = 0
+        self.manager._remote_surface_id = "detached-plan:test"
+        self.manager.repository = SimpleNamespace(get_active_view=lambda: self.view)
+        self.barrier = RemoteProjectionBarrier(
+            database_id="sql-db",
+            runtime_generation=3,
+            is_runtime_current=lambda _database_id, _generation: (
+                self.runtime_current[0]
+            ),
+            on_complete=lambda _success: None,
+        )
+        self.manager._window = SimpleNamespace(
+            plan_view=SimpleNamespace(
+                has_active_remote_projection_blocker=lambda: self.window_blocked[0]
+            )
+        )
+
+    def _identity(self, **overrides):
+        values = {
+            "database_id": "sql-db",
+            "bid_uid": "bid-1",
+            "page_uid": "p2",
+            "view_uid": "view-1",
+            "surface_id": "detached-plan:test",
+            "update_generation": 1,
+            "barrier": self.barrier,
+        }
+        values.update(overrides)
+        return _DetachedPlanIdentity(**values)
+
+    def _remote_snapshot(self, **overrides):
+        self.manager._remote_update_generation = 1
+        return self.manager._capture_page_data(self.view, self._identity(**overrides))
+
+    def test_local_capture_shares_domain_objects_but_remote_capture_copies_them(self):
+        local = self.manager._capture_page_data(self.view)
+        self.assertIs(local.page, self.pages[1])
+        self.assertIs(local.takeoffs[0], self.takeoffs[0])
+        self.assertIsNone(local.identity)
+        remote = self._remote_snapshot()
+        self.assertEqual(remote.page, self.pages[1])
+        self.assertIsNot(remote.page, self.pages[1])
+        self.assertIsNot(remote.takeoffs[0], self.takeoffs[0])
+        self.assertEqual(remote.takeoffs[0].uid, "t1")
+        self.assertIsNot(remote.annotations[0], self.named_view)
+        self.assertEqual(remote.annotations[0], self.named_view)
+        self.assertEqual(remote.conditions[0][0], "c1")
+        self.assertIsNot(remote.conditions[0][1], self.conditions["c1"])
+        self.assertEqual(remote.identity, self._identity())
+        self.assertEqual(
+            (
+                remote.bid_ref,
+                remote.target_named_view_uid,
+                remote.hidden_layer_uids,
+                remote.annotation_layer_uid,
+                remote.display_mode,
+                remote.grayscale_enabled,
+                remote.page_area_selections,
+                [page.uid for page in remote.ordered_pages],
+            ),
+            (
+                self.bid_ref,
+                "named-2",
+                frozenset({"hidden-layer"}),
+                "annotation-layer",
+                "outline",
+                True,
+                (("p2", "area-1"),),
+                ["p1", "p2"],
+            ),
+        )
+
+    def test_capture_requires_the_current_bid_and_an_existing_page(self):
+        self.current_bid_ref[0] = BidRef("sql-db", "other-bid")
+        self.assertIsNone(self.manager._capture_page_data(self.view))
+        self.current_bid_ref[0] = self.bid_ref
+        self.view.target_page_uid = "deleted-page"
+        self.assertIsNone(self.manager._capture_page_data(self.view))
+        self.assertEqual(
+            self.manager._get_page_data(self.view),
+            PageViewDto(page=None, bid_ref=self.bid_ref),
+        )
+
+    def test_prepare_page_data_projects_colors_named_view_and_layers(self):
+        snapshot = self.manager._capture_page_data(self.view)
+        page_data = self.manager._prepare_page_data(snapshot)
+        self.assertEqual(
+            self.color_calls,
+            [(self.conditions, (self.takeoffs[0],), "outline", True)],
+        )
+        self.assertIs(page_data.page, self.pages[1])
+        self.assertEqual(page_data.takeoffs, self.takeoffs)
+        self.assertEqual(page_data.conditions, self.conditions)
+        self.assertEqual(page_data.color_map, {"c1": [1, 2, 3]})
+        self.assertEqual(page_data.bid_ref, self.bid_ref)
+        self.assertEqual(page_data.annotations, [self.named_view])
+        self.assertEqual([page.uid for page in page_data.ordered_pages], ["p1", "p2"])
+        self.assertEqual(page_data.named_view.uid, "named-2")
+        self.assertEqual(page_data.named_view.name, "Detail")
+        self.assertEqual(page_data.page_area_selections, {"p2": "area-1"})
+        self.assertEqual(page_data.hidden_layer_uids, {"hidden-layer"})
+        self.assertEqual(page_data.annotation_layer_uid, "annotation-layer")
+
+    def test_prepare_page_data_ignores_a_named_view_that_no_longer_exists(self):
+        self.view.target_named_view_uid = "deleted-named-view"
+        self.assertIsNone(self.manager._get_page_data(self.view).named_view)
+        self.view.target_named_view_uid = None
+        self.assertIsNone(self.manager._get_page_data(self.view).named_view)
+
+    def test_each_local_page_projection_invalidates_in_flight_remote_snapshots(self):
+        snapshot = self._remote_snapshot()
+        self.assertTrue(self.manager._is_remote_page_data_current(snapshot))
+        self.manager._get_page_data(self.view)
+        self.assertEqual(self.manager._remote_update_generation, 2)
+        self.assertFalse(self.manager._is_remote_page_data_current(snapshot))
+
+    def test_remote_snapshot_is_current_only_for_the_same_window_view_and_barrier(self):
+        snapshot = self._remote_snapshot()
+        self.assertTrue(self.manager._is_remote_page_data_current(snapshot))
+        stale_values = {
+            "surface": {"surface_id": "detached-plan:other"},
+            "view uid": {"view_uid": "view-2"},
+            "database": {"database_id": "other-db"},
+            "bid": {"bid_uid": "bid-2"},
+            "page": {"page_uid": "p1"},
+            "generation": {"update_generation": 5},
+        }
+        for label, overrides in stale_values.items():
+            with self.subTest(stale=label):
+                stale = SimpleNamespace(identity=self._identity(**overrides))
+                self.assertFalse(self.manager._is_remote_page_data_current(stale))
+        self.runtime_current[0] = False
+        self.assertFalse(self.manager._is_remote_page_data_current(snapshot))
+        self.runtime_current[0] = True
+        self.window_blocked[0] = True
+        self.assertFalse(self.manager._is_remote_page_data_current(snapshot))
+        self.window_blocked[0] = False
+        self.assertTrue(self.manager._is_remote_page_data_current(snapshot))
+        self.view.target_page_uid = "p1"
+        self.assertFalse(self.manager._is_remote_page_data_current(snapshot))
+        self.view.target_page_uid = "p2"
+        self.manager.repository = SimpleNamespace(get_active_view=lambda: None)
+        self.assertFalse(self.manager._is_remote_page_data_current(snapshot))
+        self.manager.repository = SimpleNamespace(get_active_view=lambda: self.view)
+        self.assertTrue(self.manager._is_remote_page_data_current(snapshot))
+        local = self.manager._capture_page_data(self.view)
+        self.assertFalse(self.manager._is_remote_page_data_current(local))
+        self.manager._window = None
+        self.assertFalse(self.manager._is_remote_page_data_current(snapshot))
+
+    def test_apply_remote_page_data_updates_navigation_access_then_page(self):
+        calls = []
+        page_data = PageViewDto(page=self.pages[1], bid_ref=self.bid_ref)
+        access = _detached_support_FakePlanSurfaceAccessManager(
+            _detached_support__full_plan_surface_access()
+        )
+        self.manager._ui_access_manager = access
+        self.manager._window = SimpleNamespace(
+            update_navigation=lambda bid, named_views, pages_with_takeoffs: (
+                calls.append(("navigation", named_views, pages_with_takeoffs))
+            ),
+            set_access_state=lambda state: calls.append(("access", state)),
+            update_page=lambda data: calls.append(("page", data)),
+        )
+        self.assertTrue(self.manager._apply_remote_page_data(page_data))
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "navigation",
+                    [
+                        ("named-1", "p1", "Page 1", "named-1"),
+                        ("named-2", "p2", "Page 2", "Detail"),
+                    ],
+                    {"p2"},
+                ),
+                ("access", _detached_support__full_plan_surface_access()),
+                ("page", page_data),
+            ],
+        )
+        self.assertEqual(access.contexts[-1].page_uid, "p2")
+        calls.clear()
+        self.manager.repository = SimpleNamespace(get_active_view=lambda: None)
+        self.assertFalse(self.manager._apply_remote_page_data(page_data))
+        self.manager.repository = SimpleNamespace(get_active_view=lambda: self.view)
+        self.manager._window = None
+        self.assertFalse(self.manager._apply_remote_page_data(page_data))
+        self.assertEqual(calls, [])
+
+    def test_pages_with_takeoffs_are_listed_only_for_the_current_bid(self):
+        self.assertEqual(
+            self.manager._collect_pages_with_takeoffs(self.bid_ref), {"p2"}
+        )
+        self.takeoffs.append(SimpleNamespace(uid="t2", page_uid=""))
+        self.takeoffs.append(None)
+        self.assertEqual(
+            self.manager._collect_pages_with_takeoffs(self.bid_ref), {"p2"}
+        )
+        self.assertEqual(
+            self.manager._collect_pages_with_takeoffs(BidRef("sql-db", "other-bid")),
+            set(),
+        )
+
+    def test_update_window_navigation_clears_pages_when_bid_is_missing(self):
+        calls = []
+        self.manager._window = SimpleNamespace(
+            update_navigation=lambda bid, named_views, pages_with_takeoffs: (
+                calls.append((bid, named_views, pages_with_takeoffs))
+            )
+        )
+        self.manager._update_window_navigation(self.view)
+        bid, named_views, pages_with_takeoffs = calls[0]
+        self.assertEqual([page.uid for page in bid.pages_without_folder], ["p1", "p2"])
+        self.assertEqual([entry[0] for entry in named_views], ["named-1", "named-2"])
+        self.assertEqual(pages_with_takeoffs, {"p2"})
+        calls.clear()
+        self.project_data.get_bid = lambda _bid_ref: None
+        self.manager._update_window_navigation(self.view)
+        self.assertEqual(calls, [(None, [], {"p2"})])
+        calls.clear()
+        self.manager._window = None
+        self.manager._update_window_navigation(self.view)
+        self.assertEqual(calls, [])
+
+    def test_named_view_entries_fall_back_to_uid_and_follow_page_order(self):
+        bid = SimpleNamespace(
+            folders={
+                "folder": SimpleNamespace(
+                    subfolders={
+                        "sub": SimpleNamespace(
+                            subfolders={}, pages=[Page(uid="p3", name="Page 3")]
+                        )
+                    },
+                    pages=[Page(uid="p2", name="Page 2")],
+                )
+            },
+            pages_without_folder=[Page(uid="p1", name="Page 1")],
+        )
+        self.annotations["p3"] = [
+            BidAnnotation(
+                uid="named-3",
+                annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+                page_uid="p3",
+                position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0],
+            ),
+            BidAnnotation(uid="plain", annotation_type="text", page_uid="p3"),
+        ]
+        self.assertEqual(
+            self.manager._collect_named_views(bid),
+            [
+                ("named-3", "p3", "Page 3", "named-3"),
+                ("named-2", "p2", "Page 2", "Detail"),
+                ("named-1", "p1", "Page 1", "named-1"),
+            ],
+        )

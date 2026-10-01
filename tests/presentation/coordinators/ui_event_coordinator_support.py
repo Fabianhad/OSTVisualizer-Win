@@ -155,7 +155,7 @@ class FakeViewer:
         self.changed_takeoff_uids = []
         self.changed_annotation_uids = []
         self.changed_annotation_types = []
-        self.viewer_pages = []
+        self.overlay_refresh_flags = []
         self.remote_requests = []
 
     def update_plan_view(
@@ -164,7 +164,9 @@ class FakeViewer:
         changed_takeoff_uids=None,
         changed_annotation_uids=None,
         changed_annotation_types=None,
+        force_overlay_refresh=False,
     ):
+        self.overlay_refresh_flags.append(force_overlay_refresh)
         self.plan_pages.append(page_uid)
         self.changed_takeoff_uids.append(
             None if changed_takeoff_uids is None else list(changed_takeoff_uids)
@@ -192,9 +194,6 @@ class FakeViewer:
         self.changed_annotation_types.append(
             None if changed_annotation_types is None else list(changed_annotation_types)
         )
-
-    def update_viewers(self, page_uids):
-        self.viewer_pages.append(list(page_uids))
 
     def request_remote_plan_update(
         self,
@@ -419,7 +418,7 @@ class FakeSidebar:
     def refresh_conditions_ui(self):
         self.condition_refreshes += 1
 
-    def load_condition_summary(self):
+    def load_condition_summary(self, grouping=None):
         self.condition_summary_loads += 1
 
     def clear_sidebars(self):

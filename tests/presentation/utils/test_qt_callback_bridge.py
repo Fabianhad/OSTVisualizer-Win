@@ -6,7 +6,6 @@ import threading
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.presentation.utils.qt_callback_bridge import QtCallbackBridge
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtTest import QTest
 from tests.helpers.sql.database_foundation_support import (
     _IconProvider as _database_foundation_support__IconProvider,
     _app as _database_foundation_support__app,
@@ -21,10 +20,22 @@ class QtVoidCallbackLifecycleTests(unittest.TestCase):
         signaler = QtVoidCallback()
         callback = lambda: calls.append("called")
         signaler.set_callback(callback)
+        signaler.request()
+        self.assertEqual(calls, ["called"])
         signaler.cleanup()
         signaler.request()
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, ["called"])
         self.assertIsNone(signaler._callback)
+        signaler.deleteLater()
+
+    def test_void_callback_without_callback_is_a_no_op(self):
+        signaler = QtVoidCallback()
+        signaler.request()
+        calls = []
+        signaler.set_callback(lambda: calls.append("late"))
+        signaler.request()
+        self.assertEqual(calls, ["late"])
+        signaler.deleteLater()
 
 
 class QtCallbackBridgeSqlDialogTests(unittest.TestCase):
@@ -36,20 +47,49 @@ class QtCallbackBridgeSqlDialogTests(unittest.TestCase):
     def test_thread_callback_dispatch_returns_to_qt_main_thread(self):
         bridge = QtCallbackBridge()
         callback_thread = []
-        delivered = threading.Event()
+        payloads = []
+        loop = QtCore.QEventLoop()
 
-        def receive(_payload):
+        def receive(payload):
             callback_thread.append(QtCore.QThread.currentThread())
-            delivered.set()
+            payloads.append(payload)
+            loop.quit()
 
-        worker = threading.Thread(target=lambda: bridge.dispatch(receive, ()))
+        payload = {"rows": 3}
+        worker = threading.Thread(target=lambda: bridge.dispatch(receive, payload))
         worker.start()
         worker.join()
-        for _ in range(20):
-            self.app.processEvents()
-            if delivered.is_set():
-                break
-            QTest.qWait(1)
-        self.assertTrue(delivered.is_set())
+        self.assertEqual(payloads, [])
+        QtCore.QTimer.singleShot(2000, loop.quit)
+        loop.exec()
+        self.assertEqual(len(callback_thread), 1)
         self.assertIs(callback_thread[0], self.app.thread())
+        self.assertIs(payloads[0], payload)
+        bridge.deleteLater()
+
+    def test_request_callback_delivers_result_once_and_isolates_callback_errors(self):
+        bridge = QtCallbackBridge()
+        results = []
+        bridge.request_callback(lambda ok, msg: results.append((ok, msg)), True, "done")
+        bridge.request_callback(lambda ok, msg: results.append((ok, msg)), False, "bad")
+
+        def failing(_ok, _message):
+            raise RuntimeError("callback failed")
+
+        with self.assertLogs(
+            "ost_visualizer.presentation.utils.qt_callback_bridge"
+        ) as logs:
+            bridge.request_callback(failing, True, "boom")
+        bridge.request_callback(
+            lambda ok, msg: results.append((ok, msg)), True, "after"
+        )
+        self.assertEqual(results, [(True, "done"), (False, "bad"), (True, "after")])
+        self.assertEqual(bridge._callbacks, {})
+        self.assertIn("callback failed", "\n".join(logs.output))
+        bridge.deleteLater()
+
+    def test_unknown_callback_id_is_ignored(self):
+        bridge = QtCallbackBridge()
+        bridge.callback_ready.emit(999, True, "stale")
+        self.assertEqual(bridge._callbacks, {})
         bridge.deleteLater()

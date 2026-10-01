@@ -71,6 +71,33 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         self.assertEqual(event_bus.subscriptions, [])
 
+    def test_ui_access_constructor_reports_refresh_and_cleanup_failures_together(self):
+        class FailingEventBus(_permissions__EventBus):
+            def unsubscribe(self, event_type, callback):
+                raise RuntimeError("unsubscribe unavailable")
+
+        class FailingTransactionMonitor:
+            def is_ost_active(self):
+                raise RuntimeError("OST status unavailable")
+
+        with self.assertRaises(ExceptionGroup) as raised:
+            UIAccessManager(
+                FailingEventBus(),
+                _permissions__License(),
+                FailingTransactionMonitor(),
+                SimpleNamespace(),
+                SimpleNamespace(),
+                _permissions__DatabaseCapability(),
+            )
+        self.assertEqual(
+            str(raised.exception),
+            "UI access initialization and cleanup failed (2 sub-exceptions)",
+        )
+        initialization_error, cleanup_error = raised.exception.exceptions
+        self.assertEqual(str(initialization_error), "OST status unavailable")
+        self.assertIsInstance(cleanup_error, ExceptionGroup)
+        self.assertIs(raised.exception.__cause__, initialization_error)
+
     def test_ui_access_cleanup_retries_only_failed_unsubscriptions(self):
         class TransientEventBus(_permissions__EventBus):
             def __init__(self):
@@ -101,6 +128,11 @@ class BidLockPermissionTests(unittest.TestCase):
             [event_type for event_type, _callback in manager._subscriptions],
             [AppEvents.LICENSE_STATUS_CHANGED],
         )
+        self.assertEqual(
+            [event_type for event_type, _callback in event_bus.subscriptions],
+            [AppEvents.LICENSE_STATUS_CHANGED],
+        )
+        self.assertIs(manager._event_bus, event_bus)
         manager.cleanup()
         self.assertEqual(event_bus.subscriptions, [])
         self.assertEqual(manager._subscriptions, [])
@@ -157,6 +189,11 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(manager.is_allowed(Feature.DUPLICATE_BID))
         self.assertFalse(manager.is_allowed(Feature.DUPLICATE_CONDITION))
         self.assertFalse(manager.is_allowed(Feature.EDIT_PAGE_SETTINGS))
+        for feature in _DATABASE_EDIT_FEATURES - {Feature.CREATE_DATABASE}:
+            with self.subTest(feature=feature):
+                self.assertFalse(manager.is_allowed(feature))
+        self.assertTrue(manager.is_allowed(Feature.CREATE_DATABASE))
+        self.assertTrue(manager.is_allowed(Feature.UNLOAD_FILE))
 
     def test_bid_job_status_permission_uses_selected_bid_resource(self):
         project_data = _permissions__ProjectData()
@@ -196,6 +233,13 @@ class BidLockPermissionTests(unittest.TestCase):
             checks,
             [("C:/jobs/target.mdb", ResourceRef("bid", "9", 9))],
         )
+        checks.clear()
+        other = BidRef("C:/jobs/other.mdb", "9")
+        self.assertFalse(manager.can_duplicate_bid(other))
+        self.assertEqual(
+            checks,
+            [("C:/jobs/other.mdb", ResourceRef("bid", "9", 9))],
+        )
 
     def test_unknown_feature_and_edit_without_database_are_denied(self):
         project_data = _permissions__ProjectData()
@@ -223,6 +267,8 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(manager.is_allowed(Feature.DELETE_BID))
         self.assertTrue(manager.is_allowed(Feature.DUPLICATE_BID))
         self.assertTrue(manager.is_allowed(Feature.EDIT_BID_JOB_STATUS))
+        self.assertTrue(manager.is_allowed(Feature.COPY_CONDITION))
+        self.assertTrue(manager.is_allowed(Feature.COPY_BID))
         project_data.locked = False
         self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
         self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
@@ -261,6 +307,9 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(
             manager.is_allowed_for_active_placement(Feature.EDIT_PLAN_ITEMS)
         )
+        self.assertTrue(
+            manager.is_allowed_for_active_placement(Feature.PLACE_PLAN_ITEMS)
+        )
         project_data.annotation_layer_visible = False
         self.assertFalse(
             manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
@@ -269,6 +318,47 @@ class BidLockPermissionTests(unittest.TestCase):
         project_data.locked = True
         self.assertFalse(
             manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+        project_data.locked = False
+        self.assertTrue(
+            manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+        manager.set_text_annotation_edit_active(True, surface_id="detached-plan")
+        self.assertFalse(
+            manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+        self.assertFalse(
+            manager.is_allowed_for_active_placement(Feature.PLACE_PLAN_ITEMS)
+        )
+
+    def test_active_annotation_placement_does_not_bypass_ost_activity(self):
+        class _Monitor:
+            active = False
+
+            def is_ost_active(self):
+                return self.active
+
+        monitor = _Monitor()
+        project_data = _permissions__ProjectData()
+        manager = UIAccessManager(
+            _permissions__EventBus(),
+            _permissions__License(),
+            monitor,
+            project_data,
+            _permissions__UiState(project_data.bid_ref),
+            _permissions__DatabaseCapability(),
+        )
+        manager.set_area_placement_active(True, surface_id=MAIN_PLAN_SURFACE_ID)
+        self.assertTrue(
+            manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+        monitor.active = True
+        manager.refresh()
+        self.assertFalse(
+            manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+        self.assertFalse(
+            manager.is_allowed_for_active_placement(Feature.PLACE_PLAN_ITEMS)
         )
 
     def test_split_structure_permissions_keep_existing_blockers(self):
@@ -352,12 +442,16 @@ class PlanSurfaceAccessTests(unittest.TestCase):
         self.assertFalse(detached.can_edit_page_settings)
         self.assertTrue(main.can_place_annotations)
         self.assertTrue(detached.can_place_annotations)
-        self.assertIn(
-            (
-                "project.mdb",
-                ResourceRef("page", "page-b", 7),
-            ),
-            self.capabilities.requests,
+        self.assertEqual(
+            [
+                request
+                for request in self.capabilities.requests
+                if request[1] is not None and request[1].resource_type == "page"
+            ],
+            [
+                ("project.mdb", ResourceRef("page", "page-a", 7)),
+                ("project.mdb", ResourceRef("page", "page-b", 7)),
+            ],
         )
 
     def test_editable_detached_page_is_not_disabled_by_locked_main_page(self):
@@ -425,17 +519,19 @@ class PlanSurfaceAccessTests(unittest.TestCase):
             self._context("page-a", surface_id="detached-plan")
         )
         self.assertEqual(
-            (
-                main.can_place_annotations,
-                main.can_edit_annotations,
-                main.can_edit_annotation_text,
-            ),
-            (
-                detached.can_place_annotations,
-                detached.can_edit_annotations,
-                detached.can_edit_annotation_text,
+            main,
+            PlanSurfaceAccessState(
+                can_select_plan_items=True,
+                can_place_plan_items=True,
+                can_edit_plan_items=True,
+                can_place_annotations=True,
+                can_continue_annotation_placement=True,
+                can_edit_annotations=True,
+                can_edit_annotation_text=True,
+                can_edit_page_settings=True,
             ),
         )
+        self.assertEqual(detached, main)
 
     def test_surface_area_placement_preserves_only_its_own_continuation(self):
         self.manager.set_area_placement_active(True, surface_id="detached-plan")
@@ -459,6 +555,11 @@ class PlanSurfaceAccessTests(unittest.TestCase):
             self._context("page-a", surface_id="detached-plan")
         )
         self.assertFalse(detached.can_continue_annotation_placement)
+        main = self.manager.get_plan_surface_access(
+            self._context("page-a", surface_id=MAIN_PLAN_SURFACE_ID)
+        )
+        self.assertFalse(main.can_place_annotations)
+        self.assertTrue(main.can_continue_annotation_placement)
 
     def test_inline_text_edit_preserves_text_capability_only(self):
         self.manager.set_text_annotation_edit_active(True, surface_id="detached-plan")
@@ -496,3 +597,200 @@ class PlanSurfaceAccessTests(unittest.TestCase):
         self.manager.set_area_placement_active(True, surface_id="detached-plan")
         self.manager.set_area_placement_active(False, surface_id="detached-plan")
         self.assertNotIn("detached-plan", self.manager._surface_interactions)
+
+    def test_subscribed_listener_is_deduplicated_and_can_unsubscribe(self):
+        calls = []
+
+        def listener():
+            calls.append("refresh")
+
+        self.manager.subscribe_access_state_changed(listener)
+        self.manager.subscribe_access_state_changed(listener)
+        self.manager.refresh()
+        self.assertEqual(calls, ["refresh"])
+        self.manager.unsubscribe_access_state_changed(listener)
+        self.manager.unsubscribe_access_state_changed(listener)
+        self.manager.refresh()
+        self.assertEqual(calls, ["refresh"])
+
+    def test_clearing_surface_interaction_notifies_only_when_state_existed(self):
+        calls = []
+        self.manager.subscribe_access_state_changed(lambda: calls.append("refresh"))
+        self.manager.clear_plan_surface_interaction("detached-plan")
+        self.manager.clear_plan_surface_interaction("")
+        self.assertEqual(calls, [])
+        self.manager.set_text_annotation_edit_active(True, surface_id="detached-plan")
+        self.assertEqual(calls, ["refresh"])
+        self.manager.clear_plan_surface_interaction("detached-plan")
+        self.assertEqual(calls, ["refresh", "refresh"])
+        self.assertEqual(self.manager._surface_interactions, {})
+        self.manager.set_area_placement_active(True, surface_id="")
+        self.assertEqual(calls, ["refresh", "refresh"])
+        self.assertEqual(self.manager._surface_interactions, {})
+
+    def test_ost_activity_forces_placement_exit_when_placement_is_blocked(self):
+        exits = []
+        self.manager.set_placement_coordinator(
+            SimpleNamespace(force_exit=lambda: exits.append(True))
+        )
+        self.transaction.active = True
+        self.events.publish(AppEvents.OST_STATUS_CHANGED, active=True)
+        self.assertEqual(exits, [])
+        self.ui_state.place_condition_uid = "condition-1"
+        self.events.publish(AppEvents.OST_STATUS_CHANGED, active=True)
+        self.assertEqual(exits, [True])
+
+    def test_placement_is_kept_when_ost_activity_does_not_block_it(self):
+        exits = []
+        self.manager.set_placement_coordinator(
+            SimpleNamespace(force_exit=lambda: exits.append(True))
+        )
+        self.ui_state.place_condition_uid = "condition-1"
+        self.events.publish(AppEvents.OST_STATUS_CHANGED, active=False)
+        self.manager.refresh()
+        self.assertEqual(exits, [])
+
+    def test_current_plan_surface_context_reads_main_selection_state(self):
+        self.project.annotation_layer_visible = False
+        self.assertEqual(
+            self.manager.current_plan_surface_context(),
+            PlanSurfaceAccessContext(
+                surface_id=MAIN_PLAN_SURFACE_ID,
+                database_id="project.mdb",
+                bid_ref=self.bid_ref,
+                page_uid="page-a",
+                annotation_layer_visible=False,
+            ),
+        )
+        self.ui_state.bid_ref = None
+        self.ui_state.selected_file_path = None
+        self.ui_state.active_page_uid = None
+        self.assertEqual(
+            self.manager.current_plan_surface_context(),
+            PlanSurfaceAccessContext(
+                surface_id=MAIN_PLAN_SURFACE_ID,
+                database_id="",
+                bid_ref=None,
+                page_uid="",
+                annotation_layer_visible=False,
+            ),
+        )
+
+
+class ExplicitTargetAccessTests(unittest.TestCase):
+    """Per-target checks use the captured database and resource, not Main selection."""
+
+    def setUp(self):
+        self.events = _surface_access_support__EventBus()
+        self.license = _surface_access_support__License()
+        self.capabilities = _surface_access_support__Capabilities()
+        self.manager = UIAccessManager(
+            self.events,
+            self.license,
+            _surface_access_support__TransactionMonitor(),
+            _surface_access_support__ProjectData(BidRef("project.mdb", "7")),
+            _surface_access_support__UiState(None),
+            self.capabilities,
+        )
+        self.addCleanup(self.manager.cleanup)
+
+    def test_bid_job_status_and_structure_use_each_bid_resource(self):
+        target = BidRef("other.mdb", "12")
+        self.assertTrue(self.manager.can_edit_bid_job_status(target))
+        self.assertTrue(self.manager.can_edit_bid_structure([target]))
+        self.assertEqual(
+            self.capabilities.requests,
+            [
+                ("other.mdb", ResourceRef("bid", "12", 12)),
+                ("other.mdb", ResourceRef("bid", "12", 12)),
+            ],
+        )
+        self.assertFalse(self.manager.can_edit_bid_structure([]))
+        self.assertFalse(self.manager.can_delete_bids([]))
+
+    def test_non_numeric_bid_uid_has_no_storage_uid(self):
+        self.assertTrue(self.manager.can_edit_bid_job_status(BidRef("a.mdb", "bid-x")))
+        self.assertEqual(
+            self.capabilities.requests,
+            [("a.mdb", ResourceRef("bid", "bid-x", None))],
+        )
+
+    def test_read_only_database_denies_each_explicit_target_action(self):
+        self.capabilities.database_editable = False
+        target = BidRef("project.mdb", "7")
+        self.assertFalse(self.manager.can_edit_bid_job_status(target))
+        self.assertFalse(self.manager.can_duplicate_bid(target))
+        self.assertFalse(self.manager.can_delete_bids([target]))
+        self.assertFalse(self.manager.can_edit_bid_structure([target]))
+        self.assertFalse(self.manager.can_edit_project("project.mdb", "3"))
+        self.assertFalse(self.manager.can_delete_projects("project.mdb", ["3"]))
+        self.assertFalse(self.manager.can_create_project("project.mdb"))
+        self.assertFalse(self.manager.can_create_bid("project.mdb", "3"))
+        self.assertFalse(self.manager.can_import_project_file("project.mdb", "3"))
+        self.assertFalse(self.manager.can_maintain_database("project.mdb"))
+
+    def test_delete_bids_requires_every_bid_to_be_editable(self):
+        class _OneReadOnlyBid:
+            def is_editable(self, _locator, resource=None):
+                return resource is None or resource.resource_id != "2"
+
+        self.manager._database_capability_service = _OneReadOnlyBid()
+        first = BidRef("project.mdb", "1")
+        second = BidRef("project.mdb", "2")
+        self.assertTrue(self.manager.can_delete_bids([first]))
+        self.assertFalse(self.manager.can_delete_bids([first, second]))
+        self.assertFalse(self.manager.can_delete_bids([second, first]))
+
+    def test_project_creation_checks_project_and_collection_resources(self):
+        self.assertFalse(self.manager.can_create_project(""))
+        self.assertFalse(self.manager.can_create_bid("", "3"))
+        self.assertFalse(self.manager.can_import_project_file("", "3"))
+        self.assertEqual(self.capabilities.requests, [])
+        self.assertTrue(self.manager.can_create_project("project.mdb"))
+        self.assertTrue(self.manager.can_create_bid("project.mdb", "3"))
+        self.assertTrue(self.manager.can_create_bid("project.mdb", None))
+        self.assertEqual(
+            self.capabilities.requests,
+            [
+                ("project.mdb", ResourceRef("projects_collection", "database")),
+                ("project.mdb", ResourceRef("project", "3")),
+                ("project.mdb", ResourceRef("project_bids", "3")),
+                ("project.mdb", ResourceRef("project_bids", "orphan")),
+            ],
+        )
+
+    def test_project_bid_clipboard_requires_same_database_and_editable_targets(self):
+        target = BidRef("C:/Jobs/Project.mdb", "5")
+        self.assertTrue(
+            self.manager.is_project_bid_clipboard_allowed(
+                Feature.DUPLICATE_BID, "c:\\jobs\\project.mdb", [target], "3"
+            )
+        )
+        self.assertFalse(
+            self.manager.is_project_bid_clipboard_allowed(
+                Feature.DUPLICATE_BID, "other.mdb", [target], "3"
+            )
+        )
+        self.assertFalse(
+            self.manager.is_project_bid_clipboard_allowed(
+                Feature.DUPLICATE_BID, "C:/Jobs/Project.mdb", [], "3"
+            )
+        )
+        self.assertFalse(
+            self.manager.is_project_bid_clipboard_allowed(
+                Feature.EDIT_PLAN_ITEMS, "C:/Jobs/Project.mdb", [target], "3"
+            )
+        )
+        self.capabilities.database_editable = False
+        self.assertFalse(
+            self.manager.is_project_bid_clipboard_allowed(
+                Feature.DUPLICATE_BID, "C:/Jobs/Project.mdb", [target], "3"
+            )
+        )
+
+    def test_close_database_needs_a_database_id_but_no_license(self):
+        self.assertTrue(self.manager.can_close_database("project.mdb"))
+        self.assertFalse(self.manager.can_close_database(""))
+        self.license.valid = False
+        self.assertTrue(self.manager.can_close_database("project.mdb"))
+        self.assertFalse(self.manager.can_edit_project("project.mdb", "3"))

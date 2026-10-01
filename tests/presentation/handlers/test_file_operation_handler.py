@@ -106,6 +106,15 @@ from tests.presentation.utils.header_support import (
     _app as _header_support__app,
 )
 import threading
+from unittest.mock import create_autospec
+from ost_visualizer.application.interfaces.i_credential_store import ICredentialStore
+from ost_visualizer.application.interfaces.i_database_catalog import IDatabaseCatalog
+from ost_visualizer.application.interfaces.i_sql_database_creator import (
+    ISqlDatabaseCreator,
+)
+from ost_visualizer.application.services.sql_collaboration_coordinator import (
+    SqlCollaborationCoordinator,
+)
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseBackend,
     DatabaseDescriptor,
@@ -114,7 +123,7 @@ from ost_visualizer.domain.entities.database_descriptor import (
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler as StartupFileOperationHandler,
 )
-from shiboken6 import delete
+from shiboken6 import delete, isValid
 from tests.helpers.startup_database import (
     StartupFileOperationHandler as _startup_database_StartupFileOperationHandler,
     _OpenFilesDialogStub as _startup_database__OpenFilesDialogStub,
@@ -133,21 +142,44 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
 
     def test_project_unload_flushes_pending_writes_before_unload(self):
         deferred = RecordingDeferredPersistence()
+        events = []
         unload_calls = []
         updates = []
         entries = [FileEntry("a.mdb", is_checked=True)]
+        original_flush = deferred.flush_for_file
+        original_cancel = deferred.cancel_for_file
+
+        def flush_for_file(path):
+            events.append("flush")
+            return original_flush(path)
+
+        def cancel_for_file(path):
+            events.append("cancel")
+            original_cancel(path)
+
+        def update_entries(next_entries):
+            events.append("save")
+            updates.append(next_entries)
+
+        def unload_file(file_path):
+            events.append("unload")
+            unload_calls.append(file_path)
+            return True
+
+        deferred.flush_for_file = flush_for_file
+        deferred.cancel_for_file = cancel_for_file
         handler = WorkspaceFileOperationHandler(
             window=None,
             icon_provider=None,
             event_bus=None,
             file_state_model=SimpleNamespace(
                 file_entries=entries,
-                update_entries=lambda next_entries: updates.append(next_entries),
+                update_entries=update_entries,
             ),
             cleanup_deleted_files_use_case=None,
             file_loading_service=None,
             working_directory_service=None,
-            unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
+            unload_file_fn=unload_file,
             deferred_persistence_manager=deferred,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             sql_collaboration_coordinator=SimpleNamespace(),
@@ -157,19 +189,25 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
         self.assertEqual(deferred.flush_calls, ["a.mdb"])
         self.assertEqual(unload_calls, ["a.mdb"])
         self.assertEqual(deferred.cancel_calls, ["a.mdb"])
+        self.assertEqual(events, ["flush", "save", "unload", "cancel"])
         self.assertEqual(len(updates), 1)
+        self.assertEqual(
+            [(entry.database_id, entry.is_checked) for entry in updates[0]],
+            [(entries[0].database_id, False)],
+        )
 
     def test_project_unload_stops_when_deferred_flush_fails(self):
         deferred = RecordingDeferredPersistence()
         deferred.flush_result = False
         unload_calls = []
+        updates = []
         handler = WorkspaceFileOperationHandler(
             window=None,
             icon_provider=None,
             event_bus=None,
             file_state_model=SimpleNamespace(
-                file_entries=[],
-                update_entries=lambda _: None,
+                file_entries=[FileEntry("a.mdb", is_checked=True)],
+                update_entries=updates.append,
             ),
             cleanup_deleted_files_use_case=None,
             file_loading_service=None,
@@ -180,9 +218,15 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
             sql_collaboration_coordinator=SimpleNamespace(),
             ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
         )
-        handler.unload_file()
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            handler.unload_file()
         self.assertEqual(deferred.flush_calls, ["a.mdb"])
         self.assertEqual(unload_calls, [])
+        self.assertEqual(updates, [])
+        self.assertEqual(deferred.cancel_calls, [])
+        warning.assert_not_called()
 
     def test_project_unload_stops_when_open_files_state_cannot_be_saved(self):
         deferred = RecordingDeferredPersistence()
@@ -216,7 +260,12 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
         self.assertEqual(deferred.cancel_calls, [])
         self.assertEqual(unload_calls, [])
         self.assertTrue(_FailingState.file_entries[0].is_checked)
-        warning.assert_called_once()
+        warning.assert_called_once_with(
+            None,
+            "Unload File",
+            "The Open Files state could not be saved, so the database was not "
+            "unloaded.",
+        )
 
     def test_failed_project_unload_restores_saved_open_files_state(self):
         deferred = RecordingDeferredPersistence()
@@ -244,13 +293,55 @@ class FileOperationDeferredUnloadTests(unittest.TestCase):
         )
         with patch(
             "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
-        ):
+        ) as warning:
             handler.unload_file()
         self.assertEqual(len(updates), 2)
         self.assertFalse(updates[0][0].is_checked)
         self.assertTrue(updates[1][0].is_checked)
         self.assertTrue(state.file_entries[0].is_checked)
         self.assertEqual(deferred.cancel_calls, [])
+        warning.assert_called_once_with(
+            None, "No File Loaded", "There is no file currently loaded."
+        )
+
+    def test_failed_project_unload_reports_when_saved_state_cannot_be_restored(self):
+        deferred = RecordingDeferredPersistence()
+        saves = []
+
+        class _State:
+            file_entries = [FileEntry("a.mdb", is_checked=True)]
+
+            def update_entries(self, entries):
+                saves.append([entry.is_checked for entry in entries])
+                if len(saves) == 2:
+                    raise OSError("disk unavailable")
+
+        handler = WorkspaceFileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=None,
+            file_state_model=_State(),
+            cleanup_deleted_files_use_case=None,
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda _file_path: False,
+            deferred_persistence_manager=deferred,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            handler.unload_file()
+        self.assertEqual(saves, [[False], [True]])
+        self.assertEqual(deferred.cancel_calls, [])
+        warning.assert_called_once_with(
+            None,
+            "Unload File",
+            "The database could not be unloaded and its saved Open Files state "
+            "could not be restored.",
+        )
 
 
 class FileOperationHandlerSqlCleanupTests(unittest.TestCase):
@@ -312,6 +403,7 @@ class FileOperationHandlerSqlCleanupTests(unittest.TestCase):
                 pass
 
         stops = []
+        unloads = []
         handler = _cleanup_support_FileOperationHandler(
             window=None,
             icon_provider=None,
@@ -322,7 +414,7 @@ class FileOperationHandlerSqlCleanupTests(unittest.TestCase):
             )(),
             file_loading_service=SimpleNamespace(is_loaded=lambda _locator: False),
             working_directory_service=None,
-            unload_file_fn=lambda _locator: False,
+            unload_file_fn=lambda locator: unloads.append(locator) or False,
             deferred_persistence_manager=type(
                 "Deferred",
                 (),
@@ -350,7 +442,8 @@ class FileOperationHandlerSqlCleanupTests(unittest.TestCase):
             ),
         ):
             handler.open_files()
-        self.assertEqual(updates[-1], [])
+        self.assertEqual(updates, [[]])
+        self.assertEqual(unloads, [])
         self.assertEqual(
             [(database_id, reason) for database_id, reason, _callback in stops],
             [(descriptor.database_id, "connection-removed")],
@@ -451,6 +544,7 @@ class FileOperationHandlerSqlCleanupTests(unittest.TestCase):
             handler.open_files()
         self.assertIs(registry.resolve(descriptor.database_id), descriptor)
         self.assertEqual(credentials.deleted, [])
+        self.assertEqual(handler._file_state_model.file_entries, [])
         self.assertEqual(len(callbacks), 1)
         callbacks[0](True, "")
         self.assertIsNone(registry.resolve(descriptor.database_id))
@@ -710,6 +804,82 @@ class FileOperationHandlerSqlCleanupTests(unittest.TestCase):
         callback(True, "")
         self.assertEqual(starts, [entry.database_id])
 
+    def test_sql_connection_restarts_only_for_changed_descriptor(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        changed_descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(
+                server="localhost", database="OSTV_TEST", command_timeout_seconds=45
+            ),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        original = FileEntry.for_descriptor(descriptor)
+        self.assertEqual(descriptor.database_id, changed_descriptor.database_id)
+        for label, selected, expected_restarts in (
+            ("unchanged", original, []),
+            (
+                "changed descriptor",
+                FileEntry.for_descriptor(changed_descriptor),
+                [(descriptor.database_id, "reconfigured")],
+            ),
+        ):
+            with self.subTest(label):
+                stops = []
+                starts = []
+
+                class _State:
+                    file_entries = [original]
+
+                    def reload(self):
+                        pass
+
+                    def update_entries(self, entries):
+                        self.file_entries = list(entries)
+
+                class _Dialog(_startup_database__OpenFilesDialogStub):
+                    def get_file_entries(self):
+                        return [selected]
+
+                    def commit_credential_changes(self):
+                        return set()
+
+                handler = _startup_database_StartupFileOperationHandler(
+                    window=None,
+                    icon_provider=None,
+                    event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+                    file_state_model=_State(),
+                    cleanup_deleted_files_use_case=SimpleNamespace(
+                        execute_and_save=lambda: None
+                    ),
+                    file_loading_service=SimpleNamespace(
+                        is_loaded=lambda _locator: False
+                    ),
+                    working_directory_service=None,
+                    unload_file_fn=lambda _locator: self.fail("no unload expected"),
+                    deferred_persistence_manager=SimpleNamespace(),
+                    ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+                    sql_collaboration_coordinator=SimpleNamespace(
+                        stop_database_async=lambda database_id, reason, callback: (
+                            stops.append((database_id, reason)),
+                            callback(True, ""),
+                        ),
+                        start_database=starts.append,
+                    ),
+                )
+                with patch(
+                    "ost_visualizer.presentation.handlers.file_operation_handler."
+                    "OpenFilesDialog",
+                    _Dialog,
+                ):
+                    handler.open_files()
+                self.assertEqual(stops, expected_restarts)
+                self.assertEqual(
+                    starts, [descriptor.database_id for _restart in expected_restarts]
+                )
+                self.assertEqual(handler._file_state_model.file_entries, [selected])
+
 
 class FileOperationHandlerSqlDialogTests(unittest.TestCase):
     @classmethod
@@ -810,19 +980,31 @@ class FileOperationHandlerSqlDialogTests(unittest.TestCase):
             ),
             patch(
                 "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
-            ),
+            ) as warning,
         ):
             self.assertTrue(handler.create_sql_database())
             self.assertEqual(len(state.file_entries), 1)
+            self.assertTrue(state.file_entries[0].is_checked)
             target = credential_target_for(state.file_entries[0].database_id)
             self.assertEqual(store.passwords[target], ("test-user", password))
+            warning.assert_not_called()
             self.assertFalse(handler.create_sql_database())
             self.assertEqual(len(state.file_entries), 1)
+            warning.assert_called_once_with(
+                None,
+                "SQL Server",
+                "This SQL Server database is already in Open Files.",
+            )
             _PropertiesDialog.accepted = False
             empty_state = _State()
             handler._file_state_model = empty_state
+            store.passwords.clear()
+            warning.reset_mock()
             self.assertFalse(handler.create_sql_database())
             self.assertEqual(empty_state.file_entries, [])
+            self.assertEqual(store.passwords, {})
+            warning.assert_not_called()
+            self.assertFalse(handler.sql_creation_pending)
 
 
 class FileOperationHandlerCreationDialogIdentityTests(unittest.TestCase):
@@ -836,9 +1018,11 @@ class FileOperationHandlerCreationDialogIdentityTests(unittest.TestCase):
         handler.icon_provider = Mock()
         handler._ui_access_manager = Mock()
         handler._ui_access_manager.is_allowed.return_value = True
-        handler._database_catalog = Mock()
-        handler._credential_store = Mock()
-        handler._sql_database_creator = Mock()
+        handler._database_catalog = create_autospec(IDatabaseCatalog, instance=True)
+        handler._credential_store = create_autospec(ICredentialStore, instance=True)
+        handler._sql_database_creator = create_autospec(
+            ISqlDatabaseCreator, instance=True
+        )
         properties_dialog = Mock()
         properties_dialog.exec.return_value = QtWidgets.QDialog.DialogCode.Rejected
         with (
@@ -859,8 +1043,65 @@ class FileOperationHandlerCreationDialogIdentityTests(unittest.TestCase):
         self.assertNotIn("connection", properties_factory.call_args.kwargs)
         properties_dialog.exec.assert_called_once()
         properties_dialog.cleanup.assert_called_once()
+        properties_dialog.deleteLater.assert_called_once()
+        properties_dialog.result_data.assert_not_called()
         handler._sql_database_creator.create_database_for_client.assert_not_called()
+        handler._sql_database_creator.create_database.assert_not_called()
         handler._credential_store.write_password.assert_not_called()
+        handler._credential_store.delete_password.assert_not_called()
+
+    def test_creation_marks_file_operation_pending_only_while_it_runs(self):
+        handler = object.__new__(FileOperationHandler)
+        handler.window = None
+        handler._file_operation_pending = False
+        handler._file_operation_serial = 0
+        handler._sql_creation_active = False
+        observed = []
+
+        def create():
+            observed.append(
+                (handler.sql_creation_pending, handler._file_operation_pending)
+            )
+            return False
+
+        handler._create_sql_database = create
+        self.assertFalse(handler.create_sql_database())
+        self.assertEqual(observed, [(True, True)])
+        self.assertEqual(
+            (handler.sql_creation_pending, handler._file_operation_pending),
+            (False, False),
+        )
+
+        def failing_create():
+            raise RuntimeError("dialog failed")
+
+        handler._create_sql_database = failing_create
+        with self.assertRaises(RuntimeError):
+            handler.create_sql_database()
+        self.assertEqual(
+            (handler.sql_creation_pending, handler._file_operation_pending),
+            (False, False),
+        )
+
+    def test_creation_is_refused_while_another_file_operation_is_pending(self):
+        handler = object.__new__(FileOperationHandler)
+        handler.window = None
+        handler._file_operation_pending = True
+        handler._file_operation_serial = 4
+        handler._sql_creation_active = False
+        handler._create_sql_database = lambda: self.fail("creation must not start")
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            self.assertFalse(handler.create_sql_database())
+        warning.assert_called_once_with(
+            None,
+            "Database Operation Pending",
+            "Wait for the current database operation to finish before changing "
+            "Open Files again.",
+        )
+        self.assertTrue(handler._file_operation_pending)
+        self.assertEqual(handler._file_operation_serial, 4)
 
     def test_created_database_waits_for_open_result_and_retains_connection_on_failure(
         self,
@@ -904,6 +1145,9 @@ class FileOperationHandlerCreationDialogIdentityTests(unittest.TestCase):
             self.assertEqual(handler._file_state_model.file_entries, [entry])
             self.assertTrue(entry.is_checked)
             if not ready:
+                warning.assert_called_once()
+                self.assertEqual(warning.call_args.args[1], "SQL database not ready")
+                self.assertIn("Connection interrupted", warning.call_args.args[2])
                 self.assertIn("Reconnect through Open Files", warning.call_args.args[2])
                 self.assertIn("retained", warning.call_args.args[2])
             else:
@@ -932,7 +1176,9 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
         entry = self._entry()
         handler = object.__new__(FileOperationHandler)
         handler.window = None
-        handler._sql_collaboration = Mock()
+        handler._sql_collaboration = create_autospec(
+            SqlCollaborationCoordinator, instance=True
+        )
         callback = []
 
         def start(_database_id, **kwargs):
@@ -974,7 +1220,9 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
         entry = self._entry()
         handler = object.__new__(FileOperationHandler)
         handler.window = None
-        handler._sql_collaboration = Mock()
+        handler._sql_collaboration = create_autospec(
+            SqlCollaborationCoordinator, instance=True
+        )
         handler._file_state_model = SimpleNamespace(file_entries=[entry])
         callbacks = []
         handler._sql_collaboration.start_database.side_effect = lambda _id, **kwargs: (
@@ -998,14 +1246,23 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
         ):
             self.assertFalse(handler._open_created_sql_database(entry))
             warning.assert_called_once()
+            self.assertEqual(warning.call_args.args[1], "SQL database not ready")
+            self.assertIn(
+                "Opening has not completed within the waiting period.",
+                warning.call_args.args[2],
+            )
             self.assertIn("retained", warning.call_args.args[2])
             callbacks[0](True, "")
             warning.assert_called_once()
         self.assertEqual(handler._file_state_model.file_entries, [entry])
         self.assertTrue(entry.is_checked)
-        handler._sql_collaboration.start_database.assert_called_once()
+        handler._sql_collaboration.start_database.assert_called_once_with(
+            entry.database_id,
+            retry_initial_failure=False,
+            on_initial_open=callbacks[0],
+        )
         handler._sql_collaboration.stop_database_async.assert_not_called()
-        handler._sql_collaboration.stop_database.assert_not_called()
+        handler._sql_collaboration.drain_database_mutations_async.assert_not_called()
 
     def test_credential_and_state_save_failures_never_register_or_open(self):
         for boundary in ("credential", "state", "credential_cleanup"):
@@ -1018,9 +1275,15 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
                 handler.icon_provider = Mock()
                 handler._ui_access_manager = Mock()
                 handler._ui_access_manager.is_allowed.return_value = True
-                handler._database_catalog = Mock()
-                handler._sql_database_creator = Mock()
-                handler._credential_store = Mock()
+                handler._database_catalog = create_autospec(
+                    IDatabaseCatalog, instance=True
+                )
+                handler._sql_database_creator = create_autospec(
+                    ISqlDatabaseCreator, instance=True
+                )
+                handler._credential_store = create_autospec(
+                    ICredentialStore, instance=True
+                )
                 handler._file_state_model = state
                 handler._database_descriptor_registry = DatabaseDescriptorRegistry()
                 handler._open_created_sql_database = Mock()
@@ -1059,13 +1322,23 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
                     handler._credential_store.write_password.call_args.args[1:],
                     (_RUNTIME.username, _RUNTIME.password),
                 )
+                warning.assert_called_once()
+                self.assertEqual(warning.call_args.args[1], "SQL Server")
                 self.assertIn(
                     "server database was not deleted", warning.call_args.args[2]
                 )
-                if boundary != "credential":
-                    handler._credential_store.delete_password.assert_called_once()
+                if boundary == "credential":
+                    handler._credential_store.delete_password.assert_not_called()
+                else:
+                    handler._credential_store.delete_password.assert_called_once_with(
+                        credential_target_for(entry.database_id)
+                    )
                 if boundary == "credential_cleanup":
                     self.assertIn(
+                        "Windows Credential Manager", warning.call_args.args[2]
+                    )
+                else:
+                    self.assertNotIn(
                         "Windows Credential Manager", warning.call_args.args[2]
                     )
 
@@ -1078,9 +1351,11 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
         handler.icon_provider = Mock()
         handler._ui_access_manager = Mock()
         handler._ui_access_manager.is_allowed.return_value = True
-        handler._database_catalog = Mock()
-        handler._sql_database_creator = Mock()
-        handler._credential_store = Mock()
+        handler._database_catalog = create_autospec(IDatabaseCatalog, instance=True)
+        handler._sql_database_creator = create_autospec(
+            ISqlDatabaseCreator, instance=True
+        )
+        handler._credential_store = create_autospec(ICredentialStore, instance=True)
         repository = Mock()
         repository.load.return_value = FileState()
         handler._file_state_model = FileStateAggregate(repository)
@@ -1098,10 +1373,16 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
             ),
             patch(
                 "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
-            ),
+            ) as warning,
         ):
             self.assertFalse(handler._create_sql_database())
+            warning.assert_not_called()
             self.assertFalse(handler._create_sql_database())
+        warning.assert_called_once_with(
+            None,
+            "SQL Server",
+            "This SQL Server database is already in Open Files.",
+        )
         self.assertEqual(len(handler._file_state_model.file_entries), 1)
         repository.save.assert_called_once()
         handler._credential_store.write_password.assert_called_once()
@@ -1112,7 +1393,9 @@ class FileOperationHandlerCreationReleaseBoundaryTests(unittest.TestCase):
         )
         handler._file_loading_service = Mock()
         handler._file_loading_service.is_loaded.return_value = False
-        handler._sql_collaboration = Mock()
+        handler._sql_collaboration = create_autospec(
+            SqlCollaborationCoordinator, instance=True
+        )
         stopped = []
         handler._sql_collaboration.stop_database_async.side_effect = (
             lambda _id, _reason, callback: stopped.append(callback)
@@ -1196,7 +1479,8 @@ class OpenFilesWorkspaceContractTests(unittest.TestCase):
             Dialog,
         ):
             handler.open_files()
-        self.assertEqual(received_models, [self.model])
+        self.assertEqual(len(received_models), 1)
+        self.assertIs(received_models[0], self.model)
 
 
 class StartupDatabaseRestoreTests(unittest.TestCase):
@@ -1206,6 +1490,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
 
     def test_open_files_return_tolerates_destroyed_parent(self):
         window = QtWidgets.QDialog()
+        cleanups = []
 
         class _State:
             file_entries = []
@@ -1226,10 +1511,13 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
 
             def exec(self):
                 delete(window)
-                return QtWidgets.QDialog.DialogCode.Rejected
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_file_entries(self):
+                raise AssertionError("a destroyed dialog must not be read")
 
             def cleanup(self):
-                pass
+                cleanups.append(True)
 
         handler = _startup_database_StartupFileOperationHandler(
             window=window,
@@ -1251,6 +1539,8 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             _Dialog,
         ):
             handler.open_files()
+        self.assertFalse(isValid(window))
+        self.assertEqual(cleanups, [True])
         self.assertEqual(state.reloads, 2)
 
     def test_unchecking_unavailable_sql_does_not_require_repository_unload(self):
@@ -1262,6 +1552,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         unchecked = original.with_checked(False)
         stopped = []
         cancelled = []
+        disconnected = []
 
         class _State:
             file_entries = [original]
@@ -1307,7 +1598,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 )
             ),
             database_capability_service=SimpleNamespace(
-                mark_disconnected=lambda _database_id: None
+                mark_disconnected=disconnected.append
             ),
         )
         with patch(
@@ -1318,6 +1609,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(state.file_entries, [unchecked])
         self.assertEqual(stopped, [(sql_descriptor.database_id, "unchecked")])
         self.assertEqual(cancelled, [sql_descriptor.database_id])
+        self.assertEqual(disconnected, [sql_descriptor.database_id])
 
     def test_open_files_uncheck_of_loaded_sql_waits_for_critical_drain(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1379,9 +1671,124 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(flushed, [descriptor.database_id])
         self.assertEqual(unloads, [])
         self.assertEqual(len(drain_callbacks), 1)
+        self.assertEqual(drain_callbacks[0][0], descriptor.database_id)
+        self.assertEqual(handler._file_state_model.file_entries, [original])
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            handler.open_files()
+        warning.assert_called_once_with(
+            None,
+            "Database Operation Pending",
+            "Wait for the current database operation to finish before changing "
+            "Open Files again.",
+        )
+        self.assertEqual(unloads, [])
         drain_callbacks[0][1](True, "")
         self.assertEqual(unloads, [descriptor.database_id])
         self.assertEqual(cancelled, [descriptor.database_id])
+        self.assertEqual(handler._file_state_model.file_entries, [unchecked])
+        self.assertFalse(handler._file_operation_pending)
+
+    def test_open_files_uncheck_of_loaded_sql_stays_checked_when_critical_drain_fails(
+        self,
+    ):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="LOADED_SQL"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        original = FileEntry.for_descriptor(descriptor, is_checked=True)
+        unchecked = original.with_checked(False)
+
+        def drain_reports_failure(_database_id, callback):
+            callback(False, "writes pending")
+
+        def drain_without_message(_database_id, callback):
+            callback(False, "")
+
+        def drain_raises(_database_id, _callback):
+            raise RuntimeError("coordinator closed")
+
+        def drain_must_not_run(_database_id, _callback):
+            raise AssertionError("no drain after a failed flush")
+
+        cases = (
+            (
+                "flush failure",
+                False,
+                drain_must_not_run,
+                "A critical database setting could not be submitted before unload.",
+            ),
+            ("drain reports failure", True, drain_reports_failure, "writes pending"),
+            (
+                "drain failure without message",
+                True,
+                drain_without_message,
+                "A critical database setting could not be saved before unload.",
+            ),
+            ("drain raises", True, drain_raises, "coordinator closed"),
+        )
+        for label, flush_result, drain, expected_message in cases:
+            with self.subTest(label):
+                unloads = []
+                cancelled = []
+
+                class _State:
+                    file_entries = [original]
+
+                    def reload(self):
+                        pass
+
+                    def update_entries(self, entries):
+                        self.file_entries = list(entries)
+
+                class _Dialog(_startup_database__OpenFilesDialogStub):
+                    def get_file_entries(self):
+                        return [unchecked]
+
+                    def commit_credential_changes(self):
+                        return set()
+
+                handler = _startup_database_StartupFileOperationHandler(
+                    window=None,
+                    icon_provider=None,
+                    event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+                    file_state_model=_State(),
+                    cleanup_deleted_files_use_case=SimpleNamespace(
+                        execute_and_save=lambda: None
+                    ),
+                    file_loading_service=SimpleNamespace(
+                        is_loaded=lambda locator: locator == descriptor.database_id
+                    ),
+                    working_directory_service=None,
+                    unload_file_fn=lambda locator: unloads.append(locator) or True,
+                    deferred_persistence_manager=SimpleNamespace(
+                        flush_for_file=lambda _locator, result=flush_result: result,
+                        cancel_for_file=cancelled.append,
+                    ),
+                    ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+                    sql_collaboration_coordinator=SimpleNamespace(
+                        drain_database_mutations_async=drain
+                    ),
+                )
+                with (
+                    patch(
+                        "ost_visualizer.presentation.handlers.file_operation_handler."
+                        "OpenFilesDialog",
+                        _Dialog,
+                    ),
+                    patch(
+                        "ost_visualizer.presentation.handlers.file_operation_handler."
+                        "show_warning"
+                    ) as warning,
+                ):
+                    handler.open_files()
+                self.assertEqual(unloads, [])
+                self.assertEqual(cancelled, [])
+                self.assertEqual(handler._file_state_model.file_entries, [original])
+                self.assertTrue(handler._file_state_model.file_entries[0].is_checked)
+                warning.assert_called_once_with(None, "Unload File", expected_message)
+                self.assertFalse(handler._file_operation_pending)
 
     def test_loaded_sql_unload_rejects_duplicate_action_while_drain_is_pending(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1426,9 +1833,18 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             handler.unload_file()
         self.assertEqual(len(drain_callbacks), 1)
         self.assertEqual(unloads, [])
-        warning.assert_called_once()
+        warning.assert_called_once_with(
+            None,
+            "Database Operation Pending",
+            "Wait for the current database operation to finish before changing "
+            "Open Files again.",
+        )
+        self.assertTrue(handler._file_operation_pending)
         drain_callbacks[0](True, "")
         self.assertEqual(unloads, [descriptor.database_id])
+        self.assertEqual(
+            handler._file_state_model.file_entries, [original.with_checked(False)]
+        )
         self.assertFalse(handler._file_operation_pending)
 
     def test_explicit_unload_of_offline_sql_detaches_local_state(self):
@@ -1535,7 +1951,13 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(flushed, [descriptor.database_id])
         self.assertEqual(drains, [descriptor.database_id])
         self.assertTrue(_State.file_entries[0].is_checked)
-        warning.assert_called_once()
+        warning.assert_called_once_with(
+            None,
+            "Unload File",
+            "The Open Files state could not be saved, so the database was not "
+            "unloaded.",
+        )
+        self.assertFalse(handler._file_operation_pending)
 
     def test_loaded_sql_unload_failure_preserves_deferred_writes(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1578,12 +2000,15 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         )
         with patch(
             "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
-        ):
+        ) as warning:
             handler.unload_file()
         self.assertEqual(state.file_entries, [original])
         self.assertEqual(cancelled, [])
         self.assertEqual(flushed, [descriptor.database_id])
         self.assertEqual(drains, [descriptor.database_id])
+        warning.assert_called_once_with(
+            None, "No File Loaded", "There is no file currently loaded."
+        )
 
     def test_open_files_save_failure_does_not_unload_the_active_database(self):
         original = FileEntry("C:/projects/active.mdb", is_checked=True)
@@ -1639,8 +2064,12 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         self.assertEqual(unloads, [])
         self.assertEqual(credential_commits, [])
         self.assertEqual(handler._file_state_model.file_entries, [original])
-        warning.assert_called_once()
-        self.assertIn("could not be saved", warning.call_args.args[2])
+        warning.assert_called_once_with(
+            None,
+            "Open Files",
+            "The Open Files state could not be saved, so no database changes were "
+            "applied.",
+        )
 
     def test_open_files_credential_commit_failure_restores_saved_selection(self):
         original = FileEntry("C:/projects/active.mdb", is_checked=True)
@@ -1691,8 +2120,73 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             handler.open_files()
         self.assertEqual(state.file_entries, [original])
         self.assertEqual(unloads, [])
-        warning.assert_called_once()
-        self.assertIn("credentials", warning.call_args.args[2])
+        warning.assert_called_once_with(
+            None,
+            "Open Files",
+            "The SQL credentials could not be finalized, so no database changes "
+            "were applied.",
+        )
+
+    def test_open_files_reports_when_credential_failure_cannot_restore_selection(self):
+        original = FileEntry("C:/projects/active.mdb", is_checked=True)
+        unchecked = original.with_checked(False)
+        unloads = []
+        saves = []
+
+        class _State:
+            file_entries = [original]
+
+            def reload(self):
+                pass
+
+            def update_entries(self, entries):
+                saves.append([entry.is_checked for entry in entries])
+                if len(saves) == 2:
+                    raise OSError("disk unavailable")
+                self.file_entries = list(entries)
+
+        class _Dialog(_startup_database__OpenFilesDialogStub):
+            def get_file_entries(self):
+                return [unchecked]
+
+            def commit_credential_changes(self):
+                raise OSError("credential store unavailable")
+
+        handler = _startup_database_StartupFileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=_State(),
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=SimpleNamespace(),
+            working_directory_service=None,
+            unload_file_fn=lambda locator: unloads.append(locator) or True,
+            deferred_persistence_manager=SimpleNamespace(),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+        )
+        with (
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler."
+                "OpenFilesDialog",
+                _Dialog,
+            ),
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler."
+                "show_warning"
+            ) as warning,
+        ):
+            handler.open_files()
+        self.assertEqual(saves, [[False], [True]])
+        self.assertEqual(unloads, [])
+        warning.assert_called_once_with(
+            None,
+            "Open Files",
+            "The SQL credentials could not be finalized and the previous Open Files "
+            "state could not be restored.",
+        )
 
     def test_failed_load_checkbox_rollback_save_failure_is_contained(self):
         checked = FileEntry("C:/projects/unavailable.mdb", is_checked=True)
@@ -1702,6 +2196,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
 
             def __init__(self):
                 self.update_count = 0
+                self.saved = []
 
             def reload(self):
                 pass
@@ -1711,6 +2206,9 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 if self.update_count == 2:
                     raise OSError("disk unavailable")
                 self.file_entries = list(entries)
+                self.saved.append(
+                    [(entry.database_id, entry.is_checked) for entry in entries]
+                )
 
         class _Dialog(_startup_database__OpenFilesDialogStub):
             def get_file_entries(self):
@@ -1752,9 +2250,90 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             ) as warning,
         ):
             handler.open_files()
-        self.assertEqual(state.file_entries, [checked])
-        self.assertEqual(warning.call_count, 2)
-        self.assertIn("checked state could not be cleared", warning.call_args.args[2])
+        self.assertEqual(state.update_count, 2)
+        self.assertEqual(state.saved, [[(checked.database_id, True)]])
+        self.assertEqual(
+            [call.args[1:] for call in warning.call_args_list],
+            [
+                (
+                    "Error Loading File",
+                    f"Failed to load {checked.descriptor.display_name}:\nunavailable",
+                ),
+                (
+                    "Open Files",
+                    "A database could not be loaded and its checked state could "
+                    "not be cleared.",
+                ),
+            ],
+        )
+
+    def test_failed_load_clears_the_persisted_checkbox(self):
+        checked = FileEntry("C:/projects/unavailable.mdb", is_checked=True)
+
+        class _State:
+            file_entries = []
+
+            def __init__(self):
+                self.saved = []
+
+            def reload(self):
+                pass
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+                self.saved.append(
+                    [(entry.database_id, entry.is_checked) for entry in entries]
+                )
+
+        class _Dialog(_startup_database__OpenFilesDialogStub):
+            def get_file_entries(self):
+                return [checked]
+
+            def commit_credential_changes(self):
+                return set()
+
+        state = _State()
+        disconnected = []
+        handler = _startup_database_StartupFileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=state,
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=SimpleNamespace(
+                load_file=lambda _locator: SimpleNamespace(
+                    success=False,
+                    error_message="unavailable",
+                )
+            ),
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: True,
+            deferred_persistence_manager=SimpleNamespace(),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+            database_capability_service=SimpleNamespace(
+                mark_disconnected=disconnected.append
+            ),
+        )
+        with (
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler."
+                "OpenFilesDialog",
+                _Dialog,
+            ),
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler."
+                "show_warning"
+            ) as warning,
+        ):
+            handler.open_files()
+        database_id = checked.database_id
+        self.assertEqual(state.saved, [[(database_id, True)], [(database_id, False)]])
+        self.assertEqual(disconnected, [database_id])
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1], "Error Loading File")
 
     def test_sql_retry_uses_coordinator_without_loading_on_qt_thread(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1763,7 +2342,6 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         )
         entry = FileEntry.for_descriptor(descriptor, is_checked=True)
         restarts = []
-        active_access = ["C:/projects/active.mdb"]
 
         def stop_database(database_id, reason, callback):
             restarts.append(("stop", database_id, reason, threading.get_ident()))
@@ -1792,7 +2370,6 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         )
         loaded = handler._load_specific_entries([entry])
         self.assertEqual(loaded, {descriptor.database_id})
-        self.assertEqual(active_access, ["C:/projects/active.mdb"])
         self.assertEqual(
             [call[:2] for call in restarts],
             [
@@ -1800,6 +2377,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 ("start", descriptor.database_id),
             ],
         )
+        self.assertEqual(restarts[0][2], "reconfigured")
 
     def test_rechecking_sql_persists_checked_state_before_immediate_restart(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1898,12 +2476,87 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         handler = _startup_database_StartupFileOperationHandler.__new__(
             _startup_database_StartupFileOperationHandler
         )
+        registry = DatabaseDescriptorRegistry()
+        registry.register(descriptor)
+        credentials = _cleanup_support__CredentialStore()
+        disconnected = []
         handler._file_state_model = SimpleNamespace(
             file_entries=[entry.with_checked(False)]
         )
         handler._sql_collaboration = SimpleNamespace(start_database=starts.append)
-        handler._database_descriptor_registry = None
-        handler._credential_store = None
-        handler._database_capability_service = None
+        handler._database_descriptor_registry = registry
+        handler._credential_store = credentials
+        handler._database_capability_service = SimpleNamespace(
+            mark_disconnected=disconnected.append
+        )
         handler._complete_sql_connection_removal(entry, True, "")
         self.assertEqual(starts, [])
+        self.assertIs(registry.resolve(descriptor.database_id), descriptor)
+        self.assertEqual(credentials.deleted, [])
+        self.assertEqual(disconnected, [])
+
+    def test_sql_restart_callback_starts_only_enabled_entries_and_reports_failure(
+        self,
+    ):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="SQL"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        checked = FileEntry.for_descriptor(descriptor, is_checked=True)
+        unchecked = checked.with_checked(False)
+        closed_safely = (
+            "The existing SQL collaboration session could not be closed safely."
+        )
+        cases = (
+            (
+                "checked entry restarts",
+                [checked],
+                True,
+                "",
+                [descriptor.database_id],
+                None,
+            ),
+            ("unchecked entry stays stopped", [unchecked], True, "", [], None),
+            (
+                "checked failure reports its message",
+                [checked],
+                False,
+                "drain timed out",
+                [],
+                "drain timed out",
+            ),
+            (
+                "checked failure reports the default message",
+                [checked],
+                False,
+                "",
+                [],
+                closed_safely,
+            ),
+            ("unchecked failure stays silent", [unchecked], False, "late", [], None),
+        )
+        for label, entries, success, message, expected_starts, warned in cases:
+            with self.subTest(label):
+                starts = []
+                handler = _startup_database_StartupFileOperationHandler.__new__(
+                    _startup_database_StartupFileOperationHandler
+                )
+                handler.window = None
+                handler._file_state_model = SimpleNamespace(file_entries=entries)
+                handler._sql_collaboration = SimpleNamespace(
+                    start_database=starts.append
+                )
+                with patch(
+                    "ost_visualizer.presentation.handlers.file_operation_handler."
+                    "show_warning"
+                ) as warning:
+                    handler._complete_sql_connection_restart(
+                        descriptor.database_id, success, message
+                    )
+                self.assertEqual(starts, expected_starts)
+                if warned is None:
+                    warning.assert_not_called()
+                else:
+                    warning.assert_called_once_with(
+                        None, "Reconnect SQL Server Database", warned
+                    )

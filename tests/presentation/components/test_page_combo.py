@@ -3,12 +3,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.folder import Folder
 from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.presentation.components.page_combo import (
+    _ITEM_ROLE_PAGE,
+    _ITEM_ROLE_PRECHECK_ICON,
     PageComboBox,
     SinglePageComboBox,
 )
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from tests.presentation.dialogs.options.preference_support import (
     _app as _preferences_support__app,
 )
@@ -68,6 +72,33 @@ class PageComboPreferenceTests(unittest.TestCase):
         self.assertEqual(combo._page_items["p1"].text(), "A101")
         combo.close()
 
+    def test_page_label_options_apply_to_pages_inside_nested_folders(self):
+        nested = Folder(
+            uid="f2",
+            name="Nested",
+            pages=[Page(uid="p2", name="A102", sheet_no="S2", sequence=2)],
+        )
+        folder = Folder(
+            uid="f1",
+            name="Folder",
+            pages=[Page(uid="p1", name="A101", sheet_no="S1", sequence=1)],
+            subfolders={"f2": nested},
+        )
+        bid = Bid(uid="bid-1", name="Bid", folders={"f1": folder})
+        for combo_type in (PageComboBox, SinglePageComboBox):
+            with self.subTest(combo=combo_type):
+                combo = combo_type()
+                combo.set_label_options(True, True)
+                combo.load_bid(bid)
+                self.assertEqual(combo._page_items["p1"].text(), "1 - S1 - A101")
+                self.assertEqual(combo._page_items["p2"].text(), "2 - S2 - A102")
+                combo.set_label_options(False, False)
+                self.assertEqual(combo._page_items["p1"].text(), "A101")
+                self.assertEqual(combo._page_items["p2"].text(), "A102")
+                self.assertEqual(combo.get_page_order(), ["p2", "p1"])
+                combo.cleanup()
+                combo.deleteLater()
+
     def test_page_combo_emits_every_uncheck_switch_and_recheck_state(self):
         combo = PageComboBox()
         combo.load_bid(
@@ -109,6 +140,7 @@ class PageComboPreferenceTests(unittest.TestCase):
         self.assertEqual(combo.get_selected_page_uids(), [])
         self.assertEqual(combo.get_active_page_uid(), "page-a")
         self.assertEqual(active_changes, [])
+        self.assertEqual(combo.lineEdit().text(), "A101")
         combo.close()
 
     def test_page_combo_does_not_emit_selection_for_label_or_indicator_updates(self):
@@ -126,10 +158,29 @@ class PageComboPreferenceTests(unittest.TestCase):
         combo.restore_selection(["page-a"], active_uid="page-a")
         emitted = []
         combo.page_selection_changed.connect(lambda pages: emitted.append(list(pages)))
+        active_changes = []
+        combo.active_page_changed.connect(active_changes.append)
+        default_key = combo._draft_icon_default.cacheKey()
+        active_key = combo._draft_icon_active.cacheKey()
+        self.assertNotEqual(default_key, active_key)
         combo.set_page_has_takeoffs("page-a", True)
+        self.assertEqual(
+            combo._page_items["page-a"].data(_ITEM_ROLE_PRECHECK_ICON).cacheKey(),
+            active_key,
+        )
         combo.set_pages_with_takeoffs({"page-b"})
+        self.assertEqual(
+            combo._page_items["page-a"].data(_ITEM_ROLE_PRECHECK_ICON).cacheKey(),
+            default_key,
+        )
+        self.assertEqual(
+            combo._page_items["page-b"].data(_ITEM_ROLE_PRECHECK_ICON).cacheKey(),
+            active_key,
+        )
         combo.set_label_options(True, False)
+        self.assertEqual(combo._page_items["page-a"].text(), "1 - A101")
         self.assertEqual(emitted, [])
+        self.assertEqual(active_changes, [])
         self.assertEqual(combo.get_selected_page_uids(), ["page-a"])
         combo.close()
 
@@ -148,12 +199,16 @@ class PageComboPreferenceTests(unittest.TestCase):
         combo.restore_selection(["page-b"], active_uid="page-b")
         combo.load_bid(bid)
         order = combo.get_page_order()
-        active_index = order.index(combo.get_active_page_uid())
+        self.assertEqual(order, ["page-a", "page-b", "page-c"])
         self.assertEqual(combo.get_selected_page_uids(), ["page-b"])
         self.assertEqual(combo.get_active_page_uid(), "page-b")
         self.assertEqual(combo.lineEdit().text(), "Duplicate")
-        self.assertTrue(active_index > 0)
-        self.assertTrue(active_index < len(order) - 1)
+        self.assertEqual(
+            combo._page_items["page-b"].checkState(), QtCore.Qt.CheckState.Checked
+        )
+        self.assertEqual(
+            combo._page_items["page-a"].checkState(), QtCore.Qt.CheckState.Unchecked
+        )
         combo.go_next()
         self.assertEqual(combo.get_active_page_uid(), "page-c")
         combo.go_prev()
@@ -170,11 +225,15 @@ class PageComboPreferenceTests(unittest.TestCase):
         combo.load_bid(bid)
         combo.restore_selection(["page-a"], active_uid="page-a")
         active_changes = []
+        selection_changes = []
         model_changes = []
         combo.active_page_changed.connect(active_changes.append)
+        combo.page_selection_changed.connect(selection_changes.append)
         combo.navigation_state_changed.connect(lambda: model_changes.append(True))
         combo.load_bid(bid)
         self.assertEqual(active_changes, [])
+        self.assertEqual(selection_changes, [])
+        self.assertEqual(combo.get_selected_page_uids(), ["page-a"])
         self.assertEqual(model_changes, [True])
         self.assertEqual(combo.lineEdit().text(), "A101")
         combo.close()
@@ -206,6 +265,8 @@ class PageComboPreferenceTests(unittest.TestCase):
         combo.restore_selection(["page-b"], active_uid="page-b")
         self.assertTrue(previous_action.isEnabled())
         self.assertTrue(next_action.isEnabled())
+        previous_action.setEnabled(False)
+        next_action.setEnabled(False)
         combo.load_bid(bid)
         self.assertEqual(combo.lineEdit().text(), "A102")
         self.assertTrue(previous_action.isEnabled())
@@ -235,6 +296,58 @@ class PageComboPreferenceTests(unittest.TestCase):
         self.assertEqual(combo.get_selected_page_uids(), [])
         self.assertIsNone(combo.get_active_page_uid())
         self.assertEqual(combo.lineEdit().text(), "")
+        self.assertEqual(
+            combo._page_items["1"].checkState(), QtCore.Qt.CheckState.Unchecked
+        )
+        combo.close()
+
+    @staticmethod
+    def _mouse_event(event_type, button_state):
+        return QtGui.QMouseEvent(
+            event_type,
+            QtCore.QPointF(5.0, 5.0),
+            QtCore.QPointF(5.0, 5.0),
+            QtCore.Qt.MouseButton.LeftButton,
+            button_state,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+
+    def _press_and_release_on_page(self, combo, press_page_uid, rebuild_bid=None):
+        press_index = combo._page_items[press_page_uid].index()
+        press = self._mouse_event(
+            QtCore.QEvent.Type.MouseButtonPress, QtCore.Qt.MouseButton.LeftButton
+        )
+        with (
+            mock.patch.object(combo._tree, "indexAt", return_value=press_index),
+            mock.patch.object(combo, "_is_click_on_checkbox", return_value=False),
+        ):
+            combo.eventFilter(combo._tree.viewport(), press)
+        if rebuild_bid is not None:
+            combo.load_bid(rebuild_bid)
+        release_index = combo._page_items[press_page_uid].index()
+        release = self._mouse_event(
+            QtCore.QEvent.Type.MouseButtonRelease, QtCore.Qt.MouseButton.NoButton
+        )
+        with (
+            mock.patch.object(combo._tree, "indexAt", return_value=release_index),
+            mock.patch.object(combo, "_is_click_on_checkbox", return_value=False),
+        ):
+            return combo.eventFilter(combo._tree.viewport(), release)
+
+    def test_page_combo_press_release_on_same_page_activates_it(self):
+        combo = PageComboBox()
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="Bid",
+                pages_without_folder=[Page(uid="page-a", name="A101")],
+            )
+        )
+        activated = []
+        combo.active_page_changed.connect(activated.append)
+        self._press_and_release_on_page(combo, "page-a")
+        self.assertEqual(combo.get_active_page_uid(), "page-a")
+        self.assertEqual(activated, ["page-a"])
         combo.close()
 
     def test_page_combo_model_rebuild_cancels_pressed_page_activation(self):
@@ -246,40 +359,18 @@ class PageComboPreferenceTests(unittest.TestCase):
                 pages_without_folder=[Page(uid="page-a", name="A101")],
             )
         )
-        old_index = combo._page_items["page-a"].index()
-        press = QtGui.QMouseEvent(
-            QtCore.QEvent.Type.MouseButtonPress,
-            QtCore.QPointF(5.0, 5.0),
-            QtCore.QPointF(5.0, 5.0),
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.KeyboardModifier.NoModifier,
-        )
-        with mock.patch.object(combo._tree, "indexAt", return_value=old_index):
-            combo.eventFilter(combo._tree.viewport(), press)
-        combo.load_bid(
-            Bid(
-                uid="bid-1",
-                name="Bid",
-                pages_without_folder=[Page(uid="page-b", name="A102")],
-            )
-        )
-        new_index = combo._page_items["page-b"].index()
         activated = []
         combo.active_page_changed.connect(activated.append)
-        release = QtGui.QMouseEvent(
-            QtCore.QEvent.Type.MouseButtonRelease,
-            QtCore.QPointF(5.0, 5.0),
-            QtCore.QPointF(5.0, 5.0),
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.MouseButton.NoButton,
-            QtCore.Qt.KeyboardModifier.NoModifier,
+        handled = self._press_and_release_on_page(
+            combo,
+            "page-a",
+            rebuild_bid=Bid(
+                uid="bid-1",
+                name="Bid",
+                pages_without_folder=[Page(uid="page-a", name="A101 renamed")],
+            ),
         )
-        with (
-            mock.patch.object(combo._tree, "indexAt", return_value=new_index),
-            mock.patch.object(combo, "_is_click_on_checkbox", return_value=False),
-        ):
-            combo.eventFilter(combo._tree.viewport(), release)
+        self.assertTrue(handled)
         self.assertIsNone(combo.get_active_page_uid())
         self.assertEqual(activated, [])
         combo.close()
@@ -294,11 +385,12 @@ class PageComboPreferenceTests(unittest.TestCase):
         combo.load_bid(bid)
         combo.restore_selection(["page-a"], active_uid="page-a")
         combo.load_bid(bid)
-        order = combo.get_page_order()
-        active_index = order.index(combo.get_active_page_uid())
+        self.assertEqual(combo.get_page_order(), ["page-a"])
+        self.assertEqual(combo.get_active_page_uid(), "page-a")
         self.assertEqual(combo.lineEdit().text(), "A101")
-        self.assertFalse(active_index > 0)
-        self.assertFalse(active_index < len(order) - 1)
+        combo.go_prev()
+        combo.go_next()
+        self.assertEqual(combo.get_active_page_uid(), "page-a")
         combo.close()
 
     def test_page_label_index_uses_sequence_not_pdf_page_index(self):
@@ -349,6 +441,8 @@ class PageComboPreferenceTests(unittest.TestCase):
                     pages_without_folder=[Page(uid="p1", name="A101")],
                 )
             )
+            tree = combo._tree
+            popup = combo._popup
             combo.cleanup()
             combo.cleanup()
             self.assertIsNone(combo._page_items)
@@ -356,6 +450,9 @@ class PageComboPreferenceTests(unittest.TestCase):
             self.assertIsNone(combo._selected_uids)
             self.assertIsNone(combo._popup)
             self.assertIsNone(combo._tree)
+            self.assertIsNone(tree.model())
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.assertFalse(isValid(popup))
         finally:
             combo.deleteLater()
 
@@ -384,12 +481,17 @@ class PageComboPreferenceTests(unittest.TestCase):
                     pages_without_folder=[Page(uid="p1", name="A101")],
                 )
             )
+            tree = combo._tree
+            popup = combo._popup
             combo.cleanup()
             combo.cleanup()
             self.assertIsNone(combo._page_items)
             self.assertIsNone(combo._pages_with_takeoffs)
             self.assertIsNone(combo._popup)
             self.assertIsNone(combo._tree)
+            self.assertIsNone(tree.model())
+            self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            self.assertFalse(isValid(popup))
         finally:
             combo.deleteLater()
 
@@ -413,6 +515,28 @@ class PageComboPreferenceTests(unittest.TestCase):
         self.assertEqual(combo.lineEdit().text(), "")
         combo.set_current_page_uid("missing")
         self.assertEqual(combo._selected_uid, "")
+        combo.close()
+
+    def test_single_page_combo_same_page_reload_keeps_selection_without_activation(
+        self,
+    ):
+        combo = SinglePageComboBox()
+        bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            pages_without_folder=[
+                Page(uid="p1", name="A101"),
+                Page(uid="p2", name="A102"),
+            ],
+        )
+        combo.load_bid(bid)
+        combo.set_current_page_uid("p2")
+        activated = []
+        combo.page_activated.connect(activated.append)
+        combo.load_bid(bid)
+        self.assertEqual(combo._selected_uid, "p2")
+        self.assertEqual(combo.lineEdit().text(), "A102")
+        self.assertEqual(activated, [])
         combo.close()
 
 
@@ -477,12 +601,15 @@ class RefreshScopeTests(unittest.TestCase):
                 item = combo._page_items["42"]
                 state = item.checkState()
                 combo._model.modelReset.connect(lambda: calls.append("reset"))
+                combo._model.itemChanged.connect(lambda *_: calls.append("item"))
+                combo._model.dataChanged.connect(lambda *_: calls.append("data"))
                 self.fixture.original.name = "New label"
                 combo.refresh_page_labels([self.fixture.original])
                 self.assertIs(combo._page_items["42"], item)
                 self.assertEqual(item.text(), "New label")
                 self.assertEqual(item.checkState(), state)
-                self.assertIn("New label", combo.currentText())
+                self.assertIs(item.data(_ITEM_ROLE_PAGE), self.fixture.original)
+                self.assertEqual(combo.currentText(), "New label")
                 self.assertEqual(calls, [])
                 combo.cleanup()
                 combo.deleteLater()

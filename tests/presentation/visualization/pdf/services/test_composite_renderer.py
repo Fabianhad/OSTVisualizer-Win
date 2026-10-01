@@ -4,6 +4,7 @@ from ost_visualizer.presentation.visualization.pdf.services.composite_renderer i
 )
 from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     RASTER_NATIVE_RENDER_SCALE,
@@ -726,6 +727,99 @@ class CompositeRendererTests(unittest.TestCase):
                     rotation=0,
                 )
         self.assertTrue(_ExplodingPainter.last_instance.ended)
+
+    def test_composite_key_separates_bid_source_identity_and_base_signature(self):
+        from dataclasses import replace
+
+        cache = _SignaturePageCache()
+        renderer = CompositeRenderer(cache)
+        page = _page()
+        bid = BidRef("bid.mdb", "bid-1")
+        image = renderer.render_composite(page, bid, 1.0, 0)
+        self.assertIsNotNone(image)
+        self.assertIs(renderer.render_composite(page, bid, 1.0, 0), image)
+        for name, other_page, other_bid in (
+            ("bid file", page, BidRef("other.mdb", "bid-1")),
+            ("bid uid", page, BidRef("bid.mdb", "bid-2")),
+            ("no bid", page, None),
+            ("page uid", replace(page, uid="page-2"), bid),
+            ("page index", replace(page, page_index=1), bid),
+            ("base path", replace(page, image_path="other-base.pdf"), bid),
+            ("overlay path", replace(page, overlay_image_path="other.pdf"), bid),
+        ):
+            with self.subTest(name):
+                self.assertIsNot(
+                    renderer.render_composite(other_page, other_bid, 1.0, 0), image
+                )
+        cache.signatures["base.pdf"] = (2, 100)
+        self.assertIsNot(renderer.render_composite(page, bid, 1.0, 0), image)
+
+    def test_every_cancellation_checkpoint_discards_the_result_uncached(self):
+        scenarios = (
+            (
+                "composite",
+                _SignaturePageCache,
+                lambda renderer, cancelled: renderer.render_composite(
+                    _page(), None, 1.0, 0, cancelled_check=cancelled
+                ),
+                6,
+            ),
+            (
+                "pdf frame",
+                _SignaturePageCache,
+                lambda renderer, cancelled: renderer.render_composite_frame(
+                    _page(), 1.0, 0.0, 0.0, 100.0, 100.0, 0, cancelled_check=cancelled
+                ),
+                5,
+            ),
+        )
+        for name, make_cache, render, minimum_checks in scenarios:
+
+            def run(fire_at):
+                cache = make_cache()
+                checks = [0]
+
+                def cancelled():
+                    checks[0] += 1
+                    return fire_at is not None and checks[0] >= fire_at
+
+                return render(CompositeRenderer(cache), cancelled), checks[0], cache
+
+            image, total_checks, _cache = run(None)
+            self.assertIsNotNone(image, name)
+            self.assertGreaterEqual(total_checks, minimum_checks, name)
+            for fire_at in range(1, total_checks + 1):
+                with self.subTest(scenario=name, cancelled_at_check=fire_at):
+                    image, _checks, cache = run(fire_at)
+                    self.assertIsNone(image)
+                    self.assertEqual(len(cache._composite_cache), 0)
+
+    def test_frame_requests_are_clipped_to_the_page_before_rendering_sources(self):
+        for frame, expected in (
+            ((-10.0, -10.0, 60.0, 60.0), (0.0, 0.0, 50.0, 50.0)),
+            ((80.0, 80.0, 50.0, 50.0), (80.0, 80.0, 20.0, 20.0)),
+        ):
+            with self.subTest(frame=frame):
+                cache = _preferences_support_FakeCompositeFramePageCache()
+                image = CompositeRenderer(cache).render_composite_frame(
+                    _page(), 2.0, *frame, 0
+                )
+                self.assertEqual(cache.calls[0], ("base.pdf", 0, 2.0, *expected))
+                self.assertEqual(
+                    (image.width(), image.height()),
+                    (int(expected[2] * 2), int(expected[3] * 2)),
+                )
+        cache = _preferences_support_FakeCompositeFramePageCache()
+        renderer = CompositeRenderer(cache)
+        self.assertIsNone(
+            renderer.render_composite_frame(_page(), 2.0, 200.0, 200.0, 10.0, 10.0, 0)
+        )
+        self.assertIsNone(
+            renderer.render_composite_frame(
+                _page(image_path="base.tif"), 2.0, 0.0, 0.0, 0.0, 10.0, 0
+            )
+        )
+        self.assertEqual(cache.calls, [])
 
 
 class CompositeRendererPreferenceTests(unittest.TestCase):

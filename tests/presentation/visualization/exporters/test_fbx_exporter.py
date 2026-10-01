@@ -29,15 +29,22 @@ class FBXExporterTests(unittest.TestCase):
             with patch.object(
                 exporter.fbx_writer, "write_fbx_file", side_effect=write
             ) as writer:
+                materials_info = {"c": ("red", "Condition", "#ff0000")}
                 exporter._write_output(
                     "unused.fbx",
                     {"c": [(negative, condition), (positive, condition)]},
-                    {"c": ("red", "Condition", "#ff0000")},
+                    materials_info,
                     {"c": condition},
                     "solid",
                 )
-                writer.assert_called_once()
+                # The mesh list passed to the writer is released after writing.
+                writer.assert_called_once_with(
+                    "unused.fbx", [], materials_info, "solid"
+                )
             generate.assert_called_once_with(positive, condition)
+        self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["material_key"], "c")
+        self.assertEqual(captured[0]["material_name"], "red")
+        self.assertEqual(captured[0]["original_name"], "Condition")
         self.assertEqual(mesh.vertices, [])
         self.assertEqual(mesh.faces, [])

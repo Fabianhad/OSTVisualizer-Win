@@ -1,4 +1,5 @@
 import json
+import sys
 import unittest
 from pathlib import Path
 from ost_visualizer.presentation.utils.mcp_setup_config import (
@@ -35,6 +36,12 @@ class McpSetupConfigTests(unittest.TestCase):
         )
         self.assertEqual(helper_path.name, MCP_HELPER_EXE_NAME)
         self.assertEqual(str(helper_path.parent), r"C:\Program Files\OST Visualizer")
+        self.assertEqual(MCP_HELPER_EXE_NAME, "ostv-mcp.exe")
+
+    def test_default_helper_path_without_argument_uses_current_executable(self):
+        helper_path = default_mcp_helper_path()
+        self.assertEqual(helper_path.name, MCP_HELPER_EXE_NAME)
+        self.assertEqual(helper_path.parent, Path(sys.executable).resolve().parent)
 
     def test_claude_config_uses_packaged_helper_only(self):
         helper_path = Path(r"C:\Program Files\OST Visualizer\ostv-mcp.exe")
@@ -87,6 +94,23 @@ class McpSetupConfigTests(unittest.TestCase):
         )
         self.assert_no_private_mcp_setup_fields(command)
         self.assertNotIn("python", command.lower())
+
+    def test_codex_config_escapes_control_characters(self):
+        text = build_codex_config_toml(Path("C:/Tools/a\tb\nc/ostv-mcp.exe"))
+        self.assertEqual(
+            text.splitlines()[1],
+            'command = "C:\\\\Tools\\\\a\\tb\\nc\\\\ostv-mcp.exe"',
+        )
+        self.assertEqual(len(text.splitlines()), 3)
+
+    def test_codex_command_doubles_single_quotes_in_helper_path(self):
+        command = build_codex_mcp_add_command(
+            Path(r"C:\Users\O'Neil\ostv-mcp.exe"), codex_command="codex.cmd"
+        )
+        self.assertEqual(
+            command,
+            "codex.cmd mcp add ost-visualizer -- " r"'C:\Users\O''Neil\ostv-mcp.exe'",
+        )
 
 
 if __name__ == "__main__":

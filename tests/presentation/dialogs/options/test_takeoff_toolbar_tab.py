@@ -94,3 +94,23 @@ class TakeoffToolbarPreferencesTests(unittest.TestCase):
             all(column.spacing() == RELAXED_SPACING for column in lower_columns)
         )
         self.assertEqual(len(tab.checks), len(TAKEOFF_TOOLBAR_ITEMS))
+        self.assertEqual(set(tab.checks), {spec.key for spec in TAKEOFF_TOOLBAR_ITEMS})
+        for spec in TAKEOFF_TOOLBAR_ITEMS:
+            check = tab.checks[spec.key]
+            self.assertIs(check.parent(), groups[spec.group])
+            self.assertEqual(check.text(), spec.label)
+        left_column, right_column = lower_columns
+        self.assertEqual(
+            [left_column.itemAt(index).widget() for index in range(2)],
+            [groups["Page navigation"], groups["Cursor tools"]],
+        )
+        self.assertEqual(
+            [right_column.itemAt(index).widget() for index in range(2)],
+            [groups["View controls"], groups["Page Settings"]],
+        )
+        annotation_columns = [
+            annotation_layout.itemAt(index).layout() for index in range(2)
+        ]
+        annotation_counts = [column.count() - 1 for column in annotation_columns]
+        self.assertEqual(sum(annotation_counts), 12)
+        self.assertEqual(annotation_counts, [6, 6])

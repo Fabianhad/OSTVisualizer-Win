@@ -41,12 +41,23 @@ class PatternRendererConditionBehaviorTests(unittest.TestCase):
             (0.0, 1.0),
             (float("nan"), 1.0),
             (2.0, float("inf")),
+            (2.0, 0.0),
+            (float("inf"), 1.0),
         ):
             with self.subTest(converted=converted, view_scale=view_scale):
                 self.assertEqual(
                     pattern_renderer._convert_spacing(
                         2.0, InvalidCoordinateSystem(converted, view_scale)
                     ),
+                    72.0,
+                )
+        coord_system = InvalidCoordinateSystem(3.0, 2.0)
+        self.assertEqual(pattern_renderer._convert_spacing(2.0, coord_system), 6.0)
+        self.assertEqual(pattern_renderer._convert_spacing(2.0, None), 2.0)
+        for invalid_spacing in (0.0, -1.0, float("nan"), float("inf"), None, "abc"):
+            with self.subTest(invalid_spacing=invalid_spacing):
+                self.assertEqual(
+                    pattern_renderer._convert_spacing(invalid_spacing, coord_system),
                     72.0,
                 )
 
@@ -56,3 +67,14 @@ class PatternRendererConditionBehaviorTests(unittest.TestCase):
         forward = pattern_renderer._find_forward_diagonal_intersections(10.0, square)
         self.assertEqual(backward, [(0.0, 0.0), (10.0, 10.0)])
         self.assertEqual(forward, [(0.0, 10.0), (10.0, 0.0)])
+        self.assertEqual(
+            pattern_renderer._find_backward_diagonal_intersections(3.0, square),
+            [(3.0, 0.0), (10.0, 7.0)],
+        )
+        self.assertEqual(
+            pattern_renderer._find_forward_diagonal_intersections(5.0, square),
+            [(0.0, 5.0), (5.0, 0.0)],
+        )
+        self.assertEqual(
+            pattern_renderer._find_backward_diagonal_intersections(20.0, square), []
+        )

@@ -54,6 +54,13 @@ from tests.infrastructure.mdb.components.bid_reader_support import (
     _TolerantReadPolicyReader,
     _owner_validation_reader,
 )
+from ost_visualizer.infrastructure.database.bid_owned_identity import (
+    CyclicBidOwnedReferenceError,
+    DanglingBidOwnedReferenceError,
+    IncoherentBidOwnedScopeError,
+)
+from ost_visualizer.domain.entities.cdn_type import CdnType
+from ost_visualizer.domain.entities.layer import Layer
 from ost_visualizer.infrastructure.mdb.bid_settings_contract import (
     BidSettingsCardinalityError,
 )
@@ -138,6 +145,24 @@ from tests.infrastructure.mdb.components.bid_reader_support import (
 )
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+class _SqliteBidReader(BidDataReaderMixin):
+    logger = logging.getLogger("test.bid_reader")
+
+    def __init__(self, connection):
+        self._connection_ref = connection
+        self._schema_ref = _SqliteSchema(connection)
+
+    def _connection(self, _file_path):
+        return _SqliteConnectionWrapper(self._connection_ref)
+
+    def _schema(self, _connection):
+        return self._schema_ref
+
+    @staticmethod
+    def _record_caught_read_error(_exc, _file_path=None):
+        return False
 
 
 class BidDataReaderPersistenceTests(unittest.TestCase):
@@ -226,28 +251,27 @@ class BidDataReaderPersistenceTests(unittest.TestCase):
                     )
 
     def test_bid_area_reader_rejects_missing_or_cross_bid_parent(self):
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE BidAreas "
-            "(UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID INTEGER)"
-        )
-        conn.executemany(
-            "INSERT INTO BidAreas VALUES (?, ?, ?, ?)",
-            (
-                (7, 1, "Missing parent", 99),
-                (99, 2, "Other bid", None),
-            ),
-        )
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "BidAreas.UID=7 references missing BidAreas.UID=99",
-        ):
-            MdbReader._parse_bid_areas_for_bid(
-                _SqliteMdbOps(conn),
-                _SqliteConnectionWrapper(conn),
-                "1",
-                _SqliteSchema(conn),
-            )
+        for other_bid_rows in ((), ((99, 2, "Other bid", None),)):
+            with self.subTest(other_bid_rows=other_bid_rows):
+                conn = sqlite3.connect(":memory:")
+                conn.execute(
+                    "CREATE TABLE BidAreas "
+                    "(UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID INTEGER)"
+                )
+                conn.executemany(
+                    "INSERT INTO BidAreas VALUES (?, ?, ?, ?)",
+                    ((7, 1, "Missing parent", 99), *other_bid_rows),
+                )
+                with self.assertRaisesRegex(
+                    DanglingBidOwnedReferenceError,
+                    "BidAreas.UID=7 references missing BidAreas.UID=99",
+                ):
+                    MdbReader._parse_bid_areas_for_bid(
+                        _SqliteMdbOps(conn),
+                        _SqliteConnectionWrapper(conn),
+                        "1",
+                        _SqliteSchema(conn),
+                    )
 
     def test_bid_area_reader_rejects_parent_cycles(self):
         for rows in (
@@ -290,21 +314,30 @@ class BidDataReaderPersistenceTests(unittest.TestCase):
             _SqliteSchema(conn),
         )
         self.assertEqual(list(areas), ["7", "8", "9"])
+        self.assertEqual(
+            [(area.name, area.parent_uid, area.bid_uid) for area in areas.values()],
+            [("Root", "", "1"), ("Middle", "7", "1"), ("Leaf", "8", "1")],
+        )
 
     def test_bid_area_reader_normalizes_zero_parent_to_root(self):
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE BidAreas "
-            "(UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID INTEGER)"
-        )
-        conn.execute("INSERT INTO BidAreas VALUES (7, 1, 'Root', 0)")
-        areas = MdbReader._parse_bid_areas_for_bid(
-            _SqliteMdbOps(conn),
-            _SqliteConnectionWrapper(conn),
-            "1",
-            _SqliteSchema(conn),
-        )
-        self.assertEqual(areas["7"].parent_uid, "")
+        for stored_parent in (0, None, "0", ""):
+            with self.subTest(stored_parent=stored_parent):
+                conn = sqlite3.connect(":memory:")
+                conn.execute(
+                    "CREATE TABLE BidAreas "
+                    "(UID INTEGER, BidUID INTEGER, Name TEXT, ParentUID)"
+                )
+                conn.execute(
+                    "INSERT INTO BidAreas VALUES (7, 1, 'Root', ?)", (stored_parent,)
+                )
+                areas = MdbReader._parse_bid_areas_for_bid(
+                    _SqliteMdbOps(conn),
+                    _SqliteConnectionWrapper(conn),
+                    "1",
+                    _SqliteSchema(conn),
+                )
+                self.assertEqual(list(areas), ["7"])
+                self.assertEqual(areas["7"].parent_uid, "")
 
     def test_condition_folder_reader_preserves_orphan_and_valid_chain_contracts(self):
         conn = sqlite3.connect(":memory:")
@@ -329,10 +362,14 @@ class BidDataReaderPersistenceTests(unittest.TestCase):
             "1",
             _SqliteSchema(conn),
         )
+        self.assertEqual(sorted(folders), ["10", "11", "7", "8", "9"])
+        self.assertIsNone(folders["7"].parent_uid)
         self.assertEqual(folders["8"].parent_uid, "7")
         self.assertEqual(folders["9"].parent_uid, "8")
         self.assertEqual(folders["10"].parent_uid, "99")
         self.assertEqual(folders["11"].parent_uid, "99")
+        self.assertEqual({folder.bid_uid for folder in folders.values()}, {"1"})
+        self.assertEqual(folders["9"].name, "Leaf")
 
     def test_bid_layer_reader_rejects_null_zero_and_whitespace_uids(self):
         for malformed_uid in (None, 0, "0", "   "):
@@ -421,6 +458,36 @@ class BidDataReaderTests(unittest.TestCase):
             connection, "BidPageSettings", "7", ["10"]
         )
         self.assertEqual([row["UID"] for row in rows], ["20"])
+        self.assertEqual(len(connection.queries), 1)
+        self.assertIn("SELECT [UID] FROM [BidPages]", connection.queries[0][0])
+        database.close()
+
+    def test_page_owned_reader_returns_nothing_without_bid_or_page_scope(self):
+        database = sqlite3.connect(":memory:")
+        database.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        database.execute("CREATE TABLE Orphans (UID INTEGER)")
+        database.execute("CREATE TABLE PageOwned (UID INTEGER, BidPageUID INTEGER)")
+        database.execute("INSERT INTO Orphans VALUES (1)")
+        database.execute("INSERT INTO PageOwned VALUES (2, 10)")
+        schema = _SelectiveSchema(
+            {
+                "BidPages": ("UID", "BidUID"),
+                "Orphans": ("UID",),
+                "PageOwned": ("UID", "BidPageUID"),
+            }
+        )
+        connection = _LimitedReadConnection(database, schema)
+        reader = _StrictReadPolicyReader()
+        self.assertEqual(
+            reader._select_all_by_bid_or_page(connection, "Orphans", "7", ["10"]), []
+        )
+        self.assertEqual(
+            reader._select_all_by_bid_or_page(connection, "PageOwned", "7", []), []
+        )
+        self.assertEqual(
+            reader._select_all_by_bid_or_page(connection, "Missing", "7", ["10"]), []
+        )
+        self.assertEqual(connection.queries, [])
         database.close()
 
     def test_page_table_with_bid_uid_keeps_direct_reader_path(self):
@@ -503,78 +570,30 @@ class BidDataReaderTests(unittest.TestCase):
         database.close()
 
     def test_bid_load_rejects_takeoff_with_missing_required_owner(self):
-        class OwnerValidationReader(BidDataReaderMixin):
-            @contextmanager
-            def _connection(self, _file_path):
-                yield object()
-
-            @staticmethod
-            def _schema(_connection):
-                return _Schema()
-
-            @staticmethod
-            def _parse_cdn_types(_connection):
-                return {}
-
-            @staticmethod
-            def _parse_bid_layers_for_bid(_connection, _bid_uid):
-                return {}
-
-            @staticmethod
-            def _parse_bid_pages_for_bid(_connection, _bid_uid, _layers, _schema):
-                return {"3": SimpleNamespace(uid="3")}
-
-            @staticmethod
-            def _parse_bid_areas_for_bid(_connection, _bid_uid, _schema):
-                return {}
-
-            @staticmethod
-            def _parse_page_area_selections_for_bid(
-                _connection, _bid_uid, _pages, _schema
-            ):
-                return {}
-
-            @staticmethod
-            def _parse_bid_conditions_for_bid(
-                _connection, _bid_uid, _layers, _cdn_types, _schema
-            ):
-                return {"5": SimpleNamespace(uid="5")}
-
-            @staticmethod
-            def _parse_bid_takeoffs_for_bid(_connection, _bid_uid, _schema):
-                return (
-                    [
-                        Takeoff(
-                            uid="7",
-                            condition_uid="99",
-                            page_uid="3",
-                            position=[0.0, 0.0, 1.0, 1.0],
-                        )
-                    ],
-                    {},
-                )
-
-            @staticmethod
-            def _parse_bid_annotations_for_bid(_connection, _bid_uid, _layers, _schema):
-                return []
-
-            @staticmethod
-            def _parse_bid_condition_folders_for_bid(_connection, _bid_uid, _schema):
-                return {}
-
-            @staticmethod
-            def _parse_bid_selected_page(_connection, _bid_uid):
-                return None
-
-            @staticmethod
-            def _hydrates_bid_navigation_snapshots():
-                return False
-
+        takeoff = Takeoff(
+            uid="7",
+            condition_uid="99",
+            page_uid="3",
+            position=[0.0, 0.0, 1.0, 1.0],
+        )
         with self.assertRaisesRegex(
-            RuntimeError,
+            DanglingBidOwnedReferenceError,
             "BidTakeoffs.UID=7 references missing BidConditions.UID=99",
         ):
-            OwnerValidationReader().get_bid_data("malformed.mdb", "1")
+            _owner_validation_reader([takeoff]).get_bid_data("malformed.mdb", "1")
+
+    def test_bid_load_rejects_takeoff_with_missing_page_owner(self):
+        takeoff = Takeoff(
+            uid="7",
+            condition_uid="5",
+            page_uid="99",
+            position=[0.0, 0.0, 1.0, 1.0],
+        )
+        with self.assertRaisesRegex(
+            DanglingBidOwnedReferenceError,
+            "BidTakeoffs.UID=7 references missing BidPages.UID=99",
+        ):
+            _owner_validation_reader([takeoff]).get_bid_data("malformed.mdb", "1")
 
     def test_bid_load_rejects_takeoff_with_missing_parent(self):
         takeoff = Takeoff(
@@ -585,7 +604,7 @@ class BidDataReaderTests(unittest.TestCase):
             position=[0.0, 0.0, 1.0, 1.0],
         )
         with self.assertRaisesRegex(
-            RuntimeError,
+            DanglingBidOwnedReferenceError,
             "BidTakeoffs.UID=7 references missing BidTakeoffs.UID=99",
         ):
             _owner_validation_reader([takeoff]).get_bid_data("malformed.mdb", "1")
@@ -599,7 +618,7 @@ class BidDataReaderTests(unittest.TestCase):
             position=[0.0, 0.0, 1.0, 1.0],
         )
         with self.assertRaisesRegex(
-            RuntimeError,
+            CyclicBidOwnedReferenceError,
             "BidTakeoffs.UID=7 participates in a ParentUID cycle",
         ):
             _owner_validation_reader([takeoff]).get_bid_data("malformed.mdb", "1")
@@ -628,7 +647,10 @@ class BidDataReaderTests(unittest.TestCase):
                 position=[0.0, 0.0, 1.0, 1.0],
             ),
         ]
-        with self.assertRaisesRegex(RuntimeError, "participates in a ParentUID cycle"):
+        with self.assertRaisesRegex(
+            CyclicBidOwnedReferenceError,
+            "BidTakeoffs.UID=7 participates in a ParentUID cycle",
+        ):
             _owner_validation_reader(takeoffs).get_bid_data("malformed.mdb", "1")
 
     def test_bid_load_accepts_valid_multi_level_takeoff_parent_chain(self):
@@ -656,11 +678,214 @@ class BidDataReaderTests(unittest.TestCase):
         ]
         loaded = _owner_validation_reader(takeoffs).get_bid_data("valid.mdb", "1")
         self.assertEqual([takeoff.uid for takeoff in loaded[1]], ["7", "8", "9"])
+        self.assertEqual([takeoff.parent_uid for takeoff in loaded[1]], ["0", "7", "8"])
 
     def test_delete_content_scan_discards_partial_results_after_failure(self):
         reader = _Reader()
-        self.assertIsNone(reader.get_pages_with_delete_content("project.mdb", "bid-1"))
-        self.assertGreaterEqual(reader.connection.query_count, 3)
+        with self.assertLogs(__name__.rsplit(".", 1)[0], level="WARNING") as logs:
+            self.assertIsNone(
+                reader.get_pages_with_delete_content("project.mdb", "bid-1")
+            )
+        self.assertIn(
+            "Failed to load pages with delete-sensitive content", logs.output[0]
+        )
+        self.assertIn("content scan failed", logs.output[0])
+        self.assertEqual(reader.connection.query_count, 3)
+
+    def test_delete_content_scan_reports_only_this_bids_pages_with_user_content(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        for table in ("BidTakeoffs", "BidLegends", "BidTexts", "BidComments"):
+            conn.execute(f"CREATE TABLE {table} (UID INTEGER, BidPageUID INTEGER)")
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, ?)", ((1, 7), (2, 7), (3, 7), (4, 8))
+        )
+        conn.execute("INSERT INTO BidTakeoffs VALUES (10, 1)")
+        conn.execute("INSERT INTO BidLegends VALUES (11, 2)")
+        conn.execute("INSERT INTO BidComments VALUES (12, 4)")
+        conn.execute("INSERT INTO BidTexts VALUES (13, NULL)")
+        reader = _SqliteBidReader(conn)
+        self.assertEqual(reader.get_pages_with_delete_content("x.mdb", "7"), {"1"})
+        conn.execute("INSERT INTO BidTexts VALUES (14, 3)")
+        self.assertEqual(reader.get_pages_with_delete_content("x.mdb", "7"), {"1", "3"})
+        self.assertEqual(reader.get_pages_with_delete_content("x.mdb", "8"), {"4"})
+        self.assertEqual(reader.get_pages_with_delete_content("x.mdb", "99"), set())
+
+    def test_delete_content_scan_rejects_duplicate_page_uids(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.executemany("INSERT INTO BidPages VALUES (?, 7)", ((1,), (1,)))
+        with self.assertLogs("test.bid_reader", level="WARNING") as logs:
+            self.assertIsNone(
+                _SqliteBidReader(conn).get_pages_with_delete_content("x.mdb", "7")
+            )
+        self.assertIn("duplicate UID 1", logs.output[0])
+
+    def test_page_area_selection_reader_picks_highest_flag_and_leaves_unselected_none(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute(
+            "CREATE TABLE BidPageSettings (UID INTEGER, BidPageUID INTEGER, "
+            "BidAreaUID INTEGER, BidAreaSelected INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, ?)",
+            ((20, 1), (21, 1), (22, 1), (23, 1), (30, 2)),
+        )
+        conn.executemany(
+            "INSERT INTO BidPageSettings VALUES (?, ?, ?, ?)",
+            (
+                (1, 20, 10, 1),
+                (2, 20, 11, 2),
+                (3, 20, 12, 0),
+                (4, 21, 13, 0),
+                (5, 22, None, 1),
+                (6, 30, 14, 1),
+            ),
+        )
+        reader = _SqliteBidReader(conn)
+        pages = {uid: object() for uid in ("20", "21", "22", "23")}
+        self.assertEqual(
+            reader._parse_page_area_selections_for_bid(
+                _SqliteConnectionWrapper(conn), "1", pages, reader._schema_ref
+            ),
+            {"20": "11", "21": None, "22": "0", "23": None},
+        )
+        self.assertEqual(
+            reader._parse_page_area_selections_for_bid(
+                _SqliteConnectionWrapper(conn), "1", {}, reader._schema_ref
+            ),
+            {},
+        )
+        conn.execute("DROP TABLE BidPageSettings")
+        self.assertEqual(
+            reader._parse_page_area_selections_for_bid(
+                _SqliteConnectionWrapper(conn), "1", pages, reader._schema_ref
+            ),
+            {uid: None for uid in pages},
+        )
+
+    def test_selected_page_reader_returns_text_uid_or_none(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE BidSettings (UID INTEGER, BidUID INTEGER, BidPageSelectedUID)"
+        )
+        conn.executemany(
+            "INSERT INTO BidSettings VALUES (?, ?, ?)",
+            ((1, 1, 20), (2, 2, None), (3, 3, 0)),
+        )
+        reader = _SqliteBidReader(conn)
+        wrapper = _SqliteConnectionWrapper(conn)
+        for bid_uid, expected in (("1", "20"), ("2", None), ("3", None), ("4", None)):
+            with self.subTest(bid_uid=bid_uid):
+                self.assertEqual(
+                    reader._parse_bid_selected_page(wrapper, bid_uid), expected
+                )
+        conn.execute(
+            "ALTER TABLE BidSettings RENAME COLUMN BidPageSelectedUID TO Other"
+        )
+        self.assertIsNone(reader._parse_bid_selected_page(wrapper, "1"))
+        conn.execute("DROP TABLE BidSettings")
+        self.assertIsNone(reader._parse_bid_selected_page(wrapper, "1"))
+
+    def test_condition_reader_maps_columns_with_defaults_and_layer_visibility(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "Type INTEGER, CdnTypeUID INTEGER, BidLayerUID INTEGER, "
+            "BidConditionFolderUID INTEGER, DisplaySize REAL, Notes BLOB, "
+            "RoundQuantity INTEGER, Trim INTEGER, DropRun INTEGER, RefNo INTEGER, "
+            "UOM1 INTEGER, Quantity1 INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidConditions VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    7,
+                    "Wall @ 9'",
+                    2,
+                    3,
+                    5,
+                    11,
+                    0,
+                    "note \u00e9".encode("utf-8"),
+                    -1,
+                    0,
+                    -1,
+                    4,
+                    UOM_LINEAR_FEET,
+                    CALC_LINEAR_LENGTH,
+                ),
+                (8, "Bare", 1, None, None, None, 80.5, None, 0, -1, 0, 0, 0, 0),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO BidConditions (UID, BidUID, Name, Type) VALUES (9, 2, 'Other', 1)"
+        )
+        reader = _SqliteBidReader(conn)
+        conditions = reader._parse_bid_conditions_for_bid(
+            _SqliteConnectionWrapper(conn),
+            "1",
+            {"5": Layer(uid="5", name="Walls", visible=False)},
+            {"3": CdnType(uid="3", name="Concrete")},
+            reader._schema_ref,
+        )
+        self.assertEqual(list(conditions), ["7", "8"])
+        wall, bare = conditions["7"], conditions["8"]
+        self.assertEqual(
+            (
+                wall.name,
+                wall.condition_type,
+                wall.cdn_type_uid,
+                wall.cdn_type_name,
+                wall.layer_uid,
+                wall.layer_visible,
+                wall.folder_uid,
+                wall.display_size,
+                wall.notes,
+                wall.round_quantity,
+                wall.trim,
+                wall.drop_run,
+                wall.ref_no,
+                wall.uom1,
+                wall.calc_type1,
+            ),
+            (
+                "Wall @ 9'",
+                2,
+                "3",
+                "Concrete",
+                "5",
+                False,
+                "11",
+                100.0,
+                "note \u00e9",
+                True,
+                False,
+                True,
+                4,
+                UOM_LINEAR_FEET,
+                CALC_LINEAR_LENGTH,
+            ),
+        )
+        self.assertEqual(
+            (
+                bare.cdn_type_uid,
+                bare.cdn_type_name,
+                bare.layer_uid,
+                bare.layer_visible,
+                bare.folder_uid,
+                bare.display_size,
+                bare.notes,
+                bare.round_quantity,
+                bare.trim,
+                bare.thickness,
+                bare.uom2,
+            ),
+            (None, "Unknown", None, True, None, 80.5, "", False, True, 0.0, 0),
+        )
 
 
 class ConditionDisplaySizeTests(unittest.TestCase):
@@ -668,10 +893,12 @@ class ConditionDisplaySizeTests(unittest.TestCase):
         self.assertEqual(BidDataReaderMixin._normalize_display_size(None), 100.0)
         self.assertEqual(BidDataReaderMixin._normalize_display_size(0), 100.0)
         self.assertEqual(BidDataReaderMixin._normalize_display_size("0"), 100.0)
+        self.assertEqual(BidDataReaderMixin._normalize_display_size(-5), 100.0)
 
     def test_positive_display_size_reads_unchanged(self):
         self.assertEqual(BidDataReaderMixin._normalize_display_size(75), 75.0)
         self.assertEqual(BidDataReaderMixin._normalize_display_size("125"), 125.0)
+        self.assertEqual(BidDataReaderMixin._normalize_display_size(0.5), 0.5)
 
 
 class BidDataReaderCompatibilityTests(unittest.TestCase):
@@ -762,6 +989,75 @@ class TakeoffHydrationContractTests(unittest.TestCase):
         self.assertEqual(takeoff.position, [1.0, 2.0, 3.0, 4.0])
         self.assertEqual(takeoff.dimension_font_size, 72)
         self.assertEqual(takeoff.name_font_size, 48)
+        self.assertEqual(
+            (
+                takeoff.condition_uid,
+                takeoff.page_uid,
+                takeoff.area_uid,
+                takeoff.rotation,
+                takeoff.curve,
+                takeoff.is_negative,
+            ),
+            ("10", "20", "0", 15.0, 0, True),
+        )
+        self.assertEqual(
+            (
+                takeoff.dimension_font_name,
+                takeoff.dimension_font_color,
+                takeoff.dimension_font_bold,
+                takeoff.dimension_font_italic,
+                takeoff.dimension_font_underline,
+            ),
+            ("Arial", 255, True, False, True),
+        )
+        self.assertEqual(
+            (
+                takeoff.name_font_name,
+                takeoff.name_font_color,
+                takeoff.name_font_bold,
+                takeoff.name_font_italic,
+                takeoff.name_font_underline,
+            ),
+            ("Calibri", 128, False, True, False),
+        )
+
+    def test_access_reader_keeps_untyped_takeoff_columns_as_extras(self):
+        columns = ("UID", "BidUID", "BidConditionUID", "BidPageUID", "Position", "Tag")
+        rows = [
+            (1, 7, 10, 20, b"1;2;3;4\n", "first"),
+            (2, 7, 10, 20, b"5;6;7;8\n", None),
+        ]
+        takeoffs, extras = BidDataReaderMixin()._parse_bid_takeoffs_for_bid(
+            _takeoff_hydration_support__Connection(columns, rows),
+            "7",
+            _takeoff_hydration_support__Schema(columns),
+        )
+        self.assertEqual([takeoff.uid for takeoff in takeoffs], ["1", "2"])
+        self.assertEqual(takeoffs[1].position, [5.0, 6.0, 7.0, 8.0])
+        self.assertEqual(takeoffs[0].area_uid, "0")
+        self.assertEqual(takeoffs[0].curve, -1)
+        self.assertEqual(extras, {"1": {"Tag": "first"}, "2": {"Tag": None}})
+
+    def test_access_reader_rejects_duplicate_and_contract_violating_takeoffs(self):
+        columns = ("UID", "BidUID", "BidConditionUID", "BidPageUID", "Position")
+        schema = _takeoff_hydration_support__Schema(columns)
+        reader = BidDataReaderMixin()
+        duplicate = [(1, 7, 10, 20, b"1;2;3;4\n"), (1, 7, 10, 20, b"1;2;3;4\n")]
+        with self.assertRaisesRegex(
+            RuntimeError, "BidTakeoffs contains duplicate UID 1"
+        ):
+            reader._parse_bid_takeoffs_for_bid(
+                _takeoff_hydration_support__Connection(columns, duplicate), "7", schema
+            )
+        non_finite_position = [(2, 7, 10, 20, b"nan;2;3;4\n")]
+        with self.assertRaisesRegex(
+            ValueError, "BidTakeoffs.UID=2 does not satisfy the Takeoff domain contract"
+        ):
+            reader._parse_bid_takeoffs_for_bid(
+                _takeoff_hydration_support__Connection(columns, non_finite_position),
+                "7",
+                schema,
+            )
 
 
 class PageFolderOwnershipTests(unittest.TestCase):
@@ -824,6 +1120,18 @@ class PageFolderOwnershipTests(unittest.TestCase):
             bid_pages=infos, pages=build_pages_from_bid_data(infos, [])
         )
 
+    def test_reader_returns_only_this_bids_pages_with_folder_assignments(self):
+        infos = self.read().bid_pages
+        self.assertEqual(sorted(infos), ["1", "2", "3", "4"])
+        self.assertEqual(
+            {uid: info.folder_uid for uid, info in infos.items()},
+            {"1": "11", "2": "11", "3": None, "4": "10"},
+        )
+        self.assertEqual(
+            [info.name for info in infos.values()],
+            ["Parent", "Nested first", "Nested second", "Root"],
+        )
+
     def test_reader_rejects_duplicate_page_uids_before_projection(self):
         self.connection.execute(
             "INSERT INTO BidPages VALUES (1, 8, 'Duplicate', 99, 10)"
@@ -862,6 +1170,11 @@ class ConditionUomConsistencyTests(unittest.TestCase):
             (imperial.uom1, imperial.uom2, imperial.uom3),
             (UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET),
         )
+        for condition in (metric, imperial):
+            self.assertEqual(
+                (condition.calc_type1, condition.calc_type2, condition.calc_type3),
+                (CALC_LINEAR_LENGTH, CALC_LINEAR_BOTH_SIDES, CALC_VOLUME),
+            )
 
 
 class OverlayCoordinateContractTests(unittest.TestCase):
@@ -881,6 +1194,23 @@ class OverlayCoordinateContractTests(unittest.TestCase):
         )
         self.assertEqual(
             pages["58227"].overlay_rect, _overlay_calibration_support_CALIBRATED_64_RECT
+        )
+        page = pages["58227"]
+        self.assertEqual(
+            (
+                page.overlay_offset_x,
+                page.overlay_offset_y,
+                page.image_show_mode,
+                page.width_pts,
+                page.height_pts,
+            ),
+            (
+                _overlay_calibration_support_CALIBRATED_64_RECT[0],
+                _overlay_calibration_support_CALIBRATED_64_RECT[1],
+                2,
+                42.0 * 72.0,
+                30.0 * 72.0,
+            ),
         )
         self.assertTrue(connection.statements)
         self.assertTrue(
@@ -906,6 +1236,11 @@ class OverlayCoordinateContractTests(unittest.TestCase):
         )
         self.assertEqual(pages["58227"].overlay_rect, EMPTY_OVERLAY_RECT)
         self.assertEqual(len(reader.logger.warnings), 1)
+        self.assertTrue(
+            reader.logger.warnings[0].startswith(
+                "Ignoring invalid OverlayRect for page 58227:"
+            )
+        )
 
     def test_mdb_reader_accepts_native_empty_rect_marker_without_warning(self):
         row = _overlay_calibration_support__page_row(EMPTY_OVERLAY_RECT)
@@ -933,5 +1268,8 @@ class TakeoffLifecycleOwnershipTests(unittest.TestCase):
         reader._parse_bid_pages_for_bid = lambda *_: {
             uid: SimpleNamespace(uid=uid) for uid in ("3", "4")
         }
-        with self.assertRaisesRegex(RuntimeError, "Page|page"):
+        with self.assertRaisesRegex(
+            IncoherentBidOwnedScopeError,
+            "A Takeoff and its parent must belong to the same Page.",
+        ):
             reader.get_bid_data("malformed.mdb", "1")

@@ -59,11 +59,15 @@ class PageRendererLifecycleTests(unittest.TestCase):
             self.assertEqual(renderer._current_pdf_path, "first.pdf")
             self.assertIsNone(renderer._ensure_pdf_open_locked("broken.pdf"))
             self.assertIsNone(renderer._current_pdf_path)
+            self.assertIsNone(renderer._current_pdf_signature)
             self.assertIsNotNone(renderer._ensure_pdf_open_locked("first.pdf"))
+            self.assertEqual(renderer._current_pdf_path, "first.pdf")
         self.assertEqual(
             _FakePdfRenderer.open_calls,
             ["first.pdf", "broken.pdf", "first.pdf"],
         )
+        # The stale document is closed before each open attempt.
+        self.assertEqual(_FakePdfRenderer.close_calls, 3)
 
     def test_raster_native_scale_preserves_source_pixels_without_upsampling(self):
         source = QImage(3, 2, QImage.Format.Format_ARGB32)
@@ -109,17 +113,15 @@ class PageRendererPreferenceTests(unittest.TestCase):
         self.app.processEvents()
 
     def test_page_renderer_reopens_same_path_pdf_when_file_signature_changes(self):
-        class FakePdfRenderer:
-            def __init__(self):
-                self.open_calls = []
-                self.close_calls = 0
+        events = []
 
+        class FakePdfRenderer:
             def open(self, file_path):
-                self.open_calls.append(file_path)
+                events.append(("open", file_path))
                 return True
 
             def close(self):
-                self.close_calls += 1
+                events.append(("close", None))
 
             def get_last_error(self):
                 return "fake"
@@ -127,28 +129,50 @@ class PageRendererPreferenceTests(unittest.TestCase):
         fake_pdf = FakePdfRenderer()
         renderer = PageRenderer()
         renderer._get_pdf_renderer = lambda: fake_pdf
-        path = Path(os.environ.get("TEMP", ".")) / "ostv_renderer_signature.pdf"
-        path.write_bytes(b"first")
-        try:
-            renderer._ensure_pdf_open_locked(str(path))
-            renderer._ensure_pdf_open_locked(str(path))
-            path.write_bytes(b"second-version")
-            renderer._ensure_pdf_open_locked(str(path))
-        finally:
-            path.unlink(missing_ok=True)
-            renderer.close()
-        self.assertEqual(fake_pdf.open_calls, [str(path), str(path)])
-        self.assertGreaterEqual(fake_pdf.close_calls, 2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "ostv_renderer_signature.pdf"
+            path.write_bytes(b"first")
+            try:
+                self.assertIs(renderer._ensure_pdf_open_locked(str(path)), fake_pdf)
+                self.assertIs(renderer._ensure_pdf_open_locked(str(path)), fake_pdf)
+                self.assertEqual(
+                    [event for event in events if event[0] == "open"],
+                    [("open", str(path))],
+                )
+                path.write_bytes(b"second-version")
+                self.assertIs(renderer._ensure_pdf_open_locked(str(path)), fake_pdf)
+            finally:
+                renderer.close()
+        # Unchanged file: cached. Changed file: closed then reopened.
+        self.assertEqual(
+            events,
+            [
+                ("close", None),
+                ("open", str(path)),
+                ("close", None),
+                ("open", str(path)),
+            ],
+        )
 
     def test_pdf_frame_render_matches_full_page_orientation(self):
-        pdf_path = Path(os.environ.get("TEMP", ".")) / "ostv_frame_orientation.pdf"
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        pdf_path = Path(temp_dir.name) / "ostv_frame_orientation.pdf"
         _preferences_support__write_colored_corner_pdf(pdf_path)
         renderer = PageRenderer()
-        expected_dimensions = {
-            0: (200.0, 100.0),
-            90: (100.0, 200.0),
-            180: (200.0, 100.0),
-            270: (100.0, 200.0),
+        self.addCleanup(renderer.close)
+        red, green, blue, yellow = (
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (255, 255, 0),
+        )
+        # (frame size, corners top-left, top-right, bottom-left, bottom-right)
+        expected = {
+            0: ((200, 100), [red, green, blue, yellow]),
+            90: ((100, 200), [blue, red, yellow, green]),
+            180: ((200, 100), [yellow, blue, green, red]),
+            270: ((100, 200), [green, yellow, red, blue]),
         }
 
         def sample_corners(image):
@@ -167,7 +191,7 @@ class PageRendererPreferenceTests(unittest.TestCase):
                 for x, y in points
             ]
 
-        for rotation, (frame_w, frame_h) in expected_dimensions.items():
+        for rotation, ((frame_w, frame_h), corners) in expected.items():
             with self.subTest(rotation=rotation):
                 full = renderer.render(str(pdf_path), 0, 1.0, rotation)
                 frame = renderer.render_frame(
@@ -180,20 +204,27 @@ class PageRendererPreferenceTests(unittest.TestCase):
                     frame_h,
                     rotation,
                 )
-                self.assertEqual(sample_corners(frame), sample_corners(full))
+                self.assertEqual((full.width(), full.height()), (frame_w, frame_h))
+                self.assertEqual((frame.width(), frame.height()), (frame_w, frame_h))
+                self.assertEqual(sample_corners(full), corners)
+                self.assertEqual(sample_corners(frame), corners)
 
     def test_pdf_subframe_render_matches_full_page_crop(self):
-        pdf_path = Path(os.environ.get("TEMP", ".")) / "ostv_frame_crop.pdf"
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        pdf_path = Path(temp_dir.name) / "ostv_frame_crop.pdf"
         _preferences_support__write_colored_corner_pdf(pdf_path)
         renderer = PageRenderer()
+        self.addCleanup(renderer.close)
         scale = 2.0
         full = renderer.render(str(pdf_path), 0, scale, 0)
+        # (x, y, w, h, expected size, probe pixel, expected colour at the probe)
         frames = [
-            (0.0, 0.0, 80.0, 40.0),
-            (70.0, 30.0, 60.0, 40.0),
-            (150.0, 60.0, 50.0, 40.0),
+            (0.0, 0.0, 80.0, 40.0, (160, 80), (4, 4), QColor(255, 0, 0)),
+            (70.0, 30.0, 60.0, 40.0, (120, 80), (60, 40), QColor(255, 255, 255)),
+            (150.0, 60.0, 50.0, 40.0, (100, 80), (80, 60), QColor(255, 255, 0)),
         ]
-        for frame_x, frame_y, frame_w, frame_h in frames:
+        for frame_x, frame_y, frame_w, frame_h, size, probe, colour in frames:
             with self.subTest(frame=(frame_x, frame_y, frame_w, frame_h)):
                 frame = renderer.render_frame(
                     str(pdf_path),
@@ -205,6 +236,8 @@ class PageRendererPreferenceTests(unittest.TestCase):
                     frame_h,
                     0,
                 )
+                self.assertEqual((frame.width(), frame.height()), size)
+                self.assertEqual(frame.pixelColor(*probe), colour)
                 crop = full.copy(
                     QtCore.QRect(
                         int(frame_x * scale + 0.5),

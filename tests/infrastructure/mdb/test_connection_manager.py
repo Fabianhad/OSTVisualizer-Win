@@ -11,7 +11,10 @@ from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
 from ost_visualizer.infrastructure.database.reader_router import DatabaseProjectReader
-from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
+from ost_visualizer.infrastructure.mdb.connection_manager import (
+    MdbConnectionManager,
+    WriteBlockedError,
+)
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from unittest.mock import Mock, patch
@@ -523,6 +526,7 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         release_first = threading.Event()
         second_attempting = threading.Event()
         second_entered = threading.Event()
+        first_released_when_second_entered = []
 
         def first_work() -> None:
             with manager.connection("shared.mdb"):
@@ -532,6 +536,7 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         def second_work() -> None:
             second_attempting.set()
             with manager.connection("shared.mdb"):
+                first_released_when_second_entered.append(release_first.is_set())
                 second_entered.set()
 
         first = threading.Thread(target=first_work)
@@ -545,6 +550,7 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         first.join()
         second.join()
         self.assertTrue(second_entered.is_set())
+        self.assertEqual(first_released_when_second_entered, [True])
         self.assertEqual(self.connect.counts.connections_opened, 1)
         manager.close()
         self.assert_all_resources_released()
@@ -769,6 +775,99 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(self.connect.counts.connections_opened, 0)
         self.assertEqual(manager._read_conns, {})
         self.assertEqual(manager._write_conns, {})
+
+    def test_other_connect_errors_propagate_unclassified_and_cache_nothing(self):
+        failures = (
+            pyodbc.OperationalError("08004", "connection rejected by server"),
+            pyodbc.OperationalError("HY000", "too few client tasks (-1036)"),
+            pyodbc.Error("HY000", "driver failure"),
+        )
+        for failure in failures:
+            with self.subTest(failure=failure.args):
+                with patch(
+                    "ost_visualizer.infrastructure.mdb.connection_manager."
+                    "pyodbc.connect",
+                    side_effect=failure,
+                ):
+                    manager = MdbConnectionManager()
+                    with self.assertRaises(pyodbc.Error) as raised:
+                        with manager.connection("failing.mdb"):
+                            self.fail("connection lease granted")
+                self.assertIs(raised.exception, failure)
+                self.assertNotIsInstance(
+                    raised.exception, DatabaseConnectionUnavailableError
+                )
+                self.assertEqual(manager._read_conns, {})
+                self.assertEqual(manager._active_leases, {})
+
+    def test_write_block_rejects_writer_leases_and_closes_cached_writers_only(self):
+        manager = MdbConnectionManager()
+        with manager.connection("blocked.mdb"):
+            pass
+        with manager.connection("blocked.mdb", autocommit=False):
+            pass
+        reader = manager._read_conns[os.path.normcase(os.path.abspath("blocked.mdb"))]
+        writer = manager._write_conns[os.path.normcase(os.path.abspath("blocked.mdb"))]
+        manager.set_write_blocked(True)
+        self.assertTrue(manager.is_write_blocked())
+        self.assertTrue(writer.closed)
+        self.assertFalse(reader.closed)
+        self.assertEqual(manager._write_conns, {})
+        with self.assertRaises(WriteBlockedError):
+            with manager.connection("blocked.mdb", autocommit=False):
+                self.fail("writer lease granted while writes are blocked")
+        self.assertEqual(manager._active_leases, {})
+        with manager.connection("blocked.mdb") as connection:
+            self.assertIs(connection._conn, reader)
+        manager.set_write_blocked(False)
+        self.assertFalse(manager.is_write_blocked())
+        with manager.connection("blocked.mdb", autocommit=False) as connection:
+            self.assertIsNot(connection._conn, writer)
+        self.assertEqual(self.connect.counts.connections_opened, 3)
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_close_attempts_every_connection_and_reports_all_failures(self):
+        manager = MdbConnectionManager()
+        for path in ("first.mdb", "second.mdb", "third.mdb"):
+            with manager.connection(path):
+                pass
+        connections = {
+            key: connection for key, connection in manager._read_conns.items()
+        }
+        failing_keys = [key for key in connections if not key.endswith("third.mdb")]
+        for key in failing_keys:
+            connections[key].fail_close = True
+            original_close = connections[key].close
+
+            def failing_close(connection=connections[key], close=original_close):
+                if connection.fail_close:
+                    raise pyodbc.OperationalError("HY000", "close failed")
+                close()
+
+            connections[key].close = failing_close
+        with self.assertRaises(ExceptionGroup) as raised:
+            manager.close()
+        self.assertEqual(len(raised.exception.exceptions), 2)
+        self.assertEqual(self.connect.counts.active_connections, 2)
+        self.assertEqual(sorted(manager._read_conns), sorted(failing_keys))
+        for key in failing_keys:
+            connections[key].fail_close = False
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_committed_writer_read_preference_is_ignored_during_active_leases(self):
+        manager = MdbConnectionManager()
+        path_key = os.path.normcase(os.path.abspath("preference.mdb"))
+        with manager.connection("preference.mdb"):
+            manager.use_committed_writer_for_reads("preference.mdb")
+            self.assertNotIn(path_key, manager._writer_read_paths)
+        manager.use_committed_writer_for_reads("preference.mdb")
+        self.assertIn(path_key, manager._writer_read_paths)
+        manager.close_database("preference.mdb")
+        self.assertNotIn(path_key, manager._writer_read_paths)
+        manager.close()
+        self.assert_all_resources_released()
 
     def test_exhaustion_on_another_database_keeps_cached_database_usable(self):
         manager = MdbConnectionManager()

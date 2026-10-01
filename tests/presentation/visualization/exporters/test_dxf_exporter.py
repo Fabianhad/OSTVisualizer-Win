@@ -24,7 +24,7 @@ class DXFExporterTests(unittest.TestCase):
             with patch(
                 module + ".ost_geometry.extract_feature_edges",
                 return_value={"vertices": [(1, 2, 3), (4, 5, 6)], "edges": [(0, 1)]},
-            ):
+            ) as extract:
                 result = exporter._write_output(
                     "unused.dxf",
                     {
@@ -36,6 +36,7 @@ class DXFExporterTests(unittest.TestCase):
                     "solid",
                 )
             generate.assert_called_once_with(positive, condition)
+            extract.assert_called_once_with(mesh, 0.1)
         writer.clear.assert_called_once_with()
         writer.add_layer.assert_called_once_with("red", "#ff0000")
         writer.add_line.assert_called_once_with((1, 2, 3), (4, 5, 6), "red")

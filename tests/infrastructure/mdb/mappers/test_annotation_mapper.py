@@ -23,6 +23,14 @@ class MdbAnnotationLayerMapperTests(unittest.TestCase):
             }
         )
         self.assertEqual(mapper.resolve_layer(30), ("30", False))
+        self.assertEqual(mapper.resolve_layer("30"), ("30", False))
+        self.assertEqual(mapper.resolve_layer(20), ("20", True))
+
+    def test_unknown_row_layer_uid_is_kept_and_visible(self):
+        mapper = MdbAnnotationLayerMapper(
+            {"20": Layer(uid="20", name="Annotation", visible=False)}
+        )
+        self.assertEqual(mapper.resolve_layer(99), ("99", True))
 
     def test_missing_annotation_layer_matches_existing_reader_default(self):
         mapper = MdbAnnotationLayerMapper(

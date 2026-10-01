@@ -64,8 +64,10 @@ class FontDialogTests(unittest.TestCase):
             self.assertEqual(dialog.sample_label.font().pointSize(), 48)
             dialog.ok_button.click()
             selected = dialog.selected_font()
-            self.assertEqual(selected.point_size, 48)
-            self.assertTrue(selected.underline)
+            self.assertEqual(
+                selected,
+                FontDefinition("Arial", "Bold", 48, 700, False, True),
+            )
         finally:
             dialog.close()
 
@@ -140,5 +142,58 @@ class FontDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.sample_group.size(), sample_size)
                 self.assertEqual(dialog.font_list.geometry(), list_geometry)
                 self.assertEqual(dialog.sample_label.font().pointSize(), point_size)
+        finally:
+            dialog.close()
+
+    def test_font_dialog_invalid_size_blocks_ok_and_keeps_no_selection(self):
+        dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, False))
+        try:
+            dialog.size_edit.setText("200")
+            self.assertFalse(dialog.size_edit.hasAcceptableInput())
+            dialog.ok_button.click()
+            self.assertFalse(dialog.ok_button.isEnabled())
+            self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertIsNone(dialog.selected_font())
+        finally:
+            dialog.close()
+
+    def test_font_dialog_typed_size_and_style_commit_into_selection(self):
+        dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, True))
+        try:
+            dialog.size_edit.setText("36")
+            self.assertEqual(dialog.size_list.currentItem().text(), "36")
+            dialog.size_edit.setText("30")
+            self.assertIsNone(dialog.size_list.currentItem())
+            italic = dialog.style_list.findItems(
+                "Italic", QtCore.Qt.MatchFlag.MatchFixedString
+            )[0]
+            dialog.style_list.setCurrentItem(italic)
+            self.assertEqual(dialog.style_edit.text(), "Italic")
+            self.assertEqual(dialog.sample_label.font().pointSize(), 30)
+            self.assertTrue(dialog.sample_label.font().italic())
+            self.assertFalse(dialog.sample_label.font().bold())
+            dialog.ok_button.click()
+            self.assertEqual(
+                dialog.selected_font(),
+                FontDefinition("Arial", "Italic", 30, 400, True, True),
+            )
+        finally:
+            dialog.close()
+
+    def test_font_dialog_family_edit_rejects_unknown_and_canonicalizes_case(self):
+        dialog = FontDialog(FontDefinition("Arial", "Bold", 12, 700, False, False))
+        try:
+            dialog.font_edit.setText("No Such Installed Family")
+            dialog.font_edit.editingFinished.emit()
+            self.assertEqual(dialog.font_edit.text(), "Arial")
+            dialog.font_edit.setText("aRiAl")
+            dialog.font_edit.editingFinished.emit()
+            self.assertEqual(dialog.font_edit.text(), "Arial")
+            self.assertEqual(dialog.font_list.currentItem().text(), "Arial")
+            dialog.ok_button.click()
+            self.assertEqual(
+                dialog.selected_font(),
+                FontDefinition("Arial", "Bold", 12, 700, False, False),
+            )
         finally:
             dialog.close()

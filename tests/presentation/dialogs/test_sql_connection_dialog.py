@@ -51,9 +51,21 @@ class SqlConnectionDialogSqlCleanupTests(unittest.TestCase):
         dialog.username_input.setText("user")
         dialog.password_input.setText("temporary-secret")
         dialog._accept_if_valid()
-        self.assertIsNotNone(dialog.result_data())
+        self.assertEqual(
+            dialog.result_data(),
+            SqlConnectionDialogResult(
+                SqlServerDatabaseLocation(
+                    server="localhost",
+                    database="",
+                    authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+                    username="user",
+                ),
+                "temporary-secret",
+            ),
+        )
         dialog.cleanup()
         self.assertIsNone(dialog.result_data())
+        self.assertEqual(dialog.password_input.text(), "")
         dialog.deleteLater()
 
 
@@ -81,10 +93,57 @@ class SqlConnectionDialogSqlDialogTests(unittest.TestCase):
             dialog.username_input.setText("test-user")
             dialog.password_input.setText("temporary-secret")
             dialog._accept_if_valid()
-            self.assertTrue(dialog.result_data().location.trust_server_certificate)
+            result = dialog.result_data()
+            self.assertTrue(result.location.trust_server_certificate)
+            self.assertEqual(
+                result.location.authentication_mode, SqlAuthenticationMode.SQL_SERVER
+            )
+            self.assertEqual(result.location.username, "test-user")
+            self.assertEqual(result.password, "temporary-secret")
+            self.assertNotIn("temporary-secret", repr(result))
+            dialog.sql_auth_radio.setChecked(False)
+            dialog.windows_auth_radio.setChecked(True)
+            self.assertFalse(dialog.username_input.isEnabled())
+            self.assertFalse(dialog.password_input.isEnabled())
+            dialog._accept_if_valid()
+            windows_result = dialog.result_data()
+            self.assertEqual(
+                windows_result.location.authentication_mode,
+                SqlAuthenticationMode.WINDOWS,
+            )
+            self.assertEqual(windows_result.location.username, "")
+            self.assertEqual(windows_result.password, "")
         finally:
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_incomplete_connection_is_rejected_with_warning(self):
+        cases = (
+            ("blank server", "   ", False, "", ""),
+            ("missing login", "localhost", True, "", "temporary-secret"),
+            ("missing password", "localhost", True, "test-user", ""),
+        )
+        for label, server, sql_auth, username, password in cases:
+            with self.subTest(label):
+                dialog = SqlConnectionDialog(self.icon_provider)
+                try:
+                    dialog.server_input.setText(server)
+                    dialog.sql_auth_radio.setChecked(sql_auth)
+                    dialog.username_input.setText(username)
+                    dialog.password_input.setText(password)
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.sql_connection_dialog."
+                        "show_warning"
+                    ) as warning:
+                        dialog._accept_if_valid()
+                    warning.assert_called_once()
+                    self.assertIsNone(dialog.result_data())
+                    self.assertNotEqual(
+                        dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
+                    )
+                finally:
+                    dialog.cleanup()
+                    dialog.deleteLater()
 
     def test_enter_connects_and_cancel_discards_state(self):
         dialog = SqlConnectionDialog(self.icon_provider)
@@ -95,6 +154,10 @@ class SqlConnectionDialogSqlDialogTests(unittest.TestCase):
             result = dialog.result_data()
             self.assertIsNotNone(result)
             self.assertEqual(result.location.server, "localhost")
+            self.assertEqual(
+                result.location.authentication_mode, SqlAuthenticationMode.WINDOWS
+            )
+            self.assertEqual(result.password, "")
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -133,6 +196,7 @@ class SqlConnectionDialogCreationDialogIdentityTests(unittest.TestCase):
             self.assertFalse(dialog.encrypt_checkbox.isEnabled())
             self.assertFalse(dialog.trust_certificate_checkbox.isEnabled())
             self.assertFalse(dialog.trust_certificate_checkbox.isChecked())
+            self.assertTrue(dialog.encrypt_checkbox.isChecked())
             self.assertFalse(hasattr(dialog, "options_button"))
             dialog.sql_auth_radio.setChecked(True)
             dialog.username_input.setText(_creation_handoff_support__CREATOR.username)

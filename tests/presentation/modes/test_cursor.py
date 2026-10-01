@@ -11,6 +11,7 @@ from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_SELECT,
     CURSOR_MODE_SLOPE_ROTATE,
     CURSOR_MODE_ZOOM,
+    EDITING_CURSOR_MODES,
     PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
 )
 
@@ -43,6 +44,31 @@ class CursorModeConstantsTest(unittest.TestCase):
                 CURSOR_MODE_MOVE_OVERLAY_HANDLE,
             },
         )
+
+    def test_editing_modes_exclude_navigation_and_selection_modes(self):
+        self.assertEqual(
+            EDITING_CURSOR_MODES,
+            {
+                CURSOR_MODE_PLACE,
+                CURSOR_MODE_ANNOTATION_PLACE,
+                CURSOR_MODE_ROTATE,
+                CURSOR_MODE_SLOPE_ROTATE,
+                CURSOR_MODE_PASTE_BACKOUT,
+                CURSOR_MODE_MOVE_OVERLAY,
+                CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+            },
+        )
+        for navigation_mode in (
+            CURSOR_MODE_DEFAULT,
+            CURSOR_MODE_SELECT,
+            CURSOR_MODE_PAN,
+            CURSOR_MODE_ZOOM,
+        ):
+            self.assertNotIn(navigation_mode, EDITING_CURSOR_MODES)
+
+    def test_passive_tracking_excludes_default_pan_and_zoom(self):
+        for inert_mode in (CURSOR_MODE_DEFAULT, CURSOR_MODE_PAN, CURSOR_MODE_ZOOM):
+            self.assertNotIn(inert_mode, PASSIVE_MOUSE_TRACKING_CURSOR_MODES)
 
 
 if __name__ == "__main__":

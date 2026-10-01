@@ -332,6 +332,23 @@ class DeferredPersistenceManagerTests(_DeferredPersistenceManagerFixture):
             ],
         )
 
+    def test_flush_for_file_writes_only_that_database_and_keeps_the_rest_pending(self):
+        self.manager.schedule_page_bitonal("a.mdb", "p1", True)
+        self.manager.schedule_page_bitonal("b.mdb", "p1", False)
+        self.assertTrue(self.manager.flush_for_file("a.mdb"))
+        self.assertEqual(self.service.calls, [("page_bitonal", "a.mdb", "p1", True)])
+        self.assertEqual(self.manager.pending_count, 1)
+        self.assertTrue(self.manager._timer.isActive())
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("page_bitonal", "a.mdb", "p1", True),
+                ("page_bitonal", "b.mdb", "p1", False),
+            ],
+        )
+        self.assertEqual(self.manager.pending_count, 0)
+
     def test_cleanup_flushes_pending_writes(self):
         self.manager.schedule_page_overlay_rect("a.mdb", "p1", (1, 2.5, 3, 4.25))
         self.assertTrue(self.manager.cleanup())
@@ -355,6 +372,7 @@ class DeferredPersistenceManagerTests(_DeferredPersistenceManagerFixture):
             self.manager.schedule_page_overlay_rect("a.mdb", "p1", (0, 0, 10, 10))
         )
         self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(self.manager._visual_states, {})
         self.assertEqual(self.service.calls, [])
 
     def test_page_area_selection_coalesces_and_does_not_request_full_reload(self):
@@ -393,6 +411,7 @@ class DeferredPersistenceManagerSchedulePageViewStateTests(
         self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
         self.assertEqual(self.service.calls, [])
         self.assertEqual(self.manager.pending_count, 1)
+        self.assertTrue(self.manager._timer.isActive())
 
     def test_coalesces_repeated_writes_by_key_and_last_write_wins(self):
         self.manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
@@ -410,15 +429,34 @@ class DeferredPersistenceManagerSchedulePageViewStateTests(
         self.manager.schedule_page_invert("a.mdb", "p1", True)
         self.manager.schedule_page_bitonal("a.mdb", "p2", True)
         self.manager.schedule_layer_show("a.mdb", "l1", False)
+        self.manager.schedule_page_invert("b.mdb", "p1", True)
         self.manager.cancel_pages("a.mdb", "b1", ["p1"])
-        self.assertEqual(self.manager.pending_count, 2)
+        self.assertEqual(self.manager.pending_count, 3)
         self.assertTrue(self.manager.flush())
         self.assertEqual(
             self.service.calls,
             [
                 ("page_bitonal", "a.mdb", "p2", True),
                 ("layer_show", "a.mdb", "l1", False, False),
+                ("page_invert", "b.mdb", "p1", True),
             ],
+        )
+
+    def test_failed_page_view_state_flush_is_silent_and_not_retried(self):
+        self.service.fail_methods.add("save_page_view_state")
+        logger = logging.getLogger("tests.deferred_page_view_flush_failure")
+        manager = DeferredPersistenceManager(
+            self.service, _workspace_service(self.service), logger_=logger
+        )
+        self.addCleanup(manager.cleanup)
+        manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
+        with self.assertNoLogs(logger, level="WARNING"):
+            self.assertTrue(manager.flush())
+        self.assertEqual(manager.pending_count, 0)
+        self.assertTrue(manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [("page_view_state", "a.mdb", "p1", 2.0, 10.0, 20.0)],
         )
 
     def test_expected_blocked_visual_write_is_skipped_without_warning(self):
@@ -772,8 +810,11 @@ class DeferredPersistenceManagerScheduleBidSelectedPageTests(
         )
         self.addCleanup(manager.cleanup)
         manager.schedule_bid_selected_page("sql-db", "7", "107")
+        self.assertTrue(manager._timer.isActive())
         manager.cancel_bid_selected_pages("sql-db", ["7"])
         self.assertEqual(manager.pending_count, 0)
+        self.assertFalse(manager._timer.isActive())
+        self.assertTrue(manager.flush())
         self.assertEqual(self.service.queued_settings, [])
 
     def test_selected_page_failure_does_not_drop_real_data_write(self):
@@ -958,9 +999,7 @@ class DeferredPersistenceManagerScheduleAllLayersShowTests(
                 outcome_status=MutationOutcomeStatus.COMMITTED,
             )
         )
-        self.assertEqual(projections[-1], "enabled")
-        self.assertNotIn("disabled", projections)
-        self.assertNotIn("original", projections)
+        self.assertEqual(projections, ["enabled", "enabled"])
 
     def test_rejected_bulk_restores_layers_added_to_later_pending_intent(self):
         self.service.queue_sql_settings = True
@@ -1072,6 +1111,7 @@ class DeferredPersistenceManagerScheduleAllLayersShowTests(
         )
         self.manager.invalidate_layer_visual_revisions("sql-db", ["layer-1"])
         self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(self.manager._visual_states, {})
         self.assertTrue(self.manager.flush())
         self.assertEqual(self.service.queued_settings, [])
 
@@ -1555,7 +1595,7 @@ class DeferredPersistenceManagerScheduleAllLayersShowTests(
                 outcome_status=MutationOutcomeStatus.COMMITTED,
             )
         )
-        self.assertEqual(projections[-1], "layer-disabled")
+        self.assertEqual(projections, ["bulk-enabled", "layer-disabled"])
 
 
 class DeferredPersistenceManagerScheduleLayerShowTests(
@@ -1650,6 +1690,62 @@ class DeferredPersistenceManagerScheduleLayerShowTests(
         self.assertEqual(visibility, {"layer-1": False, "layer-2": False})
         self.assertEqual(self.manager.pending_count, 0)
 
+    def test_newer_layer_schedule_discards_only_overlapping_failed_retries(self):
+        failed_layer_uids = {"layer-3"}
+
+        def update_layer_show(
+            db_path,
+            layer_uid,
+            show,
+            publish_database_refreshed_after_write=True,
+        ):
+            self.service.calls.append(
+                (
+                    "layer_show",
+                    db_path,
+                    layer_uid,
+                    show,
+                    publish_database_refreshed_after_write,
+                )
+            )
+            return layer_uid not in failed_layer_uids
+
+        self.service.update_layer_show = update_layer_show
+        self.service.fail_methods.add("update_all_layers_show")
+        self.manager.schedule_all_layers_show(
+            "a.mdb", "7", False, ["layer-1", "layer-2"]
+        )
+        self.manager.schedule_layer_show("a.mdb", "layer-3", False)
+        self.assertFalse(self.manager.flush())
+        self.assertEqual(self.manager.pending_count, 2)
+        self.manager.schedule_layer_show("a.mdb", "layer-1", True)
+        self.assertEqual(
+            set(self.manager._pending),
+            {
+                ("layer_show", "a.mdb", "layer-3"),
+                ("layer_show", "a.mdb", "layer-1"),
+            },
+        )
+        self.assertEqual(
+            set(self.manager._visual_states),
+            {
+                ("layer_show", "a.mdb", "layer-3"),
+                ("layer_show", "a.mdb", "layer-1"),
+            },
+        )
+        failed_layer_uids.clear()
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("all_layers_show", "a.mdb", "7", False, ["layer-1", "layer-2"], False),
+                ("layer_show", "a.mdb", "layer-3", False, False),
+                ("layer_show", "a.mdb", "layer-3", False, False),
+                ("layer_show", "a.mdb", "layer-1", True, False),
+            ],
+        )
+
     def test_remote_layer_reconciliation_invalidates_pending_visual_restore(self):
         self.service.queue_sql_settings = True
         projections = []
@@ -1683,6 +1779,7 @@ class DeferredPersistenceManagerScheduleLayerShowTests(
         )
         self.manager.invalidate_layer_visual_revisions("sql-db", ["layer-1"])
         self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(self.manager._visual_states, {})
         self.assertTrue(self.manager.flush())
         self.assertEqual(self.service.queued_settings, [])
 
@@ -1816,6 +1913,10 @@ class DeferredPersistenceManagerScheduleLayerShowTests(
         self.manager.schedule_page_show_mode("b.mdb", "p1", 2)
         self.manager.cancel_for_file("a.mdb")
         self.assertEqual(self.manager.pending_count, 1)
+        self.assertEqual(
+            list(self.manager._visual_states),
+            [("page_show_mode", "b.mdb", "p1")],
+        )
         self.assertTrue(self.manager.flush())
         self.assertEqual(
             self.service.calls,
@@ -2274,6 +2375,41 @@ class DeferredPersistenceManagerSchedulePageInvertTests(
             ("page_invert", "sql-db", "bid-b", "shared-page"),
             self.manager._visual_states,
         )
+        self.assertEqual(
+            list(self.manager._pending),
+            [("page_invert", "sql-db", "bid-b", "shared-page")],
+        )
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [("page_invert", "sql-db", "shared-page", False)],
+        )
+        self.assertEqual(projections, [])
+
+    def test_page_visual_reprojection_isolates_same_uid_in_another_bid(self):
+        self.service.queue_sql_settings = True
+        projections = []
+        for bid_uid, values in (("bid-a", (1, 2)), ("bid-b", (3, 4))):
+            for value in values:
+                self.manager.schedule_page_show_mode(
+                    "sql-db",
+                    "shared-page",
+                    value,
+                    bid_uid=bid_uid,
+                    project_value=lambda bid_uid=bid_uid, value=value: (
+                        projections.append((bid_uid, value))
+                    ),
+                )
+                self.assertTrue(self.manager.flush())
+        self.manager.reproject_newer_page_visual_revisions(
+            "sql-db", ["shared-page"], "bid-b"
+        )
+        self.assertEqual(projections, [("bid-b", 4)])
+        projections.clear()
+        self.manager.reproject_newer_page_visual_revisions(
+            "sql-db", ["shared-page"], "bid-a"
+        )
+        self.assertEqual(projections, [("bid-a", 2)])
 
     def test_expected_blocked_page_visual_write_restores_authoritative_state(self):
         self.service.expected_deferred_write_blocked = True
@@ -2299,6 +2435,7 @@ class DeferredPersistenceManagerSchedulePageInvertTests(
             self.manager.schedule_page_overlay_rect("a.mdb", "p1", (0, 0, 10, 10))
         )
         self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(self.manager._visual_states, {})
         self.assertEqual(self.service.calls, [])
 
 
@@ -2345,18 +2482,21 @@ class DeferredPersistenceChaosHarnessTests(unittest.TestCase):
                 harness = DeferredPersistenceChaosHarness(seed + 7000, self)
                 try:
                     harness.run_random_actions(steps)
+                    self.assertEqual(len(harness.history), steps)
                 finally:
                     harness.cleanup()
 
     def test_known_sequence_deleted_bid_selected_page_cannot_block_flush(self):
         harness = DeferredPersistenceChaosHarness(9701, self)
         try:
-            harness.run_sequence(
-                [
-                    "schedule_bid_selected_page",
-                    "cancel_deleting_bid_selected_page",
-                    "flush_for_file",
-                ]
-            )
+            harness.manager.schedule_bid_selected_page("chaos.mdb", "b1", "stale-page")
+            harness.service.fail_next = True
+            harness.deleted_bid_uids.add("b1")
+            harness.manager.cancel_bid_selected_pages("chaos.mdb", ["b1"])
+            harness.run_sequence(["flush_for_file"])
+            self.assertFalse(harness.last_failed_flush)
+            self.assertEqual(harness.manager.pending_count, 0)
+            self.assertEqual(harness.service.calls, [])
+            self.assertTrue(harness.service.fail_next)
         finally:
             harness.cleanup()

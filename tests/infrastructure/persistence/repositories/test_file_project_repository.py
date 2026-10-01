@@ -97,9 +97,13 @@ class MdbFileParserTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(len(reload_results), 1)
         self.assertFalse(reload_results[0].success)
+        self.assertIn(
+            "unloaded, reopened, or refreshed", reload_results[0].error_message
+        )
         hierarchy = repository.current_hierarchy_data
         self.assertEqual(len(hierarchy.loaded_files), 1)
         self.assertEqual(hierarchy.loaded_files[0].display_name, "Replacement")
+        self.assertEqual(repository.active_file_path, "same-path.mdb")
 
     def test_older_reload_cannot_overwrite_newer_same_runtime_reload(self):
         older_reload_started = threading.Event()
@@ -149,13 +153,14 @@ class MdbFileParserTests(unittest.TestCase):
         self.assertFalse(older_worker.is_alive())
         self.assertEqual(len(older_results), 1)
         self.assertFalse(older_results[0].success)
+        self.assertIn(
+            "unloaded, reopened, or refreshed", older_results[0].error_message
+        )
         hierarchy = repository.current_hierarchy_data
+        self.assertEqual(len(hierarchy.loaded_files), 1)
         self.assertEqual(hierarchy.loaded_files[0].display_name, "Newer refresh")
 
-    def test_sql_bid_read_hydrates_cover_sheet_snapshots_in_navigation_result(self):
-        cover_sheet = object()
-        connection = object()
-
+    def _bid_reader(self, hydrates, connection, cover_sheet):
         class Reader(BidDataReaderMixin):
             @contextmanager
             def _connection(self, _file_path):
@@ -169,7 +174,7 @@ class MdbFileParserTests(unittest.TestCase):
 
             @staticmethod
             def _hydrates_bid_navigation_snapshots():
-                return True
+                return hydrates
 
             @staticmethod
             def _parse_cdn_types(_connection):
@@ -229,9 +234,23 @@ class MdbFileParserTests(unittest.TestCase):
                 self.assertEqual(bid_uid, "bid-1")
                 return {"page-1"}
 
-        result = Reader().get_bid_data("sql-database", "bid-1")
+        return Reader()
+
+    def test_sql_bid_read_hydrates_cover_sheet_snapshots_in_navigation_result(self):
+        cover_sheet = object()
+        connection = object()
+        reader = self._bid_reader(True, connection, cover_sheet)
+        result = reader.get_bid_data("sql-database", "bid-1")
         self.assertIs(result[-2], cover_sheet)
         self.assertEqual(result[-1], frozenset({"page-1"}))
+
+    def test_bid_read_without_navigation_snapshots_leaves_them_unhydrated(self):
+        cover_sheet = object()
+        connection = object()
+        reader = self._bid_reader(False, connection, cover_sheet)
+        result = reader.get_bid_data("access-database", "bid-1")
+        self.assertIsNone(result[-2])
+        self.assertIsNone(result[-1])
 
     def test_project_file_lookup_requires_context_when_local_ids_collide(self):
         hierarchy = HierarchyData(
@@ -252,6 +271,27 @@ class MdbFileParserTests(unittest.TestCase):
             "second-id",
         )
         self.assertIsNone(hierarchy.find_file_path_for_project("1", "missing-id"))
+        self.assertIsNone(hierarchy.find_file_path_for_project(""))
+
+    def test_project_file_lookup_resolves_unique_ids_without_context(self):
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="first-id",
+                    bid_projects={"1": HierarchyProjectInfo(name="First")},
+                ),
+                HierarchyFileEntry(
+                    file_path="second-id",
+                    bid_projects={"2": HierarchyProjectInfo(name="Second")},
+                ),
+            ]
+        )
+        self.assertEqual(hierarchy.find_file_path_for_project("2"), "second-id")
+        self.assertEqual(
+            hierarchy.find_file_path_for_project("2", "second-id"), "second-id"
+        )
+        self.assertIsNone(hierarchy.find_file_path_for_project("2", "first-id"))
+        self.assertIsNone(hierarchy.find_file_path_for_project("3"))
 
     def test_registering_late_sql_hierarchy_preserves_active_access_database(self):
         class _Parser(FakeLifecycleParser):
@@ -288,6 +328,20 @@ class MdbFileParserTests(unittest.TestCase):
         )
         self.assertEqual(len(hierarchy.loaded_files), 1)
         self.assertEqual(hierarchy.loaded_files[0].display_name, "Updated")
+        self.assertEqual(len(repository._loaded_files), 1)
+        self.assertEqual(repository.active_file_path, "sql-id")
+
+    def test_reconciling_same_sql_hierarchy_replaces_its_condition_types(self):
+        repository = FileProjectRepository(FakeLifecycleParser())
+        repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="sql-id"),
+            {"1": CdnType(uid="1", name="Original")},
+        )
+        repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="sql-id"),
+            {"2": CdnType(uid="2", name="Updated")},
+        )
+        self.assertEqual(list(repository.get_cdn_types("sql-id")), ["2"])
 
     def test_condition_types_remain_scoped_to_their_database_identity(self):
         repository = FileProjectRepository(FakeLifecycleParser())
@@ -305,15 +359,31 @@ class MdbFileParserTests(unittest.TestCase):
         self.assertEqual(second["1"].name, "Second type")
         self.assertEqual(repository.get_cdn_types("first-id")["1"].name, "First type")
         self.assertEqual(repository.get_cdn_types()["1"].name, "First type")
+        self.assertEqual(repository.get_cdn_types("unknown-id"), {})
 
     def test_bid_load_keeps_core_data_when_optional_layers_fail(self):
         parser = MdbFileParser(parser=FakeMdbReaderWithLayerFailure())
         with self.assertLogs(parser.logger, level="WARNING") as logs:
             result = parser.load_bid_data("demo.mdb", "bid-1")
-        self.assertIn("Failed to load bid layers", logs.output[0])
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            "Failed to load bid layers for bid-1 in demo.mdb: bad layer sequence",
+        )
         self.assertEqual(result.bid_layers, [])
         self.assertEqual(result.bid_conditions, {})
         self.assertEqual(result.bid_takeoffs, [])
+        self.assertEqual(result.bid_pages, {})
+        self.assertEqual(result.pages, {})
+
+    def test_bid_load_does_not_swallow_unexpected_layer_failures(self):
+        class _Reader(FakeMdbReaderWithLayerFailure):
+            def get_bid_layers_for_sidebar(self, file_path, bid_uid):
+                raise RuntimeError("unexpected layer failure")
+
+        parser = MdbFileParser(parser=_Reader())
+        with self.assertRaisesRegex(RuntimeError, "unexpected layer failure"):
+            parser.load_bid_data("demo.mdb", "bid-1")
 
     def test_unload_closes_all_connections_owned_for_database(self):
         parser = FakeLifecycleParser()
@@ -322,12 +392,60 @@ class MdbFileParserTests(unittest.TestCase):
         repository._active_file_path = "old.mdb"
         self.assertTrue(repository.unload_file("old.mdb"))
         self.assertEqual(parser.closed, ["old.mdb"])
+        self.assertEqual(repository._loaded_files, {})
+        self.assertIsNone(repository.active_file_path)
+        self.assertEqual(repository.current_hierarchy_data.loaded_files, [])
+
+    def test_unload_of_unknown_database_closes_nothing_and_changes_nothing(self):
+        parser = FakeLifecycleParser()
+        repository = FileProjectRepository(parser)
+        repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="kept.mdb"), {}
+        )
+        self.assertFalse(repository.unload_file("missing.mdb"))
+        self.assertEqual(parser.closed, [])
+        self.assertEqual(repository.active_file_path, "kept.mdb")
+        self.assertEqual(
+            [
+                entry.file_path
+                for entry in repository.current_hierarchy_data.loaded_files
+            ],
+            ["kept.mdb"],
+        )
+
+    def test_unload_of_active_database_activates_remaining_one_and_rebuilds_hierarchy(
+        self,
+    ):
+        parser = FakeLifecycleParser()
+        repository = FileProjectRepository(parser)
+        repository.register_loaded_hierarchy(HierarchyFileEntry(file_path="a-id"), {})
+        repository.register_loaded_hierarchy(HierarchyFileEntry(file_path="b-id"), {})
+        self.assertEqual(repository.active_file_path, "a-id")
+        self.assertTrue(repository.unload_file())
+        self.assertEqual(parser.closed, ["a-id"])
+        self.assertEqual(repository.active_file_path, "b-id")
+        self.assertEqual(
+            [
+                entry.file_path
+                for entry in repository.current_hierarchy_data.loaded_files
+            ],
+            ["b-id"],
+        )
 
     def test_bid_load_for_unloaded_file_returns_empty_result(self):
         repository = FileProjectRepository(FakeLifecycleParser())
-        with self.assertLogs(repository.logger, level="WARNING"):
+        with self.assertLogs(repository.logger, level="WARNING") as logs:
             result = repository.load_bid("bid-1", "missing.mdb")
+        self.assertEqual(
+            [record.getMessage() for record in logs.records],
+            [
+                "File not loaded: missing.mdb (bid_uid=bid-1)",
+                "Discarding bid load for an unloaded file: missing.mdb "
+                "(bid_uid=bid-1)",
+            ],
+        )
         self.assertEqual(result.bid_pages, {})
+        self.assertEqual(result.bid_takeoffs, [])
         self.assertIsNone(repository.active_file_path)
 
     def test_reload_refreshes_read_connection_without_closing_write_connection(self):
@@ -342,8 +460,51 @@ class MdbFileParserTests(unittest.TestCase):
         )
         result = repository.reload_database("active.mdb")
         self.assertFalse(result.success)
+        self.assertEqual(result.error_message, "stop after refresh")
         self.assertEqual(parser.refreshed, ["active.mdb"])
         self.assertEqual(parser.closed, [])
+        self.assertIn("active.mdb", repository._loaded_files)
+
+    def test_reload_can_skip_connection_refresh_and_still_reparses(self):
+        class _Parser(FakeLifecycleParser):
+            def parse(self, file_path):
+                return FileLoadResult(
+                    success=True,
+                    parsed_hierarchy=HierarchyFileEntry(
+                        file_path=file_path, display_name="Reparsed"
+                    ),
+                )
+
+        parser = _Parser()
+        repository = FileProjectRepository(parser)
+        repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="active-id", display_name="Original"), {}
+        )
+        result = repository.reload_database("active-id", close_connections=False)
+        self.assertTrue(result.success)
+        self.assertEqual(parser.refreshed, [])
+        self.assertEqual(parser.closed, [])
+        self.assertEqual(
+            repository.current_hierarchy_data.loaded_files[0].display_name,
+            "Reparsed",
+        )
+        self.assertIs(result.hierarchy, repository.current_hierarchy_data)
+
+    def test_reload_requires_a_loaded_database_path(self):
+        parser = FakeLifecycleParser()
+        repository = FileProjectRepository(parser)
+        with self.assertLogs(repository.logger, level="ERROR"):
+            missing_path = repository.reload_database()
+            unknown_path = repository.reload_database("unknown.mdb")
+        self.assertFalse(missing_path.success)
+        self.assertEqual(
+            missing_path.error_message, "file_path is required for reload_database"
+        )
+        self.assertFalse(unknown_path.success)
+        self.assertEqual(
+            unknown_path.error_message, "File not found in loaded files: unknown.mdb"
+        )
+        self.assertEqual(parser.refreshed, [])
 
 
 class HierarchyImportOrderTests(unittest.TestCase):

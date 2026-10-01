@@ -4,8 +4,12 @@ import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
+)
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
+    SqlAuthenticationMode,
     SqlServerDatabaseLocation,
     credential_target_for,
 )
@@ -188,14 +192,134 @@ class PermissionsSqlCleanupTests(unittest.TestCase):
             _cleanup_support__CredentialStore(),
             connection_manager=_PermissionManager(
                 (1, 1, 1, 1, 1),
-                (
-                    SQL_SCHEMA_V1.version,
-                    SQL_SCHEMA_V1.checksum,
-                    "READ_ONLY",
-                ),
+                current[:2] + ("READ_ONLY",) + current[3:],
             ),
         )
         self.assertFalse(read_only_database.can_edit(descriptor.database_id))
+        stale_checksum = SqlDatabasePermissionProbe(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_PermissionManager(
+                (1, 1, 1, 1, 1),
+                (current[0], "0" * 64) + current[2:],
+            ),
+        )
+        self.assertFalse(stale_checksum.can_edit(descriptor.database_id))
+        unvalidated_mixed_writer = SqlDatabasePermissionProbe(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_PermissionManager(
+                (1, 1, 1, 1, 1),
+                current[:3] + ("mixed_application", "disabled") + current[5:],
+            ),
+        )
+        self.assertFalse(unvalidated_mixed_writer.can_edit(descriptor.database_id))
+        validated_mixed_writer = SqlDatabasePermissionProbe(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_PermissionManager(
+                (1, 1, 1, 1, 1),
+                current[:3]
+                + (
+                    "mixed_application",
+                    "validated",
+                    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
+                )
+                + current[6:],
+            ),
+        )
+        self.assertTrue(validated_mixed_writer.can_edit(descriptor.database_id))
+        incomplete_snapshot = SqlDatabasePermissionProbe(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_PermissionManager(
+                (1, 1, 1, 1, 1),
+                current[:5],
+            ),
+        )
+        self.assertFalse(incomplete_snapshot.can_edit(descriptor.database_id))
+
+    def test_sql_edit_probe_opens_read_only_autocommit_connection_for_descriptor(
+        self,
+    ):
+        captured = []
+
+        class _Cursor:
+            def execute(self, sql, *_params):
+                captured.append(sql)
+                return self
+
+            def fetchone(self):
+                return (
+                    1, 1, 1, 1, 1,
+                    SQL_SCHEMA_V1.version,
+                    SQL_SCHEMA_V1.checksum,
+                    "READ_WRITE",
+                    "ost_visualizer_only",
+                    "disabled",
+                    None,
+                    1, 1, 1, 1,
+                    len(SQL_CLIENT_DIRECT_WRITE_TABLES), 0, 0,
+                    1, 1, 0, 0, 1,
+                )  # fmt: skip
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                return None
+
+        class _Manager:
+            requests = []
+            autocommit_values = []
+
+            @contextlib.contextmanager
+            def connection(self, request, *, autocommit=False):
+                self.requests.append(request)
+                self.autocommit_values.append(autocommit)
+                yield SimpleNamespace(cursor=_Cursor)
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        manager = _Manager()
+        probe = SqlDatabasePermissionProbe(
+            registry, _cleanup_support__CredentialStore(), connection_manager=manager
+        )
+        self.assertTrue(probe.can_edit(descriptor.database_id))
+        self.assertEqual(len(manager.requests), 1)
+        self.assertEqual(manager.requests[0].location, descriptor.sql_location)
+        self.assertTrue(manager.requests[0].read_only)
+        self.assertEqual(manager.autocommit_values, [True])
+        self.assertEqual(len(captured), 1)
+        self.assertIn("ostv_permission_snapshot", captured[0])
+
+    def test_unknown_descriptor_and_missing_sql_password_are_read_only(self):
+        class _NeverConnects:
+            def connection(self, _request, *, autocommit=False):
+                raise AssertionError("must not connect without a usable request")
+
+        registry = DatabaseDescriptorRegistry()
+        sql_auth = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(
+                server="localhost",
+                database="OSTV_TEST",
+                authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+                username="test-user",
+            ),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(sql_auth)
+        probe = SqlDatabasePermissionProbe(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_NeverConnects(),
+        )
+        self.assertFalse(probe.can_edit("not-a-registered-database"))
+        self.assertFalse(probe.can_edit(sql_auth.database_id))
 
     def test_sql_edit_probe_treats_connection_failure_as_read_only(self):
         class _UnavailableConnection:

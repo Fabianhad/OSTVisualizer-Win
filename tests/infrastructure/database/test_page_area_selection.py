@@ -38,3 +38,23 @@ class CanonicalizePageAreaSettingsTests(unittest.TestCase):
         last = {"UID": None, "BidPageUID": "p1", "BidAreaSelected": 1, "AreaUID": "b"}
         self.assertEqual(canonicalize_page_area_settings([first, last]), [last])
         self.assertEqual(first["AreaUID"], "a")
+
+    def test_inactive_rows_stay_ahead_of_one_selected_row_per_page(self):
+        inactive_zero = {"UID": 1, "BidPageUID": 5, "BidAreaSelected": 0}
+        older_selection = {"UID": 2, "BidPageUID": 5, "BidAreaSelected": "1"}
+        newer_selection = {"UID": 3, "BidPageUID": "5", "BidAreaSelected": 1}
+        inactive_none = {"UID": 4, "BidPageUID": 5, "BidAreaSelected": None}
+        other_page = {"UID": 5, "BidPageUID": 6, "BidAreaSelected": 1}
+        result = canonicalize_page_area_settings(
+            [inactive_zero, older_selection, newer_selection, inactive_none, other_page]
+        )
+        expected = [inactive_zero, inactive_none, newer_selection, other_page]
+        self.assertEqual(result, expected)
+        for expected_row, actual_row in zip(expected, result):
+            self.assertIs(actual_row, expected_row)
+
+    def test_higher_selection_rank_beats_a_later_higher_uid(self):
+        ranked = {"UID": 1, "BidPageUID": "p1", "BidAreaSelected": 3}
+        later = {"UID": 99, "BidPageUID": "p1", "BidAreaSelected": 2}
+        self.assertEqual(canonicalize_page_area_settings([ranked, later]), [ranked])
+        self.assertEqual(canonicalize_page_area_settings([later, ranked]), [ranked])

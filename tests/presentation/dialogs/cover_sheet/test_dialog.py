@@ -42,6 +42,7 @@ from ost_visualizer.domain.entities.cover_sheet import (
 from unittest import mock
 from pathlib import Path
 from copy import deepcopy
+import datetime
 import unittest
 import time
 import threading
@@ -243,8 +244,13 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 dialog.plan_tree.setCurrentItem(item, 6)
                 dialog.plan_tree.clicked.emit(model_index)
                 self.assertEqual(len(pool.runnables), 1)
+                first_pending = dialog._page_rows["p1"].pending_metadata_request
+                self.assertIsNotNone(first_pending)
                 dialog.plan_tree.clicked.emit(model_index)
                 self.assertEqual(len(pool.runnables), 1)
+                self.assertEqual(
+                    dialog._page_rows["p1"].pending_metadata_request, first_pending
+                )
             finally:
                 dialog.reject()
                 dialog.deleteLater()
@@ -321,6 +327,7 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
             pdf_path = str(Path(tmp) / "indexed.pdf")
             Path(pdf_path).write_bytes(b"%PDF-1.4\n")
             pool = FalseyPool()
+            self.assertFalse(bool(pool))
             dialog = _path_support_CoverSheetDialog(
                 _path_support__FakeIconProvider(),
                 None,
@@ -486,10 +493,12 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 self.assertEqual(len(pool.runnables), 1)
                 pool.run_next()
                 self.assertEqual(calls, [pdf_path])
-                self.assertEqual(
-                    [dialog._page_rows[uid].multi_page_count for uid in ("p1", "p2")],
-                    [2, 2],
-                )
+                expected_sizes = ((42.0, 30.0, "One"), (42.0, 30.0, "Two"))
+                for uid in ("p1", "p2"):
+                    row = dialog._page_rows[uid]
+                    self.assertEqual(row.pdf_page_sizes, expected_sizes)
+                    self.assertEqual(row.multi_page_count, 2)
+                    self.assertIsNone(row.pending_metadata_request)
             finally:
                 dialog.close()
                 dialog.deleteLater()
@@ -834,21 +843,29 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 dialog.deleteLater()
 
     def test_cover_sheet_uses_persisted_multi_page_count_without_pdf_read(self):
-        dialog = _path_support_CoverSheetDialog(
-            _path_support__FakeIconProvider(),
-            None,
-            _path_support__cover_sheet_data(multi_page_count=7),
-            pdf_page_sizes_fn=lambda _path: self.fail(
-                "Persisted multipage count must not require PDF metadata"
-            ),
-        )
-        try:
-            self.assertEqual(
-                _path_support__first_page_update(dialog)["multi_page_count"], 7
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "persisted.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _path_support__ManualRunnablePool()
+            calls = []
+            dialog = _path_support_CoverSheetDialog(
+                _path_support__FakeIconProvider(),
+                None,
+                _path_support__cover_sheet_data(
+                    image_path=pdf_path, multi_page_count=7
+                ),
+                pdf_page_sizes_fn=lambda path: calls.append(path) or [],
+                pdf_metadata_pool=pool,
             )
-        finally:
-            dialog.close()
-            dialog.deleteLater()
+            try:
+                page = _path_support__first_page_update(dialog)
+                self.assertEqual(page["multi_page_count"], 7)
+                self.assertEqual(page["image_path"], pdf_path)
+                self.assertEqual(calls, [])
+                self.assertEqual(pool.runnables, [])
+            finally:
+                dialog.close()
+                dialog.deleteLater()
 
     def test_cover_sheet_rows_have_independent_index_combos_and_share_pdf_metadata(
         self,
@@ -959,6 +976,11 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 ):
                     self.assertEqual(after[field], before[field])
                 self.assertEqual(moved_item.text(6), "2")
+                self.assertEqual(
+                    _path_support__path_editor(dialog, moved_item, 4).text(),
+                    "indexed.pdf",
+                )
+                self.assertIs(dialog._page_items["p1"], moved_item)
             finally:
                 dialog.close()
                 dialog.deleteLater()
@@ -1203,10 +1225,16 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
             overlay_editor = _path_support__path_editor(dialog, item, 5)
             self.assertEqual(image_editor.text(), Path(missing_image).name)
             self.assertEqual(overlay_editor.text(), Path(missing_overlay).name)
-            self.assertIn("color:", image_editor.styleSheet())
-            self.assertIn("Image File was not found", image_editor.toolTip())
-            self.assertIn("color:", overlay_editor.styleSheet())
-            self.assertIn("Overlay Image was not found", overlay_editor.toolTip())
+            missing_style = "color: #b00020;"
+            self.assertEqual(image_editor.styleSheet(), missing_style)
+            self.assertEqual(
+                image_editor.toolTip(), f"Image File was not found:\n{missing_image}"
+            )
+            self.assertEqual(overlay_editor.styleSheet(), missing_style)
+            self.assertEqual(
+                overlay_editor.toolTip(),
+                f"Overlay Image was not found:\n{missing_overlay}",
+            )
         finally:
             dialog.close()
             dialog.deleteLater()
@@ -1396,6 +1424,17 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 [page["sequence"] for page in dialog.get_updates()["pages"]],
                 [1, 2, 3, 4, 5],
             )
+            expanded = dialog.get_updates()["pages"][2:4]
+            self.assertEqual(
+                [(page["uid"], page["index"], page["image_path"]) for page in expanded],
+                [
+                    (None, 2, "C:/Plans/Expanded.pdf"),
+                    (None, 3, "C:/Plans/Expanded.pdf"),
+                ],
+            )
+            self.assertEqual(
+                [page["sheet_no"] for page in expanded], ["00001", "00002"]
+            )
         finally:
             dialog.close()
             dialog.deleteLater()
@@ -1467,6 +1506,15 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 dialog.accept()
                 self.assertEqual(len(submissions), 1)
                 self.assertFalse(dialog._operation_pending)
+                self.assertFalse(dialog._save_done)
+                self.assertNotEqual(
+                    dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
+                )
+                self.assertTrue(dialog.ok_button.isEnabled())
+                self.assertEqual(
+                    [page["image_path"] for page in submissions[0]["pages"]],
+                    [str(source)],
+                )
                 self.assertTrue(source.is_file())
                 self.assertEqual(source.read_bytes(), original)
             finally:
@@ -1513,6 +1561,7 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 self.assertEqual(page["width"], 25.0)
                 self.assertEqual(page["height"], 37.0)
                 self.assertEqual(editor.styleSheet(), "")
+                self.assertEqual(editor.toolTip(), pdf_path)
                 self.assertEqual(editor.text(), "drawing.pdf")
             finally:
                 dialog.close()
@@ -1701,6 +1750,13 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 self.assertEqual(
                     _path_support__first_page_update(dialog)["image_path"], pdf_path
                 )
+                row = dialog._page_rows["p1"]
+                self.assertEqual(row.pdf_page_sizes, ())
+                self.assertEqual(
+                    dialog._page_index_options("p1"),
+                    [("1", (1, None, None), None)],
+                )
+                self.assertEqual(calls, [pdf_path])
             finally:
                 dialog.close()
                 dialog.deleteLater()
@@ -1724,7 +1780,10 @@ class DialogCoverSheetPathTests(_DialogCoverSheetPathFixture):
                 self.assertEqual(
                     _path_support__first_page_update(dialog)["image_path"], pasted_path
                 )
-                self.assertIn("color:", editor.styleSheet())
+                self.assertEqual(editor.styleSheet(), "color: #b00020;")
+                self.assertEqual(
+                    editor.toolTip(), f"Image File was not found:\n{pasted_path}"
+                )
                 self.assertEqual(editor.text(), Path(pasted_path).name)
                 self.assertEqual(calls, [])
             finally:
@@ -2377,8 +2436,15 @@ class CoverSheetDialogDeleteSelectedTests(_DialogCoverSheetPathFixture):
                 item.setSelected(True)
                 dialog._delete_selected()
                 self.assertNotIn("p1", dialog._page_rows)
+                self.assertEqual(dialog._deleted_page_uids, ["p1"])
+                self.assertEqual(set(dialog._page_rows), {"new_0"})
                 pool.run_next()
                 self.assertNotIn("p1", dialog._page_rows)
+                self.assertEqual(set(dialog._page_rows), {"new_0"})
+                self.assertIsNone(dialog._page_rows["new_0"].pdf_page_sizes)
+                self.assertEqual(
+                    [page["uid"] for page in dialog.get_updates()["pages"]], [None]
+                )
             finally:
                 dialog.reject()
                 dialog.deleteLater()
@@ -2605,6 +2671,16 @@ class CoverSheetDialogAddNewFolderTests(_DialogCoverSheetPathFixture):
             self.assertEqual(
                 _path_support__child_labels(folder_item), ["New Folder", "A102"]
             )
+            self.assertEqual(
+                dialog.get_updates()["new_folders"],
+                [
+                    {
+                        "local_uid": "new_folder_0",
+                        "name": "New Folder",
+                        "parent_uid": "f1",
+                    }
+                ],
+            )
         finally:
             dialog.close()
             dialog.deleteLater()
@@ -2633,6 +2709,10 @@ class CoverSheetDialogPopulateImportedPagesTests(_DialogCoverSheetPathFixture):
                     for page in dialog.get_updates()["pages"]
                 ],
                 [("Level 1", 1), ("A102.pdf (1)", 2), ("A102.pdf (2)", 3)],
+            )
+            self.assertEqual(
+                [page["sheet_no"] for page in dialog.get_updates()["pages"]],
+                ["A101", "00001", "00002"],
             )
         finally:
             dialog.close()
@@ -2940,6 +3020,15 @@ class CoverSheetDialogOpenBidAreasDialogTests(_DialogCoverSheetPathFixture):
                 module.BidAreasDialog = old_dialog
             self.assertNotIn("on_saved_fn", captured)
             self.assertEqual(refresh_calls, ["refresh"])
+            self.assertIs(captured["parent"], dialog)
+            self.assertEqual(captured["bid_areas"], [])
+            self.assertTrue(captured["has_license"])
+            self.assertEqual(captured["bid_ref"], dialog._bid_ref)
+            self.assertIs(
+                captured["workspace_state_model"], dialog._workspace_state_model
+            )
+            self.assertIsNone(captured["save_async_fn"])
+            self.assertEqual(captured["save_fn"]({"changed": True}), {})
         finally:
             dialog.close()
             dialog.deleteLater()
@@ -3027,24 +3116,96 @@ class CoverSheetDialogOpenBidAreasDialogTests(_DialogCoverSheetPathFixture):
         try:
             from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
 
-            with mock.patch.object(
-                module, "BidAreasDialog"
-            ) as areas_dialog, mock.patch.object(
-                module,
-                "show_warning",
-                side_effect=lambda _parent, title, message: warnings.append(
-                    (title, message)
+            with (
+                mock.patch.object(module, "BidAreasDialog") as areas_dialog,
+                mock.patch.object(
+                    module,
+                    "show_warning",
+                    side_effect=lambda _parent, title, message: warnings.append(
+                        (title, message)
+                    ),
                 ),
-            ), self.assertLogs(
-                module.logger, level="ERROR"
-            ) as logs:
+                self.assertLogs(module.logger, level="ERROR") as logs,
+            ):
                 dialog._open_bid_areas_dialog()
             areas_dialog.assert_not_called()
-            self.assertEqual(warnings[0][0], "Bid Areas Unavailable")
+            self.assertEqual(
+                warnings,
+                [
+                    (
+                        "Bid Areas Unavailable",
+                        "The bid areas could not be loaded. Close and reopen the "
+                        "database, then try again.",
+                    )
+                ],
+            )
             self.assertIn("Could not reload bid areas", logs.output[0])
+            self.assertIn("database unavailable", logs.output[0])
         finally:
             dialog.close()
             dialog.deleteLater()
+
+    def _open_bid_areas_with_fake_dialog(self, *, saved_changes, refresh_result):
+        from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+        refresh_calls = []
+        warnings = []
+        dialog = _path_support_CoverSheetDialog(
+            _path_support__FakeIconProvider(),
+            None,
+            _path_support__cover_sheet_data(),
+            reload_bid_areas_fn=lambda: [],
+            save_bid_areas_fn=lambda _changes: {},
+            refresh_fn=lambda: refresh_calls.append("refresh") or refresh_result,
+        )
+        try:
+            with (
+                mock.patch.object(
+                    module, "BidAreasDialog", autospec=True
+                ) as areas_dialog,
+                mock.patch.object(
+                    module,
+                    "show_warning",
+                    side_effect=lambda _parent, title, message: warnings.append(
+                        (title, message)
+                    ),
+                ),
+            ):
+                areas_dialog.return_value.exec.return_value = (
+                    QtWidgets.QDialog.DialogCode.Rejected
+                )
+                areas_dialog.return_value.has_saved_changes.return_value = saved_changes
+                dialog._open_bid_areas_dialog()
+            cleanup = areas_dialog.return_value.cleanup
+            cleanup.assert_called_once_with()
+            self.assertIsNone(dialog._active_sub_dialog)
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+        return refresh_calls, warnings
+
+    def test_cover_sheet_bid_area_refresh_failure_after_save_warns_once(self):
+        refresh_calls, warnings = self._open_bid_areas_with_fake_dialog(
+            saved_changes=True, refresh_result=False
+        )
+        self.assertEqual(refresh_calls, ["refresh"])
+        self.assertEqual(
+            warnings,
+            [
+                (
+                    "Refresh Error",
+                    "The bid area changes were saved, but the area list could not be "
+                    "refreshed. Reopen the database to see the latest bid areas.",
+                )
+            ],
+        )
+
+    def test_cover_sheet_bid_areas_without_saved_changes_does_not_refresh(self):
+        refresh_calls, warnings = self._open_bid_areas_with_fake_dialog(
+            saved_changes=False, refresh_result=False
+        )
+        self.assertEqual(refresh_calls, [])
+        self.assertEqual(warnings, [])
 
 
 class CoverSheetDialogOpenEmployeesDialogTests(_DialogCoverSheetPathFixture):
@@ -3052,7 +3213,7 @@ class CoverSheetDialogOpenEmployeesDialogTests(_DialogCoverSheetPathFixture):
 
     def test_employee_picker_cancel_restores_existing_estimator_selection(self):
         data = _path_support__cover_sheet_data()
-        data.estimator_uid = "emp-1"
+        data.estimator_uid = "emp-2"
         data.employees = [
             Employee(uid="emp-1", first_name="Alice", last_name="Estimator"),
             Employee(uid="emp-2", first_name="Bob", last_name="Estimator"),
@@ -3087,8 +3248,8 @@ class CoverSheetDialogOpenEmployeesDialogTests(_DialogCoverSheetPathFixture):
                 dialog._open_employees_dialog()
             finally:
                 module.EmployeesDialog = old_dialog
-            self.assertEqual(dialog.combo_estimator.currentData(), "emp-1")
-            self.assertEqual(dialog.combo_estimator.currentText(), "Alice Estimator")
+            self.assertEqual(dialog.combo_estimator.currentData(), "emp-2")
+            self.assertEqual(dialog.combo_estimator.currentText(), "Bob Estimator")
             self.assertTrue(dialog.combo_estimator.signalsBlocked())
         finally:
             dialog.combo_estimator.blockSignals(False)
@@ -3175,6 +3336,333 @@ class CoverSheetDialogOpenEmployeesDialogTests(_DialogCoverSheetPathFixture):
         self.assertEqual(reloads, [])
 
 
+class CoverSheetDialogFormStateTests(_DialogCoverSheetPathFixture):
+    """CoverSheetDialog header form, preferences, lock state, and OK/save flow."""
+
+    def _dialog(self, data=None, **dialog_options):
+        return _path_support_CoverSheetDialog(
+            _path_support__FakeIconProvider(),
+            None,
+            data or _path_support__cover_sheet_data(),
+            **dialog_options,
+        )
+
+    def test_measure_base_toggle_applies_metric_and_imperial_defaults(self):
+        dialog = self._dialog()
+        try:
+            self.assertTrue(dialog.radio_inches.isChecked())
+            dialog.radio_mm.setChecked(True)
+            self.assertEqual(dialog.label_increments_unit.text(), "millimeters")
+            self.assertEqual(dialog.edit_takeoff_increments.text(), "10")
+            updates = dialog.get_updates()
+            self.assertEqual(updates["measure_base"], 1)
+            self.assertEqual(updates["takeoff_increments"], 10.0)
+            self.assertEqual(updates["scale_style"], 3)
+            self.assertEqual(
+                (updates["scale_factor1"], updates["scale_factor2"]), (1.0, 100.0)
+            )
+            self.assertEqual(
+                (updates["page_width"], updates["page_height"]), (1189.0, 841.0)
+            )
+            dialog.radio_inches.setChecked(True)
+            self.assertEqual(dialog.label_increments_unit.text(), "inches")
+            updates = dialog.get_updates()
+            self.assertEqual(updates["measure_base"], 0)
+            self.assertEqual(updates["takeoff_increments"], 1.0)
+            self.assertEqual(updates["scale_style"], 1)
+            self.assertEqual(
+                (updates["scale_factor1"], updates["scale_factor2"]), (0.125, 12.0)
+            )
+            self.assertEqual(
+                (updates["page_width"], updates["page_height"]), (42.0, 30.0)
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_bid_date_time_and_invalid_takeoff_increment_round_trip_to_updates(self):
+        data = _path_support__cover_sheet_data()
+        data.bid_date = "2026 03 15 10 30 00"
+        data.measure_base = 1
+        data.takeoff_increments = 2.5
+        dialog = self._dialog(data)
+        try:
+            self.assertEqual(dialog.date_edit.date(), QtCore.QDate(2026, 3, 15))
+            self.assertEqual(dialog.combo_time.currentText(), "10:30 AM")
+            self.assertEqual(dialog.label_increments_unit.text(), "millimeters")
+            updates = dialog.get_updates()
+            self.assertEqual(
+                updates["bid_date"], datetime.datetime(2026, 3, 15, 10, 30)
+            )
+            self.assertEqual(updates["bid_no"], 1)
+            self.assertEqual(updates["takeoff_increments"], 2.5)
+            dialog.edit_takeoff_increments.setText("not a number")
+            dialog.edit_bid_no.setText("abc")
+            updates = dialog.get_updates()
+            self.assertEqual(updates["takeoff_increments"], 10.0)
+            self.assertIsNone(updates["bid_no"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_unparseable_bid_date_defaults_to_today_at_eight(self):
+        data = _path_support__cover_sheet_data()
+        data.bid_date = "not a date"
+        dialog = self._dialog(data)
+        try:
+            today = QtCore.QDate.currentDate()
+            self.assertEqual(
+                dialog.get_updates()["bid_date"],
+                datetime.datetime(today.year(), today.month(), today.day(), 8, 0),
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_create_mode_locks_bid_number_and_areas_and_submits_no_bid_number(self):
+        dialog = self._dialog(create_mode=True)
+        try:
+            self.assertEqual(dialog.windowTitle(), "New Project")
+            self.assertTrue(dialog.edit_bid_no.isReadOnly())
+            self.assertFalse(dialog.btn_bid_areas.isEnabled())
+            dialog._update_lock_state(False)
+            self.assertFalse(dialog.edit_bid_no.isEnabled())
+            self.assertFalse(dialog.btn_bid_areas.isEnabled())
+            self.assertIsNone(dialog.get_updates()["bid_no"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+        existing = self._dialog()
+        try:
+            self.assertEqual(existing.windowTitle(), "Cover Sheet")
+            self.assertFalse(existing.edit_bid_no.isReadOnly())
+            self.assertTrue(existing.btn_bid_areas.isEnabled())
+        finally:
+            existing.close()
+            existing.deleteLater()
+
+    def test_locked_job_status_locks_form_and_unlocks_on_status_change(self):
+        data = _path_support__cover_sheet_data()
+        data.job_statuses = [
+            JobStatus(uid="1", name="Open"),
+            JobStatus(uid="2", name="Closed", locked=True),
+        ]
+        data.job_status_uid = "2"
+        dialog = self._dialog(data)
+        try:
+            self.assertTrue(dialog._locked)
+            for widget in (
+                dialog.edit_project_name,
+                dialog.edit_notes,
+                dialog.combo_estimator,
+                dialog.date_edit,
+                dialog._add_btn,
+                dialog._new_folder_btn,
+                dialog.radio_mm,
+                dialog.combo_pref_scale,
+            ):
+                self.assertFalse(widget.isEnabled())
+            self.assertFalse(dialog.plan_tree.dragEnabled())
+            self.assertFalse(dialog.plan_tree.acceptDrops())
+            self.assertTrue(dialog.ok_button.isEnabled())
+            self.assertTrue(dialog.combo_job_status.isEnabled())
+            self.assertFalse(dialog._can_edit_page_column("p1", dialog._SCALE_COLUMN))
+            dialog.combo_job_status.setCurrentIndex(0)
+            self.assertFalse(dialog._locked)
+            for widget in (
+                dialog.edit_project_name,
+                dialog.edit_notes,
+                dialog._add_btn,
+                dialog.radio_mm,
+            ):
+                self.assertTrue(widget.isEnabled())
+            self.assertTrue(dialog.plan_tree.dragEnabled())
+            self.assertTrue(dialog._can_edit_page_column("p1", dialog._SCALE_COLUMN))
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_unlicensed_dialog_keeps_editors_disabled_after_unlock(self):
+        dialog = self._dialog(has_license=False)
+        try:
+            dialog._update_lock_state(False)
+            for widget in (
+                dialog.combo_job_status,
+                dialog.edit_job_id,
+                dialog.combo_estimator,
+                dialog.date_edit,
+                dialog._add_btn,
+                dialog._duplicate_btn,
+                dialog.radio_inches,
+                dialog.combo_pref_page_size,
+            ):
+                self.assertFalse(widget.isEnabled())
+            self.assertFalse(dialog.plan_tree.dragEnabled())
+            self.assertFalse(dialog._can_edit_page_column("p1", dialog._SCALE_COLUMN))
+            self.assertTrue(dialog.ok_button.isEnabled())
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_ok_with_unknown_job_status_clears_text_and_offers_to_add_it(self):
+        data = _path_support__cover_sheet_data()
+        data.job_statuses = [JobStatus(uid="1", name="Open")]
+        for add_it in (False, True):
+            with self.subTest(add_it=add_it):
+                dialog = self._dialog(data)
+                try:
+                    dialog.combo_job_status.setCurrentIndex(-1)
+                    dialog.combo_job_status.setEditText("Pending Review")
+                    with (
+                        mock.patch(
+                            "ost_visualizer.presentation.dialogs.cover_sheet.dialog."
+                            "confirm_not_found",
+                            return_value=add_it,
+                        ) as confirm,
+                        mock.patch.object(
+                            dialog, "_open_job_statuses_dialog"
+                        ) as open_picker,
+                    ):
+                        dialog._on_ok()
+                    confirm.assert_called_once_with(dialog, "Pending Review")
+                    self.assertEqual(dialog.combo_job_status.currentText(), "")
+                    self.assertNotEqual(
+                        dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
+                    )
+                    if add_it:
+                        open_picker.assert_called_once_with(
+                            initial_name="Pending Review"
+                        )
+                    else:
+                        open_picker.assert_not_called()
+                finally:
+                    dialog.close()
+                    dialog.deleteLater()
+
+    def test_ok_with_unknown_estimator_clears_text_and_offers_to_add_it(self):
+        data = _path_support__cover_sheet_data()
+        data.employees = [Employee(uid="1", first_name="Alice")]
+        for add_it in (False, True):
+            with self.subTest(add_it=add_it):
+                dialog = self._dialog(data)
+                try:
+                    dialog.combo_estimator.setCurrentIndex(-1)
+                    dialog.combo_estimator.setEditText("Zed")
+                    with (
+                        mock.patch(
+                            "ost_visualizer.presentation.dialogs.cover_sheet.dialog."
+                            "confirm_not_found",
+                            return_value=add_it,
+                        ) as confirm,
+                        mock.patch.object(
+                            dialog, "_open_employees_dialog"
+                        ) as open_picker,
+                    ):
+                        dialog._on_ok()
+                    confirm.assert_called_once_with(dialog, "Zed")
+                    self.assertEqual(dialog.combo_estimator.currentText(), "")
+                    self.assertNotEqual(
+                        dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
+                    )
+                    if add_it:
+                        open_picker.assert_called_once_with(initial_first_name="Zed")
+                    else:
+                        open_picker.assert_not_called()
+                finally:
+                    dialog.close()
+                    dialog.deleteLater()
+
+    def test_ok_with_known_selections_accepts_without_prompts(self):
+        data = _path_support__cover_sheet_data()
+        data.job_statuses = [JobStatus(uid="1", name="Open")]
+        data.employees = [Employee(uid="5", first_name="Alice")]
+        data.job_status_uid = "1"
+        data.estimator_uid = "5"
+        dialog = self._dialog(data)
+        try:
+            with mock.patch(
+                "ost_visualizer.presentation.dialogs.cover_sheet.dialog."
+                "confirm_not_found"
+            ) as confirm:
+                dialog._on_ok()
+            confirm.assert_not_called()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            updates = dialog.get_updates()
+            self.assertEqual(updates["job_status_uid"], 1)
+            self.assertEqual(updates["estimator_uid"], 5)
+        finally:
+            dialog.deleteLater()
+
+    def test_async_save_success_closes_dialog_after_completion(self):
+        submissions = []
+
+        def save(updates, completed):
+            submissions.append(updates)
+            completed(True)
+            return True
+
+        dialog = self._dialog(save_cover_sheet_async_fn=save)
+        try:
+            dialog.accept()
+            self.assertEqual(len(submissions), 1)
+            self.assertEqual(submissions[0]["pages"][0]["uid"], "p1")
+            self.assertTrue(dialog._save_done)
+            self.assertFalse(dialog._operation_pending)
+            self.assertTrue(dialog._closed)
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+        finally:
+            dialog.deleteLater()
+
+    def test_async_save_not_started_keeps_dialog_open_and_interactive(self):
+        submissions = []
+
+        def save(updates, _completed):
+            submissions.append(updates)
+            return False
+
+        dialog = self._dialog(save_cover_sheet_async_fn=save)
+        try:
+            dialog.accept()
+            self.assertEqual(len(submissions), 1)
+            self.assertFalse(dialog._operation_pending)
+            self.assertFalse(dialog._save_done)
+            self.assertFalse(dialog._closed)
+            self.assertTrue(dialog.ok_button.isEnabled())
+            self.assertTrue(dialog.combo_job_status.isEnabled())
+            self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+
+    def test_pending_async_save_blocks_close_and_reject_until_completed(self):
+        pending = []
+
+        def save(_updates, completed):
+            pending.append(completed)
+            return True
+
+        dialog = self._dialog(save_cover_sheet_async_fn=save)
+        try:
+            dialog.accept()
+            self.assertEqual(len(pending), 1)
+            self.assertTrue(dialog._operation_pending)
+            self.assertFalse(dialog.ok_button.isEnabled())
+            self.assertFalse(dialog.combo_job_status.isEnabled())
+            self.assertFalse(dialog.close())
+            dialog.reject()
+            dialog.accept()
+            self.assertEqual(len(pending), 1)
+            self.assertFalse(dialog._closed)
+            pending[0](False)
+            self.assertFalse(dialog._operation_pending)
+            self.assertTrue(dialog.ok_button.isEnabled())
+            self.assertFalse(dialog._closed)
+            self.assertFalse(dialog._save_done)
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+
+
 class CoverSheetMasterDataProjectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -3201,7 +3689,7 @@ class CoverSheetMasterDataProjectionTests(unittest.TestCase):
             pay_classes=list(pay_classes),
         )
         dialog = CoverSheetDialog(
-            Mock(),
+            _path_support__FakeIconProvider(),
             None,
             data,
             make_workspace_state_model(),
@@ -3214,6 +3702,7 @@ class CoverSheetMasterDataProjectionTests(unittest.TestCase):
             dialog.edit_project_name.setText("Unsaved")
             employees[0] = Employee("1", first_name="New")
             statuses[0] = JobStatus("1", "New")
+            pay_classes.append(PayClass("2", "Remote class"))
             with patch.object(dialog, "_populate") as rebuild:
                 bus.publish(
                     AppEvents.REMOTE_MASTER_DATA_CHANGED,
@@ -3224,6 +3713,9 @@ class CoverSheetMasterDataProjectionTests(unittest.TestCase):
                 self.assertEqual(dialog.combo_job_status.currentText(), "New")
                 self.assertEqual(dialog.combo_estimator.currentData(), "1")
                 self.assertEqual(dialog.combo_job_status.currentData(), "1")
+                self.assertEqual(dialog.data.pay_classes, pay_classes)
+                self.assertEqual(dialog._all_employees, employees)
+                self.assertEqual(dialog.data.job_statuses, statuses)
                 with patch.object(
                     dialog, "_replace_combo_items", wraps=dialog._replace_combo_items
                 ) as replace_items:

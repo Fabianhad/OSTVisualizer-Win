@@ -14,7 +14,6 @@ from tests.helpers.mdb.import_export_support import (
 )
 from xml.etree.ElementTree import Element
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.uom_service import (
     CALC_AREA,
     CALC_COUNT,
@@ -107,6 +106,8 @@ class OstExporterRelationshipTests(unittest.TestCase):
             {takeoff.get("Name") for takeoff in takeoffs}, {"Parent", "Child"}
         )
         by_name = {takeoff.get("Name"): takeoff for takeoff in takeoffs}
+        self.assertEqual(by_name["Parent"].get("UID"), "30")
+        self.assertEqual(by_name["Child"].get("UID"), "31")
         self.assertEqual(
             by_name["Child"].get("ParentUID"), by_name["Parent"].get("UID")
         )
@@ -157,14 +158,66 @@ class OstExporterRelationshipTests(unittest.TestCase):
         self.assertEqual(pay_class_uids, ["3"])
         self.assertEqual(root.find("./Bid").get("EstimatorUID"), "7")
 
+    def test_ost_export_includes_every_referenced_role_employee_and_access_level(self):
+        raw_data = RawBidData(
+            bid_row={
+                "UID": "1",
+                "EstimatorUID": "7",
+                "PrManagerUID": "8",
+                "JobSiteManagerUID": "9",
+                "JobName": "Bid",
+            },
+            bid_tables={
+                "BidConditions": [],
+                "BidPages": [],
+                "BidEmployees": [
+                    {"UID": "5", "BidUID": "1", "EmployeeUID": "10", "PayClassUID": "6"}
+                ],
+            },
+            global_tables={
+                "Employees": [
+                    {"UID": "7", "PayClassUID": "3", "AccessLevelUID": "21"},
+                    {"UID": "8", "PayClassUID": "4", "AccessLevelUID": "0"},
+                    {"UID": "9", "PayClassUID": "0", "AccessLevelUID": "22"},
+                    {"UID": "10", "PayClassUID": "0", "AccessLevelUID": "0"},
+                    {"UID": "11", "PayClassUID": "99", "AccessLevelUID": "23"},
+                ],
+                "PayClasses": [
+                    {"UID": uid, "Name": f"Class {uid}"}
+                    for uid in ("3", "4", "5", "6", "99")
+                ],
+                "AccessLevels": [
+                    {"UID": uid, "Description": f"Level {uid}"}
+                    for uid in ("21", "22", "23")
+                ],
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "roles.ost"
+            result = OstExporter(SimpleNamespace()).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            root = ET.parse(output_path).getroot()
+        self.assertEqual(
+            [e.get("UID") for e in root.findall("./Employees/Employee")],
+            ["7", "8", "9", "10"],
+        )
+        self.assertEqual(
+            sorted(e.get("UID") for e in root.findall("./PayClasses/PayClass")),
+            ["3", "4", "6"],
+        )
+        self.assertEqual(
+            sorted(e.get("UID") for e in root.findall("./AccessLevels/AccessLevel")),
+            ["21", "22"],
+        )
+
     def test_ost_export_writes_bid_layers_by_descending_uid(self):
         raw_data = RawBidData(
             bid_row={"UID": "1", "JobName": "Bid"},
             bid_tables={
                 "BidLayers": [
-                    {"UID": "12", "BidUID": "1", "Name": "High", "Sequence": "20"},
+                    {"UID": "12", "BidUID": "1", "Name": "High", "Sequence": "5"},
                     {"UID": "10", "BidUID": "1", "Name": "Low", "Sequence": "0"},
-                    {"UID": "11", "BidUID": "1", "Name": "Mid", "Sequence": "10"},
+                    {"UID": "11", "BidUID": "1", "Name": "Mid", "Sequence": "9"},
                 ],
                 "BidConditions": [],
                 "BidPages": [],
@@ -195,16 +248,35 @@ class OstExporterRelationshipTests(unittest.TestCase):
                 "ost_visualizer.infrastructure.mdb.exporters.ost_exporter._write_element",
                 side_effect=fail_after_partial_write,
             ):
-                result = OstExporter(SimpleNamespace()).export(
-                    raw_data,
-                    str(output_path),
-                )
+                with self.assertLogs(
+                    "ost_visualizer.infrastructure.mdb.exporters.ost_exporter",
+                    level="ERROR",
+                ):
+                    result = OstExporter(SimpleNamespace()).export(
+                        raw_data,
+                        str(output_path),
+                    )
             self.assertFalse(result.success)
+            self.assertEqual(result.error_message, "disk full")
             self.assertEqual(
                 output_path.read_text(encoding="utf-8"),
                 "existing export",
             )
             self.assertEqual(list(Path(temp_dir).iterdir()), [output_path])
+
+    def test_ost_export_success_replaces_existing_destination_without_temp_files(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Fresh"},
+            bid_tables={"BidConditions": [], "BidPages": []},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "existing.ost"
+            output_path.write_text("existing export", encoding="utf-8")
+            result = OstExporter(SimpleNamespace()).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            self.assertEqual(list(Path(temp_dir).iterdir()), [output_path])
+            root = ET.parse(output_path).getroot()
+        self.assertEqual(root.find("./Bid").get("JobName"), "Fresh")
 
     def test_ost_export_uses_native_area_page_setting_and_text_order(self):
         text_row = {
@@ -318,6 +390,14 @@ class OstExporterRelationshipTests(unittest.TestCase):
         ]
         self.assertEqual(named_view_names, ["Valid"])
         self.assertEqual(hotlink_names, ["Valid Link"])
+        self.assertEqual(
+            [elem.get("UID") for elem in root.findall("./Bid/BidNamedViews/*")],
+            ["30"],
+        )
+        self.assertEqual(
+            [elem.get("UID") for elem in root.findall("./Bid/BidHotLinks/*")],
+            ["40"],
+        )
 
     def test_ost_export_matches_reference_xml_shape_for_core_sections(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -358,6 +438,23 @@ class OstExporterRelationshipTests(unittest.TestCase):
         self.assertIn('CurrentX="2302.443986254299944"', text)
         self.assertIn('CurrentY="1725.017182130580068"', text)
         self.assertIn('Quantity1="0" Quantity2="0" Quantity3="0"', text)
+        area_conditions = root.findall(
+            "./Bid/BidConditions/BidCondition/BidAreaConditions/BidAreaCondition"
+        )
+        self.assertEqual(
+            [dict(row.attrib) for row in area_conditions],
+            [
+                {
+                    "UID": "1",
+                    "BidConditionUID": "10",
+                    "AreaUID": "0",
+                    "TypAreaUID": "0",
+                    "Quantity1": "0",
+                    "Quantity2": "0",
+                    "Quantity3": "0",
+                }
+            ],
+        )
 
     def test_ost_export_preserves_page_overlay_and_source_rows(self):
         overlay_fields = (
@@ -420,6 +517,11 @@ class OstExporterRelationshipTests(unittest.TestCase):
             "{ABCDEF01-2345-6789-ABCD-EF0123456789}",
         )
         self.assertEqual(exported_bid.get("CopyTimestamp"), "2026 7 19 0 39 2")
+        self.assertIsNone(exported_bid.get("CopyTimeStamp"))
+        self.assertEqual(exported_bid.get("ExternalID"), "0")
+        exported_setting = root.find("./Bid/BidSettings/BidSetting")
+        self.assertIsNotNone(exported_setting)
+        self.assertEqual(exported_setting.get("BidPageSelectedUID"), "0")
         self.assertEqual(
             {name: exported_page.get(name) for name in overlay_fields},
             {name: page_row[name] for name in overlay_fields},
@@ -459,6 +561,24 @@ class OstExporterRelationshipTests(unittest.TestCase):
             text = output_path.read_text(encoding="utf-8")
         self.assertIn("<BidEmployees>", text)
         self.assertIn('<BidEmployee UID="5" BidUID="1" EmployeeUID="2"', text)
+        root = ET.fromstring(text)
+        self.assertEqual(
+            [
+                dict(row.attrib)
+                for row in root.findall("./Bid/BidEmployees/BidEmployee")
+            ],
+            [
+                {
+                    "UID": "5",
+                    "BidUID": "1",
+                    "EmployeeUID": "2",
+                    "PayClassUID": "0",
+                }
+            ],
+        )
+        self.assertEqual(
+            [row.get("UID") for row in root.findall("./Employees/Employee")], ["2"]
+        )
 
     def test_ost_export_formats_calculated_area_condition_quantities(self):
         uom_service = create_autospec(IUOMService, instance=True)
@@ -508,6 +628,24 @@ class OstExporterRelationshipTests(unittest.TestCase):
             'Quantity1="734.011999999999944" Quantity2="0" Quantity3="1.25"',
             text,
         )
+        uom_service.calculate_condition_quantities.assert_called_once()
+        call_kwargs = uom_service.calculate_condition_quantities.call_args.kwargs
+        self.assertEqual(call_kwargs["condition_type"], 1)
+        self.assertEqual(call_kwargs["position"], [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(
+            (
+                call_kwargs["calc_type1"],
+                call_kwargs["calc_type2"],
+                call_kwargs["calc_type3"],
+            ),
+            (0, 0, 0),
+        )
+        self.assertEqual(
+            (call_kwargs["uom1"], call_kwargs["uom2"], call_kwargs["uom3"]), (0, 0, 0)
+        )
+        self.assertFalse(call_kwargs["round_quantity"])
+        self.assertIsNone(call_kwargs["hole_positions"])
+        self.assertEqual(call_kwargs["attachment_footprint"], 0.0)
 
     def test_ost_export_converts_aggregated_area_condition_quantities_once(self):
         calculation_order = []
@@ -595,6 +733,70 @@ class OstExporterRelationshipTests(unittest.TestCase):
             ],
         )
 
+    def test_ost_export_rounds_area_condition_totals_after_aggregating_takeoffs(self):
+        def calculate_condition_quantities(**kwargs):
+            return kwargs["position"][0], 0.0, 0.0
+
+        def takeoff(uid, area_uid, x):
+            return {
+                "UID": uid,
+                "BidUID": "1",
+                "BidConditionUID": "100",
+                "BidPageUID": "200",
+                "BidAreaUID": area_uid,
+                "Position": f"{x};0;{x + 1};0",
+            }
+
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Rounding"},
+            bid_tables={
+                "BidAreas": [
+                    {"UID": "10", "BidUID": "1", "Name": "Low"},
+                    {"UID": "20", "BidUID": "1", "Name": "High"},
+                ],
+                "BidConditions": [
+                    {
+                        "UID": "100",
+                        "BidUID": "1",
+                        "Name": "Linear",
+                        "Type": "1",
+                        "UOM1": "2",
+                        "RoundQuantity": "1",
+                        "RoundUp": "6",
+                    }
+                ],
+                "BidPages": [
+                    {"UID": "200", "BidUID": "1", "Name": "Sheet", "Sequence": "1"}
+                ],
+            },
+            page_tables={
+                "BidTakeoffs": [
+                    takeoff("1", "10", 1),
+                    takeoff("3", "10", 3),
+                    takeoff("2", "20", 2),
+                ]
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "rounding.ost"
+            uom_service = create_autospec(IUOMService, instance=True)
+            uom_service.calculate_condition_quantities.side_effect = (
+                calculate_condition_quantities
+            )
+            result = OstExporter(uom_service).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            rows = (
+                ET.parse(output_path)
+                .getroot()
+                .findall("./Bid/BidConditions/BidCondition/BidAreaConditions/*")
+            )
+        # Area 10 totals 4 inches = 0.333 ft, which rounds up once to the 0.5 ft
+        # increment; rounding each takeoff before summing would yield 1.0 ft.
+        self.assertEqual(
+            [(row.get("AreaUID"), float(row.get("Quantity1"))) for row in rows],
+            [("20", 0.5), ("10", 0.5)],
+        )
+
 
 class TakeoffLifecycleQuantityTests(unittest.TestCase):
     def test_ost_export_matches_signed_quantities_and_cross_condition_backouts(self):
@@ -646,52 +848,72 @@ class TakeoffLifecycleQuantityTests(unittest.TestCase):
             for row in root.findall("./BidConditions/BidCondition")
         }
         self.assertEqual(quantities["area"], -96)
+        self.assertEqual(quantities["backout"], 0)
         self.assertEqual(quantities["point"], -1)
 
-    def setUp(self):
-        self.conditions = {
-            "area": Condition(
-                uid="area",
-                condition_type=Condition.TYPE_AREA,
-                calc_type1=CALC_AREA,
-                uom1=UOM_SQUARE_INCHES,
-            ),
-            "backout": Condition(
-                uid="backout",
-                condition_type=Condition.TYPE_AREA,
-                calc_type1=CALC_AREA,
-                uom1=UOM_SQUARE_INCHES,
-            ),
-            "attachment": Condition(
-                uid="attachment",
-                condition_type=Condition.TYPE_ATTACHMENT,
-                width=2,
-                depth=2,
-                calc_type1=CALC_COUNT,
-            ),
-        }
-        self.takeoffs = [
-            Takeoff(
-                uid="parent",
-                condition_uid="area",
-                page_uid="page",
-                position=[0, 0, 10, 0, 10, 10, 0, 10],
-            ),
-            Takeoff(
-                uid="hole",
-                condition_uid="backout",
-                page_uid="page",
-                parent_uid="parent",
-                position=[1, 1, 3, 1, 3, 3, 1, 3],
-            ),
-            Takeoff(
-                uid="point",
-                condition_uid="attachment",
-                page_uid="page",
-                parent_uid="parent",
-                position=[5, 5],
-            ),
+    def test_ost_export_subtracts_attachment_footprint_only_for_net_area_quantity(self):
+        net_area_calc = 12
+        conditions = [
+            {
+                "UID": "net",
+                "Type": str(Condition.TYPE_AREA),
+                "Quantity1": str(net_area_calc),
+                "UOM1": str(UOM_SQUARE_INCHES),
+            },
+            {
+                "UID": "gross",
+                "Type": str(Condition.TYPE_AREA),
+                "Quantity1": str(CALC_AREA),
+                "UOM1": str(UOM_SQUARE_INCHES),
+            },
+            {
+                "UID": "attachment",
+                "Type": str(Condition.TYPE_ATTACHMENT),
+                "Width": "2",
+                "Depth": "2",
+                "Quantity1": str(CALC_COUNT),
+            },
         ]
+        square = "0;0;10;0;10;10;0;10"
+        takeoffs = [
+            {
+                "UID": "1",
+                "BidConditionUID": "net",
+                "ParentUID": "0",
+                "Position": square,
+            },
+            {
+                "UID": "2",
+                "BidConditionUID": "gross",
+                "ParentUID": "0",
+                "Position": square,
+            },
+            {
+                "UID": "3",
+                "BidConditionUID": "attachment",
+                "ParentUID": "1",
+                "Position": "5;5",
+            },
+            {
+                "UID": "4",
+                "BidConditionUID": "attachment",
+                "ParentUID": "2",
+                "Position": "5;5",
+            },
+        ]
+        root = Element("Bid")
+        OstExporter(uom_service)._build_conditions_section(
+            root, conditions, {}, {"BidTakeoffs": takeoffs}
+        )
+        quantities = {
+            row.get("UID"): float(
+                row.find("./BidAreaConditions/BidAreaCondition").get("Quantity1")
+            )
+            for row in root.findall("./BidConditions/BidCondition")
+        }
+        self.assertEqual(quantities["net"], 96)
+        self.assertEqual(quantities["gross"], 100)
+        self.assertEqual(quantities["attachment"], 2)
 
 
 class ConditionUomConsistencyTests(unittest.TestCase):
@@ -709,59 +931,74 @@ class ConditionUomConsistencyTests(unittest.TestCase):
         self.app.processEvents()
 
     def test_metric_raw_ost_export_normalizes_stale_condition_uom_and_quantity(self):
-        raw_data = RawBidData(
-            bid_row={"UID": "1", "JobName": "Metric", "MeasureBase": "1"},
-            bid_tables={
-                "BidConditions": [
-                    {
-                        "UID": "10",
-                        "BidUID": "1",
-                        "Name": "Line",
-                        "Type": str(Condition.TYPE_LINEAR),
-                        "Height": "12",
-                        "Thickness": "6",
-                        "Quantity1": str(CALC_LINEAR_LENGTH),
-                        "UOM1": str(UOM_LINEAR_FEET),
-                    }
-                ],
-                "BidPages": [
-                    {
-                        "UID": "20",
-                        "BidUID": "1",
-                        "Name": "Sheet",
-                        "Sequence": "1",
-                    }
-                ],
-            },
-            page_tables={
-                "BidTakeoffs": [
-                    {
-                        "UID": "30",
-                        "BidUID": "1",
-                        "BidConditionUID": "10",
-                        "BidPageUID": "20",
-                        "Position": "0;0;120;0",
-                    }
-                ]
-            },
-        )
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "metric.ost"
-            result = OstExporter(UOMDomainService()).export(raw_data, str(output_path))
-            condition_element = (
-                ET.parse(output_path).getroot().find("./Bid/BidConditions/BidCondition")
-            )
-        self.assertTrue(result.success, result.error_message)
-        self.assertIsNotNone(condition_element)
-        self.assertEqual(condition_element.get("UOM1"), str(UOM_M))
-        self.assertEqual(
-            raw_data.bid_tables["BidConditions"][0]["UOM1"],
-            str(UOM_LINEAR_FEET),
-        )
-        quantity_element = condition_element.find(
-            "./BidAreaConditions/BidAreaCondition"
-        )
-        self.assertAlmostEqual(float(quantity_element.get("Quantity1")), 3.048)
+        for label, measure_base, stale_uom, expected_uom, expected_quantity in (
+            ("metric bid with imperial uom", "1", UOM_LINEAR_FEET, UOM_M, 3.048),
+            ("imperial bid with metric uom", "0", UOM_M, UOM_LINEAR_FEET, 10.0),
+        ):
+            with self.subTest(label):
+                raw_data = RawBidData(
+                    bid_row={
+                        "UID": "1",
+                        "JobName": "Metric",
+                        "MeasureBase": measure_base,
+                    },
+                    bid_tables={
+                        "BidConditions": [
+                            {
+                                "UID": "10",
+                                "BidUID": "1",
+                                "Name": "Line",
+                                "Type": str(Condition.TYPE_LINEAR),
+                                "Height": "12",
+                                "Thickness": "6",
+                                "Quantity1": str(CALC_LINEAR_LENGTH),
+                                "UOM1": str(stale_uom),
+                            }
+                        ],
+                        "BidPages": [
+                            {
+                                "UID": "20",
+                                "BidUID": "1",
+                                "Name": "Sheet",
+                                "Sequence": "1",
+                            }
+                        ],
+                    },
+                    page_tables={
+                        "BidTakeoffs": [
+                            {
+                                "UID": "30",
+                                "BidUID": "1",
+                                "BidConditionUID": "10",
+                                "BidPageUID": "20",
+                                "Position": "0;0;120;0",
+                            }
+                        ]
+                    },
+                )
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    output_path = Path(temp_dir) / "metric.ost"
+                    result = OstExporter(UOMDomainService()).export(
+                        raw_data, str(output_path)
+                    )
+                    condition_element = (
+                        ET.parse(output_path)
+                        .getroot()
+                        .find("./Bid/BidConditions/BidCondition")
+                    )
+                self.assertTrue(result.success, result.error_message)
+                self.assertIsNotNone(condition_element)
+                self.assertEqual(condition_element.get("UOM1"), str(expected_uom))
+                self.assertEqual(
+                    raw_data.bid_tables["BidConditions"][0]["UOM1"],
+                    str(stale_uom),
+                )
+                quantity_element = condition_element.find(
+                    "./BidAreaConditions/BidAreaCondition"
+                )
+                self.assertAlmostEqual(
+                    float(quantity_element.get("Quantity1")), expected_quantity
+                )
 
 
 class OverlayCoordinateContractTests(unittest.TestCase):

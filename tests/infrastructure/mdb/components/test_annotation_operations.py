@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
+from ost_visualizer.application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
@@ -102,6 +103,59 @@ class AnnotationOperationsPersistenceTests(unittest.TestCase):
             ),
             6,
         )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidAnnotationRects").fetchone()[0], 0
+        )
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 1)
+
+    def test_annotation_delete_chunk_boundaries_remove_exactly_the_requested_rows(
+        self,
+    ):
+        class LimitedAnnotationOps(
+            AnnotationOperationsMixin, _ParameterLimitedSqliteOps
+        ):
+            pass
+
+        for row_count, expected_delete_statements in (
+            (1, 1),
+            (50, 1),
+            (51, 2),
+            (100, 2),
+        ):
+            with self.subTest(row_count=row_count):
+                conn = sqlite3.connect(":memory:")
+                conn.execute("CREATE TABLE Bids (UID INTEGER)")
+                conn.execute("INSERT INTO Bids VALUES (1)")
+                conn.execute(
+                    "CREATE TABLE BidAnnotationRects (UID INTEGER, BidUID INTEGER)"
+                )
+                conn.executemany(
+                    "INSERT INTO BidAnnotationRects VALUES (?, 1)",
+                    ((uid,) for uid in range(1, 201)),
+                )
+                statements = []
+                conn.set_trace_callback(statements.append)
+                self.assertTrue(
+                    LimitedAnnotationOps(conn).delete_annotations(
+                        "large.mdb",
+                        [(str(uid), "rect") for uid in range(1, row_count + 1)],
+                    )
+                )
+                self.assertEqual(
+                    sum(
+                        sql.lstrip()
+                        .upper()
+                        .startswith("DELETE FROM [BIDANNOTATIONRECTS]")
+                        for sql in statements
+                    ),
+                    expected_delete_statements,
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT MIN(UID), COUNT(*) FROM BidAnnotationRects"
+                    ).fetchone(),
+                    (row_count + 1, 200 - row_count),
+                )
 
     def test_bulk_annotation_insert_scans_each_table_uid_space_once(self):
         conn = sqlite3.connect(":memory:")
@@ -133,8 +187,15 @@ class AnnotationOperationsPersistenceTests(unittest.TestCase):
         max_uid_queries = [
             sql for sql in statements if sql.lstrip().upper().startswith("SELECT MAX")
         ]
-        self.assertEqual(len(result), 100)
+        self.assertEqual(result, [str(uid) for uid in range(1, 101)])
         self.assertEqual(len(max_uid_queries), 1)
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT UID), MIN(UID), MAX(UID) "
+                "FROM BidAnnotationRects"
+            ).fetchone(),
+            (100, 100, 1, 100),
+        )
 
     def test_annotation_insert_rejects_orphan_bid_before_identity_allocation(self):
         conn = sqlite3.connect(":memory:")
@@ -146,6 +207,8 @@ class AnnotationOperationsPersistenceTests(unittest.TestCase):
             "UID INTEGER, BidUID INTEGER, BidPageUID INTEGER, Position BLOB, "
             "Color INTEGER, Width INTEGER)"
         )
+        statements = []
+        conn.set_trace_callback(statements.append)
         with self.assertLogs("test", level="ERROR") as logs:
             result = _SqliteAnnotationOps(conn).insert_annotations(
                 "malformed.mdb",
@@ -164,6 +227,14 @@ class AnnotationOperationsPersistenceTests(unittest.TestCase):
         self.assertIn("Bids has no row for UID 99", logs.output[0])
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM BidAnnotationRects").fetchone()[0], 0
+        )
+        self.assertEqual(
+            [
+                sql
+                for sql in statements
+                if sql.lstrip().upper().startswith(("SELECT MAX", "INSERT"))
+            ],
+            [],
         )
 
     def test_named_view_rename_writes_bid_named_views_name_only(self):
@@ -222,7 +293,7 @@ class AnnotationOperationsPersistenceTests(unittest.TestCase):
         self.assertTrue(
             writer.save_annotation_text_properties(
                 "job.mdb",
-                [("42", "namedview", {"Text": "New View"})],
+                [("42", "namedview", {"Text": "New View", "FontName": "Calibri"})],
             )
         )
         self.assertEqual(
@@ -232,8 +303,9 @@ class AnnotationOperationsPersistenceTests(unittest.TestCase):
                 ("BidNamedViews", ("UID", "Name")),
             ],
         )
+        self.assertEqual(len(writer.connection.cursor_instance.calls), 1)
         sql, params = writer.connection.cursor_instance.calls[0]
-        self.assertIn("UPDATE [BidNamedViews] SET [Name]=?", sql)
+        self.assertEqual(sql, "UPDATE [BidNamedViews] SET [Name]=? WHERE [UID]=?")
         self.assertEqual(params, ("New View", 42))
 
 
@@ -250,11 +322,17 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ((original_a,), (original_b,)),
         )
         conn.commit()
+        statements = []
+        conn.set_trace_callback(statements.append)
         self.assertFalse(
             _dimension_support__DimensionWriteOps(conn).save_annotation_positions(
                 "malformed.mdb",
                 [("7", "namedview", [4.0, 4.0, 8.0, 8.0, 0.0])],
             )
+        )
+        self.assertEqual(
+            [sql for sql in statements if sql.lstrip().upper().startswith("UPDATE")],
+            [],
         )
         self.assertEqual(
             conn.execute(
@@ -275,6 +353,8 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ((7, 1, original_a), (8, 2, original_b)),
         )
         conn.commit()
+        statements = []
+        conn.set_trace_callback(statements.append)
         self.assertFalse(
             _dimension_support__DimensionWriteOps(conn).save_annotation_positions(
                 "malformed.mdb",
@@ -285,11 +365,57 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
         )
         self.assertEqual(
+            [sql for sql in statements if sql.lstrip().upper().startswith("UPDATE")],
+            [],
+        )
+        self.assertEqual(
             conn.execute("SELECT Position FROM BidNamedViews ORDER BY UID").fetchall(),
             [(original_a,), (original_b,)],
         )
 
-    def test_annotation_batch_failure_rolls_back_without_uid_spec_misalignment(self):
+    def test_annotation_position_save_rejects_cross_table_bid_batch_atomically(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE BidNamedViews (UID INTEGER, BidUID INTEGER, Position BLOB)"
+        )
+        conn.execute(
+            "CREATE TABLE BidAnnotationRects "
+            "(UID INTEGER, BidUID INTEGER, Position BLOB)"
+        )
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", ((1,), (2,)))
+        original_view = encode_position([0.0, 0.0, 1.0, 1.0, 0.0])
+        original_rect = encode_position([2.0, 2.0, 3.0, 3.0])
+        conn.execute("INSERT INTO BidNamedViews VALUES (7, 1, ?)", (original_view,))
+        conn.execute(
+            "INSERT INTO BidAnnotationRects VALUES (8, 2, ?)", (original_rect,)
+        )
+        conn.commit()
+        statements = []
+        conn.set_trace_callback(statements.append)
+        self.assertFalse(
+            _dimension_support__DimensionWriteOps(conn).save_annotation_positions(
+                "malformed.mdb",
+                [
+                    ("7", "namedview", [4.0, 4.0, 8.0, 8.0, 0.0]),
+                    ("8", "rect", [9.0, 9.0, 12.0, 12.0]),
+                ],
+            )
+        )
+        self.assertEqual(
+            [sql for sql in statements if sql.lstrip().upper().startswith("UPDATE")],
+            [],
+        )
+        self.assertEqual(
+            conn.execute("SELECT Position FROM BidNamedViews").fetchall(),
+            [(original_view,)],
+        )
+        self.assertEqual(
+            conn.execute("SELECT Position FROM BidAnnotationRects").fetchall(),
+            [(original_rect,)],
+        )
+
+    def test_annotation_batch_with_unsupported_type_inserts_nothing(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE Bids (UID INTEGER)")
         conn.execute("INSERT INTO Bids VALUES (1)")
@@ -332,6 +458,113 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM BidAnnotationRects").fetchone()[0],
             0,
+        )
+
+    def test_annotation_batch_failure_after_first_insert_rolls_back_every_row(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidPages VALUES (3, 1)")
+        conn.execute(
+            "CREATE TABLE BidAnnotationRects ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidPageUID INTEGER, "
+            "BidLayerUID INTEGER, Position BLOB, Color INTEGER, Width INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE BidAnnotationOvals ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidPageUID INTEGER, "
+            "BidLayerUID INTEGER, Position BLOB, Color INTEGER)"
+        )
+        conn.commit()
+        statements = []
+        conn.set_trace_callback(statements.append)
+        specs = [
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type=annotation_type,
+                position=[1.0, 2.0, 3.0, 4.0],
+                color="#ff0000",
+                width=2.0,
+            )
+            for annotation_type in ("rect", "oval")
+        ]
+        new_uids = _dimension_support__DimensionWriteOps(conn).insert_annotations(
+            "bid.mdb", "1", specs
+        )
+        self.assertEqual(new_uids, [])
+        self.assertTrue(
+            any(
+                sql.lstrip().upper().startswith("INSERT INTO [BIDANNOTATIONRECTS]")
+                for sql in statements
+            )
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidAnnotationRects").fetchone()[0], 0
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidAnnotationOvals").fetchone()[0], 0
+        )
+
+    def test_annotation_insert_returns_uids_in_spec_order_across_interleaved_tables(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidPages VALUES (3, 1)")
+        conn.execute("CREATE TABLE BidLayers (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidLayers VALUES (9, 1)")
+        for table in ("BidAnnotationRects", "BidAnnotationOvals"):
+            conn.execute(
+                f"CREATE TABLE {table} ("
+                "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidPageUID INTEGER, "
+                "BidLayerUID INTEGER, Position BLOB, Color INTEGER, Width INTEGER)"
+            )
+        conn.execute(
+            "INSERT INTO BidAnnotationRects (UID, BidUID, BidPageUID) VALUES (5, 1, 3)"
+        )
+        positions = {
+            "rect-a": [1.0, 1.0, 2.0, 2.0],
+            "oval-b": [3.0, 3.0, 4.0, 4.0],
+            "rect-c": [5.0, 5.0, 6.0, 6.0],
+            "oval-d": [7.0, 7.0, 8.0, 8.0],
+        }
+        specs = [
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type=name.split("-")[0],
+                position=position,
+                color="#010203",
+                width=3.0,
+                layer_uid="9" if name == "oval-d" else "",
+            )
+            for name, position in positions.items()
+        ]
+        new_uids = _dimension_support__DimensionWriteOps(conn).insert_annotations(
+            "bid.mdb", "1", specs
+        )
+        self.assertEqual(new_uids, ["6", "1", "7", "2"])
+        for table, uid, name in (
+            ("BidAnnotationRects", 6, "rect-a"),
+            ("BidAnnotationOvals", 1, "oval-b"),
+            ("BidAnnotationRects", 7, "rect-c"),
+            ("BidAnnotationOvals", 2, "oval-d"),
+        ):
+            with self.subTest(table=table, uid=uid):
+                row = conn.execute(
+                    f"SELECT BidUID, BidPageUID, BidLayerUID, Color, Width, Position "
+                    f"FROM {table} WHERE UID=?",
+                    (uid,),
+                ).fetchone()
+                self.assertEqual(
+                    row[:5],
+                    (1, 3, 9 if name == "oval-d" else None, 0x030201, 3),
+                )
+                self.assertEqual(parse_position_storage(row[5]), positions[name])
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidAnnotationRects").fetchone()[0], 3
         )
 
     @classmethod
@@ -391,6 +624,129 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             """
         ).fetchone()
         self.assertEqual(row, ("Calibri", 0x332211, 18, 1, 1, 1))
+
+    def test_dimension_text_property_defaults_and_hex_color_only_touch_target_row(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            """
+            CREATE TABLE BidDimensions (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                FontName TEXT,
+                FontColor INTEGER,
+                FontSize INTEGER,
+                FontBold INTEGER,
+                FontItalic INTEGER,
+                FontUnderline INTEGER
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO BidDimensions VALUES (?, 1, 'Times', 5, 30, 1, 1, 1)",
+            ((7,), (8,)),
+        )
+        self.assertTrue(
+            _dimension_support__DimensionWriteOps(conn).save_annotation_text_properties(
+                "bid.mdb",
+                [
+                    (
+                        "7",
+                        "dimension",
+                        {"FontName": "", "FontColor": "#112233", "FontSize": 0},
+                    )
+                ],
+            )
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, FontName, FontColor, FontSize, FontBold, FontItalic, "
+                "FontUnderline FROM BidDimensions ORDER BY UID"
+            ).fetchall(),
+            [(7, "Arial", 0x332211, 10, 0, 0, 0), (8, "Times", 5, 30, 1, 1, 1)],
+        )
+
+    def test_text_and_callout_property_updates_write_encoded_name_and_font_columns(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        for table in ("BidTexts", "BidCallOuts"):
+            conn.execute(
+                f"""
+                CREATE TABLE {table} (
+                    UID INTEGER PRIMARY KEY,
+                    BidUID INTEGER,
+                    Name BLOB,
+                    FontName TEXT,
+                    FontColor INTEGER,
+                    FontSize INTEGER,
+                    FontBold INTEGER,
+                    FontItalic INTEGER,
+                    FontUnderline INTEGER,
+                    TextAlign INTEGER
+                )
+                """
+            )
+            conn.executemany(
+                f"INSERT INTO {table} VALUES (?, 1, X'00', 'Times', 5, 30, 1, 1, 1, 3)",
+                ((1,), (2,)),
+            )
+        self.assertTrue(
+            _dimension_support__DimensionWriteOps(conn).save_annotation_text_properties(
+                "bid.mdb",
+                [
+                    (
+                        "1",
+                        "text",
+                        {
+                            "Text": "H\u00e9llo",
+                            "FontName": "Calibri",
+                            "FontColor": "#112233",
+                            "FontSize": 20,
+                            "FontBold": True,
+                            "TextAlign": 2,
+                        },
+                    ),
+                    ("1", "callout", {"Text": "Note"}),
+                    ("1", "bogus", {"Text": "ignored"}),
+                ],
+            )
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, Name, FontName, FontColor, FontSize, FontBold, "
+                "FontItalic, FontUnderline, TextAlign FROM BidTexts ORDER BY UID"
+            ).fetchall(),
+            [
+                (
+                    1,
+                    "H\u00e9llo".encode("latin-1"),
+                    "Calibri",
+                    0x332211,
+                    20,
+                    1,
+                    0,
+                    0,
+                    2,
+                ),
+                (2, b"\x00", "Times", 5, 30, 1, 1, 1, 3),
+            ],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, Name, FontName, FontColor, FontSize, FontBold, "
+                "FontItalic, FontUnderline, TextAlign FROM BidCallOuts ORDER BY UID"
+            ).fetchall(),
+            [
+                (1, b"Note", "Arial", 0, 12, 0, 0, 0, 0),
+                (2, b"\x00", "Times", 5, 30, 1, 1, 1, 3),
+            ],
+        )
 
     def test_placeable_annotation_shapes_insert_through_annotation_write_path(self):
         conn = sqlite3.connect(":memory:")
@@ -659,12 +1015,32 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             "BidAnnotationPolygons": "polygon",
             "BidAnnotationClouds": "cloud",
         }
+        spec_positions = {spec.annotation_type: spec.position for spec in specs}
         for table, annotation_type in expected_tables.items():
             with self.subTest(annotation_type=annotation_type):
-                row = conn.execute(
-                    f"SELECT BidUID, BidPageUID, Color, Width FROM {table}"
-                ).fetchone()
-                self.assertEqual(row, (1, 3, 255, 2))
+                rows = conn.execute(
+                    f"SELECT BidUID, BidPageUID, Color, Width, Position FROM {table}"
+                ).fetchall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0][:4], (1, 3, 255, 2))
+                self.assertEqual(
+                    rows[0][4],
+                    serialize_position_for_table(
+                        table, spec_positions[annotation_type]
+                    ),
+                )
+        self.assertEqual(
+            conn.execute("SELECT Position FROM BidAnnotationRects").fetchone()[0],
+            b"1.0;2.0;13.0;14.0\n",
+        )
+        for table in ("BidALines", "BidArrows"):
+            with self.subTest(takeoff_references=table):
+                self.assertEqual(
+                    conn.execute(
+                        f"SELECT BidTakeoffFromUID, BidTakeoffToUID FROM {table}"
+                    ).fetchall(),
+                    [(None, None)],
+                )
         highlight_row = conn.execute(
             "SELECT BidUID, BidPageUID, Color, Position FROM BidHighlights"
         ).fetchone()
@@ -682,6 +1058,24 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             """
         ).fetchone()
         self.assertEqual(dimension_row, (1, 3, "Arial", 255, 48))
+        self.assertEqual(
+            conn.execute(
+                "SELECT BidTakeoffFromUID, BidTakeoffToUID, FontBold, FontItalic, "
+                "FontUnderline, Position FROM BidDimensions"
+            ).fetchall(),
+            [
+                (
+                    None,
+                    None,
+                    0,
+                    0,
+                    0,
+                    serialize_position_for_table(
+                        "BidDimensions", [1.0, 2.0, 13.0, 14.0]
+                    ),
+                )
+            ],
+        )
         text_row = conn.execute(
             """
             SELECT BidUID, BidPageUID, FontName, FontColor, FontSize, TextAlign, Position
@@ -724,21 +1118,127 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 captured_values.update(values)
             )
         )
-        operations._execute_annotation_insert(
-            None,
-            _dimension_support__Schema(),
-            "BidHotLinks",
-            "hotlink",
-            1,
-            2,
-            3,
-            None,
-            b"position",
-            255,
-            0,
-            {"BidPageViewUID": 0},
+        for raw_target in (0, "0", "", None):
+            with self.subTest(raw_target=raw_target):
+                captured_values.clear()
+                operations._execute_annotation_insert(
+                    None,
+                    _dimension_support__Schema(),
+                    "BidHotLinks",
+                    "hotlink",
+                    1,
+                    2,
+                    3,
+                    None,
+                    b"position",
+                    255,
+                    0,
+                    {"BidPageViewUID": raw_target},
+                )
+                self.assertEqual(
+                    captured_values,
+                    {
+                        "UID": 1,
+                        "BidUID": 2,
+                        "BidPageUID": 3,
+                        "BidPageViewUID": None,
+                        "BidLayerUID": None,
+                        "Position": b"position",
+                        "Color": 255,
+                    },
+                )
+        for properties, remap, expected_target in (
+            ({"BidPageViewUID": "7"}, None, 7),
+            ({"BidPageViewUID": "7"}, PasteRefRemap(namedview_uids={"7": "12"}), 12),
+            ({"BidPageViewUID": "8"}, PasteRefRemap(namedview_uids={"7": "12"}), 8),
+        ):
+            with self.subTest(properties=properties, remap=remap):
+                captured_values.clear()
+                operations._execute_annotation_insert(
+                    None,
+                    _dimension_support__Schema(),
+                    "BidHotLinks",
+                    "hotlink",
+                    1,
+                    2,
+                    3,
+                    None,
+                    b"position",
+                    255,
+                    0,
+                    properties,
+                    ref_remap=remap,
+                )
+                self.assertEqual(captured_values["BidPageViewUID"], expected_target)
+
+    def test_paste_remap_translates_takeoff_and_named_view_references_before_validation(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute("CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER)")
+        conn.execute("INSERT INTO BidPages VALUES (3, 1)")
+        conn.execute(
+            "CREATE TABLE BidNamedViews "
+            "(UID INTEGER, BidUID INTEGER, BidPageUID INTEGER)"
         )
-        self.assertIsNone(captured_values["BidPageViewUID"])
+        conn.executemany("INSERT INTO BidNamedViews VALUES (?, ?, 3)", ((5, 2), (9, 1)))
+        conn.execute(
+            "CREATE TABLE BidHotLinks (UID INTEGER, BidUID INTEGER, "
+            "BidPageUID INTEGER, BidPageViewUID INTEGER, BidLayerUID INTEGER, "
+            "Color INTEGER, Position BLOB)"
+        )
+        conn.execute(
+            "CREATE TABLE BidALines (UID INTEGER, BidUID INTEGER, BidPageUID INTEGER, "
+            "BidTakeoffFromUID INTEGER, BidTakeoffToUID INTEGER, Position BLOB, "
+            "Color INTEGER, Width INTEGER)"
+        )
+        conn.commit()
+        specs = [
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="line",
+                position=[0.0, 0.0, 1.0, 1.0],
+                color="#000000",
+                width=1.0,
+                properties={"BidTakeoffFromUID": "11", "BidTakeoffToUID": "12"},
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="hotlink",
+                position=[5.0, 6.0],
+                color="#000000",
+                width=1.0,
+                properties={"BidPageViewUID": "5"},
+            ),
+        ]
+        operations = _dimension_support__DimensionWriteOps(conn)
+        self.assertEqual(operations.insert_annotations("bid.mdb", "1", specs), [])
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidALines").fetchone()[0], 0
+        )
+        self.assertEqual(
+            operations.insert_annotations(
+                "bid.mdb",
+                "1",
+                specs,
+                ref_remap=PasteRefRemap(
+                    takeoff_uids={"11": "21"}, namedview_uids={"5": "9"}
+                ),
+            ),
+            ["1", "1"],
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT BidTakeoffFromUID, BidTakeoffToUID FROM BidALines"
+            ).fetchall(),
+            [(21, None)],
+        )
+        self.assertEqual(
+            conn.execute("SELECT BidPageViewUID FROM BidHotLinks").fetchall(),
+            [(9,)],
+        )
 
     def test_hotlink_insert_rejects_named_view_from_another_bid(self):
         conn = sqlite3.connect(":memory:")
@@ -921,8 +1421,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             """,
             (encode_position([0.0, 0.0, 1.0, 1.0]),),
         )
-        _dimension_support__DimensionWriteOps(conn).save_annotation_positions(
-            "bid.mdb", [("1", "text", [7.0, 8.0, 12.0, 12.0])]
+        self.assertTrue(
+            _dimension_support__DimensionWriteOps(conn).save_annotation_positions(
+                "bid.mdb", [("1", "text", [7.0, 8.0, 12.0, 12.0])]
+            )
         )
         position_value = conn.execute(
             "SELECT Position FROM BidTexts WHERE UID=1"
@@ -1155,7 +1657,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         ops = _dimension_support__DimensionWriteOps(conn)
         ops.insert_annotations("bid.mdb", "1", specs)
         updates = [
-            ("1", annotation_type, {"Color": "#00aa00", "Width": 6.0})
+            ("1", annotation_type, {"Color": "#00aa44", "Width": 6.0})
             for annotation_type in base_positions
         ]
         self.assertTrue(ops.save_annotation_styles("bid.mdb", updates))
@@ -1173,19 +1675,66 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 rows = conn.execute(
                     f"SELECT UID, Color, Width FROM {table} ORDER BY UID"
                 ).fetchall()
-                self.assertEqual(rows, [(1, 0x00AA00, 6), (2, 0xFF0000, 4)])
+                self.assertEqual(rows, [(1, 0x44AA00, 6), (2, 0xFF0000, 4)])
         dimension_rows = conn.execute(
             "SELECT UID, FontColor FROM BidDimensions ORDER BY UID"
         ).fetchall()
-        self.assertEqual(dimension_rows, [(1, 0x00AA00), (2, 0xFF0000)])
+        self.assertEqual(dimension_rows, [(1, 0x44AA00), (2, 0xFF0000)])
         text_rows = conn.execute(
             "SELECT UID, FontColor FROM BidTexts ORDER BY UID"
         ).fetchall()
-        self.assertEqual(text_rows, [(1, 0x00AA00), (2, 0xFF0000)])
+        self.assertEqual(text_rows, [(1, 0x44AA00), (2, 0xFF0000)])
         highlight_rows = conn.execute(
             "SELECT UID, Color FROM BidHighlights ORDER BY UID"
         ).fetchall()
-        self.assertEqual(highlight_rows, [(1, 0x00AA00), (2, 0xFF0000)])
+        self.assertEqual(highlight_rows, [(1, 0x44AA00), (2, 0xFF0000)])
+
+    def test_annotation_style_update_variants_leave_unlisted_columns_untouched(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.execute("INSERT INTO Bids VALUES (1)")
+        conn.execute(
+            "CREATE TABLE BidAnnotationRects "
+            "(UID INTEGER, BidUID INTEGER, Color INTEGER, Width INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE BidNamedViews (UID INTEGER, BidUID INTEGER, Color INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE BidHotLinks (UID INTEGER, BidUID INTEGER, Color INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO BidAnnotationRects VALUES (?, 1, 100, 4)", ((1,), (2,))
+        )
+        conn.execute("INSERT INTO BidNamedViews VALUES (1, 1, 100)")
+        conn.execute("INSERT INTO BidHotLinks VALUES (1, 1, 100)")
+        ops = _dimension_support__DimensionWriteOps(conn)
+        self.assertTrue(ops.save_annotation_styles("bid.mdb", []))
+        self.assertTrue(
+            ops.save_annotation_styles(
+                "bid.mdb",
+                [
+                    ("1", "rect", {"Color": 0x112233}),
+                    ("2", "rect", {"Width": "3.7"}),
+                    ("1", "namedview", {"Color": "#00aa44", "Width": 9}),
+                    ("1", "hotlink", {"Color": 5, "Width": 9}),
+                    ("1", "bogus", {"Color": 7}),
+                    ("2", "rect", {"Opacity": 1}),
+                ],
+            )
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT UID, Color, Width FROM BidAnnotationRects ORDER BY UID"
+            ).fetchall(),
+            [(1, 0x112233, 4), (2, 100, 3)],
+        )
+        self.assertEqual(
+            conn.execute("SELECT Color FROM BidNamedViews").fetchall(), [(0x44AA00,)]
+        )
+        self.assertEqual(
+            conn.execute("SELECT Color FROM BidHotLinks").fetchall(), [(5,)]
+        )
 
     def test_delete_annotations_removes_hotlinks_before_named_views(self):
         conn = sqlite3.connect(":memory:")
@@ -1255,6 +1804,42 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         self.assertEqual(
             conn.execute("SELECT * FROM BidNamedViews").fetchall(), [(1, 1, "Lobby")]
+        )
+
+    def test_delete_annotations_rejects_targets_from_different_bids(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER)")
+        conn.executemany("INSERT INTO Bids VALUES (?)", ((1,), (2,)))
+        for table in ("BidAnnotationRects", "BidAnnotationOvals"):
+            conn.execute(f"CREATE TABLE {table} (UID INTEGER, BidUID INTEGER)")
+            conn.executemany(
+                f"INSERT INTO {table} VALUES (?, ?)", ((1, 1), (2, 2), (3, 1))
+            )
+        conn.commit()
+        ops = _dimension_support__DimensionWriteOps(conn)
+        for annotations in (
+            [("1", "rect"), ("2", "rect")],
+            [("1", "rect"), ("2", "oval")],
+        ):
+            with self.subTest(annotations=annotations):
+                self.assertFalse(ops.delete_annotations("bid.mdb", annotations))
+                for table in ("BidAnnotationRects", "BidAnnotationOvals"):
+                    self.assertEqual(
+                        conn.execute(
+                            f"SELECT UID FROM {table} ORDER BY UID"
+                        ).fetchall(),
+                        [(1,), (2,), (3,)],
+                    )
+        self.assertTrue(
+            ops.delete_annotations("bid.mdb", [("1", "rect"), ("3", "oval")])
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidAnnotationRects ORDER BY UID").fetchall(),
+            [(2,), (3,)],
+        )
+        self.assertEqual(
+            conn.execute("SELECT UID FROM BidAnnotationOvals ORDER BY UID").fetchall(),
+            [(1,), (2,)],
         )
 
     def test_delete_annotations_rejects_unsupported_type(self):

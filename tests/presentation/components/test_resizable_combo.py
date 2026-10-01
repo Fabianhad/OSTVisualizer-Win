@@ -42,3 +42,22 @@ class ResizableComboContractTests(unittest.TestCase):
             popup, QtCore.QEvent.Type.DeferredDelete
         )
         self.assertEqual(destroyed, [True])
+
+    def test_item_click_closes_popup_and_popup_opens_on_current_row(self):
+        model = QtGui.QStandardItemModel(self.combo)
+        for label in ("First", "Second", "Third"):
+            model.appendRow(QtGui.QStandardItem(label))
+        self.combo.setModel(model)
+        self.combo.setCurrentIndex(2)
+        self.combo.show()
+        self.combo.showPopup()
+        self.assertTrue(self.combo._popup.isVisible())
+        self.assertEqual(self.combo._tree.currentIndex().row(), 2)
+        activations = []
+        self.combo.activated.connect(activations.append)
+        self.combo._tree.clicked.emit(model.index(0, 0))
+        self.assertFalse(self.combo._popup.isVisible())
+        self.assertEqual(self.combo.currentIndex(), 0)
+        self.assertEqual(activations, [0])
+        self.combo.activated.disconnect(activations.append)
+        self.combo.hide()

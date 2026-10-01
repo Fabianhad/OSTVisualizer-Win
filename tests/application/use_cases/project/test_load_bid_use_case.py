@@ -1,5 +1,11 @@
+import logging
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    ConcurrencyToken,
+    ResourceRef,
+)
 from ost_visualizer.application.dtos.user_workspace_state_dtos import (
     UserBidWorkspaceState,
     UserPageViewState,
@@ -10,7 +16,10 @@ from ost_visualizer.application.use_cases.project.load_bid_use_case import (
 )
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.page_info import BidPageInfo
+from ost_visualizer.domain.entities.takeoff import Takeoff
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -42,6 +51,13 @@ from tests.integration.quantities.uom_support import (
     _app as _uom_support__app,
     _condition as _uom_support__condition,
 )
+
+
+def _quiet_logger():
+    logger = logging.getLogger("test.load_bid")
+    logger.addHandler(logging.NullHandler())
+    logger.propagate = False
+    return logger
 
 
 class LoadBidUseCaseTests(unittest.TestCase):
@@ -126,6 +142,11 @@ class LoadBidUseCaseTests(unittest.TestCase):
                 ("apply", "database-id"),
             ],
         )
+        self.assertEqual(model.current_bid_ref, BidRef("database-id", "42"))
+        self.assertIsNone(model.current_bid)
+        self.assertEqual(model.bid_conditions, {})
+        self.assertEqual(model.bid_takeoffs, [])
+        self.assertIsNone(model.last_selected_page_uid)
 
     def test_sql_execute_rejects_synchronous_navigation_read(self):
         use_case = LoadBidUseCase(
@@ -137,6 +158,121 @@ class LoadBidUseCaseTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "background navigation service"):
             use_case.execute(BidRef("sql-database", "42"))
+        with self.assertRaisesRegex(RuntimeError, "background navigation service"):
+            use_case.execute(BidRef("sql-database", "7"))
+
+    def test_execute_with_empty_bid_uid_loads_nothing(self):
+        calls = []
+        use_case = LoadBidUseCase(
+            SimpleNamespace(),
+            SimpleNamespace(),
+            SimpleNamespace(
+                prepare_bid_load=lambda *_args: calls.append("prepare"),
+                apply_bid_load=lambda *_args: calls.append("apply"),
+            ),
+            SimpleNamespace(load_bid=lambda *_args: calls.append("tokens")),
+            SimpleNamespace(uses_sql_workspace=lambda *_args: calls.append("sql")),
+            logger=_quiet_logger(),
+        )
+        self.assertFalse(use_case.execute(BidRef("database-id", "")))
+        self.assertEqual(calls, [])
+
+    def test_prepare_reads_sql_workspace_state_only_for_sql_databases(self):
+        calls = []
+        workspace_state = UserBidWorkspaceState(active_page_uid="p2")
+        versions = (
+            (ResourceRef("bid", "42", 42), ConcurrencyToken(b"\x00" * 7 + b"\x01")),
+        )
+        bid_data = BidLoadResult()
+
+        def build(uses_sql):
+            return LoadBidUseCase(
+                SimpleNamespace(),
+                SimpleNamespace(),
+                SimpleNamespace(prepare_bid_load=lambda *_args: bid_data),
+                SimpleNamespace(load_bid=lambda *_args: versions),
+                SimpleNamespace(
+                    uses_sql_workspace=lambda _database_id: uses_sql,
+                    load_bid_state=lambda file_path, bid_uid: (
+                        calls.append((file_path, bid_uid)) or workspace_state
+                    ),
+                ),
+            )
+
+        prepared = build(True).prepare(BidRef("sql-database", "42"))
+        self.assertIs(prepared.bid_data, bid_data)
+        self.assertIs(prepared.sql_workspace_state, workspace_state)
+        self.assertEqual(prepared.resource_versions, versions)
+        self.assertEqual(calls, [("sql-database", "42")])
+        prepared = build(False).prepare(BidRef("database.mdb", "42"))
+        self.assertIsNone(prepared.sql_workspace_state)
+        self.assertEqual(prepared.resource_versions, versions)
+        self.assertEqual(calls, [("sql-database", "42")])
+
+    def test_apply_prepared_checks_versions_inside_mutation_scope(self):
+        events = []
+        versions = (
+            (ResourceRef("bid", "42", 42), ConcurrencyToken(b"\x00" * 7 + b"\x01")),
+        )
+
+        class Tokens:
+            current = True
+
+            @contextmanager
+            def mutation_scope(self, file_path):
+                events.append(("enter", file_path))
+                try:
+                    yield
+                finally:
+                    events.append(("exit", file_path))
+
+            def bid_versions_are_current(self, file_path, bid_uid, resource_versions):
+                events.append(("check", file_path, bid_uid, resource_versions))
+                return self.current
+
+        tokens = Tokens()
+        model = SimpleNamespace(
+            find_bid_info=lambda _bid_ref: None,
+            set_pages=lambda _pages: events.append(("pages",)),
+            set_annotations=lambda _annotations: None,
+            deselect_pages=lambda: None,
+        )
+        use_case = LoadBidUseCase(
+            model,
+            SimpleNamespace(set_bid_layer_visibility=lambda _layers: None),
+            SimpleNamespace(
+                apply_bid_load=lambda file_path: events.append(("apply", file_path))
+            ),
+            tokens,
+            SimpleNamespace(uses_sql_workspace=lambda *_args: False),
+        )
+        prepared = PreparedBidLoad(BidLoadResult(), None, versions)
+        bid_ref = BidRef("sql-database", "42")
+        self.assertTrue(use_case.apply_prepared(bid_ref, prepared))
+        self.assertEqual(
+            events,
+            [
+                ("enter", "sql-database"),
+                ("check", "sql-database", "42", versions),
+                ("apply", "sql-database"),
+                ("pages",),
+                ("exit", "sql-database"),
+            ],
+        )
+        self.assertEqual(model.current_bid_ref, bid_ref)
+        events.clear()
+        tokens.current = False
+        model.current_bid_ref = None
+        self.assertFalse(use_case.apply_prepared(bid_ref, prepared))
+        self.assertEqual(
+            events,
+            [
+                ("enter", "sql-database"),
+                ("check", "sql-database", "42", versions),
+                ("exit", "sql-database"),
+            ],
+        )
+        self.assertIsNone(model.current_bid_ref)
 
     def test_projects_sql_cover_sheet_snapshots_with_prepared_bid_state(self):
         calls = []
@@ -189,6 +325,132 @@ class LoadBidUseCaseTests(unittest.TestCase):
                 ),
             ],
         )
+        self.assertIs(calls[1][3], cover_sheet)
+
+    def test_cover_sheet_and_delete_content_are_only_projected_when_loaded(self):
+        calls = []
+
+        class ProjectData:
+            def set_bid_layer_visibility(self, layers):
+                calls.append(("layers", list(layers)))
+
+            def replace_cover_sheet_data(self, *args):
+                calls.append(("cover", args))
+
+            def replace_page_delete_content_uids(self, *args):
+                calls.append(("delete-content", args))
+
+        model = SimpleNamespace(
+            find_bid_info=lambda _bid_ref: None,
+            set_pages=lambda _pages: None,
+            set_annotations=lambda _annotations: None,
+            deselect_pages=lambda: None,
+        )
+        use_case = LoadBidUseCase(
+            model,
+            ProjectData(),
+            SimpleNamespace(apply_bid_load=lambda _database_id: None),
+            SimpleNamespace(load_bid=lambda *_args: None),
+            SimpleNamespace(uses_sql_workspace=lambda *_args: False),
+        )
+        self.assertTrue(
+            use_case.apply_prepared(
+                BidRef("database.mdb", "42"), PreparedBidLoad(BidLoadResult(), None)
+            )
+        )
+        self.assertEqual(calls, [("layers", [])])
+        self.assertTrue(
+            use_case.apply_prepared(
+                BidRef("database.mdb", "42"),
+                PreparedBidLoad(
+                    BidLoadResult(page_delete_content_uids=frozenset()), None
+                ),
+            )
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("layers", []),
+                ("layers", []),
+                ("delete-content", ("database.mdb", "42", frozenset())),
+            ],
+        )
+
+    def test_layer_visibility_maps_are_rebuilt_from_loaded_layers(self):
+        projected_layers = []
+        model = SimpleNamespace(
+            find_bid_info=lambda _bid_ref: None,
+            set_pages=lambda _pages: None,
+            set_annotations=lambda _annotations: None,
+            deselect_pages=lambda: None,
+            bid_layer_visibility={"stale": True},
+            bid_layer_names_by_uid={"stale": "stale"},
+            bid_layer_visibility_by_name={"stale": True},
+        )
+        layers = [
+            BidLayer(uid="1", bid_uid="42", name=" Walls ", show=True, sequence=1),
+            BidLayer(uid="2", bid_uid="42", name="Floors", show=False, sequence=2),
+            BidLayer(uid="", bid_uid="42", name="No UID", show=True, sequence=3),
+            BidLayer(uid="4", bid_uid="42", name="  ", show=True, sequence=4),
+        ]
+        use_case = LoadBidUseCase(
+            model,
+            SimpleNamespace(
+                set_bid_layer_visibility=lambda value: projected_layers.append(value)
+            ),
+            SimpleNamespace(apply_bid_load=lambda _database_id: None),
+            SimpleNamespace(load_bid=lambda *_args: None),
+            SimpleNamespace(uses_sql_workspace=lambda *_args: False),
+        )
+        self.assertTrue(
+            use_case.apply_prepared(
+                BidRef("database.mdb", "42"),
+                PreparedBidLoad(BidLoadResult(bid_layers=layers), None),
+            )
+        )
+        self.assertEqual(model.bid_layer_visibility, {"1": True, "2": False, "4": True})
+        self.assertEqual(model.bid_layer_names_by_uid, {"1": "walls", "2": "floors"})
+        self.assertEqual(
+            model.bid_layer_visibility_by_name, {"walls": True, "floors": False}
+        )
+        self.assertEqual(model.bid_layers, layers)
+        self.assertIsNot(model.bid_layers, layers)
+        self.assertEqual(projected_layers, [model.bid_layers])
+
+    def test_pages_are_built_from_bid_page_info_when_no_pages_are_prepared(self):
+        loaded = {}
+        model = SimpleNamespace(
+            find_bid_info=lambda _bid_ref: None,
+            set_pages=lambda pages: loaded.update(pages),
+            set_annotations=lambda _annotations: None,
+            deselect_pages=lambda: None,
+        )
+        use_case = LoadBidUseCase(
+            model,
+            SimpleNamespace(set_bid_layer_visibility=lambda _layers: None),
+            SimpleNamespace(apply_bid_load=lambda _database_id: None),
+            SimpleNamespace(load_bid=lambda *_args: None),
+            SimpleNamespace(uses_sql_workspace=lambda *_args: False),
+        )
+        takeoff = Takeoff(uid="tk1", condition_uid="c1", page_uid="p1")
+        self.assertTrue(
+            use_case.apply_prepared(
+                BidRef("database.mdb", "42"),
+                PreparedBidLoad(
+                    BidLoadResult(
+                        bid_pages={"p1": BidPageInfo(name="Built", zoom_fac=2.0)},
+                        bid_takeoffs=[takeoff],
+                        selected_page_uid="p1",
+                    ),
+                    None,
+                ),
+            )
+        )
+        self.assertEqual(list(loaded), ["p1"])
+        self.assertEqual(loaded["p1"].name, "Built")
+        self.assertEqual(loaded["p1"].zoom_fac, 2.0)
+        self.assertEqual(loaded["p1"].takeoffs, [takeoff])
+        self.assertEqual(model.last_selected_page_uid, "p1")
 
     def test_user_selected_page_and_precise_view_override_shared_sql_state(self):
         workspace_state = UserBidWorkspaceState(
@@ -206,15 +468,33 @@ class LoadBidUseCaseTests(unittest.TestCase):
         self.assertEqual(pages["p2"].zoom_fac, 3.125)
         self.assertEqual(pages["p2"].current_x, 10.1250000001)
         self.assertEqual(pages["p2"].current_y, 20.8750000001)
+        self.assertEqual(
+            (pages["p1"].zoom_fac, pages["p1"].current_x, pages["p1"].current_y),
+            (0.0, 0.0, 0.0),
+        )
 
     def test_missing_user_selected_page_does_not_restore_shared_page(self):
         model, pages = self._apply_with_workspace_state(
-            UserBidWorkspaceState(active_page_uid="deleted-page")
+            UserBidWorkspaceState(
+                active_page_uid="deleted-page",
+                page_views={
+                    "deleted-page": UserPageViewState(
+                        zoom_fac=9.0, current_x=9.0, current_y=9.0
+                    )
+                },
+            )
         )
         self.assertIsNone(model.last_selected_page_uid)
-        self.assertEqual(pages["p1"].zoom_fac, 0.0)
-        self.assertEqual(pages["p1"].current_x, 0.0)
-        self.assertEqual(pages["p1"].current_y, 0.0)
+        self.assertEqual(sorted(pages), ["p1", "p2"])
+        for page_uid in ("p1", "p2"):
+            self.assertEqual(
+                (
+                    pages[page_uid].zoom_fac,
+                    pages[page_uid].current_x,
+                    pages[page_uid].current_y,
+                ),
+                (0.0, 0.0, 0.0),
+            )
 
     def test_sql_without_workspace_row_does_not_use_shared_page_view_columns(self):
         model, pages = self._apply_with_workspace_state(UserBidWorkspaceState())
@@ -225,14 +505,40 @@ class LoadBidUseCaseTests(unittest.TestCase):
         )
 
     def test_users_restore_independent_active_pages(self):
-        first, _pages = self._apply_with_workspace_state(
-            UserBidWorkspaceState(active_page_uid="p1")
+        first, first_pages = self._apply_with_workspace_state(
+            UserBidWorkspaceState(
+                active_page_uid="p1",
+                page_views={
+                    "p1": UserPageViewState(zoom_fac=2.0, current_x=3.0, current_y=4.0)
+                },
+            )
         )
-        second, _pages = self._apply_with_workspace_state(
-            UserBidWorkspaceState(active_page_uid="p2")
+        second, second_pages = self._apply_with_workspace_state(
+            UserBidWorkspaceState(
+                active_page_uid="p2",
+                page_views={
+                    "p1": UserPageViewState(zoom_fac=5.0, current_x=6.0, current_y=7.0)
+                },
+            )
         )
         self.assertEqual(first.last_selected_page_uid, "p1")
         self.assertEqual(second.last_selected_page_uid, "p2")
+        self.assertEqual(
+            (
+                first_pages["p1"].zoom_fac,
+                first_pages["p1"].current_x,
+                first_pages["p1"].current_y,
+            ),
+            (2.0, 3.0, 4.0),
+        )
+        self.assertEqual(
+            (
+                second_pages["p1"].zoom_fac,
+                second_pages["p1"].current_x,
+                second_pages["p1"].current_y,
+            ),
+            (5.0, 6.0, 7.0),
+        )
 
     def test_mdb_without_client_state_preserves_database_page_and_view(self):
         model, pages = self._apply_with_workspace_state(None)
@@ -240,6 +546,10 @@ class LoadBidUseCaseTests(unittest.TestCase):
         self.assertEqual(pages["p1"].zoom_fac, 1.25)
         self.assertEqual(pages["p1"].current_x, 1.0)
         self.assertEqual(pages["p1"].current_y, 2.0)
+        self.assertEqual(
+            (pages["p2"].zoom_fac, pages["p2"].current_x, pages["p2"].current_y),
+            (0.0, 0.0, 0.0),
+        )
 
 
 class ConditionUomConsistencyTests(unittest.TestCase):
@@ -289,3 +599,45 @@ class ConditionUomConsistencyTests(unittest.TestCase):
             (condition.uom1, condition.uom2, condition.uom3),
             (UOM_M, UOM_M2, UOM_M3),
         )
+
+    def _apply_conditions(self, bid_info, conditions):
+        model = SimpleNamespace(
+            find_bid_info=lambda _bid_ref: bid_info,
+            set_pages=lambda _pages: None,
+            set_annotations=lambda _annotations: None,
+            deselect_pages=lambda: None,
+        )
+        use_case = LoadBidUseCase(
+            model,
+            SimpleNamespace(set_bid_layer_visibility=lambda _layers: None),
+            SimpleNamespace(apply_bid_load=lambda _database_id: None),
+            SimpleNamespace(load_bid=lambda *_args: None),
+            SimpleNamespace(uses_sql_workspace=lambda *_args: False),
+        )
+        self.assertTrue(
+            use_case.apply_prepared(
+                BidRef("metric.mdb", "42"),
+                PreparedBidLoad(BidLoadResult(bid_conditions=conditions), None),
+            )
+        )
+        return model
+
+    def test_bid_load_keeps_imperial_uoms_and_skips_normalization_without_bid(self):
+        imperial = _uom_support__condition("imperial")
+        model = self._apply_conditions(
+            HierarchyBidInfo(uid="42", name="Imperial", measure_base=0),
+            {imperial.uid: imperial},
+        )
+        self.assertEqual(
+            (imperial.uom1, imperial.uom2, imperial.uom3),
+            (UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET),
+        )
+        self.assertEqual(model.current_bid.measure_base, 0)
+        unknown_bid = _uom_support__condition("unknown")
+        model = self._apply_conditions(None, {unknown_bid.uid: unknown_bid})
+        self.assertIsNone(model.current_bid)
+        self.assertEqual(
+            (unknown_bid.uom1, unknown_bid.uom2, unknown_bid.uom3),
+            (UOM_LINEAR_FEET, UOM_SQUARE_FEET, UOM_CUBIC_FEET),
+        )
+        self.assertEqual(model.bid_conditions, {unknown_bid.uid: unknown_bid})

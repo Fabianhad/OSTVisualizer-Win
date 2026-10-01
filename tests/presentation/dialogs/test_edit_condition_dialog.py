@@ -109,6 +109,10 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             name="Condition 1",
             condition_type=Condition.TYPE_LINEAR,
             ref_no=1,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
         )
         save_calls = SingleCallRecorder(
             lambda _uid, _dto: SimpleNamespace(success=True)
@@ -129,10 +133,95 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         dialog._ok_btn.click()
         save_calls.assert_called_once(self, "Edit Condition OK click")
         self.assertEqual(save_calls.calls[0][0][0], "c1")
+        self.assertEqual(
+            save_calls.calls[0][0][1].get_changes(), {"name": "Updated Condition"}
+        )
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         dialog.close()
 
+    def test_edit_condition_ok_click_with_failed_save_stays_open_and_warns(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        save_calls = SingleCallRecorder(
+            lambda _uid, _dto: SimpleNamespace(success=False, error="disk full")
+        )
+        dialog = WorkspaceEditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            save_calls,
+            read_service=FakeReadService(),
+        )
+        self.addCleanup(delete, dialog)
+        dialog._name_edit.setText("Updated Condition")
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+        ) as warning:
+            dialog._ok_btn.click()
+        save_calls.assert_called_once(self, "Edit Condition OK click")
+        warning.assert_called_once_with(dialog, "Save Failed", "disk full")
+        self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+        self.assertTrue(dialog._dirty)
+        dialog._dirty = False
+
     def test_edit_condition_preserves_duplicate_named_condition_type_uid(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            cdn_type_uid="type-2",
+            cdn_type_name="Concrete",
+            ref_no=1,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+        )
+        dialog = WorkspaceEditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {
+                "type-1": CdnType(uid="type-1", name="Concrete"),
+                "type-2": CdnType(uid="type-2", name="Concrete"),
+            },
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: True,
+            read_service=FakeReadService(),
+        )
+        try:
+            with patch(
+                "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+            ) as warning:
+                dto = dialog._validate_and_build_dto()
+            warning.assert_not_called()
+            self.assertIsNotNone(dto)
+            self.assertNotIn("cdn_type_uid", dto.get_changes())
+            self.assertEqual(dto.get_changes(), {})
+            dialog._type_edit_identity_uid = "type-1"
+            with patch(
+                "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+            ) as warning:
+                dto = dialog._validate_and_build_dto()
+            warning.assert_not_called()
+            self.assertEqual(dto.get_changes(), {"cdn_type_uid": "type-1"})
+        finally:
+            dialog._dirty = False
+            dialog.close()
+
+    def test_edit_condition_blocks_ambiguous_duplicate_condition_type_name(self):
         condition = Condition(
             uid="c1",
             name="Condition 1",
@@ -156,13 +245,19 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             lambda _uid, _dto: True,
             read_service=FakeReadService(),
         )
-        try:
-            dto = dialog._validate_and_build_dto()
-            self.assertIsNotNone(dto)
-            self.assertNotIn("cdn_type_uid", dto.get_changes())
-        finally:
-            dialog._dirty = False
-            dialog.close()
+        self.addCleanup(delete, dialog)
+        dialog._type_edit_identity_uid = None
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+        ) as warning:
+            self.assertIsNone(dialog._validate_and_build_dto())
+        warning.assert_called_once_with(
+            dialog,
+            "Ambiguous Condition Type",
+            '"Concrete" matches more than one condition type. '
+            "Select the intended item from the list.",
+        )
+        dialog._dirty = False
 
     def test_condition_type_dialog_return_stops_after_parent_is_destroyed(self):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
@@ -211,6 +306,23 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(dto)
         self.assertEqual(dto.get("color_fill"), 0xEFCDAB)
         self.assertEqual(condition.color_fill, 0x563412)
+        with (
+            patch.object(
+                QtWidgets.QColorDialog,
+                "exec",
+                return_value=QtWidgets.QDialog.DialogCode.Rejected,
+            ),
+            patch.object(
+                QtWidgets.QColorDialog,
+                "currentColor",
+                return_value=QtGui.QColor("#000000"),
+            ),
+        ):
+            dialog._color_btn.click()
+        dto = dialog._validate_and_build_dto()
+        self.assertEqual(dto.get("color_fill"), 0xEFCDAB)
+        self.assertEqual(dialog._color_btn.color().name(), "#abcdef")
+        dialog._dirty = False
 
     def test_layers_dialog_return_stops_after_parent_is_destroyed(self):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
@@ -267,7 +379,11 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
             ) as warning:
                 self.assertIsNone(dialog._validate_and_build_dto())
-            warning.assert_called_once()
+            warning.assert_called_once_with(
+                dialog,
+                "Invalid Value",
+                '"not-a-dimension" is not a valid dimension for Spacing.',
+            )
         finally:
             dialog._dirty = False
             dialog.close()
@@ -288,10 +404,36 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                         "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
                     ) as warning:
                         self.assertIsNone(dialog._validate_and_build_dto())
-                    warning.assert_called_once()
+                    warning.assert_called_once_with(
+                        dialog,
+                        "Invalid Value",
+                        "Condition number must be a positive whole number.",
+                    )
                 finally:
                     dialog._dirty = False
                     dialog.close()
+
+    def test_edit_condition_accepts_valid_changed_condition_number(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=7,
+            is_top=True,
+            uom1=-1,
+            uom2=-1,
+            uom3=-1,
+        )
+        dialog = self._make_dialog(condition)
+        self.addCleanup(delete, dialog)
+        dialog._ref_no_edit.setText(" 8 ")
+        with patch(
+            "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
+        ) as warning:
+            dto = dialog._validate_and_build_dto()
+        warning.assert_not_called()
+        self.assertEqual(dto.get_changes(), {"ref_no": 8})
+        dialog._dirty = False
 
     def test_edit_condition_rejects_non_finite_numeric_values(self):
         cases = (
@@ -299,29 +441,34 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                 "elevation",
                 Condition.TYPE_LINEAR,
                 lambda dialog: dialog._elev_value_edit.setText("nan"),
+                '"nan" is not a valid elevation.',
             ),
             (
                 "spacing",
                 Condition.TYPE_LINEAR,
                 lambda dialog: dialog._spacing_edit.setText("nan"),
+                '"nan" is not a valid dimension for Spacing.',
             ),
             (
                 "linear rise",
                 Condition.TYPE_LINEAR,
                 lambda dialog: dialog._rise_edit.setText("inf"),
+                "Rise must be a finite number.",
             ),
             (
                 "area run",
                 Condition.TYPE_AREA,
                 lambda dialog: dialog._run_edit.setText("-inf"),
+                "Run must be a finite number.",
             ),
             (
                 "display size",
                 Condition.TYPE_COUNT,
                 lambda dialog: dialog._display_size_edit.setText("nan"),
+                '"nan" is not a valid number for Display Size.',
             ),
         )
-        for label, condition_type, set_invalid_value in cases:
+        for label, condition_type, set_invalid_value, message in cases:
             with self.subTest(label=label):
                 condition = Condition(
                     uid="c1",
@@ -336,7 +483,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
                         "ost_visualizer.presentation.dialogs.edit_condition_dialog.show_warning"
                     ) as warning:
                         self.assertIsNone(dialog._validate_and_build_dto())
-                    warning.assert_called_once()
+                    warning.assert_called_once_with(dialog, "Invalid Value", message)
                 finally:
                     dialog._dirty = False
                     dialog.close()
@@ -394,6 +541,7 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             (dialog._shape_combo.currentIndex() + 1) % dialog._shape_combo.count()
         )
         self.assertEqual(dialog.dirty_call_count, 1)
+        self.assertTrue(dialog._dirty)
         dialog._dirty = False
         dialog.close()
 
@@ -429,8 +577,64 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         self.assertFalse(dialog._interactive_enabled)
         self.assertFalse(dialog._name_edit.isEnabled())
         self.assertFalse(dialog._ok_btn.isEnabled())
+        self.assertFalse(dialog._save_pending)
+        self.assertFalse(dialog._dirty)
+        dialog.set_interactive(True)
+        self.assertTrue(dialog._name_edit.isEnabled())
+        self.assertTrue(dialog._ok_btn.isEnabled())
         dialog._dirty = False
         dialog.close()
+
+    def test_edit_condition_async_failure_restores_controls_and_warns_unless_presented(
+        self,
+    ):
+        for error_presented in (False, True):
+            with self.subTest(error_presented=error_presented):
+                callbacks = []
+                condition = Condition(
+                    uid="c1",
+                    name="Condition 1",
+                    condition_type=Condition.TYPE_LINEAR,
+                    ref_no=1,
+                )
+                dialog = WorkspaceEditConditionDialog(
+                    None,
+                    None,
+                    condition,
+                    ["c1"],
+                    {"c1": condition},
+                    {},
+                    {},
+                    lambda _uid: False,
+                    lambda _uid, _dto: self.fail("sync save must not run"),
+                    save_async_fn=lambda _uid, _dto, completed: (
+                        callbacks.append(completed) or True
+                    ),
+                    read_service=FakeReadService(),
+                )
+                self.addCleanup(delete, dialog)
+                dialog._name_edit.setText("Updated Condition")
+                self.assertFalse(dialog._apply_changes())
+                self.assertFalse(dialog._ok_btn.isEnabled())
+                with patch(
+                    "ost_visualizer.presentation.dialogs.edit_condition_dialog."
+                    "show_warning"
+                ) as warning:
+                    callbacks[0](
+                        SimpleNamespace(
+                            success=False, error_presented=error_presented, error="boom"
+                        )
+                    )
+                if error_presented:
+                    warning.assert_not_called()
+                else:
+                    warning.assert_called_once_with(dialog, "Save Failed", "boom")
+                self.assertFalse(dialog._save_pending)
+                self.assertTrue(dialog._dirty)
+                self.assertTrue(dialog._name_edit.isEnabled())
+                self.assertTrue(dialog._ok_btn.isEnabled())
+                self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+                dialog._dirty = False
 
     def test_edit_condition_dialog_initializes_style_locked_when_takeoffs_exist(self):
         condition = Condition(
@@ -457,6 +661,10 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             "Condition style cannot be changed after takeoffs have been placed.",
         )
         dialog.close()
+        unlocked = self._make_dialog(condition)
+        self.addCleanup(delete, unlocked)
+        self.assertTrue(unlocked._style_combo.isEnabled())
+        self.assertEqual(unlocked._style_combo.toolTip(), "")
 
     def test_count_attachment_advanced_properties_show_only_display_name(self):
         condition = Condition(
@@ -467,6 +675,30 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         )
         dialog = self._make_dialog(condition)
         self.assertIsNotNone(dialog._display_name_check)
+        self.assertTrue(dialog._advanced_tab.isAncestorOf(dialog._display_name_check))
+        self.assertEqual(dialog._display_name_check.text(), "Display Name")
+        for hidden_control in (
+            dialog._round_qty_check,
+            dialog._round_to_edit,
+            dialog._drop_run_check,
+            dialog._add_length_edit,
+            dialog._trim_check,
+            dialog._curved_check,
+            dialog._grid_check,
+            dialog._tile1_edit,
+            dialog._tile2_edit,
+            dialog._gap_edit,
+            dialog._display_pattern_check,
+            dialog._display_dim_check,
+        ):
+            self.assertIsNone(hidden_control)
+        self.assertEqual(
+            [
+                group.title()
+                for group in dialog._advanced_tab.findChildren(QtWidgets.QGroupBox)
+            ],
+            ["", "Properties"],
+        )
         dialog.close()
 
     def test_linear_advanced_properties_show_measurement_controls(self):
@@ -483,6 +715,25 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(dialog._add_length_edit)
         self.assertIsNotNone(dialog._trim_check)
         self.assertIsNotNone(dialog._curved_check)
+        for control in (
+            dialog._round_qty_check,
+            dialog._round_to_edit,
+            dialog._drop_run_check,
+            dialog._add_length_edit,
+            dialog._trim_check,
+            dialog._curved_check,
+        ):
+            self.assertTrue(dialog._advanced_tab.isAncestorOf(control))
+        for hidden_control in (
+            dialog._grid_check,
+            dialog._tile1_edit,
+            dialog._tile2_edit,
+            dialog._gap_edit,
+            dialog._display_pattern_check,
+            dialog._display_dim_check,
+            dialog._display_name_check,
+        ):
+            self.assertIsNone(hidden_control)
         dialog.close()
 
     def test_linear_advanced_groups_use_equal_layout_stretch(self):
@@ -515,6 +766,25 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(dialog._display_pattern_check)
         self.assertIsNotNone(dialog._display_dim_check)
         self.assertIsNotNone(dialog._display_name_check)
+        for control in (
+            dialog._round_qty_check,
+            dialog._round_to_edit,
+            dialog._grid_check,
+            dialog._tile1_edit,
+            dialog._tile2_edit,
+            dialog._gap_edit,
+            dialog._display_pattern_check,
+            dialog._display_dim_check,
+            dialog._display_name_check,
+        ):
+            self.assertTrue(dialog._advanced_tab.isAncestorOf(control))
+        for hidden_control in (
+            dialog._drop_run_check,
+            dialog._add_length_edit,
+            dialog._trim_check,
+            dialog._curved_check,
+        ):
+            self.assertIsNone(hidden_control)
         dialog.close()
 
     def test_trim_disables_curved_segment_control(self):
@@ -525,9 +795,16 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             ref_no=1,
         )
         dialog = self._make_dialog(condition)
+        dialog._curved_check.setChecked(True)
+        self.assertTrue(dialog._curved_check.isChecked())
+        self.assertTrue(dialog._curved_check.isEnabled())
         dialog._trim_check.setChecked(True)
         self.assertFalse(dialog._curved_check.isChecked())
         self.assertFalse(dialog._curved_check.isEnabled())
+        dialog._trim_check.setChecked(False)
+        self.assertTrue(dialog._curved_check.isEnabled())
+        dialog._curved_check.setChecked(True)
+        self.assertFalse(dialog._trim_check.isChecked())
         dialog._dirty = False
         dialog.close()
 
@@ -550,8 +827,11 @@ class EditConditionDialogConditionBehaviorTests(unittest.TestCase):
             lambda _uid, _dto: True,
             read_service=FakeReadService(),
         )
+        dialog._display_dim_check.setChecked(True)
+        self.assertTrue(dialog._display_dim_check.isChecked())
         dialog._populate_defaults_for_type(Condition.TYPE_AREA)
         self.assertFalse(dialog._display_dim_check.isChecked())
+        dialog._dirty = False
         dialog.close()
 
 
@@ -681,6 +961,11 @@ class ConditionNestedCompletionTests(unittest.TestCase):
                                 parent._name_edit.text(), "Newer parent draft"
                             )
                             self.assertEqual(parent._current_uid, expected[0])
+                            if kind == "type":
+                                self.assertEqual(
+                                    parent._type_edit_identity_uid == "late",
+                                    transition == "current" and success,
+                                )
                         finally:
                             parent.reject()
                             delete(parent)

@@ -25,7 +25,7 @@ from ost_visualizer.presentation.utils.image_show_mode import (
     SHOW_OVERLAY,
 )
 from PySide6 import QtWidgets
-from shiboken6 import delete
+from shiboken6 import delete, isValid
 
 
 class _FakeProjectData:
@@ -64,6 +64,42 @@ class _FakeProjectData:
 
     def get_all_annotations(self):
         return []
+
+
+_CANCELLED_WARNING = (
+    "Export Cancelled",
+    "The selected bid or page changed while the save dialog was open. "
+    "Please start the export again.",
+)
+_INVALID_SAVE_LOCATION = (
+    "Invalid Save Location",
+    "Cannot save over a selected base or overlay source file.\n"
+    "Please choose a different filename or location.",
+)
+
+
+class _ForbiddenProjectData:
+    def __getattr__(self, name):
+        raise AssertionError(f"project data must not be read: {name}")
+
+
+class _ImmediateProgressDialog:
+    """Runs the worker eagerly; subclasses choose the dialog outcome."""
+
+    outcome = export_handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+    def __init__(self, _filename, run, parent=None, reporter=None):
+        self.result = run()
+        self.error = None
+
+    def exec(self):
+        return self.outcome
+
+    def cleanup(self):
+        pass
+
+    def deleteLater(self):
+        pass
 
 
 class _FakeDeferredPersistence:
@@ -182,14 +218,17 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
             )
         self.assertIsNotNone(app)
+        self.assertFalse(isValid(window))
         self.assertEqual(critical_messages, [])
 
     def test_bid_file_export_reads_through_backend_neutral_reader(self):
         calls = []
+        exported = []
         bid = SimpleNamespace(name="Bid")
+        raw_data = RawBidData()
         database_reader = SimpleNamespace(
             get_raw_bid_data=lambda locator, bid_uid: calls.append((locator, bid_uid))
-            or RawBidData()
+            or raw_data
         )
         handler = _make_export_handler(
             database_reader=database_reader,
@@ -201,64 +240,251 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             ),
         )
 
-        class _ProgressDialog:
-            def __init__(self, _filename, run, parent=None, reporter=None):
-                self.result = run()
-                self.error = None
-
-            def exec(self):
-                return export_handler_module.QtWidgets.QDialog.DialogCode.Accepted
-
-            def cleanup(self):
-                pass
-
-            def deleteLater(self):
-                pass
+        def make_export(raw, filename, bid_name, _reporter):
+            return lambda: exported.append((raw, filename, bid_name)) or (
+                SimpleNamespace(success=True)
+            )
 
         with (
             patch.object(
                 export_handler_module.QtWidgets.QFileDialog,
                 "getSaveFileName",
                 return_value=("output.ost", ""),
+            ) as save_dialog,
+            patch.object(
+                export_handler_module, "ProgressDialog", _ImmediateProgressDialog
             ),
-            patch.object(export_handler_module, "ProgressDialog", _ProgressDialog),
-            patch.object(export_handler_module, "show_info"),
+            patch.object(export_handler_module, "show_info") as info,
+        ):
+            handler._export_bid_file("OST", "ost", "Export", make_export)
+        self.assertEqual(calls, [("sql-database-id", "42")])
+        save_dialog.assert_called_once_with(
+            None, "Export", "Bid.ost", "OST Files (*.ost);;All Files (*.*)"
+        )
+        self.assertEqual(len(exported), 1)
+        self.assertIs(exported[0][0], raw_data)
+        self.assertEqual(exported[0][1:], ("output.ost", "Bid"))
+        info.assert_called_once_with(
+            None, "Export Complete", "Successfully exported bid to output.ost"
+        )
+
+    def test_bid_file_export_reports_worker_failure_message_and_default(self):
+        default_message = (
+            "Failed to export OST file. Please ensure you have write "
+            "permissions to the destination folder and try again."
+        )
+        bid = SimpleNamespace(name="Bid")
+        for label, worker_result, expected in (
+            (
+                "worker message",
+                ExportResultDto(
+                    success=False, format_name="OST", error_message="disk is full"
+                ),
+                "disk is full",
+            ),
+            ("no result", None, default_message),
+            (
+                "failed without message",
+                ExportResultDto(success=False, format_name="OST"),
+                default_message,
+            ),
+        ):
+            with self.subTest(label):
+                handler = _make_export_handler(
+                    project_data_service=SimpleNamespace(
+                        get_current_bid_ref=lambda: BidRef("bid.mdb", "bid-1"),
+                        get_current_bid=lambda: bid,
+                    ),
+                    database_reader=SimpleNamespace(
+                        get_raw_bid_data=lambda _path, _uid: RawBidData()
+                    ),
+                )
+                with (
+                    patch.object(
+                        export_handler_module.QtWidgets.QFileDialog,
+                        "getSaveFileName",
+                        return_value=("output.ost", ""),
+                    ),
+                    patch.object(
+                        export_handler_module,
+                        "ProgressDialog",
+                        _ImmediateProgressDialog,
+                    ),
+                    patch.object(export_handler_module, "show_info") as info,
+                    patch.object(export_handler_module, "show_critical") as critical,
+                    patch.object(export_handler_module.logger, "error"),
+                ):
+                    handler._export_bid_file(
+                        "OST",
+                        "ost",
+                        "Export",
+                        lambda *_args, result=worker_result: lambda: result,
+                    )
+                info.assert_not_called()
+                critical.assert_called_once_with(None, "Export Error", expected)
+
+    def test_bid_file_export_does_not_report_success_when_dialog_is_rejected(self):
+        class RejectedDialog(_ImmediateProgressDialog):
+            outcome = export_handler_module.QtWidgets.QDialog.DialogCode.Rejected
+
+        handler = _make_export_handler(
+            database_reader=SimpleNamespace(
+                get_raw_bid_data=lambda _path, _uid: RawBidData()
+            ),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("output.ost", ""),
+            ),
+            patch.object(export_handler_module, "ProgressDialog", RejectedDialog),
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(export_handler_module, "show_critical") as critical,
+            patch.object(export_handler_module.logger, "error"),
         ):
             handler._export_bid_file(
                 "OST",
                 "ost",
                 "Export",
                 lambda _raw, _filename, _name, _reporter: lambda: SimpleNamespace(
-                    success=True
+                    success=True, error_message=None
                 ),
             )
-        self.assertEqual(calls, [("sql-database-id", "42")])
+        info.assert_not_called()
+        critical.assert_called_once()
+        self.assertEqual(critical.call_args.args[1], "Export Error")
+
+    def test_bid_file_export_reports_unexpected_reader_failure(self):
+        def broken_reader(_path, _uid):
+            raise OSError("database vanished")
+
+        handler = _make_export_handler(
+            database_reader=SimpleNamespace(get_raw_bid_data=broken_reader),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("output.osp", ""),
+            ),
+            patch.object(
+                export_handler_module,
+                "ProgressDialog",
+                side_effect=AssertionError("no progress without bid data"),
+            ),
+            patch.object(export_handler_module, "show_critical") as critical,
+            self.assertLogs(export_handler_module.logger, level="ERROR"),
+        ):
+            handler._export_bid_file(
+                "OSP",
+                "osp",
+                "Export",
+                lambda *_args: self.fail("exporter must not be built"),
+            )
+        critical.assert_called_once_with(
+            None,
+            "Export Error",
+            "An unexpected error occurred while exporting the OSP file. "
+            "Please try again or choose a different destination.",
+        )
+
+    def test_bid_file_export_warns_without_bid_and_stops_on_cancelled_dialog(self):
+        for label, bid_ref, bid in (
+            ("no bid ref", None, SimpleNamespace(name="Bid")),
+            ("no bid", BidRef("bid.mdb", "bid-1"), None),
+        ):
+            with self.subTest(label):
+                handler = _make_export_handler(
+                    project_data_service=SimpleNamespace(
+                        get_current_bid_ref=lambda bid_ref=bid_ref: bid_ref,
+                        get_current_bid=lambda bid=bid: bid,
+                    ),
+                )
+                with (
+                    patch.object(
+                        export_handler_module.QtWidgets.QFileDialog,
+                        "getSaveFileName",
+                        side_effect=AssertionError("no dialog without a bid"),
+                    ),
+                    patch.object(export_handler_module, "show_warning") as warning,
+                ):
+                    handler._export_bid_file(
+                        "OST", "ost", "Export", lambda *_args: self.fail("no export")
+                    )
+                warning.assert_called_once_with(
+                    None,
+                    "No Bid Selected",
+                    "Please load a database and select a bid before exporting.",
+                )
+        handler = _make_export_handler(
+            database_reader=SimpleNamespace(
+                get_raw_bid_data=lambda *_args: self.fail("no read after cancel")
+            ),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("", ""),
+            ),
+            patch.object(export_handler_module, "show_warning") as warning,
+        ):
+            handler._export_bid_file(
+                "OST", "ost", "Export", lambda *_args: self.fail("no export")
+            )
+        warning.assert_not_called()
 
     def test_pdf_export_stops_when_deferred_persistence_flush_fails(self):
         deferred = _FakeDeferredPersistence(result=False)
         handler = _make_export_handler(
-            project_data_service=SimpleNamespace(
-                get_bid_conditions=lambda: self.fail(
-                    "export should not read project data after failed flush"
-                )
-            ),
+            project_data_service=_ForbiddenProjectData(),
             deferred_persistence_manager=deferred,
         )
-        handler.export_as_pdf(["page-1"])
+        with patch.object(
+            export_handler_module.QtWidgets.QFileDialog,
+            "getSaveFileName",
+            side_effect=AssertionError("no save dialog after failed flush"),
+        ):
+            handler.export_as_pdf(["page-1"])
         self.assertEqual(deferred.flush_calls, 1)
 
     def test_osp_export_stops_when_deferred_persistence_flush_fails(self):
         deferred = _FakeDeferredPersistence(result=False)
         handler = _make_export_handler(
-            project_data_service=SimpleNamespace(
-                get_current_bid_ref=lambda: self.fail(
-                    "export should not read bid data after failed flush"
-                )
-            ),
+            project_data_service=_ForbiddenProjectData(),
             deferred_persistence_manager=deferred,
         )
-        handler.export_as_osp()
+        with patch.object(
+            export_handler_module.QtWidgets.QFileDialog,
+            "getSaveFileName",
+            side_effect=AssertionError("no save dialog after failed flush"),
+        ):
+            handler.export_as_osp()
         self.assertEqual(deferred.flush_calls, 1)
+
+    def test_every_export_entry_point_stops_when_deferred_flush_fails(self):
+        entry_points = (
+            ("ost", lambda handler: handler.export_as_ost()),
+            ("format", lambda handler: handler.export_format("html", ["page-1"])),
+            ("summary csv", lambda handler: handler.export_summary_csv()),
+        )
+        for label, run in entry_points:
+            with self.subTest(label):
+                deferred = _FakeDeferredPersistence(result=False)
+                handler = _make_export_handler(
+                    project_data_service=_ForbiddenProjectData(),
+                    export_service=_ForbiddenProjectData(),
+                    summary_csv_export_service=_ForbiddenProjectData(),
+                    deferred_persistence_manager=deferred,
+                )
+                with patch.object(
+                    export_handler_module.QtWidgets.QFileDialog,
+                    "getSaveFileName",
+                    side_effect=AssertionError("no save dialog after failed flush"),
+                ):
+                    run(handler)
+                self.assertEqual(deferred.flush_calls, 1)
 
     def test_single_page_pdf_default_filename_keeps_existing_pdf_extension(self):
         filename = _capture_pdf_default_filename(["S-100.pdf"])
@@ -286,8 +512,148 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             filename, "25-051 Marriott Element, Capel Hill, NC - 2 Pages.pdf"
         )
 
+    def test_pdf_save_dialog_title_and_filter_follow_page_count(self):
+        for page_names, expected_title in (
+            (["A1"], "Export Page as PDF"),
+            (["A1", "A2", "A3"], "Export 3 Pages as PDF"),
+        ):
+            with self.subTest(page_names=page_names):
+                handler = _make_export_handler(
+                    project_data_service=_FakeProjectData(page_names)
+                )
+                with patch.object(
+                    export_handler_module.QtWidgets.QFileDialog,
+                    "getSaveFileName",
+                    return_value=("", ""),
+                ) as save_dialog:
+                    handler.export_as_pdf(
+                        [f"page-{index}" for index in range(1, len(page_names) + 1)]
+                    )
+                self.assertEqual(save_dialog.call_args.args[1], expected_title)
+                self.assertEqual(
+                    save_dialog.call_args.args[3],
+                    "PDF Files (*.pdf);;All Files (*.*)",
+                )
+
+    def test_single_page_pdf_default_filename_falls_back_for_blank_page_name(self):
+        filename = _capture_pdf_default_filename([""])
+        self.assertEqual(filename, "25-051 Marriott Element, Capel Hill, NC - Page.pdf")
+
+    def test_pdf_export_warns_when_no_selected_page_has_a_valid_size(self):
+        project_data = _FakeProjectData(["A1", "A2"])
+        for page in project_data._pages.values():
+            page.width_pts = 0.0
+        handler = _make_export_handler(project_data_service=project_data)
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                side_effect=AssertionError("no save dialog without a valid page"),
+            ),
+            patch.object(export_handler_module, "show_warning") as warning,
+        ):
+            handler.export_as_pdf(["page-1", "page-2"])
+        warning.assert_called_once_with(
+            None, "No Valid Pages", "No valid pages selected for export."
+        )
+
+    def test_pdf_export_counts_only_valid_pages_and_reports_destination(self):
+        project_data = _FakeProjectData(["A1", "A2", "Broken"])
+        project_data._pages["page-3"].height_pts = 0.0
+        exported_page_uids = []
+        infos = []
+
+        def export(pages_data, filename, *_args, **_kwargs):
+            exported_page_uids.append([data.page.uid for data in pages_data])
+            return ExportResultDto(success=True, format_name="PDF", page_count=2)
+
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            project_data_service=project_data,
+            pdf_exporter=SimpleNamespace(export=export),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=(r"C:\tmp\out.pdf", ""),
+            ) as save_dialog,
+            patch.object(
+                export_handler_module, "ProgressDialog", _ImmediateProgressDialog
+            ),
+            patch.object(
+                export_handler_module,
+                "show_info",
+                side_effect=lambda _window, title, message: infos.append(
+                    (title, message)
+                ),
+            ),
+        ):
+            handler.export_as_pdf(["page-1", "page-2", "page-3"])
+        self.assertEqual(
+            save_dialog.call_args.args[1:3],
+            (
+                "Export 2 Pages as PDF",
+                "25-051 Marriott Element, Capel Hill, NC - 2 Pages.pdf",
+            ),
+        )
+        self.assertEqual(exported_page_uids, [["page-1", "page-2"]])
+        self.assertEqual(
+            infos,
+            [("Export Complete", r"Successfully exported 2 pages to C:\tmp\out.pdf")],
+        )
+
+    def test_pdf_export_reports_exporter_failure_and_unexpected_errors(self):
+        for label, export, expected in (
+            (
+                "reported failure",
+                lambda *_args, **_kwargs: ExportResultDto(
+                    success=False, format_name="PDF", error_message="Disk is full"
+                ),
+                "Disk is full",
+            ),
+            (
+                "unexpected error",
+                None,
+                "An unexpected error occurred while exporting the PDF. "
+                "Please try again or choose a different destination.",
+            ),
+        ):
+            with self.subTest(label):
+                project_data = _FakeProjectData(["A1"])
+                if export is None:
+                    project_data.get_all_annotations = lambda: (_ for _ in ()).throw(
+                        RuntimeError("annotation snapshot failed")
+                    )
+                    export = lambda *_args, **_kwargs: self.fail("must not export")
+                handler = _make_export_handler(
+                    config_model=SimpleNamespace(snapshot=Config),
+                    project_data_service=project_data,
+                    pdf_exporter=SimpleNamespace(export=export),
+                )
+                with (
+                    patch.object(
+                        export_handler_module.QtWidgets.QFileDialog,
+                        "getSaveFileName",
+                        return_value=(r"C:\tmp\out.pdf", ""),
+                    ),
+                    patch.object(
+                        export_handler_module,
+                        "ProgressDialog",
+                        _ImmediateProgressDialog,
+                    ),
+                    patch.object(export_handler_module, "show_info") as info,
+                    patch.object(export_handler_module, "show_critical") as critical,
+                    patch.object(export_handler_module.logger, "exception"),
+                ):
+                    handler.export_as_pdf(["page-1"])
+                info.assert_not_called()
+                critical.assert_called_once_with(None, "Export Error", expected)
+
     def test_pdf_export_uses_2d_display_mode(self):
         calls = []
+        filenames = []
+        infos = []
         original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
         original_progress_dialog = export_handler_module.ProgressDialog
         original_show_info = export_handler_module.show_info
@@ -325,6 +691,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             bid_annotations,
             on_progress: Optional[ExportProgressCallback] = None,
         ):
+            filenames.append(filename)
             calls.append(
                 (
                     display_mode,
@@ -343,13 +710,15 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             fake_get_save_file_name
         )
         export_handler_module.ProgressDialog = FakeProgressDialog
-        export_handler_module.show_info = lambda _window, _title, _message: None
+        export_handler_module.show_info = lambda _window, title, message: infos.append(
+            (title, message)
+        )
         try:
             handler = _make_export_handler(
                 config_model=SimpleNamespace(
                     snapshot=lambda: Config(
                         display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
-                        grayscale_enabled=False,
+                        grayscale_enabled=True,
                         pdf_annotation_captions_enabled=True,
                         pdf_annotation_caption_ids=("area", "volume"),
                         pdf_elevation_callouts_enabled=True,
@@ -369,7 +738,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             export_handler_module.ProgressDialog = original_progress_dialog
             export_handler_module.show_info = original_show_info
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][:3], (Config.DISPLAY_MODE_TRANSPARENT, False, 1))
+        self.assertEqual(calls[0][:3], (Config.DISPLAY_MODE_TRANSPARENT, True, 1))
+        self.assertEqual(filenames, [r"C:\tmp\out.pdf"])
+        self.assertEqual(
+            infos,
+            [("Export Complete", r"Successfully exported page to C:\tmp\out.pdf")],
+        )
         self.assertTrue(calls[0][3].enabled)
         self.assertEqual(
             tuple(caption_id.value for caption_id in calls[0][3].selected_ids),
@@ -391,6 +765,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             (SHOW_BOTH, SHOW_OVERLAY),
         )
         captured_modes = []
+        snapshot_is_detached = []
         dialog_count = 0
 
         class _ProgressDialog:
@@ -443,11 +818,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             captured_modes.append(
                 tuple(page_data.page.image_show_mode for page_data in pages_data)
             )
-            for page_data in pages_data:
-                self.assertIsNot(
-                    page_data.page,
-                    project_data._pages[page_data.page.uid],
-                )
+            # The handler swallows exceptions raised by the worker, so record the
+            # identity facts here and assert them after the export returns.
+            snapshot_is_detached.extend(
+                page_data.page is not project_data._pages[page_data.page.uid]
+                for page_data in pages_data
+            )
             return ExportResultDto(success=True, format_name="PDF", page_count=2)
 
         handler = _make_export_handler(
@@ -462,11 +838,18 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 side_effect=choose_output,
             ),
             patch.object(export_handler_module, "ProgressDialog", _ProgressDialog),
-            patch.object(export_handler_module, "show_info"),
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(
+                export_handler_module,
+                "show_critical",
+                side_effect=AssertionError("export must not fail"),
+            ),
         ):
             for _transition in transitions:
                 handler.export_as_pdf(selected_page_uids)
         self.assertEqual(captured_modes, list(transitions))
+        self.assertEqual(snapshot_is_detached, [True] * 6)
+        self.assertEqual(info.call_count, 3)
         self.assertEqual(selected_page_uids, ["page-1", "page-2"])
 
     def test_pdf_export_cancels_when_bid_changes_inside_native_save_dialog(self):
@@ -492,12 +875,6 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
 
         def choose_output(_window, _title, _default_filename, _filter):
             current_bid_ref[0] = BidRef("second.mdb", "bid-2")
-            project_data._pages["page-1"] = Page(
-                uid="page-1",
-                name="Colliding Page",
-                width_pts=612.0,
-                height_pts=792.0,
-            )
             return r"C:\tmp\out.pdf", ""
 
         def export(*_args, **_kwargs):
@@ -527,7 +904,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         ):
             handler.export_as_pdf(["page-1"])
         self.assertEqual(exports, [])
-        self.assertEqual(warnings[0][0], "Export Cancelled")
+        self.assertEqual(warnings, [_CANCELLED_WARNING])
 
     def test_pdf_export_cancels_when_same_uid_bid_is_replaced_inside_save_dialog(
         self,
@@ -583,7 +960,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         ):
             handler.export_as_pdf(["page-1"])
         self.assertEqual(exports, [])
-        self.assertEqual(warnings[0][0], "Export Cancelled")
+        self.assertEqual(warnings, [_CANCELLED_WARNING])
 
     def test_pdf_export_cancels_when_same_uid_page_is_replaced_inside_save_dialog(
         self,
@@ -641,34 +1018,44 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         ):
             handler.export_as_pdf(["page-1"])
         self.assertEqual(exports, [])
-        self.assertEqual(warnings[0][0], "Export Cancelled")
+        self.assertEqual(warnings, [_CANCELLED_WARNING])
 
     def test_pdf_export_stops_if_window_closes_inside_native_save_dialog(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        window = QtWidgets.QDialog()
         project_data = _FakeProjectData(["Original Page"])
         exports = []
         handler = _make_export_handler(
-            window=object(),
+            window=window,
             config_model=SimpleNamespace(snapshot=Config),
             project_data_service=project_data,
-            pdf_exporter=SimpleNamespace(),
+            pdf_exporter=SimpleNamespace(
+                export=lambda *_args, **_kwargs: exports.append("export")
+            ),
         )
         handler._build_pdf_export_snapshot = (
             lambda _page_uids: exports.append("snapshot") or []
         )
+
+        def close_window_while_dialog_is_open(*_args):
+            delete(window)
+            return r"C:\tmp\out.pdf", ""
+
         with (
             patch.object(
                 export_handler_module.QtWidgets.QFileDialog,
                 "getSaveFileName",
-                return_value=(r"C:\tmp\out.pdf", ""),
-            ),
-            patch.object(
-                export_handler_module, "isValid", return_value=False, create=True
+                side_effect=close_window_while_dialog_is_open,
             ),
             patch.object(export_handler_module, "show_warning") as warning,
+            patch.object(export_handler_module, "show_critical") as critical,
         ):
             handler.export_as_pdf(["page-1"])
+        self.assertIsNotNone(app)
+        self.assertFalse(isValid(window))
         self.assertEqual(exports, [])
         warning.assert_not_called()
+        critical.assert_not_called()
 
     def test_pdf_export_rejects_case_variant_of_source_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -727,7 +1114,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
             ):
                 handler.export_as_pdf(["page-1"])
-        self.assertEqual(errors[0][0], "Invalid Save Location")
+        self.assertEqual(errors, [_INVALID_SAVE_LOCATION])
 
     def test_pdf_export_path_identity_normalizes_extended_local_and_unc_aliases(self):
         local_path = r"C:\Projects\Bid; A\Sheet 01.pdf"
@@ -740,6 +1127,29 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             export_handler_module._path_identity(unc_path),
             export_handler_module._path_identity(
                 "\\\\?\\UNC\\" + unc_path.removeprefix("\\")
+            ),
+        )
+        self.assertEqual(
+            export_handler_module._path_identity(unc_path),
+            export_handler_module._path_identity(
+                "\\\\?\\unc\\" + unc_path.removeprefix("\\\\")
+            ),
+        )
+        self.assertEqual(
+            export_handler_module._path_identity(local_path),
+            export_handler_module._path_identity(local_path.upper()),
+        )
+        self.assertEqual(
+            export_handler_module._path_identity(local_path), local_path.casefold()
+        )
+        self.assertNotEqual(
+            export_handler_module._path_identity(local_path),
+            export_handler_module._path_identity(r"C:\Projects\Bid; A\Sheet 02.pdf"),
+        )
+        self.assertNotEqual(
+            export_handler_module._path_identity(local_path),
+            export_handler_module._path_identity(
+                "\\\\?\\" + r"D:\Projects\Bid; A\Sheet 01.pdf"
             ),
         )
 
@@ -799,7 +1209,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
             ):
                 handler.export_as_pdf(["page-1"])
-        self.assertEqual(errors[0][0], "Invalid Save Location")
+        self.assertEqual(errors, [_INVALID_SAVE_LOCATION])
 
     def test_general_export_uses_saved_config_snapshot(self):
         config = Config(html_elevation_callouts_enabled=False)
@@ -814,24 +1224,48 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             export_calls.append((used_config, request))
             return ExportResultDto(success=True, format_name="HTML", page_count=1)
 
-        original_show_info = export_handler_module.show_info
-        export_handler_module.show_info = lambda _window, _title, _message: None
-        try:
-            handler = _make_export_handler(
-                config_model=SimpleNamespace(snapshot=snapshot),
-                export_service=SimpleNamespace(export=export),
-            )
-            request = ExportRequestDto(["page-1"], "html", "out.html")
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=snapshot),
+            export_service=SimpleNamespace(export=export),
+        )
+        request = ExportRequestDto(["page-1"], "html", "out.html")
+        with patch.object(export_handler_module, "show_info") as info:
             handler._execute_export(request)
-        finally:
-            export_handler_module.show_info = original_show_info
-        self.assertEqual(snapshots, [config])
-        self.assertEqual(export_calls, [(config, request)])
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(len(export_calls), 1)
+        self.assertIs(export_calls[0][0], config)
+        self.assertIs(export_calls[0][1], request)
+        info.assert_called_once_with(
+            None, "Export Complete", "Successfully exported 1 page(s) to out.html"
+        )
+
+    def test_general_export_reports_service_failure(self):
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            export_service=SimpleNamespace(
+                export=lambda _config, _request: ExportResultDto(
+                    success=False,
+                    format_name="HTML",
+                    error_message="template missing",
+                )
+            ),
+        )
+        with (
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(export_handler_module, "show_critical") as critical,
+        ):
+            handler._execute_export(ExportRequestDto(["page-1"], "html", "out.html"))
+        info.assert_not_called()
+        critical.assert_called_once_with(
+            None, "Export Error", "Error creating HTML export: template missing"
+        )
 
     def test_general_export_cancels_when_bid_changes_in_native_save_dialog(self):
         current_bid = [BidRef("database-1", "bid-1")]
         bid = SimpleNamespace(name="Bid")
+        page = Page(uid="page-1", name="Page")
         export_calls = []
+        warnings = []
         service = SimpleNamespace(
             get_export_dialog_info=lambda _pages, _format: SimpleNamespace(
                 success=True,
@@ -850,7 +1284,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             project_data_service=SimpleNamespace(
                 get_current_bid_ref=lambda: current_bid[0],
                 get_current_bid=lambda: bid,
-                get_page=lambda _uid: Page(uid="page-1", name="Page"),
+                get_page=lambda _uid: page,
             ),
         )
 
@@ -859,9 +1293,190 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             return "out.html"
 
         handler._show_save_dialog = switch_bid
-        with patch.object(export_handler_module, "show_warning"):
+        with patch.object(
+            export_handler_module,
+            "show_warning",
+            side_effect=lambda _window, title, message: warnings.append(
+                (title, message)
+            ),
+        ):
             handler.export_format("html", ["page-1"])
         self.assertEqual(export_calls, [])
+        self.assertEqual(warnings, [_CANCELLED_WARNING])
+
+    def test_general_export_runs_service_for_unchanged_context(self):
+        bid = SimpleNamespace(name="Bid")
+        page = Page(uid="page-1", name="Page")
+        requests = []
+        dialog_calls = []
+        service = SimpleNamespace(
+            get_export_dialog_info=lambda pages, format_key: dialog_calls.append(
+                (pages, format_key)
+            )
+            or SimpleNamespace(
+                success=True,
+                dialog_title="Export",
+                default_filename="bid.html",
+                format_name="HTML",
+                extension="html",
+                valid_pages=["page-1"],
+            ),
+            export=lambda _config, request: requests.append(request)
+            or ExportResultDto(success=True, format_name="HTML", page_count=1),
+        )
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            export_service=service,
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                get_current_bid=lambda: bid,
+                get_page=lambda _uid: page,
+            ),
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("out.html", ""),
+            ) as save_dialog,
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(
+                export_handler_module,
+                "show_warning",
+                side_effect=AssertionError("unchanged context must not warn"),
+            ),
+        ):
+            handler.export_format("html", ["page-1"], active_page_uid="page-1")
+        self.assertEqual(dialog_calls, [(["page-1"], "html")])
+        save_dialog.assert_called_once_with(
+            None, "Export", "bid.html", "HTML (*.html);;All files (*.*)"
+        )
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(
+            (
+                requests[0].page_uids,
+                requests[0].format_key,
+                requests[0].filename,
+                requests[0].active_page_uid,
+            ),
+            (["page-1"], "html", "out.html", "page-1"),
+        )
+        info.assert_called_once_with(
+            None, "Export Complete", "Successfully exported 1 page(s) to out.html"
+        )
+
+    def test_general_export_stops_for_empty_selection_cancelled_dialog_or_bad_prep(
+        self,
+    ):
+        bid = SimpleNamespace(name="Bid")
+        page = Page(uid="page-1", name="Page")
+        project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+            get_current_bid=lambda: bid,
+            get_page=lambda _uid: page,
+        )
+
+        def dialog_info(**overrides):
+            values = dict(
+                success=True,
+                dialog_title="Export",
+                default_filename="bid.html",
+                format_name="HTML",
+                extension="html",
+                valid_pages=["page-1"],
+                error=None,
+                error_code=None,
+            )
+            values.update(overrides)
+            return SimpleNamespace(**values)
+
+        cases = (
+            ("empty selection", [], dialog_info(), "", None),
+            ("cancelled dialog", ["page-1"], dialog_info(), "", None),
+            (
+                "no data",
+                ["page-1"],
+                dialog_info(
+                    success=False,
+                    error=None,
+                    error_code=ExportErrorCode.NO_DATA,
+                ),
+                "out.html",
+                (
+                    "warning",
+                    "No Data",
+                    "No takeoffs found for any of the selected pages.",
+                ),
+            ),
+            (
+                "preparation error",
+                ["page-1"],
+                dialog_info(
+                    success=False,
+                    error="Unknown format",
+                    error_code=ExportErrorCode.UNKNOWN_FORMAT,
+                ),
+                "out.html",
+                ("critical", "Export Error", "Unknown format"),
+            ),
+        )
+        for label, page_uids, info, filename, expected_message in cases:
+            with self.subTest(label):
+                export_calls = []
+                handler = _make_export_handler(
+                    config_model=SimpleNamespace(snapshot=Config),
+                    export_service=SimpleNamespace(
+                        get_export_dialog_info=lambda _pages, _format, info=info: info,
+                        export=lambda _config, _request: export_calls.append(True),
+                    ),
+                    project_data_service=project_data,
+                )
+                handler._show_save_dialog = lambda _info, filename=filename: (
+                    filename or None
+                )
+                with (
+                    patch.object(export_handler_module, "show_warning") as warning,
+                    patch.object(export_handler_module, "show_critical") as critical,
+                ):
+                    handler.export_format("html", page_uids)
+                self.assertEqual(export_calls, [])
+                if expected_message is None:
+                    warning.assert_not_called()
+                    critical.assert_not_called()
+                elif expected_message[0] == "warning":
+                    warning.assert_called_once_with(None, *expected_message[1:])
+                    critical.assert_not_called()
+                else:
+                    critical.assert_called_once_with(None, *expected_message[1:])
+                    warning.assert_not_called()
+
+    def test_general_export_warns_when_a_valid_page_vanishes_before_save_dialog(self):
+        bid = SimpleNamespace(name="Bid")
+        handler = _make_export_handler(
+            config_model=SimpleNamespace(snapshot=Config),
+            export_service=SimpleNamespace(
+                get_export_dialog_info=lambda _pages, _format: SimpleNamespace(
+                    success=True, valid_pages=["page-1", "page-2"]
+                ),
+                export=lambda _config, _request: self.fail("must not export"),
+            ),
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                get_current_bid=lambda: bid,
+                get_page=lambda uid: (
+                    Page(uid=uid, name=uid) if uid == "page-1" else None
+                ),
+            ),
+        )
+        handler._show_save_dialog = lambda _info: self.fail("no save dialog")
+        with patch.object(export_handler_module, "show_warning") as warning:
+            handler.export_format("html", ["page-1", "page-2"])
+        warning.assert_called_once_with(
+            None,
+            "Export Cancelled",
+            "A selected page changed before the save dialog opened. "
+            "Please start the export again.",
+        )
 
     def test_general_export_cancels_when_same_uid_page_is_replaced_in_save_dialog(
         self,
@@ -910,7 +1525,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         ):
             handler.export_format("html", ["page-1"])
         self.assertEqual(export_calls, [])
-        self.assertEqual(warnings[0][0], "Export Cancelled")
+        self.assertEqual(warnings, [_CANCELLED_WARNING])
 
     def test_general_export_snapshots_page_uid_request_before_save_dialog(self):
         bid = SimpleNamespace(name="Bid")
@@ -992,7 +1607,15 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             )
             export_handler_module.show_info = original_show_info
         self.assertEqual(calls, [(grouping, r"C:\tmp\summary.csv")])
-        self.assertEqual(infos[0][0], "Export Complete")
+        self.assertEqual(
+            infos,
+            [
+                (
+                    "Export Complete",
+                    r"Successfully exported Summary to C:\tmp\summary.csv",
+                )
+            ],
+        )
 
     def test_summary_csv_export_reports_empty_data_as_warning(self):
         warnings = []
@@ -1068,7 +1691,126 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 "getSaveFileName",
                 side_effect=choose_output,
             ),
-            patch.object(export_handler_module, "show_warning"),
+            patch.object(export_handler_module, "show_warning") as warning,
+            patch.object(export_handler_module, "show_info") as info,
         ):
             handler.export_summary_csv()
         self.assertEqual(calls, [])
+        warning.assert_called_once_with(handler.window, *_CANCELLED_WARNING)
+        info.assert_not_called()
+
+    def test_summary_csv_export_normalizes_default_and_chosen_extension(self):
+        for label, default_name, chosen, expected_default, expected_path in (
+            (
+                "missing both",
+                "Bid Summary",
+                r"C:\tmp\summary",
+                "Bid Summary.csv",
+                r"C:\tmp\summary.csv",
+            ),
+            (
+                "uppercase kept",
+                "Bid Summary.CSV",
+                r"C:\tmp\SUMMARY.CSV",
+                "Bid Summary.CSV",
+                r"C:\tmp\SUMMARY.CSV",
+            ),
+        ):
+            with self.subTest(label):
+                calls = []
+                bid = SimpleNamespace(name="Bid")
+                handler = _make_export_handler(
+                    window=SimpleNamespace(
+                        get_summary_grouping=lambda: ConditionSummaryGrouping()
+                    ),
+                    project_data_service=SimpleNamespace(
+                        get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                        get_current_bid=lambda bid=bid: bid,
+                    ),
+                    summary_csv_export_service=SimpleNamespace(
+                        default_filename=lambda name=default_name: name,
+                        export_current_summary=lambda _grouping, filename: calls.append(
+                            filename
+                        )
+                        or ExportResultDto(success=True, format_name="Summary CSV"),
+                    ),
+                )
+                with (
+                    patch.object(
+                        export_handler_module.QtWidgets.QFileDialog,
+                        "getSaveFileName",
+                        return_value=(chosen, ""),
+                    ) as save_dialog,
+                    patch.object(export_handler_module, "show_info"),
+                ):
+                    handler.export_summary_csv()
+                self.assertEqual(save_dialog.call_args.args[2], expected_default)
+                self.assertEqual(calls, [expected_path])
+
+    def test_summary_csv_export_reports_failure_and_ignores_cancelled_dialog(self):
+        bid = SimpleNamespace(name="Bid")
+
+        def make_handler(result, calls):
+            return _make_export_handler(
+                window=SimpleNamespace(
+                    get_summary_grouping=lambda: ConditionSummaryGrouping()
+                ),
+                project_data_service=SimpleNamespace(
+                    get_current_bid_ref=lambda: BidRef("database-1", "bid-1"),
+                    get_current_bid=lambda: bid,
+                ),
+                summary_csv_export_service=SimpleNamespace(
+                    default_filename=lambda: "Bid Summary.csv",
+                    export_current_summary=lambda _grouping, _filename: calls.append(
+                        True
+                    )
+                    or result,
+                ),
+            )
+
+        calls = []
+        handler = make_handler(
+            ExportResultDto(
+                success=False,
+                format_name="Summary CSV",
+                error_message="file is locked",
+                error_code=ExportErrorCode.WRITE_FAILED,
+            ),
+            calls,
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=(r"C:\tmp\summary.csv", ""),
+            ),
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(export_handler_module, "show_warning") as warning,
+            patch.object(export_handler_module, "show_critical") as critical,
+        ):
+            handler.export_summary_csv()
+        self.assertEqual(calls, [True])
+        info.assert_not_called()
+        warning.assert_not_called()
+        critical.assert_called_once_with(
+            handler.window,
+            "Export Error",
+            "Error creating Summary CSV export: file is locked",
+        )
+        cancelled_calls = []
+        cancelled = make_handler(
+            ExportResultDto(success=True, format_name="Summary CSV"), cancelled_calls
+        )
+        with (
+            patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=("", ""),
+            ),
+            patch.object(export_handler_module, "show_info") as info,
+            patch.object(export_handler_module, "show_warning") as warning,
+        ):
+            cancelled.export_summary_csv()
+        self.assertEqual(cancelled_calls, [])
+        info.assert_not_called()
+        warning.assert_not_called()

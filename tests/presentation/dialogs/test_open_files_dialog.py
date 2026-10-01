@@ -63,7 +63,7 @@ from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.presentation.dialogs.open_files_dialog import (
     OpenFilesDialog as StartupOpenFilesDialog,
 )
-from shiboken6 import delete
+from shiboken6 import delete, isValid
 from tests.helpers.startup_database import (
     StartupOpenFilesDialog as _startup_database_StartupOpenFilesDialog,
 )
@@ -114,9 +114,88 @@ class OpenFilesDialogSqlDialogTests(unittest.TestCase):
                 self.assertEqual(len(dialog.file_entries), 1)
                 self.assertEqual(dialog.file_entries[0].file_path, path)
                 self.assertEqual(dialog.file_entries[0].backend, DatabaseBackend.ACCESS)
+                self.assertTrue(dialog.file_entries[0].is_checked)
+                self.assertEqual(dialog.table.topLevelItemCount(), 1)
+                self.assertEqual(dialog.table.topLevelItem(0).text(1), "Access")
+                with patch(
+                    "ost_visualizer.presentation.dialogs.open_files_dialog."
+                    "SelectDatabaseTypeDialog",
+                    _AcceptedAccessDialog,
+                ), patch.object(
+                    QtWidgets.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(path, "Microsoft Access Database (*.mdb)"),
+                ), patch(
+                    "ost_visualizer.presentation.dialogs.open_files_dialog.show_info"
+                ) as info:
+                    dialog._on_find()
+                info.assert_called_once_with(
+                    dialog, "File Already Added", "This file is already in the list."
+                )
+                self.assertEqual(len(dialog.file_entries), 1)
             finally:
                 dialog.cleanup()
                 dialog.deleteLater()
+
+    def test_database_type_choice_routes_to_matching_picker_or_nothing(self):
+        def type_dialog(backend, result):
+            class _TypeDialog:
+                def __init__(self, _icon_provider, _parent=None):
+                    pass
+
+                def exec(self):
+                    return result
+
+                def selected_backend(self):
+                    return backend
+
+                def cleanup(self):
+                    pass
+
+                def deleteLater(self):
+                    pass
+
+            return _TypeDialog
+
+        accepted = QtWidgets.QDialog.DialogCode.Accepted
+        rejected = QtWidgets.QDialog.DialogCode.Rejected
+        cases = (
+            ("access", DatabaseBackend.ACCESS, accepted, "_open_access_file_picker"),
+            (
+                "sql",
+                DatabaseBackend.SQL_SERVER,
+                accepted,
+                "_open_sql_server_connection",
+            ),
+            ("cancelled", DatabaseBackend.ACCESS, rejected, None),
+        )
+        for label, backend, result, expected in cases:
+            with self.subTest(choice=label):
+                dialog = _database_foundation_support_OpenFilesDialog(
+                    self.icon_provider, None, [], None
+                )
+                try:
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.open_files_dialog."
+                        "SelectDatabaseTypeDialog",
+                        type_dialog(backend, result),
+                    ), patch.object(
+                        dialog, "_open_access_file_picker"
+                    ) as access_picker, patch.object(
+                        dialog, "_open_sql_server_connection"
+                    ) as sql_picker:
+                        dialog._on_find()
+                    self.assertEqual(
+                        access_picker.call_count,
+                        1 if expected == "_open_access_file_picker" else 0,
+                    )
+                    self.assertEqual(
+                        sql_picker.call_count,
+                        1 if expected == "_open_sql_server_connection" else 0,
+                    )
+                finally:
+                    dialog.cleanup()
+                    dialog.deleteLater()
 
     def test_sql_selection_saves_descriptor_and_credential_separately(self):
         password = secrets.token_urlsafe(24)
@@ -213,6 +292,10 @@ class OpenFilesDialogSqlDialogTests(unittest.TestCase):
             entry = dialog.file_entries[0]
             self.assertEqual(entry.backend, DatabaseBackend.SQL_SERVER)
             self.assertEqual(entry.descriptor.sql_location.database, selected.name)
+            self.assertEqual(entry.descriptor.sql_location.username, "test-user")
+            self.assertTrue(entry.is_checked)
+            self.assertEqual(catalog.calls, [(initial_location, password)])
+            self.assertEqual(store.deleted, [])
             serialized = json.dumps(entry.to_dict())
             self.assertNotIn(password, serialized)
             target = credential_target_for(entry.database_id)
@@ -322,8 +405,15 @@ class OpenFilesDialogSqlDialogTests(unittest.TestCase):
                 _DatabaseDialog,
             ), patch(
                 "ost_visualizer.presentation.dialogs.open_files_dialog.show_info"
-            ):
+            ) as info:
                 dialog._open_sql_server_connection()
+            info.assert_called_once_with(
+                dialog,
+                "Database Connection Updated",
+                "The saved SQL Server connection was updated.",
+            )
+            self.assertEqual(store.deleted, [])
+            self.assertEqual(dialog.table.topLevelItemCount(), 1)
             self.assertEqual(len(dialog.file_entries), 1)
             self.assertTrue(dialog.file_entries[0].is_checked)
             target = credential_target_for(dialog.file_entries[0].database_id)
@@ -361,6 +451,7 @@ class OpenFilesDialogSqlDialogTests(unittest.TestCase):
         dialog.cleanup()
         dialog.deleteLater()
         self.assertNotIn(target, store.passwords)
+        self.assertEqual(store.deleted, [target])
 
     def test_cancelled_reconnect_restores_previous_sql_credential(self):
         old_password = secrets.token_urlsafe(24)
@@ -420,10 +511,51 @@ class OpenFilesDialogSqlDialogTests(unittest.TestCase):
         dialog._save_sql_result(
             SqlDatabasePropertiesResult(location, SQL_SCHEMA_V1.version, password)
         )
-        dialog.commit_credential_changes()
+        self.assertEqual(dialog.commit_credential_changes(), {descriptor.database_id})
         dialog.cleanup()
         dialog.deleteLater()
         self.assertEqual(store.passwords[target], (location.username, password))
+        self.assertEqual(store.deleted, [])
+
+    def test_committed_dialog_restores_credential_of_entry_removed_before_commit(self):
+        password = secrets.token_urlsafe(24)
+        location = SqlServerDatabaseLocation(
+            server="localhost",
+            database="OSTV_TEST_REMOVED",
+            authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+            username="test-user",
+            database_guid="00000000-0000-0000-0000-000000000225",
+        )
+        descriptor = DatabaseDescriptor.for_sql_server(
+            location, schema_version=SQL_SCHEMA_V1.version
+        )
+        target = credential_target_for(descriptor.database_id)
+        store = _database_foundation_support__CredentialStore()
+        dialog = _database_foundation_support_OpenFilesDialog(
+            self.icon_provider,
+            None,
+            [],
+            None,
+            credential_store=store,
+        )
+        dialog._save_sql_result(
+            SqlDatabasePropertiesResult(location, SQL_SCHEMA_V1.version, password)
+        )
+        self.assertIn(target, store.passwords)
+        dialog.table.setCurrentItem(dialog.table.topLevelItem(0))
+        with patch(
+            "ost_visualizer.presentation.dialogs.open_files_dialog.confirm",
+            return_value=True,
+        ) as confirm:
+            dialog._on_remove()
+        self.assertIn(
+            "The server database will not be deleted.", confirm.call_args.args[2]
+        )
+        self.assertEqual(dialog.file_entries, [])
+        self.assertEqual(dialog.commit_credential_changes(), set())
+        self.assertNotIn(target, store.passwords)
+        dialog.cleanup()
+        dialog.deleteLater()
 
 
 class OpenFilesSortedIdentityTests(unittest.TestCase):
@@ -459,6 +591,17 @@ class OpenFilesSortedIdentityTests(unittest.TestCase):
         self.assertTrue(dialog.remove_button.isEnabled())
         with mock.patch(
             "ost_visualizer.presentation.dialogs.open_files_dialog.confirm",
+            return_value=False,
+        ) as declined:
+            dialog._on_remove()
+        declined.assert_called_once_with(
+            dialog,
+            "Confirm Removal",
+            "Are you sure you want to remove 'Alpha' from the list?",
+        )
+        self.assertEqual(len(dialog.file_entries), 2)
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.open_files_dialog.confirm",
             return_value=True,
         ):
             dialog._on_remove()
@@ -466,6 +609,8 @@ class OpenFilesSortedIdentityTests(unittest.TestCase):
             [entry.descriptor.display_name for entry in dialog.file_entries],
             ["Zulu"],
         )
+        self.assertEqual(dialog.table.topLevelItemCount(), 1)
+        self.assertEqual(dialog.table.topLevelItem(0).text(2), "Zulu")
         dialog.close()
         dialog.cleanup()
         dialog.deleteLater()
@@ -492,6 +637,8 @@ class OpenFilesStartupStateTests(unittest.TestCase):
             self.assertTrue(checkbox.isEnabled())
             checkbox.click()
             self.assertFalse(dialog.get_file_entries()[0].is_checked)
+            checkbox.click()
+            self.assertTrue(dialog.get_file_entries()[0].is_checked)
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -505,7 +652,10 @@ class OpenFilesStartupStateTests(unittest.TestCase):
             None,
         )
         delete(parent)
+        self.assertFalse(isValid(dialog))
         dialog.cleanup()
         dialog.cleanup()
         self.assertEqual(dialog.file_entries, [])
         self.assertIsNone(dialog.table)
+        self.assertIsNone(dialog.close_button)
+        self.assertIsNone(dialog.remove_button)

@@ -78,6 +78,8 @@ class BidLockPermissionTests(unittest.TestCase):
     def test_sql_bid_cut_completion_callback_runs_only_after_commit(self):
         write_service = _permissions__QueuedHierarchyDeleteWriteService()
         committed = []
+        refreshes = []
+        errors = []
         handler = ProjectWriteHandler(
             window=None,
             project_data_service=SimpleNamespace(),
@@ -87,8 +89,8 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         handler.set_ui_event_coordinator(
             SimpleNamespace(
-                refresh_hierarchy_projection=lambda: None,
-                present_queued_mutation_error=lambda *_args: None,
+                refresh_hierarchy_projection=lambda: refreshes.append(True),
+                present_queued_mutation_error=lambda *args: errors.append(args),
             )
         )
         bid_ref = BidRef("database", "bid-1")
@@ -110,6 +112,9 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         self.assertEqual(committed, [])
+        self.assertEqual(refreshes, [True])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0][:2], ("database", "Move Bids"))
         self.assertTrue(
             handler.paste_bids(
                 [bid_ref],
@@ -128,6 +133,8 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         self.assertEqual(committed, [True])
+        self.assertEqual(refreshes, [True])
+        self.assertEqual(len(errors), 1)
 
     def test_bid_paste_handler_accepts_normalized_same_database_source_paths(self):
         write_service = _permissions__PartialPasteWriteService()
@@ -162,6 +169,8 @@ class BidLockPermissionTests(unittest.TestCase):
                 ("C:/jobs/test.mdb", "bid-2", False),
             ],
         )
+        self.assertEqual(write_service.reloads, ["C:/jobs/test.mdb"])
+        self.assertEqual(write_service.notifications, ["C:/jobs/test.mdb"])
 
     def test_multi_bid_paste_partial_success_warns_without_plain_failure(self):
         write_service = _permissions__PartialPasteWriteService()
@@ -214,7 +223,12 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(write_service.reloads, ["db.mdb"])
         self.assertEqual(write_service.notifications, ["db.mdb"])
         self.assertEqual(len(warnings), 1)
-        self.assertIn("Some bids were pasted", warnings[0][2])
+        self.assertEqual(warnings[0][1], "Paste Partially Completed")
+        self.assertEqual(
+            warnings[0][2],
+            "Some bids were pasted, but the paste did not finish. "
+            "Review the refreshed project tree before retrying.",
+        )
         self.assertEqual(len(criticals), 0)
 
     def test_duplicate_stops_after_progress_dialog_destroys_main_window(self):
@@ -241,12 +255,18 @@ class BidLockPermissionTests(unittest.TestCase):
 
         handler._run_progress_dialog = destroy_window
         criticals = []
+        warnings = []
         with patch(
             "ost_visualizer.presentation.handlers.project_write_handler.show_critical",
             side_effect=lambda *args: criticals.append(args),
+        ), patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.show_warning",
+            side_effect=lambda *args: warnings.append(args),
         ):
             handler.duplicate_selected()
         self.assertEqual(len(criticals), 0)
+        self.assertEqual(len(warnings), 0)
+        self.assertFalse(handler._duplicate_in_progress)
         app.processEvents()
 
     def test_duplicate_worker_failure_is_reported_once_and_can_retry(self):
@@ -295,6 +315,8 @@ class BidLockPermissionTests(unittest.TestCase):
             handler.duplicate_selected()
             self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
             self.assertFalse(handler._duplicate_in_progress)
+            self.assertEqual(len(criticals), 1)
+            self.assertEqual(notifications, [])
             handler.duplicate_selected()
         self.assertEqual(len(criticals), 1)
         self.assertEqual(criticals[0][1], "Duplicate Error")
@@ -372,6 +394,10 @@ class BidLockPermissionTests(unittest.TestCase):
         key_b = ("database-b", "move_bids", "7")
         self.assertIn(key_a, handler._pending_sql_operations)
         self.assertIn(key_b, handler._pending_sql_operations)
+        # A still-pending operation for the same database and key is not
+        # submitted twice.
+        self.assertFalse(submit("database-a"))
+        self.assertEqual(committed, [])
         for status in (
             MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
             MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
@@ -400,6 +426,9 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertNotIn(key_a, handler._pending_sql_operations)
         self.assertIn(key_b, handler._pending_sql_operations)
         self.assertEqual(committed, ["database-a"])
+        self.assertEqual(errors, [])
+        self.assertEqual(refreshes, [])
+        self.assertTrue(submit("database-a"))
 
     def _delete_project_data(
         self, selected_project_uid="project-2", remaining_uids=None
@@ -509,6 +538,17 @@ class BidLockPermissionTests(unittest.TestCase):
         ):
             handler._delete_projects([project_uid], second_path)
         self.assertEqual(delete_calls, [(second_path, [project_uid])])
+        # The same project uid in the database that does hold bids stays blocked.
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ), patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.show_warning"
+        ) as show_warning:
+            handler._delete_projects([project_uid], first_path)
+        self.assertEqual(delete_calls, [(second_path, [project_uid])])
+        show_warning.assert_called_once()
+        self.assertEqual(show_warning.call_args.args[1], "Cannot Delete Project")
 
     def test_moving_active_bid_to_deleted_clears_selection_before_refresh(self):
         bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
@@ -551,6 +591,8 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(write_service.selected_bid_during_notify, [None])
         self.assertIsNone(ui_state.get_selected_bid_ref())
         self.assertEqual(write_service.notifications, ["C:/jobs/test.mdb"])
+        self.assertEqual(ui_state.selected_file_path, "C:/jobs/test.mdb")
+        self.assertIsNone(ui_state.selected_project_uid)
 
     def test_empty_project_delete_discards_selected_page_writes_before_flush(self):
         hierarchy = HierarchyData(
@@ -637,15 +679,75 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         finally:
             project_write_handler.confirm = old_confirm
-        replacement = ui_state.get_selected_bid_ref()
-        self.assertIsNotNone(replacement)
-        self.assertEqual(replacement.bid_uid, "bid-2")
         self.assertEqual(
-            [
-                ref.bid_uid if ref else None
-                for ref in write_service.selected_bid_during_notify
-            ],
-            ["bid-2"],
+            ui_state.get_selected_bid_ref(), BidRef("C:/jobs/test.mdb", "bid-2")
+        )
+        self.assertEqual(
+            write_service.move_calls,
+            [("C:/jobs/test.mdb", ["bid-1"], "1", "project-2", False)],
+        )
+        self.assertEqual(project_data.clear_bid_calls, [True])
+        self.assertEqual(write_service.selected_bid_during_reload, [None])
+        self.assertEqual(
+            write_service.selected_bid_during_notify,
+            [BidRef("C:/jobs/test.mdb", "bid-2")],
+        )
+
+    def test_delete_selection_state_for_another_database_falls_back_to_deleted_one(
+        self,
+    ):
+        first_path = "C:/jobs/first.mdb"
+        second_path = "C:/jobs/second.mdb"
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path=path,
+                    bid_projects={
+                        "project-1": HierarchyProjectInfo(
+                            name="Project",
+                            bids=[HierarchyBidInfo(uid="bid-2", name="bid-2")],
+                        )
+                    },
+                )
+                for path in (first_path, second_path)
+            ]
+        )
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=ProjectDataService(
+                SimpleNamespace(get_hierarchy_data=lambda: hierarchy)
+            ),
+            project_write_service=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(),
+            deferred_persistence_manager=_permissions__FakeDeferredPersistence(),
+        )
+        database_state = {
+            "kind": "database",
+            "file_path": first_path,
+            "bid_uid": None,
+            "project_uid": None,
+        }
+        for requested in (
+            {"kind": "bid", "file_path": second_path, "bid_uid": "bid-2"},
+            {"kind": "project", "file_path": second_path, "project_uid": "project-1"},
+            {"kind": "database", "file_path": second_path},
+        ):
+            self.assertEqual(
+                handler._valid_delete_selection_state(first_path, requested),
+                database_state,
+                requested,
+            )
+        self.assertEqual(
+            handler._valid_delete_selection_state(
+                first_path,
+                {"kind": "bid", "file_path": first_path, "bid_uid": "bid-2"},
+            ),
+            {
+                "kind": "bid",
+                "file_path": first_path,
+                "bid_uid": "bid-2",
+                "project_uid": None,
+            },
         )
 
     def test_move_bid_to_deleted_discards_pending_selected_page_before_flush(self):
@@ -684,8 +786,9 @@ class BidLockPermissionTests(unittest.TestCase):
     def test_sql_bid_delete_completion_does_not_replace_newer_bid_selection(self):
         original = BidRef("C:/jobs/test.mdb", "bid-1")
         replacement = BidRef("C:/jobs/test.mdb", "bid-2")
+        newer = BidRef("C:/jobs/test.mdb", "bid-3")
         ui_state = _permissions__DeleteBidUiState(original)
-        project_data = self._delete_project_data(remaining_uids=["bid-2"])
+        project_data = self._delete_project_data(remaining_uids=["bid-2", "bid-3"])
         write_service = _permissions__QueuedHierarchyDeleteWriteService()
         handler = ProjectWriteHandler(
             window=None,
@@ -713,7 +816,7 @@ class BidLockPermissionTests(unittest.TestCase):
                 }
             )
         self.assertEqual(len(write_service.callbacks), 1)
-        ui_state.set_bid_selection(replacement)
+        ui_state.set_bid_selection(newer)
         write_service.callbacks[0](
             QueuedMutationResult(
                 database_id=original.file_path,
@@ -722,7 +825,7 @@ class BidLockPermissionTests(unittest.TestCase):
                 outcome_status=MutationOutcomeStatus.COMMITTED,
             )
         )
-        self.assertEqual(ui_state.get_selected_bid_ref(), replacement)
+        self.assertEqual(ui_state.get_selected_bid_ref(), newer)
         self.assertEqual(project_data.clear_bid_calls, [])
 
     def test_sql_bid_delete_completion_rejects_same_uid_bid_replacement(self):
@@ -800,7 +903,10 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         handler.duplicate_selected()
+        self.assertEqual(len(write_service.callbacks), 1)
+        self.assertTrue(handler._duplicate_in_progress)
         self.assertFalse(duplicate_action.isEnabled())
+        self.assertEqual(refresh_calls, [])
         write_service.callbacks[0](
             QueuedMutationResult(
                 database_id=bid_ref.file_path,
@@ -810,6 +916,7 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         self.assertEqual(refresh_calls, [True])
+        self.assertFalse(handler._duplicate_in_progress)
         self.assertFalse(duplicate_action.isEnabled())
 
     def test_sql_duplicate_failure_is_reported_once_and_can_retry(self):
@@ -847,6 +954,7 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         self.assertEqual(len(presented_errors), 1)
+        self.assertEqual(presented_errors[0][0], bid_ref.file_path)
         self.assertEqual(presented_errors[0][1], "Duplicate Bid")
         self.assertEqual(refreshes, [True])
         self.assertEqual(toolbar_refreshes, [True])
@@ -862,7 +970,10 @@ class BidLockPermissionTests(unittest.TestCase):
                 commit_attempted=True,
             )
         )
+        self.assertEqual(len(write_service.callbacks), 2)
         self.assertEqual(len(presented_errors), 1)
+        self.assertEqual(refreshes, [True])
+        self.assertEqual(toolbar_refreshes, [True, True])
         self.assertEqual(ui_state.get_selected_bid_ref(), bid_ref)
         self.assertFalse(handler._duplicate_in_progress)
 
@@ -906,6 +1017,69 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         self.assertEqual(ui_state.get_selected_bid_ref(), replacement)
+        self.assertEqual(project_data.clear_bid_calls, [True])
+
+    def test_sql_permanent_bid_delete_queues_delete_and_selects_replacement_on_commit(
+        self,
+    ):
+        class _QueuedPermanentDeleteWriteService(
+            _permissions__QueuedHierarchyDeleteWriteService
+        ):
+            def __init__(self):
+                super().__init__()
+                self.delete_requests = []
+
+            def queue_bids_delete(self, file_path, uids, callback):
+                self.delete_requests.append((file_path, list(uids)))
+                self.callbacks.append(callback)
+
+        original = BidRef("C:/jobs/test.mdb", "deleted-1")
+        ui_state = _permissions__DeleteBidUiState(original)
+        project_data = self._delete_project_data(
+            selected_project_uid="1", remaining_uids=["deleted-2"]
+        )
+        write_service = _QueuedPermanentDeleteWriteService()
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_permissions__FakeDeferredPersistence(),
+        )
+        handler.set_ui_event_coordinator(
+            SimpleNamespace(
+                refresh_hierarchy_projection=lambda: None,
+                present_queued_mutation_error=lambda *_args: None,
+            )
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler.delete_selected(
+                {
+                    "kind": "bid",
+                    "file_path": original.file_path,
+                    "bid_uid": "deleted-2",
+                    "project_uid": None,
+                }
+            )
+        self.assertEqual(
+            write_service.delete_requests, [(original.file_path, ["deleted-1"])]
+        )
+        self.assertEqual(ui_state.get_selected_bid_ref(), original)
+        self.assertEqual(project_data.clear_bid_calls, [])
+        write_service.callbacks[0](
+            QueuedMutationResult(
+                database_id=original.file_path,
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000110",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+            )
+        )
+        self.assertEqual(
+            ui_state.get_selected_bid_ref(), BidRef(original.file_path, "deleted-2")
+        )
         self.assertEqual(project_data.clear_bid_calls, [True])
 
     def test_sql_project_delete_completion_does_not_replace_newer_project_selection(
@@ -1111,15 +1285,14 @@ class BidLockPermissionTests(unittest.TestCase):
             write_service.delete_calls,
             [("C:/jobs/test.mdb", ["deleted-1"], False)],
         )
-        replacement = ui_state.get_selected_bid_ref()
-        self.assertIsNotNone(replacement)
-        self.assertEqual(replacement.bid_uid, "deleted-2")
         self.assertEqual(
-            [
-                ref.bid_uid if ref else None
-                for ref in write_service.selected_bid_during_notify
-            ],
-            ["deleted-2"],
+            ui_state.get_selected_bid_ref(), BidRef("C:/jobs/test.mdb", "deleted-2")
+        )
+        self.assertEqual(project_data.clear_bid_calls, [True])
+        self.assertEqual(write_service.selected_bid_during_reload, [None])
+        self.assertEqual(
+            write_service.selected_bid_during_notify,
+            [BidRef("C:/jobs/test.mdb", "deleted-2")],
         )
 
     def test_permanent_bid_delete_discards_pending_selected_page_before_flush(self):

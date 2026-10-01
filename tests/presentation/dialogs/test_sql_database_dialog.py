@@ -38,7 +38,7 @@ from ost_visualizer.presentation.dialogs.sql_database_dialog import (
     SqlDatabasePropertiesResult,
 )
 from PySide6 import QtCore, QtWidgets
-from shiboken6 import delete
+from shiboken6 import delete, isValid
 from tests.helpers.sql.database_foundation_support import (
     _Catalog as _database_foundation_support__Catalog,
     _IconProvider as _database_foundation_support__IconProvider,
@@ -126,8 +126,10 @@ class SqlDatabaseDialogSqlCleanupTests(unittest.TestCase):
             object(),
             connection=connection,
         )
+        self.assertEqual(dialog.password_input.text(), "temporary-secret")
         dialog.cleanup()
         self.assertIsNone(dialog._initial_connection)
+        self.assertIsNone(dialog.result_data())
         self.assertEqual(dialog.password_input.text(), "")
         dialog.deleteLater()
 
@@ -148,10 +150,13 @@ class SqlDatabaseDialogSqlDialogTests(unittest.TestCase):
             parent,
         )
         delete(parent)
+        self.assertFalse(isValid(dialog))
         dialog.cleanup()
         dialog.cleanup()
         self.assertIsNone(dialog._catalog)
         self.assertIsNone(dialog._database_creator)
+        self.assertIsNone(dialog._icon_provider)
+        self.assertIsNone(dialog.result_data())
 
     def test_properties_open_validates_selection_and_cancel_clears_secret(self):
         password = secrets.token_urlsafe(24)
@@ -185,9 +190,21 @@ class SqlDatabaseDialogSqlDialogTests(unittest.TestCase):
             dialog._accept_if_valid()
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
             result = dialog.result_data()
-            self.assertIsNotNone(result)
-            self.assertEqual(result.location.database, selected.name)
-            self.assertEqual(len(catalog.calls), 1)
+            self.assertEqual(
+                result,
+                SqlDatabasePropertiesResult(
+                    replace(
+                        connection.location,
+                        database=selected.name,
+                        database_guid=selected.database_guid,
+                    ),
+                    SQL_SCHEMA_V1.version,
+                    password,
+                ),
+            )
+            self.assertEqual(
+                catalog.calls, [(connection.location, selected.name, password)]
+            )
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -200,12 +217,72 @@ class SqlDatabaseDialogSqlDialogTests(unittest.TestCase):
             databases=[selected],
         )
         try:
+            self.assertEqual(cancelled.password_input.text(), password)
             cancelled.reject()
             self.assertIsNone(cancelled.result_data())
             self.assertEqual(cancelled.password_input.text(), "")
         finally:
             cancelled.cleanup()
             cancelled.deleteLater()
+
+    def test_properties_open_rejects_unusable_selection_with_warning(self):
+        incompatible = SqlDatabaseCatalogEntry(
+            name="OSTV_TEST_OLD",
+            database_guid="00000000-0000-0000-0000-000000000124",
+            state="ONLINE",
+            is_compatible=False,
+            compatibility_message="Schema version is not supported.",
+            schema_version=0,
+        )
+        vanished = SqlDatabaseCatalogEntry(
+            name="OSTV_TEST_GONE",
+            database_guid="00000000-0000-0000-0000-000000000125",
+            state="ONLINE",
+            is_compatible=True,
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        connection = SqlConnectionDialogResult(
+            SqlServerDatabaseLocation(server="localhost", database="")
+        )
+        cases = (
+            (
+                "incompatible",
+                [incompatible],
+                [incompatible],
+                "Schema version is not supported.",
+            ),
+            (
+                "vanished from catalog",
+                [],
+                [vanished],
+                "The selected database is no longer available to this login.",
+            ),
+            ("nothing listed", [], [], "Select a database."),
+        )
+        for label, catalog_entries, listed, message in cases:
+            with self.subTest(label):
+                dialog = SqlDatabasePropertiesDialog(
+                    self.icon_provider,
+                    SqlDatabasePropertiesMode.OPEN,
+                    _database_foundation_support__Catalog(catalog_entries),
+                    _database_foundation_support__SqlDatabaseCreator(),
+                    connection=connection,
+                    databases=listed,
+                )
+                try:
+                    with patch(
+                        "ost_visualizer.presentation.dialogs.sql_database_dialog."
+                        "show_warning"
+                    ) as warning:
+                        dialog._accept_if_valid()
+                    warning.assert_called_once_with(dialog, "SQL Server", message)
+                    self.assertIsNone(dialog.result_data())
+                    self.assertNotEqual(
+                        dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
+                    )
+                finally:
+                    dialog.cleanup()
+                    dialog.deleteLater()
 
     @patch.object(
         SqlDatabasePropertiesDialog,
@@ -256,9 +333,12 @@ class SqlDatabaseDialogSqlDialogTests(unittest.TestCase):
             dialog.database_name_input.setText("OSTV_TEST_CREATED")
             dialog._accept_if_valid()
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            created = dialog.result_data()
+            self.assertEqual(created.location.database, "OSTV_TEST_CREATED")
             self.assertEqual(
-                dialog.result_data().location.database, "OSTV_TEST_CREATED"
+                created.location.database_guid, "00000000-0000-0000-0000-000000000789"
             )
+            self.assertEqual(created.schema_version, 1)
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -276,8 +356,11 @@ class SqlDatabaseDialogSqlDialogTests(unittest.TestCase):
             with patch(
                 "ost_visualizer.presentation.dialogs.sql_database_dialog."
                 "show_warning"
-            ):
+            ) as warning:
                 failed._accept_if_valid()
+            warning.assert_called_once_with(
+                failed, "SQL Server", "Database initialization failed."
+            )
             self.assertIsNone(failed.result_data())
             self.assertNotEqual(failed.result(), QtWidgets.QDialog.DialogCode.Accepted)
         finally:
@@ -352,9 +435,13 @@ class SqlDatabaseDialogCreationDialogIdentityTests(unittest.TestCase):
     def test_cancel_before_submission_does_not_provision(self):
         creator = Mock()
         dialog = self._dialog(creator)
+        self.assertEqual(
+            dialog.password_input.text(), _creation_handoff_support__RUNTIME.password
+        )
         dialog.reject()
         creator.create_database_for_client.assert_not_called()
         self.assertIsNone(dialog.result_data())
+        self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
         self.assertEqual(dialog.password_input.text(), "")
 
     def test_creation_properties_accept_server_authentication_and_database_directly(
@@ -483,35 +570,53 @@ class SqlDatabaseDialogCreationDialogIdentityTests(unittest.TestCase):
                     properties.result_data().location.authentication_mode,
                     runtime.location.authentication_mode,
                 )
+                self.assertEqual(
+                    properties.result_data().location,
+                    replace(
+                        runtime.location,
+                        database="Test database",
+                        database_guid=_creation_handoff_support__GUID,
+                    ),
+                )
+                self.assertEqual(properties.result_data().schema_version, 1)
 
     def test_destroyed_or_cleaned_properties_cannot_continue_after_creator_prompt(self):
         from shiboken6 import delete
 
         for destroy in (False, True):
-            creator = Mock()
-            properties = self._dialog(creator, prompt_creator=True, own_cleanup=False)
-            from ost_visualizer.presentation.utils.dialog import delete_later_if_valid
-
-            self.addCleanup(delete_later_if_valid, properties)
-            self.addCleanup(properties.cleanup)
-
-            def accept_after_close(dialog):
-                dialog.sql_auth_radio.setChecked(True)
-                dialog.username_input.setText(
-                    _creation_handoff_support__CREATOR.username
+            with self.subTest(destroy=destroy):
+                creator = Mock()
+                properties = self._dialog(
+                    creator, prompt_creator=True, own_cleanup=False
                 )
-                dialog.password_input.setText("creator-test-secret")
-                dialog._accept_if_valid()
-                if destroy:
-                    delete(properties)
-                else:
-                    properties.cleanup()
-                return QtWidgets.QDialog.DialogCode.Accepted
+                from ost_visualizer.presentation.utils.dialog import (
+                    delete_later_if_valid,
+                )
 
-            with patch.object(SqlConnectionDialog, "exec", new=accept_after_close):
-                properties._accept_if_valid()
-            creator.create_database_for_client.assert_not_called()
-            self.assertIsNone(properties.result_data())
+                self.addCleanup(delete_later_if_valid, properties)
+                self.addCleanup(properties.cleanup)
+
+                def accept_after_close(dialog):
+                    dialog.sql_auth_radio.setChecked(True)
+                    dialog.username_input.setText(
+                        _creation_handoff_support__CREATOR.username
+                    )
+                    dialog.password_input.setText("creator-test-secret")
+                    dialog._accept_if_valid()
+                    self.assertEqual(
+                        dialog.result_data().password, "creator-test-secret"
+                    )
+                    if destroy:
+                        delete(properties)
+                    else:
+                        properties.cleanup()
+                    return QtWidgets.QDialog.DialogCode.Accepted
+
+                with patch.object(SqlConnectionDialog, "exec", new=accept_after_close):
+                    properties._accept_if_valid()
+                creator.create_database_for_client.assert_not_called()
+                self.assertIsNone(properties.result_data())
+                self.assertFalse(properties._creation_in_progress)
 
     def test_creation_worker_keeps_gui_responsive_and_cannot_be_cancelled_mid_setup(
         self,
@@ -552,39 +657,51 @@ class SqlDatabaseDialogCreationDialogIdentityTests(unittest.TestCase):
             release.set()
 
         QtCore.QTimer.singleShot(0, release_from_gui)
-        dialog._accept_if_valid()
+        with patch(
+            "ost_visualizer.presentation.dialogs.sql_database_dialog.show_warning"
+        ) as warning:
+            dialog._accept_if_valid()
+        warning.assert_not_called()
         self.assertEqual(gui_callbacks, [caller])
         self.assertNotEqual(worker_threads, [caller])
         creator.create_database_for_client.assert_called_once()
-        self.assertIsNotNone(dialog.result_data())
+        created = dialog.result_data()
+        self.assertEqual(created.location.database, "Test database")
+        self.assertEqual(
+            created.location.database_guid, _creation_handoff_support__GUID
+        )
+        self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+        self.assertFalse(dialog._creation_in_progress)
 
     def test_tls_controls_preserve_timeouts_and_reach_creator_request(self):
-        creator = Mock()
-        creator.create_database_for_client.return_value = SqlDatabaseCreationResult(
-            replace(
-                _creation_handoff_support__CREATOR,
-                database="Test database",
-                database_guid=_creation_handoff_support__GUID,
-            ),
-            1,
-        )
-        dialog = self._dialog(creator)
-        from ost_visualizer.presentation.dialogs.sql_connection_dialog import (
-            SqlConnectionDialogResult,
-        )
-
-        dialog._initial_connection = SqlConnectionDialogResult(
-            _creation_handoff_support__CREATOR, "creator-test-secret"
-        )
-        dialog._apply_initial_connection()
-        self.assertFalse(dialog.trust_certificate_checkbox.isChecked())
-        dialog.encrypt_checkbox.setChecked(True)
-        dialog._accept_if_valid()
-        location = creator.create_database_for_client.call_args.args[0]
-        self.assertTrue(location.encrypt)
-        self.assertFalse(location.trust_server_certificate)
-        self.assertEqual(location.connection_timeout_seconds, 7)
-        self.assertEqual(location.command_timeout_seconds, 17)
+        for encrypt, trust in ((True, False), (False, True), (False, False)):
+            with self.subTest(encrypt=encrypt, trust=trust):
+                creator = Mock()
+                creator.create_database_for_client.return_value = (
+                    SqlDatabaseCreationResult(
+                        replace(
+                            _creation_handoff_support__CREATOR,
+                            database="Test database",
+                            database_guid=_creation_handoff_support__GUID,
+                        ),
+                        1,
+                    )
+                )
+                dialog = self._dialog(creator)
+                dialog._initial_connection = SqlConnectionDialogResult(
+                    _creation_handoff_support__CREATOR, "creator-test-secret"
+                )
+                dialog._apply_initial_connection()
+                self.assertTrue(dialog.encrypt_checkbox.isChecked())
+                self.assertFalse(dialog.trust_certificate_checkbox.isChecked())
+                dialog.encrypt_checkbox.setChecked(encrypt)
+                dialog.trust_certificate_checkbox.setChecked(trust)
+                dialog._accept_if_valid()
+                location = creator.create_database_for_client.call_args.args[0]
+                self.assertEqual(location.encrypt, encrypt)
+                self.assertEqual(location.trust_server_certificate, trust)
+                self.assertEqual(location.connection_timeout_seconds, 7)
+                self.assertEqual(location.command_timeout_seconds, 17)
 
     def test_existing_properties_restore_transport_without_creator_controls(self):
         from ost_visualizer.presentation.dialogs.sql_connection_dialog import (
@@ -625,6 +742,12 @@ class SqlDatabaseDialogCreationDialogIdentityTests(unittest.TestCase):
             )
             self.assertEqual(dialog.result_data().location.command_timeout_seconds, 17)
             self.assertEqual(dialog.result_data().password, "existing-runtime-secret")
+            self.assertEqual(dialog.result_data().location.database, "Existing")
+            self.assertEqual(
+                dialog.result_data().location.server,
+                _creation_handoff_support__CREATOR.server,
+            )
+            self.assertEqual(dialog.result_data().schema_version, 1)
             self.assertTrue(
                 catalog.get_database.call_args.args[0].trust_server_certificate
             )
@@ -671,7 +794,11 @@ class SqlDatabaseDialogCreationDialogIdentityTests(unittest.TestCase):
             SqlAuthenticationMode.SQL_SERVER,
         )
         self.assertNotIn("creator-test-secret", repr(dialog.result_data()))
+        self.assertEqual(
+            dialog.password_input.text(), _creation_handoff_support__RUNTIME.password
+        )
         dialog.reject()
+        self.assertIsNone(dialog.result_data())
         self.assertEqual(dialog.password_input.text(), "")
 
     def test_failed_handoff_cannot_accept_or_return_a_descriptor(self):
@@ -686,7 +813,57 @@ class SqlDatabaseDialogCreationDialogIdentityTests(unittest.TestCase):
             dialog._accept_if_valid()
         self.assertIsNone(dialog.result_data())
         self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
-        warning.assert_called_once()
+        warning.assert_called_once_with(
+            dialog, "SQL Server", "Client permission denied."
+        )
+        self.assertFalse(dialog._creation_in_progress)
+
+    def test_unexpected_setup_failure_reports_safe_message_without_descriptor(self):
+        creator = Mock()
+        creator.create_database_for_client.side_effect = RuntimeError(
+            "raw driver detail"
+        )
+        dialog = self._dialog(creator)
+        with patch(
+            "ost_visualizer.presentation.dialogs.sql_database_dialog.show_warning"
+        ) as warning:
+            dialog._accept_if_valid()
+        self.assertIsNone(dialog.result_data())
+        self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+        message = warning.call_args.args[2]
+        self.assertIn("SQL database setup failed unexpectedly", message)
+        self.assertNotIn("raw driver detail", message)
+
+    def test_creation_requires_schema_permission_and_valid_name_before_prompting(self):
+        cases = (
+            (
+                "no permission",
+                lambda: False,
+                "Test database",
+                "You do not have permission",
+            ),
+            (
+                "blank name",
+                lambda: True,
+                "   ",
+                "Database names must be 1 to 128 characters",
+            ),
+        )
+        for label, allowed, name, message in cases:
+            with self.subTest(label):
+                creator = Mock()
+                dialog = self._dialog(creator, prompt_creator=True)
+                dialog._schema_change_allowed_fn = allowed
+                dialog.database_name_input.setText(name)
+                with patch.object(SqlConnectionDialog, "exec") as prompt, patch(
+                    "ost_visualizer.presentation.dialogs.sql_database_dialog.show_warning"
+                ) as warning:
+                    dialog._accept_if_valid()
+                prompt.assert_not_called()
+                creator.create_database_for_client.assert_not_called()
+                warning.assert_called_once()
+                self.assertTrue(warning.call_args.args[2].startswith(message))
+                self.assertIsNone(dialog.result_data())
 
 
 class SqlDatabaseDialogCreationReleaseBoundaryTests(unittest.TestCase):

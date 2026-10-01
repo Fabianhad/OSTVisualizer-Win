@@ -305,6 +305,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
         self.assertFalse(toolbar.place_enabled)
         self.assertFalse(placement.is_active)
+        self.assertEqual(placement.force_exit_calls, 1)
+        self.assertEqual(placement.enter_calls, [])
 
     def test_condition_delete_hidden_fallback_keeps_takeoff_disabled(self):
         conditions = self._make_conditions(2)
@@ -315,6 +317,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
         self.assertFalse(toolbar.place_enabled)
         self.assertFalse(placement.is_active)
+        self.assertEqual(placement.force_exit_calls, 1)
+        self.assertEqual(placement.enter_calls, [])
 
     def test_condition_delete_different_type_fallback_enables_new_takeoff(self):
         conditions = self._make_conditions(2)
@@ -326,6 +330,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
         self.assertTrue(toolbar.place_enabled)
         self.assertFalse(placement.is_active)
+        self.assertEqual(placement.force_exit_calls, 1)
         self.assertEqual(placement.enter_calls, [])
 
     def test_condition_delete_fallback_respects_lost_place_access(self):
@@ -337,6 +342,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
         self.assertFalse(toolbar.place_enabled)
         self.assertFalse(placement.is_active)
+        self.assertEqual(placement.force_exit_calls, 1)
+        self.assertEqual(placement.enter_calls, [])
 
     def test_condition_delete_revalidates_access_after_confirmation(self):
         from ost_visualizer.presentation.handlers import condition_action_handler
@@ -388,6 +395,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             handler.on_delete_requested(["c1"])
         finally:
             condition_action_handler.confirm_delete_conditions = original_confirm
+        self.assertFalse(access.allowed)
         self.assertEqual(delete_calls, [])
 
     def test_condition_delete_handler_selects_previous_after_multi_write_refresh(self):
@@ -408,6 +416,54 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
 
+    def test_condition_delete_cancelled_confirmation_keeps_conditions_and_selection(
+        self,
+    ):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(3)
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.highlight_conditions({"c3"})
+        handler = self._make_condition_delete_handler(sidebar, conditions, {"c3"})
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_delete_conditions",
+            return_value=[],
+        ) as confirm_delete:
+            handler.on_delete_requested(["c3"])
+        confirm_delete.assert_called_once()
+        self.assertEqual(sorted(conditions), ["c1", "c2", "c3"])
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c3"])
+
+    def test_condition_delete_failed_write_keeps_tool_and_selection(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(3)
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.highlight_conditions({"c3"})
+        handler = self._make_condition_delete_handler(sidebar, conditions, {"c3"})
+        exits = []
+        delete_calls = []
+        handler._coordinator.placement = SimpleNamespace(
+            force_exit=lambda: exits.append(True)
+        )
+        handler._write_service = SimpleNamespace(
+            uses_sql_collaboration_mutations=lambda _database_id: False,
+            delete_conditions=lambda *args: delete_calls.append(args) or False,
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_delete_conditions",
+            lambda _parent, names: [uid for uid, _name in names],
+        ), self.assertLogs(
+            "ost_visualizer.presentation.handlers.condition_action_handler",
+            level="WARNING",
+        ):
+            handler.on_delete_requested(["c3"])
+        self.assertEqual(delete_calls, [("db.mdb", "bid-1", ["c3"])])
+        self.assertEqual(exits, [])
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c3"])
+
     def test_sql_condition_delete_queues_and_selects_after_authoritative_completion(
         self,
     ):
@@ -417,8 +473,9 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         self.addCleanup(sidebar.close)
         conditions = self._make_conditions(4)
         sidebar.load_conditions(conditions, {}, "Project")
-        queued = {}
+        queued = {"calls": 0}
         errors = []
+        placement_exits = []
 
         class Access:
             @staticmethod
@@ -438,6 +495,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
 
             @staticmethod
             def queue_conditions_delete(database_id, bid_uid, condition_uids, callback):
+                queued["calls"] += 1
                 queued.update(
                     database_id=database_id,
                     bid_uid=bid_uid,
@@ -449,7 +507,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         coordinator = SimpleNamespace(
             ui_access_manager=Access(),
             conditions_sidebar=sidebar,
-            placement=SimpleNamespace(force_exit=lambda: None),
+            placement=SimpleNamespace(force_exit=lambda: placement_exits.append(True)),
             flush_deferred_for_file=lambda _file_path: True,
             highlight_sidebar=lambda uids, reveal=True: sidebar.highlight_conditions(
                 set(uids), reveal=reveal
@@ -482,9 +540,19 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         finally:
             condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(queued["condition_uids"], ["c3"])
+        self.assertEqual(queued["database_id"], "database")
+        self.assertEqual(queued["bid_uid"], "7")
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
         operation_key = ("database", "7", "delete", "c3")
         self.assertIn(operation_key, handler._pending_sql_operations)
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_delete_conditions",
+            lambda _parent, names: [uid for uid, _name in names],
+        ):
+            handler.on_delete_requested(["c3"])
+        self.assertEqual(queued["calls"], 1)
+        self.assertEqual(placement_exits, [])
         queued["callback"](
             QueuedMutationResult(
                 database_id="database",
@@ -520,6 +588,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
         self.assertNotIn(operation_key, handler._pending_sql_operations)
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+        self.assertEqual(placement_exits, [True])
+        self.assertEqual(errors, [])
 
     def test_sql_condition_operations_with_same_uid_are_scoped_to_bid(self):
         callbacks = {}
@@ -536,6 +606,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
         first = BidRef("database-a", "7")
         second = BidRef("database-b", "7")
+        third = BidRef("database-a", "8")
         self.assertTrue(
             handler._submit_sql_condition_operation(
                 first,
@@ -552,7 +623,97 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 lambda callback: callbacks.__setitem__(second.file_path, callback),
             )
         )
-        self.assertEqual(set(callbacks), {"database-a", "database-b"})
+        self.assertTrue(
+            handler._submit_sql_condition_operation(
+                third,
+                ("rename_condition", "c1"),
+                "Rename Condition",
+                lambda callback: callbacks.__setitem__("third", callback),
+            )
+        )
+        self.assertEqual(set(callbacks), {"database-a", "database-b", "third"})
+        repeated = []
+        self.assertFalse(
+            handler._submit_sql_condition_operation(
+                first,
+                ("rename_condition", "c1"),
+                "Rename Condition",
+                repeated.append,
+            )
+        )
+        self.assertEqual(repeated, [])
+        self.assertEqual(
+            handler._pending_sql_operations,
+            {
+                ("database-a", "7", "rename_condition", "c1"),
+                ("database-b", "7", "rename_condition", "c1"),
+                ("database-a", "8", "rename_condition", "c1"),
+            },
+        )
+
+    def test_sql_condition_operation_lifecycle_presents_failures_and_releases_key(
+        self,
+    ):
+        errors = []
+        committed = []
+        failed = []
+        callbacks = []
+        handler = ConditionActionHandler(
+            coordinator=SimpleNamespace(
+                present_queued_mutation_error=lambda *args: errors.append(args),
+                conditions_sidebar=SimpleNamespace(window=lambda: "window"),
+            ),
+            project_write_service=SimpleNamespace(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: None),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        bid_ref = BidRef("database", "7")
+        key = ("database", "7", "rename_condition", "c1")
+
+        def submit_operation():
+            return handler._submit_sql_condition_operation(
+                bid_ref,
+                ("rename_condition", "c1"),
+                "Rename Condition",
+                callbacks.append,
+                committed.append,
+                failed.append,
+            )
+
+        self.assertTrue(submit_operation())
+        self.assertEqual(handler._pending_sql_operations, {key})
+        rejected = QueuedMutationResult(
+            database_id="database",
+            runtime_generation=1,
+            operation_id="00000000-0000-0000-0000-000000000301",
+            outcome_status=MutationOutcomeStatus.REJECTED,
+            commit_attempted=False,
+        )
+        callbacks[0](rejected)
+        callbacks[0](rejected)
+        self.assertEqual(errors, [("database", "Rename Condition", rejected)])
+        self.assertEqual(failed, [rejected])
+        self.assertEqual(committed, [])
+        self.assertEqual(handler._pending_sql_operations, set())
+        self.assertTrue(submit_operation())
+        self.assertEqual(handler._pending_sql_operations, {key})
+
+        def failing_submit(_callback):
+            raise ValueError("Could not queue.")
+
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "show_warning"
+        ) as warning:
+            self.assertFalse(
+                handler._submit_sql_condition_operation(
+                    bid_ref, ("other",), "Other Operation", failing_submit
+                )
+            )
+        warning.assert_called_once_with("window", "Other Operation", "Could not queue.")
+        self.assertEqual(handler._pending_sql_operations, {key})
 
     def test_sql_condition_delete_completion_does_not_project_into_new_bid(self):
         from ost_visualizer.presentation.handlers import condition_action_handler
@@ -709,6 +870,76 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(placement_calls, [])
 
+    def test_sql_condition_duplicate_completion_places_and_highlights_when_bid_unchanged(
+        self,
+    ):
+        queued = {}
+        bid_ref = BidRef("database", "7")
+        bid = object()
+        placement_calls = []
+        highlighted = []
+
+        class WriteService:
+            @staticmethod
+            def uses_sql_collaboration_mutations(_database_id):
+                return True
+
+            @staticmethod
+            def queue_conditions_duplicate(
+                database_id,
+                bid_uid,
+                condition_uids,
+                callback,
+                **options,
+            ):
+                queued.update(
+                    args=(database_id, bid_uid, list(condition_uids)),
+                    options=options,
+                    callback=callback,
+                )
+                return 1
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            conditions_sidebar=SimpleNamespace(window=lambda: None),
+            placement=SimpleNamespace(
+                enter=lambda *args: placement_calls.append(args),
+            ),
+            highlight_sidebar=lambda uids, reveal=True: highlighted.append(
+                (set(uids), reveal)
+            ),
+            flush_deferred_for_file=lambda _file_path: True,
+            _is_takeoff_2d_view_active=lambda: True,
+            present_queued_mutation_error=lambda *_args, **_kwargs: None,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(get_bid=lambda _ref: bid),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            workspace_state_model=make_workspace_state_model(),
+        )
+        handler.on_duplicate_requested(["c1"])
+        self.assertEqual(queued["args"], ("database", "7", ["c1"]))
+        self.assertEqual(queued["options"], {})
+        self.assertEqual(placement_calls, [])
+        queued["callback"](
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id="00000000-0000-0000-0000-000000000111",
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("c1-copy",),
+                ),
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(placement_calls, [("c1-copy", ["c1-copy"])])
+        self.assertEqual(highlighted, [({"c1-copy"}, False)])
+        self.assertEqual(handler._pending_sql_operations, set())
+
     def test_sql_condition_duplicate_completion_rejects_same_uid_bid_replacement(self):
         queued = {}
         bid_ref = BidRef("database", "7")
@@ -829,56 +1060,78 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(placement_calls, [])
 
     def test_sql_condition_update_followups_reject_same_uid_bid_replacement(self):
-        callbacks = []
-        bid_ref = BidRef("database", "7")
-        current_bid = [object()]
-        highlighted = []
+        for replaced in (False, True):
+            with self.subTest(replaced=replaced):
+                queued = []
+                callbacks = []
+                bid_ref = BidRef("database", "7")
+                current_bid = [object()]
+                highlighted = []
 
-        class WriteService:
-            @staticmethod
-            def uses_sql_collaboration_mutations(_database_id):
-                return True
+                class WriteService:
+                    @staticmethod
+                    def uses_sql_collaboration_mutations(_database_id):
+                        return True
 
-            @staticmethod
-            def queue_conditions_update(*args):
-                callbacks.append(args[-1])
-                return len(callbacks)
+                    @staticmethod
+                    def queue_conditions_update(*args):
+                        queued.append(args[:-1])
+                        callbacks.append(args[-1])
+                        return len(callbacks)
 
-        sidebar = SimpleNamespace(
-            set_pending_condition_selection=lambda _uid: None,
-        )
-        coordinator = SimpleNamespace(
-            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
-            conditions_sidebar=sidebar,
-            flush_deferred_for_file=lambda _file_path: True,
-            highlight_sidebar=lambda uids: highlighted.append(set(uids)),
-            present_queued_mutation_error=lambda *_args, **_kwargs: None,
-        )
-        handler = ConditionActionHandler(
-            coordinator=coordinator,
-            project_write_service=WriteService(),
-            project_read_service=None,
-            project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
-            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
-            workspace_state_model=make_workspace_state_model(),
-        )
-        handler.on_condition_renamed("c1", "Renamed")
-        handler.on_move_condition_to_folder("c2", "folder-1")
-        handler.on_condition_layer_change_requested(["c3"], "layer-1")
-        current_bid[0] = object()
-        for index, callback in enumerate(callbacks, start=1):
-            callback(
-                QueuedMutationResult(
-                    database_id="database",
-                    runtime_generation=1,
-                    operation_id=f"00000000-0000-0000-0000-{index:012d}",
-                    outcome_status=MutationOutcomeStatus.COMMITTED,
-                    commit_attempted=True,
+                sidebar = SimpleNamespace(
+                    set_pending_condition_selection=lambda _uid: None,
                 )
-            )
-        self.assertEqual(highlighted, [])
+                coordinator = SimpleNamespace(
+                    ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+                    conditions_sidebar=sidebar,
+                    flush_deferred_for_file=lambda _file_path: True,
+                    highlight_sidebar=lambda uids: highlighted.append(set(uids)),
+                    present_queued_mutation_error=lambda *_args, **_kwargs: None,
+                )
+                handler = ConditionActionHandler(
+                    coordinator=coordinator,
+                    project_write_service=WriteService(),
+                    project_read_service=None,
+                    project_data=SimpleNamespace(get_bid=lambda _ref: current_bid[0]),
+                    ui_state_manager=SimpleNamespace(
+                        get_selected_bid_ref=lambda: bid_ref
+                    ),
+                    workspace_state_model=make_workspace_state_model(),
+                )
+                handler.on_condition_renamed("c1", "Renamed")
+                handler.on_move_condition_to_folder("c2", "folder-1")
+                handler.on_condition_layer_change_requested(["c3"], "layer-1")
+                self.assertEqual(
+                    queued,
+                    [
+                        ("database", "7", ["c1"], {"name": "Renamed"}),
+                        ("database", "7", ["c2"], {"folder_uid": "folder-1"}),
+                        ("database", "7", ["c3"], {"layer_uid": "layer-1"}),
+                    ],
+                )
+                if replaced:
+                    current_bid[0] = object()
+                for index, callback in enumerate(callbacks, start=1):
+                    callback(
+                        QueuedMutationResult(
+                            database_id="database",
+                            runtime_generation=1,
+                            operation_id=f"00000000-0000-0000-0000-{index:012d}",
+                            outcome_status=MutationOutcomeStatus.COMMITTED,
+                            commit_attempted=True,
+                        )
+                    )
+                self.assertEqual(
+                    highlighted, [] if replaced else [{"c1"}, {"c2"}, {"c3"}]
+                )
 
     def test_sql_folder_create_completion_rejects_same_uid_bid_replacement(self):
+        for replaced in (False, True):
+            with self.subTest(replaced=replaced):
+                self._assert_sql_folder_create_completion(replaced=replaced)
+
+    def _assert_sql_folder_create_completion(self, *, replaced):
         queued = {}
         bid_ref = BidRef("database", "7")
         original_bid = object()
@@ -902,6 +1155,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 parent_uid,
                 callback,
             ):
+                queued["args"] = (database_id, bid_uid, name, parent_uid)
                 queued["callback"] = callback
                 return 1
 
@@ -920,7 +1174,9 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             workspace_state_model=make_workspace_state_model(),
         )
         handler.on_create_folder_requested("")
-        current_bid[0] = object()
+        self.assertEqual(queued["args"], ("database", "7", "New Folder", None))
+        if replaced:
+            current_bid[0] = object()
         queued["callback"](
             QueuedMutationResult(
                 database_id="database",
@@ -933,13 +1189,19 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 commit_attempted=True,
             )
         )
-        self.assertEqual(pending_edits, [])
+        self.assertEqual(pending_edits, [] if replaced else ["folder-new"])
 
     def test_sql_condition_delete_completion_rejects_same_uid_bid_replacement(self):
+        for replaced in (False, True):
+            with self.subTest(replaced=replaced):
+                self._assert_sql_delete_completion(replaced=replaced)
+
+    def _assert_sql_delete_completion(self, *, replaced):
         queued = {}
         bid_ref = BidRef("database", "7")
         current_bid = [object()]
         placement_exits = []
+        highlighted = []
         conditions = {"c1": Condition(uid="c1", name="Condition")}
         sidebar = SimpleNamespace(
             get_condition_name=lambda _uid: "Condition",
@@ -966,7 +1228,9 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 force_exit=lambda: placement_exits.append(True),
             ),
             ensure_select_mode=lambda: None,
-            highlight_sidebar=lambda *_args, **_kwargs: None,
+            highlight_sidebar=lambda uids, reveal=True: highlighted.append(
+                (set(uids), reveal)
+            ),
             flush_deferred_for_file=lambda _file_path: True,
             present_queued_mutation_error=lambda *_args, **_kwargs: None,
         )
@@ -987,7 +1251,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             return_value=["c1"],
         ):
             handler.on_delete_requested(["c1"])
-        current_bid[0] = object()
+        if replaced:
+            current_bid[0] = object()
         queued["callback"](
             QueuedMutationResult(
                 database_id="database",
@@ -997,7 +1262,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 commit_attempted=True,
             )
         )
-        self.assertEqual(placement_exits, [])
+        self.assertEqual(placement_exits, [] if replaced else [True])
+        self.assertEqual(highlighted, [] if replaced else [({"c2"}, False)])
 
     def test_sql_condition_cut_clipboard_clears_only_after_committed_move(self):
         callbacks = []
@@ -1022,6 +1288,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 callbacks.append(callback)
                 return len(callbacks)
 
+        errors = []
         sidebar = SimpleNamespace(
             complete_cut_paste=lambda uids, revision: completed.append(
                 (list(uids), revision)
@@ -1033,7 +1300,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             conditions_sidebar=sidebar,
             flush_deferred_for_file=lambda _file_path: True,
             highlight_sidebar=lambda uids: highlighted.append(set(uids)),
-            present_queued_mutation_error=lambda *_args: None,
+            present_queued_mutation_error=lambda *args: errors.append(args),
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,
@@ -1050,16 +1317,18 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             "clipboard_revision": 3,
         }
         handler.on_paste_requested(["c1"], target)
-        callbacks[0](
-            QueuedMutationResult(
-                database_id="database",
-                runtime_generation=1,
-                operation_id="00000000-0000-0000-0000-000000000201",
-                outcome_status=MutationOutcomeStatus.REJECTED,
-                commit_attempted=False,
-            )
+        rejected = QueuedMutationResult(
+            database_id="database",
+            runtime_generation=1,
+            operation_id="00000000-0000-0000-0000-000000000201",
+            outcome_status=MutationOutcomeStatus.REJECTED,
+            commit_attempted=False,
         )
+        callbacks[0](rejected)
         self.assertEqual(completed, [])
+        self.assertEqual(highlighted, [])
+        self.assertEqual(errors, [("database", "Move Conditions", rejected)])
+        self.assertEqual(handler._pending_sql_operations, set())
         handler.on_paste_requested(["c1"], target)
         current_bid[0] = object()
         callbacks[1](
@@ -1085,6 +1354,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(completed, [(["c1"], 3)])
         self.assertEqual(highlighted, [{"c1"}])
+        self.assertEqual(len(errors), 1)
 
     def test_condition_tree_inline_rename_projects_authoritative_result(self):
         app = _app()
@@ -1221,6 +1491,29 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                             len(writes),
                             0 if outcome in ("escape", "flush_rejected") else 1,
                         )
+                        if writes and outcome.startswith("sql_"):
+                            self.assertEqual(
+                                writes[0],
+                                (
+                                    (
+                                        "db.mdb",
+                                        "bid-1",
+                                        ["c1"],
+                                        {"name": "Requested name"},
+                                    )
+                                    if kind == "condition"
+                                    else ("db.mdb", "bid-1", "f1", "Requested name")
+                                ),
+                            )
+                        elif writes and kind == "condition":
+                            self.assertEqual(writes[0][:3], ("db.mdb", "bid-1", "c1"))
+                            self.assertEqual(
+                                writes[0][3].get_changes(), {"name": "Requested name"}
+                            )
+                        elif writes:
+                            self.assertEqual(
+                                writes[0], ("db.mdb", "f1", "Requested name")
+                            )
                         self.assertEqual(len(errors), int(outcome == "sql_rejected"))
                         self.assertEqual(
                             conditions["c1"].name,
@@ -1259,6 +1552,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
         refreshes = []
         highlights = []
+        executed = []
 
         class Access:
             def is_allowed(self, feature):
@@ -1392,16 +1686,44 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             Dialog,
         ), patch(
             "ost_visualizer.presentation.handlers.condition_action_handler.exec_with_ost_blocking",
-            lambda _dialog, _event_bus: QtWidgets.QDialog.DialogCode.Rejected,
+            lambda dialog, _event_bus: (
+                executed.append(dialog) or QtWidgets.QDialog.DialogCode.Rejected
+            ),
         ):
             handler.on_edit_requested(["c1"])
+        self.assertEqual(len(executed), 1)
+        self.assertIsInstance(executed[0], Dialog)
         self.assertEqual(refreshes, [])
         self.assertEqual(highlights, [])
 
     def test_condition_properties_rejected_save_preserves_active_takeoff_tool(self):
+        outcome = self._run_condition_properties_save(
+            UpdateConditionResultDto(success=False, error="Rejected")
+        )
+        self.assertFalse(outcome["result"].success)
+        self.assertEqual(outcome["result"].error, "Rejected")
+        self.assertEqual(len(outcome["save_calls"]), 1)
+        self.assertEqual(outcome["save_calls"][0][:3], ("db.mdb", "bid-1", "c1"))
+        self.assertTrue(outcome["placement"].is_active)
+        self.assertEqual(outcome["highlights"], [])
+        self.assertEqual(outcome["refreshes"], [])
+
+    def test_condition_properties_accepted_save_highlights_and_refreshes_dialog(self):
+        outcome = self._run_condition_properties_save(
+            UpdateConditionResultDto(success=True)
+        )
+        self.assertTrue(outcome["result"].success)
+        self.assertEqual(len(outcome["save_calls"]), 1)
+        self.assertEqual(outcome["highlights"], [{"c1"}])
+        self.assertEqual(outcome["refreshes"], [{"c1": outcome["condition"]}])
+        self.assertTrue(outcome["placement"].is_active)
+
+    def _run_condition_properties_save(self, update_result):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
         save_calls = []
         highlights = []
+        refreshes = []
+        results = []
 
         class Access:
             @staticmethod
@@ -1461,6 +1783,10 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 self.save_fn = save_fn
 
             @staticmethod
+            def refresh_condition_data(conditions):
+                refreshes.append(dict(conditions))
+
+            @staticmethod
             def deleteLater():
                 pass
 
@@ -1494,10 +1820,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
         write_service = SimpleNamespace(
             uses_sql_collaboration_mutations=lambda _database_id: False,
-            update_condition=lambda *_args: (
-                save_calls.append(True)
-                or UpdateConditionResultDto(success=False, error="Rejected")
-            ),
+            update_condition=lambda *args: save_calls.append(args) or update_result,
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,
@@ -1514,7 +1837,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             result = dialog.save_fn(
                 "c1", UpdateConditionDto({"name": "Condition 1 edited"})
             )
-            self.assertFalse(result.success)
+            results.append(result)
             return QtWidgets.QDialog.DialogCode.Rejected
 
         with patch(
@@ -1525,11 +1848,49 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             execute,
         ):
             handler.on_edit_requested(["c1"])
-        self.assertEqual(save_calls, [True])
-        self.assertTrue(placement.is_active)
-        self.assertEqual(highlights, [])
+        self.assertEqual(len(results), 1)
+        return {
+            "result": results[0],
+            "save_calls": save_calls,
+            "highlights": highlights,
+            "refreshes": refreshes,
+            "placement": placement,
+            "condition": condition,
+        }
 
     def test_sql_condition_editor_save_transfers_and_reacquires_its_lease(self):
+        run = self._run_sql_condition_editor_save(MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(run["lease_requests"], [run["expected_resources"]] * 2)
+        self.assertEqual(
+            run["queued"][0][:4], ("database", "7", ["c2"], {"name": "Renamed"})
+        )
+        self.assertEqual(run["queued"][0][4].draft_id, "draft-1")
+        self.assertEqual([result.success for result in run["completions"]], [True])
+        self.assertEqual(
+            [handle.draft_id for handle in run["ended_leases"]], ["draft-2"]
+        )
+        self.assertEqual(run["errors"], [])
+
+    def test_sql_condition_editor_rejected_save_reports_error_and_reacquires_lease(
+        self,
+    ):
+        run = self._run_sql_condition_editor_save(MutationOutcomeStatus.REJECTED)
+        self.assertEqual(run["lease_requests"], [run["expected_resources"]] * 2)
+        self.assertEqual(
+            run["queued"][0][:4], ("database", "7", ["c2"], {"name": "Renamed"})
+        )
+        self.assertEqual(len(run["completions"]), 1)
+        completion = run["completions"][0]
+        self.assertFalse(completion.success)
+        self.assertEqual(completion.error, "Failed to save condition.")
+        self.assertTrue(completion.error_presented)
+        self.assertEqual(len(run["errors"]), 1)
+        self.assertEqual(run["errors"][0][:2], ("database", "Save Condition"))
+        self.assertEqual(
+            [handle.draft_id for handle in run["ended_leases"]], ["draft-2"]
+        )
+
+    def _run_sql_condition_editor_save(self, outcome):
         conditions = {
             "c1": Condition(uid="c1", name="Condition 1", ref_no=1),
             "c2": Condition(uid="c2", name="Condition 2", ref_no=2),
@@ -1538,6 +1899,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         ended_leases = []
         queued = []
         completions = []
+        errors = []
 
         class Access:
             @staticmethod
@@ -1621,8 +1983,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                         database_id=database_id,
                         runtime_generation=1,
                         operation_id="00000000-0000-0000-0000-000000000001",
-                        outcome_status=MutationOutcomeStatus.COMMITTED,
-                        commit_attempted=True,
+                        outcome_status=outcome,
+                        commit_attempted=outcome == MutationOutcomeStatus.COMMITTED,
                     )
                 )
                 return 1
@@ -1663,7 +2025,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             flush_deferred_for_file=lambda _file_path: True,
             request_collaboration_edit=request_collaboration_edit,
             end_collaboration_edit=ended_leases.append,
-            present_queued_mutation_error=lambda *_args: None,
+            present_queued_mutation_error=lambda *args: errors.append(args),
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,
@@ -1695,13 +2057,30 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             ResourceRef("condition", "c1", 7),
             ResourceRef("condition", "c2", 7),
         )
-        self.assertEqual(lease_requests, [expected_resources, expected_resources])
-        self.assertEqual(queued[0][:4], ("database", "7", ["c2"], {"name": "Renamed"}))
-        self.assertEqual(queued[0][4].draft_id, "draft-1")
-        self.assertEqual([result.success for result in completions], [True])
-        self.assertEqual([handle.draft_id for handle in ended_leases], ["draft-2"])
+        return {
+            "expected_resources": expected_resources,
+            "lease_requests": lease_requests,
+            "queued": queued,
+            "completions": completions,
+            "ended_leases": ended_leases,
+            "errors": errors,
+        }
 
     def test_delayed_condition_editor_lease_does_not_open_after_bid_switch(self):
+        executions, ended_leases, handle = self._run_delayed_condition_editor_lease(
+            switch_bid=True
+        )
+        self.assertEqual(executions, [])
+        self.assertEqual(ended_leases, [handle])
+
+    def test_delayed_condition_editor_lease_opens_when_bid_unchanged(self):
+        executions, ended_leases, handle = self._run_delayed_condition_editor_lease(
+            switch_bid=False
+        )
+        self.assertEqual(executions, [True])
+        self.assertEqual(ended_leases, [handle])
+
+    def _run_delayed_condition_editor_lease(self, *, switch_bid):
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
         bid_ref = BidRef("database", "1")
         selected_bid_ref = [bid_ref]
@@ -1816,7 +2195,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         ):
             handler.on_edit_requested(["c1"])
             self.assertEqual(len(lease_callbacks), 1)
-            selected_bid_ref[0] = BidRef("database", "2")
+            if switch_bid:
+                selected_bid_ref[0] = BidRef("database", "2")
             handle = EditLeaseHandle(
                 database_id="database",
                 draft_id="late-condition-edit",
@@ -1826,10 +2206,29 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 resources=(ResourceRef("condition", "c1", 1),),
             )
             lease_callbacks[0](EditLeaseResult(True, handle=handle))
-        self.assertEqual(executions, [])
-        self.assertEqual(ended_leases, [handle])
+        return executions, ended_leases, handle
 
     def test_open_condition_editor_rejects_same_uid_condition_replacement(self):
+        save_results, writes = self._run_open_condition_editor_save(
+            replace_condition=True
+        )
+        self.assertFalse(save_results[0].success)
+        self.assertEqual(
+            save_results[0].error,
+            "The active bid or edit access changed.",
+        )
+        self.assertEqual(writes, [])
+
+    def test_open_condition_editor_saves_when_condition_family_is_unchanged(self):
+        save_results, writes = self._run_open_condition_editor_save(
+            replace_condition=False
+        )
+        self.assertTrue(save_results[0].success)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][:3], ("database", "1", "c1"))
+        self.assertEqual(writes[0][3].get_changes(), {"name": "Edited"})
+
+    def _run_open_condition_editor_save(self, *, replace_condition):
         original = Condition(uid="c1", name="Original", ref_no=1)
         conditions = [{"c1": original}]
         writes = []
@@ -1913,7 +2312,10 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
 
         def execute(dialog, _event_bus):
-            conditions[0] = {"c1": Condition(uid="c1", name="Replacement", ref_no=1)}
+            if replace_condition:
+                conditions[0] = {
+                    "c1": Condition(uid="c1", name="Replacement", ref_no=1)
+                }
             save_results.append(
                 dialog.save_fn("c1", UpdateConditionDto({"name": "Edited"}))
             )
@@ -1933,14 +2335,37 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             lambda _dialog: None,
         ):
             handler.on_edit_requested(["c1"])
-        self.assertFalse(save_results[0].success)
-        self.assertEqual(writes, [])
+        return save_results, writes
 
     def test_create_condition_dialog_rejects_same_uid_bid_replacement(self):
+        save_results, writes, highlighted = self._run_create_condition_dialog_save(
+            replace_bid=True
+        )
+        self.assertFalse(save_results[0].success)
+        self.assertEqual(
+            save_results[0].error, "The active bid or edit access changed."
+        )
+        self.assertEqual(writes, [])
+        self.assertEqual(highlighted, [])
+
+    def test_create_condition_dialog_saves_and_highlights_when_bid_unchanged(self):
+        save_results, writes, highlighted = self._run_create_condition_dialog_save(
+            replace_bid=False
+        )
+        self.assertTrue(save_results[0].success)
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][:2], ("database", "1"))
+        self.assertEqual(writes[0][2].name, "New Condition")
+        self.assertIsNone(writes[0][2].folder_uid)
+        self.assertEqual(highlighted, [{"new-condition"}])
+
+    def _run_create_condition_dialog_save(self, *, replace_bid):
         bid_ref = BidRef("database", "1")
         current_bid = [SimpleNamespace(measure_base=0)]
         writes = []
         save_results = []
+        highlighted = []
+        conditions = {}
 
         class Sidebar(QtCore.QObject):
             @staticmethod
@@ -1960,9 +2385,20 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             def deleteLater():
                 pass
 
+        def create_condition(*args):
+            writes.append(args)
+            conditions["new-condition"] = Condition(uid="new-condition", name="New")
+            return SimpleNamespace(
+                write_success=True,
+                value="new-condition",
+                refresh_failed=False,
+                projection=None,
+            )
+
         project_data = SimpleNamespace(
             get_bid=lambda _bid_ref: current_bid[0],
             get_current_bid=lambda: current_bid[0],
+            get_bid_conditions=lambda: conditions,
         )
         coordinator = SimpleNamespace(
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
@@ -1970,20 +2406,13 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             main_window=SimpleNamespace(icon_provider=None),
             event_bus=EventBus(),
             flush_deferred_for_file=lambda _file_path: True,
-            highlight_sidebar=lambda *_args, **_kwargs: None,
+            highlight_sidebar=lambda uids: highlighted.append(set(uids)),
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,
             project_write_service=SimpleNamespace(
                 uses_sql_collaboration_mutations=lambda _database_id: False,
-                create_condition_result=lambda *args: (
-                    writes.append(args)
-                    or SimpleNamespace(
-                        write_success=True,
-                        value="new-condition",
-                        refresh_failed=False,
-                    )
-                ),
+                create_condition_result=create_condition,
             ),
             project_read_service=SimpleNamespace(
                 get_cdn_types=lambda _file_path: {},
@@ -1995,7 +2424,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
 
         def execute(dialog, _event_bus):
-            current_bid[0] = SimpleNamespace(measure_base=0)
+            if replace_bid:
+                current_bid[0] = SimpleNamespace(measure_base=0)
             save_results.append(
                 dialog.save_fn("__new__", UpdateConditionDto({"name": "New Condition"}))
             )
@@ -2015,12 +2445,25 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             lambda _dialog: None,
         ):
             handler.on_create_requested("")
-        self.assertFalse(save_results[0].success)
-        self.assertEqual(writes, [])
+        return save_results, writes, highlighted
 
     def test_create_condition_in_folder_highlights_after_own_family_reconstruction(
         self,
     ):
+        save_results, highlighted = self._run_create_condition_in_folder(
+            changed_folder=False
+        )
+        self.assertTrue(save_results[0].success)
+        self.assertEqual(highlighted, [{"new-condition"}])
+
+    def test_create_condition_in_folder_does_not_highlight_after_folder_changed(self):
+        save_results, highlighted = self._run_create_condition_in_folder(
+            changed_folder=True
+        )
+        self.assertTrue(save_results[0].success)
+        self.assertEqual(highlighted, [])
+
+    def _run_create_condition_in_folder(self, *, changed_folder):
         bid_ref = BidRef("database", "1")
         bid_owner = SimpleNamespace(measure_base=0)
         folders = [{"f1": BidConditionFolder(uid="f1", name="Folder")}]
@@ -2047,7 +2490,14 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
                 pass
 
         def create_condition(*_args):
-            folders[0] = {uid: replace(folder) for uid, folder in folders[0].items()}
+            folders[0] = {
+                uid: (
+                    replace(folder, name="Changed")
+                    if changed_folder
+                    else replace(folder)
+                )
+                for uid, folder in folders[0].items()
+            }
             conditions["new-condition"] = Condition(uid="new-condition", name="New")
             return SimpleNamespace(
                 write_success=True,
@@ -2105,14 +2555,29 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             lambda _dialog: None,
         ):
             handler.on_create_requested("f1")
-        self.assertTrue(save_results[0].success)
-        self.assertEqual(highlighted, [{"new-condition"}])
+        return save_results, highlighted
 
     def test_condition_delete_confirmation_rejects_same_uid_replacement(self):
+        self.assertEqual(self._run_condition_delete_confirmation(replace=True), [])
+
+    def test_condition_delete_confirmation_rejects_bid_switch(self):
+        self.assertEqual(
+            self._run_condition_delete_confirmation(replace=False, switch_bid=True),
+            [],
+        )
+
+    def test_condition_delete_confirmation_deletes_unreplaced_condition(self):
+        self.assertEqual(
+            self._run_condition_delete_confirmation(replace=False),
+            [("database", "1", ["c1"])],
+        )
+
+    def _run_condition_delete_confirmation(self, *, replace, switch_bid=False):
         original = Condition(uid="c1", name="Original", ref_no=1)
         conditions = [{"c1": original}]
         writes = []
         bid_ref = BidRef("database", "1")
+        selected_bid_ref = [bid_ref]
         sidebar = SimpleNamespace(
             get_condition_name=lambda uid: conditions[0][uid].name,
             window=lambda: None,
@@ -2136,12 +2601,19 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             project_data=SimpleNamespace(
                 get_bid_conditions=lambda: conditions[0],
             ),
-            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: selected_bid_ref[0]
+            ),
             workspace_state_model=make_workspace_state_model(),
         )
 
         def replace_during_confirmation(_parent, _names):
-            conditions[0] = {"c1": Condition(uid="c1", name="Replacement", ref_no=1)}
+            if replace:
+                conditions[0] = {
+                    "c1": Condition(uid="c1", name="Replacement", ref_no=1)
+                }
+            if switch_bid:
+                selected_bid_ref[0] = BidRef("database", "2")
             return ["c1"]
 
         with patch(
@@ -2150,9 +2622,20 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             replace_during_confirmation,
         ):
             handler.on_delete_requested(["c1"])
-        self.assertEqual(writes, [])
+        return writes
 
     def test_condition_folder_delete_confirmation_rejects_same_uid_replacement(self):
+        self.assertEqual(
+            self._run_condition_folder_delete_confirmation(replace=True), []
+        )
+
+    def test_condition_folder_delete_confirmation_deletes_unreplaced_folder(self):
+        self.assertEqual(
+            self._run_condition_folder_delete_confirmation(replace=False),
+            [("database", "1", ["f1"])],
+        )
+
+    def _run_condition_folder_delete_confirmation(self, *, replace):
         folders = [{"f1": BidConditionFolder(uid="f1", name="Original")}]
         writes = []
         bid_ref = BidRef("database", "1")
@@ -2182,7 +2665,8 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
 
         def replace_during_confirmation(*_args, **_kwargs):
-            folders[0] = {"f1": BidConditionFolder(uid="f1", name="Replacement")}
+            if replace:
+                folders[0] = {"f1": BidConditionFolder(uid="f1", name="Replacement")}
             return [("Original", "f1")]
 
         with patch(
@@ -2191,9 +2675,18 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             replace_during_confirmation,
         ):
             handler.on_folder_delete_requested(["f1"])
-        self.assertEqual(writes, [])
+        return writes
 
     def test_condition_renumber_confirmation_rejects_same_uid_replacement(self):
+        self.assertEqual(self._run_condition_renumber_confirmation(replace=True), [])
+
+    def test_condition_renumber_confirmation_renumbers_unreplaced_conditions(self):
+        self.assertEqual(
+            self._run_condition_renumber_confirmation(replace=False),
+            [("database", "1", ["c1"])],
+        )
+
+    def _run_condition_renumber_confirmation(self, *, replace):
         conditions = [{"c1": Condition(uid="c1", name="Original", ref_no=1)}]
         writes = []
         bid_ref = BidRef("database", "1")
@@ -2221,7 +2714,10 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         )
 
         def replace_during_confirmation(*_args, **_kwargs):
-            conditions[0] = {"c1": Condition(uid="c1", name="Replacement", ref_no=1)}
+            if replace:
+                conditions[0] = {
+                    "c1": Condition(uid="c1", name="Replacement", ref_no=1)
+                }
             return True
 
         with patch(
@@ -2229,7 +2725,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
             replace_during_confirmation,
         ):
             handler.on_renumber_requested()
-        self.assertEqual(writes, [])
+        return writes
 
 
 class BidLockPermissionTests(unittest.TestCase):
@@ -2340,6 +2836,88 @@ class BidLockPermissionTests(unittest.TestCase):
             ],
         )
 
+    def test_batch_condition_field_update_skips_failed_rows_and_warns_on_reload_failure(
+        self,
+    ):
+        for label, failing, reload_ok, expected_reload, expected_warnings in (
+            ("one row fails", {"cond-1"}, True, ["cond-2"], 0),
+            ("every row fails", {"cond-1", "cond-2"}, True, None, 0),
+            ("reload fails", set(), False, ["cond-1", "cond-2"], 1),
+        ):
+            with self.subTest(label):
+                highlighted = []
+                warnings = []
+
+                class WriteService(_permissions__ConditionStructureWriteService):
+                    def update_condition(
+                        self, db_path, bid_uid, condition_uid, *args, **kw
+                    ):
+                        super().update_condition(
+                            db_path, bid_uid, condition_uid, *args, **kw
+                        )
+                        return SimpleNamespace(
+                            success=condition_uid not in failing, error="Rejected"
+                        )
+
+                    def reload_conditions_and_notify(self, *args):
+                        super().reload_conditions_and_notify(*args)
+                        return reload_ok
+
+                write_service = WriteService()
+                coordinator = SimpleNamespace(
+                    ui_access_manager=_permissions__FakeAccess(
+                        {Feature.EDIT_CONDITION}
+                    ),
+                    conditions_sidebar=SimpleNamespace(window=lambda: None),
+                    highlight_sidebar=lambda uids: highlighted.append(set(uids)),
+                    flush_deferred_for_file=lambda _file_path: True,
+                )
+                handler = ConditionActionHandler(
+                    coordinator=coordinator,
+                    project_write_service=write_service,
+                    project_read_service=None,
+                    project_data=SimpleNamespace(),
+                    ui_state_manager=SimpleNamespace(
+                        get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+                    ),
+                    workspace_state_model=make_workspace_state_model(),
+                )
+                with patch(
+                    "ost_visualizer.presentation.handlers.condition_action_handler."
+                    "show_warning",
+                    lambda *args: warnings.append(args),
+                ), patch(
+                    "ost_visualizer.presentation.handlers.condition_action_handler."
+                    "logger"
+                ) as handler_logger:
+                    handler.on_condition_type_change_requested(
+                        ["cond-1", "cond-2"], "type-1"
+                    )
+                self.assertEqual(handler_logger.warning.call_count, len(failing))
+                self.assertEqual(len(write_service.condition_updates), 2)
+                self.assertEqual(
+                    [call[3].get_changes() for call in write_service.condition_updates],
+                    [{"cdn_type_uid": "type-1"}] * 2,
+                )
+                self.assertEqual(
+                    [reload[:4] for reload in write_service.reloads],
+                    (
+                        []
+                        if expected_reload is None
+                        else [("db.mdb", "bid-1", expected_reload, ["cdn_type_uid"])]
+                    ),
+                )
+                self.assertEqual(len(warnings), expected_warnings)
+                if expected_warnings:
+                    self.assertEqual(warnings[0][1], "Refresh Error")
+                    self.assertIn("The condition was updated", warnings[0][2])
+                    self.assertEqual(highlighted, [])
+                else:
+                    self.assertEqual(
+                        highlighted,
+                        [] if expected_reload is None else [set(expected_reload)],
+                    )
+
     def test_condition_duplicate_refresh_failure_warns_without_placement(self):
         warnings = []
         access = _permissions__FakeAccess({Feature.DUPLICATE_CONDITION})
@@ -2377,6 +2955,8 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(write_service.calls, [("db.mdb", "bid-1", ["condition-1"])])
         self.assertEqual(placement.entered, [])
         self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0][:2], (None, "Refresh Error"))
+        self.assertIn("The condition was duplicated", warnings[0][2])
         self.assertIn("could not be refreshed", warnings[0][2])
 
     def test_condition_folder_delete_handler_uses_shared_validation(self):
@@ -2428,6 +3008,8 @@ class BidLockPermissionTests(unittest.TestCase):
             handler.on_folder_delete_requested(["folder-1"])
         self.assertEqual(validate_calls, [("db.mdb", "bid-1", ["folder-1"])])
         self.assertEqual(delete_calls, [])
+        self.assertEqual(confirm_delete.call_args.args[1], "Delete Folder")
+        self.assertEqual(confirm_delete.call_args.args[2], [("Folder 1", "folder-1")])
         self.assertEqual(confirm_delete.call_args.args[3], {"folder-1"})
 
     def test_condition_dialog_layer_insert_warns_when_refresh_fails(self):
@@ -2462,6 +3044,7 @@ class BidLockPermissionTests(unittest.TestCase):
             condition_action_handler.show_warning = old_warning
         self.assertEqual(uid, "layer-new")
         self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0][:2], (None, "Refresh Error"))
         self.assertIn(
             "created, but the layer list could not be refreshed", warnings[0][2]
         )
@@ -2504,4 +3087,6 @@ class BidLockPermissionTests(unittest.TestCase):
             condition_action_handler.show_warning = old_warning
         self.assertEqual(result, {"new_condition_type": "type-new"})
         self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0][:2], (None, "Refresh Error"))
+        self.assertIn("condition type changes were saved", warnings[0][2])
         self.assertIn("could not be refreshed", warnings[0][2])

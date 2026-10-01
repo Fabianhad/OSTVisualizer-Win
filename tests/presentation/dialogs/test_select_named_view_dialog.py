@@ -1,5 +1,5 @@
 from shiboken6 import delete
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
     SelectNamedViewDialog,
 )
@@ -27,8 +27,17 @@ class SelectNamedViewDialogTests(unittest.TestCase):
                 ("nv-2", "p2", "Page B", "Lobby Wall"),
             ]
         )
+        self.addCleanup(delete, dialog)
         combo = dialog._named_view_combo
         completer = combo.completer()
+        self.assertEqual(
+            [combo.itemText(index) for index in range(combo.count())],
+            ["Office Ceiling (Page A)", "Lobby Wall (Page B)"],
+        )
+        self.assertEqual(
+            [combo.itemData(index) for index in range(combo.count())],
+            ["nv-1", "nv-2"],
+        )
         self.assertTrue(combo.isEditable())
         self.assertEqual(
             combo.insertPolicy(), QtWidgets.QComboBox.InsertPolicy.NoInsert
@@ -38,6 +47,11 @@ class SelectNamedViewDialogTests(unittest.TestCase):
             completer.caseSensitivity(), QtCore.Qt.CaseSensitivity.CaseInsensitive
         )
         self.assertEqual(completer.filterMode(), QtCore.Qt.MatchFlag.MatchContains)
+        self.assertEqual(
+            completer.completionMode(),
+            QtWidgets.QCompleter.CompletionMode.PopupCompletion,
+        )
+        self.assertTrue(combo.lineEdit().isClearButtonEnabled())
 
     def test_named_view_search_text_is_focused_and_selected(self):
         dialog = SelectNamedViewDialog(
@@ -46,12 +60,29 @@ class SelectNamedViewDialogTests(unittest.TestCase):
                 ("nv-2", "p2", "Page B", "Lobby Wall"),
             ]
         )
+        self.addCleanup(delete, dialog)
         line_edit = dialog._named_view_combo.lineEdit()
         self.assertIsNotNone(line_edit)
         self.assertTrue(line_edit.hasSelectedText())
+        self.assertEqual(line_edit.selectedText(), "Office Ceiling (Page A)")
         self.assertEqual(
             line_edit.selectedText(), dialog._named_view_combo.currentText()
         )
+        dialog.show()
+        self.app.processEvents()
+        self.assertTrue(line_edit.hasFocus())
+        self.assertEqual(line_edit.selectedText(), "Office Ceiling (Page A)")
+
+    def test_without_named_views_defaults_to_create_new(self):
+        dialog = SelectNamedViewDialog([])
+        self.addCleanup(delete, dialog)
+        self.assertTrue(dialog._new_radio.isChecked())
+        self.assertFalse(dialog._existing_radio.isEnabled())
+        self.assertFalse(dialog._named_view_combo.isEnabled())
+        dialog.accept()
+        self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+        self.assertTrue(dialog.result_data().create_new)
+        self.assertEqual(dialog.result_data().named_view_uid, "")
 
     def test_accept_uses_exact_typed_named_view_match(self):
         dialog = SelectNamedViewDialog(
@@ -60,11 +91,14 @@ class SelectNamedViewDialogTests(unittest.TestCase):
                 ("nv-2", "p2", "Page B", "Lobby Wall"),
             ]
         )
+        self.addCleanup(delete, dialog)
+        self.assertEqual(dialog._named_view_combo.currentIndex(), 0)
         dialog._named_view_combo.setEditText("lobby wall (page b)")
         dialog.accept()
         result = dialog.result_data()
         self.assertFalse(result.create_new)
         self.assertEqual(result.named_view_uid, "nv-2")
+        self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
 
     def test_accept_ignores_unmatched_typed_text(self):
         dialog = SelectNamedViewDialog(
@@ -73,6 +107,7 @@ class SelectNamedViewDialogTests(unittest.TestCase):
                 ("nv-2", "p2", "Page B", "Lobby Wall"),
             ]
         )
+        self.addCleanup(delete, dialog)
         dialog._named_view_combo.setCurrentIndex(0)
         dialog._named_view_combo.setEditText("Lobby")
         dialog.accept()
@@ -137,15 +172,52 @@ class SelectNamedViewDialogTests(unittest.TestCase):
         dialog._named_view_combo.setEditText("")
         dialog._show_current_completions()
         self.assertEqual(completer.completionPrefix(), "")
+        self.assertFalse(completer.popup().isVisible())
+
+    def test_programmatic_focus_does_not_open_popup_but_mouse_release_does(self):
+        dialog = SelectNamedViewDialog(
+            [
+                ("nv-1", "p1", "Page A", "Level 6 East"),
+                ("nv-2", "p2", "Page B", "Lobby"),
+            ]
+        )
+        self.addCleanup(delete, dialog)
+        dialog.show()
+        self.app.processEvents()
+        line_edit = dialog._named_view_combo.lineEdit()
+        completer = dialog._named_view_combo.completer()
+        dialog._named_view_combo.setEditText("Lobby")
+        completer.popup().hide()
+        programmatic_focus = QtGui.QFocusEvent(
+            QtCore.QEvent.Type.FocusIn,
+            QtCore.Qt.FocusReason.OtherFocusReason,
+        )
+        dialog.eventFilter(line_edit, programmatic_focus)
+        self.app.processEvents()
+        self.assertFalse(completer.popup().isVisible())
+        QtTest.QTest.mouseRelease(line_edit, QtCore.Qt.MouseButton.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(completer.popup().isVisible())
+        self.assertEqual(completer.completionPrefix(), "Lobby")
+        completer.popup().hide()
 
     def test_queued_completion_popup_is_dropped_after_dialog_destruction(self):
-        dialog = SelectNamedViewDialog([("nv-1", "p1", "Page A", "Level 6 East")])
         calls = []
-        dialog._show_current_completions = lambda: calls.append(True)
-        dialog._queue_show_current_completions()
-        delete(dialog)
-        self.app.processEvents()
-        self.assertEqual(calls, [])
+        with patch.object(
+            SelectNamedViewDialog,
+            "_show_current_completions",
+            lambda _dialog: calls.append(True),
+        ):
+            control = SelectNamedViewDialog([("nv-1", "p1", "Page A", "Level 6 East")])
+            self.addCleanup(delete, control)
+            control._queue_show_current_completions()
+            self.app.processEvents()
+            self.assertEqual(calls, [True])
+            dialog = SelectNamedViewDialog([("nv-1", "p1", "Page A", "Level 6 East")])
+            dialog._queue_show_current_completions()
+            delete(dialog)
+            self.app.processEvents()
+        self.assertEqual(calls, [True])
 
 
 class NamedViewPopupContinuationTests(unittest.TestCase):

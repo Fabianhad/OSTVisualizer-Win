@@ -57,6 +57,37 @@ class BaseExporterFailureTests(unittest.TestCase):
         self.assertTrue(
             _ResultExporter(None).export({}, [object()], "output.obj", **export_options)
         )
+        self.assertTrue(
+            _ResultExporter(True).export({}, [object()], "output.obj", **export_options)
+        )
+
+    def test_base_exporter_returns_false_without_writing_when_nothing_is_exportable(
+        self,
+    ):
+        exporter = _ResultExporter(True)
+        exporter._write_output = Mock(return_value=True)
+        result = exporter.export(
+            {},
+            [],
+            "output.obj",
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        self.assertFalse(result)
+        exporter._write_output.assert_not_called()
+
+    def test_base_exporter_releases_resources_after_failed_export(self):
+        exporter = _ResultExporter(False)
+        exporter.processed_mesh_cache["stale"] = object()
+        result = exporter.export(
+            {},
+            [object()],
+            "output.dxf",
+            inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
+        )
+        self.assertFalse(result)
+        self.assertIsNone(exporter.mesh_factory)
+        self.assertEqual(exporter.processed_mesh_cache, {})
+        self.assertEqual(exporter.area_holes_map, {})
 
     def test_base_exporter_does_not_hide_programming_errors(self):
         exporter = _ResultExporter(None)
@@ -68,3 +99,5 @@ class BaseExporterFailureTests(unittest.TestCase):
                 "output.obj",
                 inactive_object_color=Config.DEFAULT_INACTIVE_OBJECT_COLOR,
             )
+        exporter._write_output.assert_called_once()
+        self.assertIsNone(exporter.mesh_factory)

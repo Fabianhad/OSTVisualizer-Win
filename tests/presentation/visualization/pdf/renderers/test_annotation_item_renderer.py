@@ -5,8 +5,8 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyleOptionGraphicsItem,
 )
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QTextOption
+from PySide6.QtCore import QPointF, QRectF, Qt
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
     HighlightGraphicsItem,
@@ -15,6 +15,8 @@ import os
 import unittest
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.presentation.scene.plan_view_z_order import (
+    ANNOTATION_BODY_Z,
+    DIMENSION_LABEL_Z,
     FOREGROUND_OVERLAY_Z,
     PAGE_IMAGE_Z,
     PAGE_VISIBLE_FRAME_Z,
@@ -23,6 +25,9 @@ from ost_visualizer.presentation.scene.plan_view_z_order import (
 )
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
+)
+from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
+    ClippedTextGraphicsItem,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -114,6 +119,9 @@ class AnnotationRendererZOrderTests(unittest.TestCase):
             [("h1", highlight), ("r1", rect)], {}, "p1"
         )
         by_uid = {item.data(0): item for item, _hotlink in results}
+        self.assertEqual(sorted(by_uid), ["h1", "r1"])
+        self.assertIsInstance(by_uid["h1"], HighlightGraphicsItem)
+        self.assertEqual(by_uid["r1"].zValue(), ANNOTATION_BODY_Z)
         self.assertEqual(by_uid["h1"].zValue(), PAPER_HIGHLIGHT_Z)
         self.assertGreater(by_uid["h1"].zValue(), PAGE_VISIBLE_FRAME_Z)
         self.assertGreater(by_uid["h1"].zValue(), FOREGROUND_OVERLAY_Z)
@@ -126,12 +134,14 @@ class AnnotationRendererZOrderTests(unittest.TestCase):
             uid="h1",
             annotation_type="highlight",
             page_uid="p1",
-            position=[10.0, 10.0, 90.0, 10.0, 90.0, 90.0, 10.0, 90.0],
+            position=[30.0, 20.0, 100.0, 40.0, 90.0, 70.0, 20.0, 50.0],
             color="#ffff00",
         )
         results, _uid_to_items = renderer.create_all_annotation_items(
             [("h1", highlight)], {}, "p1"
         )
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0][0], HighlightGraphicsItem)
         self.assertEqual(results[0][0].zValue(), PAPER_HIGHLIGHT_Z)
 
 
@@ -193,6 +203,12 @@ class HighlightRenderingTests(unittest.TestCase):
         painter.end()
         self.assertEqual(image.pixelColor(40, 40), QColor("#ffff00"))
         self.assertEqual(image.pixelColor(60, 40), QColor("#000000"))
+        self.assertEqual(image.pixelColor(10, 10), QColor("#ffffff"))
+        self.assertEqual(image.pixelColor(40, 70), QColor("#ffffff"))
+        # Multiply is applied per RGB channel: yellow over mid-grey keeps R and G.
+        on_grey = self._paint_item(item, QStyle.StateFlag.State_None)
+        self.assertEqual(on_grey.pixelColor(40, 40), QColor(128, 128, 0))
+        self.assertEqual(on_grey.pixelColor(10, 10), QColor("#808080"))
 
     def test_plan_highlight_is_fill_only_with_square_ends(self):
         item = self._render_annotation(self._highlight())
@@ -246,6 +262,10 @@ class HighlightRenderingTests(unittest.TestCase):
             for index in range(path.elementCount())
         )
         self.assertEqual(move_count, 2)
+        self.assertEqual(path.boundingRect(), QRectF(10.0, 10.0, 100.0, 50.0))
+        self.assertTrue(path.contains(QPointF(30.0, 20.0)))
+        self.assertTrue(path.contains(QPointF(80.0, 50.0)))
+        self.assertFalse(path.contains(QPointF(30.0, 50.0)))
 
     def test_selection_and_hover_state_do_not_change_base_highlight_pixels(self):
         item = self._render_annotation(self._highlight())
@@ -254,6 +274,8 @@ class HighlightRenderingTests(unittest.TestCase):
             item,
             QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver,
         )
+        self.assertEqual(normal.pixelColor(40, 40), QColor(128, 128, 0))
+        self.assertEqual(normal.pixelColor(10, 10), QColor("#808080"))
         self.assertEqual(bytes(normal.constBits()), bytes(selected_hovered.constBits()))
 
     def test_regular_rectangle_keeps_existing_outline_renderer(self):
@@ -270,6 +292,10 @@ class HighlightRenderingTests(unittest.TestCase):
         self.assertEqual(item.pen().style(), Qt.PenStyle.SolidLine)
         self.assertEqual(item.pen().color(), QColor("#ff0000"))
         self.assertEqual(item.brush().color().alpha(), 0)
+        self.assertEqual(item.pen().widthF(), 3.0)
+        self.assertTrue(item.pen().isCosmetic())
+        self.assertEqual(item.zValue(), ANNOTATION_BODY_Z)
+        self.assertEqual(item.path().boundingRect(), QRectF(20.0, 20.0, 80.0, 40.0))
 
 
 class PlanOvalRendererTests(unittest.TestCase):
@@ -302,6 +328,26 @@ class PlanOvalRendererTests(unittest.TestCase):
         self.assertAlmostEqual(bounds.width(), 120.0)
         self.assertAlmostEqual(bounds.height(), 40.0)
         self.assertAlmostEqual(item.rotation(), 30.0)
+        self.assertAlmostEqual(item.transformOriginPoint().x(), 200.0)
+        self.assertAlmostEqual(item.transformOriginPoint().y(), 150.0)
+        self.assertEqual(item.pen().widthF(), 2.0)
+        self.assertEqual(item.zValue(), ANNOTATION_BODY_Z)
+
+
+def _path_elements(item):
+    path = item.path()
+    return [
+        (round(path.elementAt(i).x, 3), round(path.elementAt(i).y, 3))
+        for i in range(path.elementCount())
+    ]
+
+
+def _text_center(item):
+    origin = item.transformOriginPoint()
+    return (
+        round(item.pos().x() + origin.x(), 3),
+        round(item.pos().y() + origin.y(), 3),
+    )
 
 
 class BidDimensionAnnotationTests(unittest.TestCase):
@@ -330,6 +376,28 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(items[1].data(2), DIMENSION_LABEL_ITEM_KIND)
         self.assertEqual(items[0].path().elementCount(), 6)
         self.assertEqual(items[0].pen().widthF(), 1.0)
+        self.assertEqual(items[0].pen().color(), QColor("#ff0000"))
+        self.assertEqual(items[1].defaultTextColor(), QColor("#ff0000"))
+        self.assertEqual(items[0].zValue(), ANNOTATION_BODY_Z)
+        self.assertEqual(items[1].zValue(), DIMENSION_LABEL_Z)
+        # Line, then a 10 px end tick perpendicular to it at each end.
+        self.assertEqual(
+            _path_elements(items[0]),
+            [
+                (0.0, 0.0),
+                (255.0, 0.0),
+                (0.0, -5.0),
+                (0.0, 5.0),
+                (255.0, -5.0),
+                (255.0, 5.0),
+            ],
+        )
+        # The label is centred on the line midpoint, offset above the line.
+        self.assertEqual(_text_center(items[1]), (127.5, -6.0))
+        self.assertEqual(items[1].rotation(), 0.0)
+        self.assertTrue(
+            items[1].flags() & QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable
+        )
         self.assertEqual([item.data(0) for item in uid_to_items["d1"]], ["d1", "d1"])
 
     def test_vertical_dimension_renders_perpendicular_ticks(self):
@@ -351,6 +419,19 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertAlmostEqual(tick_start.y, tick_end.y)
         self.assertNotAlmostEqual(tick_start.x, tick_end.x)
         self.assertEqual(results[1][0].toPlainText(), "10' - 0\"")
+        self.assertEqual(
+            _path_elements(results[0][0]),
+            [
+                (0.0, 0.0),
+                (0.0, 120.0),
+                (5.0, 0.0),
+                (-5.0, 0.0),
+                (5.0, 120.0),
+                (-5.0, 120.0),
+            ],
+        )
+        self.assertEqual(_text_center(results[1][0]), (6.0, 60.0))
+        self.assertEqual(results[1][0].rotation(), 90.0)
 
     def test_angled_dimension_renders_without_crashing(self):
         renderer = AnnotationItemRenderer(OSTCoordinateSystem())
@@ -367,6 +448,21 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         self.assertEqual(len(results), 2)
         self.assertEqual(results[1][0].toPlainText(), "5' - 0\"")
+        self.assertEqual(
+            _path_elements(results[0][0]),
+            [
+                (0.0, 0.0),
+                (36.0, 48.0),
+                (4.0, -3.0),
+                (-4.0, 3.0),
+                (40.0, 45.0),
+                (32.0, 51.0),
+            ],
+        )
+        self.assertEqual(_text_center(results[1][0]), (22.8, 20.4))
+        self.assertAlmostEqual(
+            results[1][0].rotation(), math.degrees(math.atan2(48, 36))
+        )
 
     def test_missing_scale_data_is_graceful(self):
         renderer = AnnotationItemRenderer(OSTCoordinateSystem())
@@ -385,6 +481,19 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         self.assertEqual(len(results), 2)
         self.assertEqual(results[1][0].toPlainText(), "1' - 0\"")
+        # Zero scale factors fall back to a 1:1 ratio at 72 points per inch.
+        self.assertEqual(
+            _path_elements(results[0][0]),
+            [
+                (0.0, 0.0),
+                (864.0, 0.0),
+                (0.0, -5.0),
+                (0.0, 5.0),
+                (864.0, -5.0),
+                (864.0, 5.0),
+            ],
+        )
+        self.assertEqual(_text_center(results[1][0]), (432.0, -6.0))
 
     def test_bid_aline_rendering_remains_a_single_line_item(self):
         renderer = AnnotationItemRenderer(OSTCoordinateSystem())
@@ -402,6 +511,9 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0][0], QGraphicsPathItem)
         self.assertEqual(results[0][0].path().elementCount(), 2)
+        self.assertEqual(_path_elements(results[0][0]), [(0.0, 0.0), (24.0, 0.0)])
+        self.assertEqual(results[0][0].pen().widthF(), 2.0)
+        self.assertEqual(results[0][0].pen().color(), QColor("#ff0000"))
 
     def test_dimension_text_and_ticks_are_selectable_scene_items(self):
         renderer = AnnotationItemRenderer(OSTCoordinateSystem())
@@ -422,6 +534,12 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         text_item = results[1][0]
         hit_items = scene.items(text_item.mapToScene(text_item.boundingRect().center()))
         self.assertIn("d5", [item.data(0) for item in hit_items])
+        self.assertIn(text_item, hit_items)
+        line_hit_items = scene.items(QPointF(100.0, 0.0))
+        self.assertIn(results[0][0], line_hit_items)
+        tick_hit_items = scene.items(QPointF(255.0, 4.0))
+        self.assertIn(results[0][0], tick_hit_items)
+        self.assertEqual({item.data(0) for item, _link in results}, {"d5"})
 
     def test_empty_text_annotation_renders_editable_text_item(self):
         renderer = AnnotationItemRenderer(OSTCoordinateSystem())
@@ -440,6 +558,15 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertIsInstance(results[0][0], QGraphicsTextItem)
         self.assertEqual(results[0][0].toPlainText(), "")
         self.assertEqual(uid_to_items["text-1"], [results[0][0]])
+        text_item = results[0][0]
+        self.assertIsInstance(text_item, ClippedTextGraphicsItem)
+        self.assertEqual(text_item.data(0), "text-1")
+        self.assertEqual(text_item.defaultTextColor(), QColor("#336699"))
+        self.assertEqual(text_item.zValue(), ANNOTATION_BODY_Z)
+        self.assertEqual(text_item.font().family(), "Arial")
+        # The clip box keeps the stored 40 x 20 box so the empty item stays hittable.
+        self.assertEqual(text_item.clip_rect(), QRectF(0.0, 0.0, 40.0, 20.0))
+        self.assertEqual((text_item.pos().x(), text_item.pos().y()), (40.0, 70.0))
 
 
 class TextAnnotationNativeLifecycleTests(unittest.TestCase):
@@ -481,4 +608,16 @@ class TextAnnotationNativeLifecycleTests(unittest.TestCase):
             },
             "#000000",
         )
-        self.assertEqual(items[0][0].toPlainText(), content)
+        self.assertEqual(len(items), 1)
+        text_item = items[0][0]
+        self.assertEqual(text_item.toPlainText(), content)
+        document = text_item.document()
+        self.assertEqual(document.blockCount(), 3)
+        self.assertEqual(
+            document.defaultTextOption().wrapMode(),
+            QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere,
+        )
+        # The unbroken 150 character word wraps onto several lines inside the box.
+        self.assertGreater(document.firstBlock().layout().lineCount(), 1)
+        self.assertLessEqual(document.size().width(), text_item.textWidth() + 1.0)
+        self.assertEqual(text_item.clip_rect().size().toTuple(), (40.0, 100.0))

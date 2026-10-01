@@ -224,6 +224,10 @@ class SelectionManagerZOrderTests(unittest.TestCase):
         )
         selection._current_page_transform = lambda: None
         self.assertIsNone(selection.find_linear_annotation_near(QPointF(50.0, 0.0)))
+        selection._hidden_layer_uids = {"other"}
+        self.assertEqual(
+            selection.find_linear_annotation_near(QPointF(50.0, 0.0)), "line-1"
+        )
 
     def test_hidden_layer_text_annotation_is_not_hit_testable(self):
         annotation = BidAnnotation(
@@ -247,6 +251,10 @@ class SelectionManagerZOrderTests(unittest.TestCase):
         selection._hidden_layer_uids = {"hidden"}
         selection._uid_to_items = {annotation.uid: [item]}
         self.assertIsNone(selection.find_text_annotation_at(QPointF(1.0, 1.0)))
+        selection._hidden_layer_uids = {"other"}
+        self.assertEqual(
+            selection.find_text_annotation_at(QPointF(1.0, 1.0)), annotation.uid
+        )
 
     def test_hidden_layer_hotlink_annotation_is_not_hit_testable(self):
         annotation = BidAnnotation(
@@ -258,6 +266,7 @@ class SelectionManagerZOrderTests(unittest.TestCase):
         )
         scene = QGraphicsScene()
         item = QGraphicsRectItem(5.0, 5.0, 10.0, 10.0)
+        item.setData(0, annotation.uid)
         scene.addItem(item)
         link = HotlinkDto(
             uid=annotation.uid,
@@ -276,6 +285,8 @@ class SelectionManagerZOrderTests(unittest.TestCase):
         selection._hidden_layer_uids = {"hidden"}
         selection._hotlink_items = [(item, link)]
         self.assertIsNone(selection.find_hotlink_at(QPointF(10.0, 10.0)))
+        selection._hidden_layer_uids = {"other"}
+        self.assertIs(selection.find_hotlink_at(QPointF(10.0, 10.0)), link)
 
     def test_annotation_hit_order_still_prefers_lowered_highlight_over_takeoff(self):
         scene = QGraphicsScene()
@@ -300,7 +311,41 @@ class SelectionManagerZOrderTests(unittest.TestCase):
             },
             conditions={"c1": Condition(uid="c1", condition_type=Condition.TYPE_AREA)},
         )
+        self.assertEqual(harness.find_takeoffs_at(QPointF(10.0, 10.0)), ["h1", "t1"])
         self.assertEqual(harness.find_takeoff_at(QPointF(10.0, 10.0)), "h1")
+
+    def test_find_takeoffs_at_excludes_hidden_layer_and_pending_items(self):
+        scene = QGraphicsScene()
+        takeoffs = {}
+        for z_value, uid, condition_uid in (
+            (0.5, "visible", "c-visible"),
+            (0.6, "hidden", "c-hidden"),
+            (0.7, "pending", "c-visible"),
+        ):
+            item = QGraphicsRectItem(QRectF(0.0, 0.0, 20.0, 20.0))
+            item.setData(0, uid)
+            item.setZValue(z_value)
+            scene.addItem(item)
+            takeoffs[uid] = Takeoff(uid=uid, condition_uid=condition_uid)
+        harness = _SelectionHarness(
+            scene=scene,
+            takeoffs=takeoffs,
+            annotations={},
+            conditions={
+                "c-visible": Condition(
+                    uid="c-visible",
+                    condition_type=Condition.TYPE_AREA,
+                    layer_visible=True,
+                ),
+                "c-hidden": Condition(
+                    uid="c-hidden",
+                    condition_type=Condition.TYPE_AREA,
+                    layer_visible=False,
+                ),
+            },
+        )
+        harness._pending_mutation_uids = {"pending"}
+        self.assertEqual(harness.find_takeoffs_at(QPointF(10.0, 10.0)), ["visible"])
 
 
 class OvalSelectionHandleTests(unittest.TestCase):
@@ -326,6 +371,7 @@ class OvalSelectionHandleTests(unittest.TestCase):
                     150.0 + dx * math.sin(angle) + dy * math.cos(angle),
                 ]
             )
+        self.assertEqual(len(actual), len(expected))
         for actual_value, expected_value in zip(actual, expected):
             self.assertAlmostEqual(actual_value, expected_value)
 
@@ -570,8 +616,91 @@ class CtrlDragTests(unittest.TestCase):
 
     def test_area_control_point_target_ignores_non_area_takeoffs(self):
         view = self._make_area_control_point_view()
+        # A curved linear takeoff stores six values, so only the Condition type
+        # (not the vertex count) can keep it from being offered as a polygon.
+        view._current_takeoffs["linear1"].position = [
+            200.0,
+            0.0,
+            300.0,
+            0.0,
+            250.0,
+            50.0,
+        ]
         self.assertIsNone(
             view.polygon_control_point_target_at(QtCore.QPointF(250.0, 0.0))
+        )
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(200.0, 0.0))
+        )
+
+    def test_area_control_point_target_wraps_to_closing_edge(self):
+        view = self._make_area_control_point_view()
+        target = view.polygon_control_point_target_at(QtCore.QPointF(0.0, 50.0))
+        self.assertEqual(target.kind, "edge")
+        self.assertEqual(target.plan_item_uid, "area1")
+        self.assertEqual(target.edge_index, 3)
+        self.assertEqual(target.insert_point, (0.0, 50.0))
+
+    def test_area_control_point_target_vertex_and_edge_hit_boundaries(self):
+        view = self._make_area_control_point_view()
+        vertex = view.polygon_control_point_target_at(QtCore.QPointF(0.0, 7.0))
+        self.assertEqual(vertex.kind, "vertex")
+        self.assertEqual(vertex.vertex_index, 0)
+        edge = view.polygon_control_point_target_at(QtCore.QPointF(0.0, 9.0))
+        self.assertEqual(edge.kind, "edge")
+        self.assertEqual(edge.edge_index, 3)
+        self.assertEqual(edge.insert_point, (0.0, 9.0))
+        self.assertIsNotNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(50.0, 7.0))
+        )
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(50.0, 9.0))
+        )
+
+    def test_area_control_point_hit_tolerance_shrinks_with_zoom(self):
+        view = self._make_area_control_point_view()
+        view.transform = lambda: QTransform.fromScale(2.0, 2.0)
+        near = view.polygon_control_point_target_at(QtCore.QPointF(50.0, 3.0))
+        self.assertEqual(near.kind, "edge")
+        self.assertEqual(near.edge_index, 0)
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(50.0, 5.0))
+        )
+
+    def test_area_control_point_target_requires_selectable_area(self):
+        click = QtCore.QPointF(50.0, 0.0)
+        view = self._make_area_control_point_view()
+        self.assertIsNotNone(view.polygon_control_point_target_at(click))
+        view._selection_enabled = False
+        self.assertIsNone(view.polygon_control_point_target_at(click))
+        view = self._make_area_control_point_view()
+        view._pending_mutation_uids = {"area1"}
+        self.assertIsNone(view.polygon_control_point_target_at(click))
+        view = self._make_area_control_point_view()
+        view._current_conditions["area"].layer_visible = False
+        self.assertIsNone(view.polygon_control_point_target_at(click))
+
+    def test_polygon_annotation_control_point_target_excludes_rect_annotations(self):
+        view = self._make_area_control_point_view()
+        view._current_annotations = {
+            "poly1": BidAnnotation(
+                uid="poly1",
+                annotation_type=ANNOTATION_TYPE_POLYGON,
+                position=[300.0, 0.0, 400.0, 0.0, 400.0, 100.0],
+            ),
+            "rect1": BidAnnotation(
+                uid="rect1",
+                annotation_type="rect",
+                position=[500.0, 0.0, 600.0, 0.0, 600.0, 100.0, 500.0, 100.0],
+            ),
+        }
+        target = view.polygon_control_point_target_at(QtCore.QPointF(350.0, 0.0))
+        self.assertEqual(target.kind, "edge")
+        self.assertEqual(target.plan_item_uid, "poly1")
+        self.assertEqual(target.edge_index, 0)
+        self.assertEqual(target.insert_point, (350.0, 0.0))
+        self.assertIsNone(
+            view.polygon_control_point_target_at(QtCore.QPointF(550.0, 0.0))
         )
 
     def test_area_control_point_target_supports_parent_with_child_holes(self):
@@ -579,6 +708,8 @@ class CtrlDragTests(unittest.TestCase):
         target = view.polygon_control_point_target_at(QtCore.QPointF(50.0, 0.0))
         self.assertEqual(target.kind, "edge")
         self.assertEqual(target.plan_item_uid, "area1")
+        self.assertEqual(target.edge_index, 0)
+        self.assertEqual(target.insert_point, (50.0, 0.0))
 
     def test_hole_control_point_target_returns_edge_near_boundary(self):
         view = self._make_area_control_point_view(include_hole=True)
@@ -603,9 +734,30 @@ class CtrlDragTests(unittest.TestCase):
 
     def test_hole_control_point_target_rejects_missing_parent(self):
         view = self._make_area_control_point_view(include_hole=True)
+        click = QtCore.QPointF(30.0, 20.0)
+        self.assertEqual(
+            view.polygon_control_point_target_at(click).plan_item_uid, "hole1"
+        )
         view._current_takeoffs["hole1"].parent_uid = "missing-parent"
+        self.assertIsNone(view.polygon_control_point_target_at(click))
+
+    def test_hole_control_point_target_rejects_non_area_parent(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        click = QtCore.QPointF(30.0, 20.0)
+        view._current_takeoffs["hole1"].parent_uid = "linear1"
+        self.assertIsNone(view.polygon_control_point_target_at(click))
+
+    def test_hole_control_point_target_rejects_nested_hole_parent(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        view._current_takeoffs["nested"] = Takeoff(
+            uid="nested",
+            condition_uid="area",
+            page_uid="page-1",
+            parent_uid="hole1",
+            position=[28.0, 30.0, 32.0, 30.0, 30.0, 33.0],
+        )
         self.assertIsNone(
-            view.polygon_control_point_target_at(QtCore.QPointF(30.0, 20.0))
+            view.polygon_control_point_target_at(QtCore.QPointF(30.0, 30.0))
         )
 
     def _make_hotlink_view(self, *, selected: bool):
@@ -667,8 +819,12 @@ class CtrlDragTests(unittest.TestCase):
                 properties={"BidPageViewUID": "view-1"},
             )
         }
+        click = QtCore.QPointF(10.0, 10.0)
+        self.assertIs(view.find_hotlink_at(click), hotlink)
+        view._pending_mutation_uids = {"shared"}
+        self.assertIs(view.find_hotlink_at(click), hotlink)
         view._pending_mutation_uids = {"shared_hotlink"}
-        self.assertIsNone(view.find_hotlink_at(QtCore.QPointF(10.0, 10.0)))
+        self.assertIsNone(view.find_hotlink_at(click))
 
     def test_hotlink_placement_release_skips_hotlink_hit_testing(self):
         view = self._make_hotlink_view(selected=False)
@@ -733,7 +889,7 @@ class CtrlDragTests(unittest.TestCase):
             view.mouseReleaseEvent(
                 _interaction_support_FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
             )
-            self.assertEqual(len(view.hotlink_clicked.emitted), expected_clicks)
+            self.assertEqual(view.hotlink_clicked.emitted, [("h1",)] * expected_clicks)
             self.assertGreater(len(hit_test_calls), calls_before_click)
 
     def test_programmatic_sql_selection_refreshes_cursor_without_mouse_move(self):
@@ -757,9 +913,12 @@ class CtrlDragTests(unittest.TestCase):
         view._update_cursor = lambda vp_pos=None: InputHandlerMixin._update_cursor(
             view, vp_pos
         )
+        self.assertIsNone(viewport.cursor)
         SelectionManagerMixin.set_selected_uids(view, {"t1"})
+        self.assertEqual(view._selected_uids, {"t1"})
         self.assertEqual(viewport.cursor, Qt.CursorShape.SizeAllCursor)
         SelectionManagerMixin.clear_selection(view)
+        self.assertEqual(view._selected_uids, set())
         self.assertEqual(viewport.cursor, Qt.CursorShape.ArrowCursor)
 
     def _make_named_view_resize_view(self):
@@ -862,6 +1021,9 @@ class PlanViewInteractionTests(unittest.TestCase):
         self.assertNotEqual(
             outline_rect, item.mapToScene(item.boundingRect()).boundingRect()
         )
+        self.assertEqual(outline.data(0), "a1")
+        self.assertEqual(len(view._selection_items), 9)
+        self.assertEqual(len(view._handle_infos), 8)
         view.cleanup()
 
     def test_inline_text_annotation_edit_outline_uses_resize_box_bounds(self):
@@ -971,9 +1133,115 @@ class PlanViewInteractionTests(unittest.TestCase):
             item.setData(0, uid)
             view._scene.addItem(item)
             view._uid_to_items[uid] = [item]
+        applied = []
+        view.takeoff_selection_command_applied.connect(
+            lambda uids: applied.append(list(uids))
+        )
         view.select_takeoffs_in_area("area-1")
         self.assertEqual(view._selected_uids, {"visible-area"})
-        self.assertTrue(view._selection_items)
+        self.assertEqual(applied, [["visible-area"]])
+        self.assertEqual(len(view._handle_infos), 6)
+        view.cleanup()
+
+    def test_select_objects_without_area_selects_all_visible_current_page_takeoffs(
+        self,
+    ):
+        view = self._make_plan_view()
+        view._current_bid_page_uid = "page-1"
+        view._current_conditions = {
+            "visible-condition": Condition(
+                uid="visible-condition",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=True,
+            ),
+            "hidden-condition": Condition(
+                uid="hidden-condition",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=False,
+            ),
+        }
+        view._current_takeoffs = {
+            "area-1": Takeoff(
+                uid="area-1",
+                condition_uid="visible-condition",
+                page_uid="page-1",
+                area_uid="area-1",
+                position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0],
+            ),
+            "area-2": Takeoff(
+                uid="area-2",
+                condition_uid="visible-condition",
+                page_uid="page-1",
+                area_uid="area-2",
+                position=[0.0, 30.0, 20.0, 30.0, 20.0, 50.0],
+            ),
+            "hidden": Takeoff(
+                uid="hidden",
+                condition_uid="hidden-condition",
+                page_uid="page-1",
+                area_uid="area-1",
+                position=[30.0, 0.0, 50.0, 0.0, 50.0, 20.0],
+            ),
+            "other-page": Takeoff(
+                uid="other-page",
+                condition_uid="visible-condition",
+                page_uid="page-2",
+                area_uid="area-1",
+                position=[30.0, 30.0, 50.0, 30.0, 50.0, 50.0],
+            ),
+        }
+        view._current_annotations = {}
+        view._uid_to_items = {}
+        view._selection_enabled = True
+        view._cursor_mode = "select"
+        for uid in view._current_takeoffs:
+            item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+            item.setData(0, uid)
+            view._scene.addItem(item)
+            view._uid_to_items[uid] = [item]
+        view.select_takeoffs_in_area(None)
+        self.assertEqual(view._selected_uids, {"area-1", "area-2"})
+        view.cleanup()
+
+    def test_select_objects_in_area_is_ignored_when_selection_is_unavailable(self):
+        view = self._make_plan_view()
+        view._current_bid_page_uid = "page-1"
+        condition = Condition(
+            uid="area-condition",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=True,
+        )
+        view._current_conditions = {condition.uid: condition}
+        view._current_takeoffs = {
+            "area-takeoff": Takeoff(
+                uid="area-takeoff",
+                condition_uid=condition.uid,
+                page_uid="page-1",
+                area_uid="area-1",
+                position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0],
+            )
+        }
+        view._current_annotations = {}
+        item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        item.setData(0, "area-takeoff")
+        view._scene.addItem(item)
+        view._uid_to_items = {"area-takeoff": [item]}
+        applied = []
+        view.takeoff_selection_command_applied.connect(
+            lambda uids: applied.append(list(uids))
+        )
+        view._selection_enabled = True
+        view._cursor_mode = "pan"
+        view.select_takeoffs_in_area("area-1")
+        view._cursor_mode = "select"
+        view._selection_enabled = False
+        view.select_takeoffs_in_area("area-1")
+        self.assertEqual(view._selected_uids, set())
+        self.assertEqual(applied, [])
+        view._selection_enabled = True
+        view.select_takeoffs_in_area("area-1")
+        self.assertEqual(view._selected_uids, {"area-takeoff"})
+        self.assertEqual(applied, [["area-takeoff"]])
         view.cleanup()
 
     def test_select_objects_in_current_area_allows_reenabled_layer(self):
@@ -1029,14 +1297,20 @@ class PlanViewInteractionTests(unittest.TestCase):
         view._scene.addItem(item)
         view._uid_to_items = {"area": [item]}
         emitted = []
+        plan_emitted = []
         view.takeoff_selection_changed.connect(lambda uids: emitted.append(list(uids)))
+        view.plan_item_selection_changed.connect(
+            lambda uids: plan_emitted.append(list(uids))
+        )
         view.set_selected_uids({"area"})
         self.assertEqual(view._selected_uids, {"area"})
+        self.assertEqual(emitted[-1], ["area"])
         condition.layer_visible = False
         view.update_selection_visuals()
         self.assertEqual(view._selected_uids, set())
         self.assertEqual(view._selection_items, [])
         self.assertEqual(emitted[-1], [])
+        self.assertEqual(plan_emitted[-1], [])
         view.cleanup()
 
     def _add_text_annotation(

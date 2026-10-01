@@ -8,6 +8,12 @@ from ost_visualizer.presentation.scene.plan_view_z_order import (
     PAGE_VISIBLE_FRAME_Z,
     PAPER_HIGHLIGHT_Z,
     TAKEOFF_BODY_Z,
+    overlay_visual_z,
+)
+from ost_visualizer.presentation.utils.image_show_mode import (
+    SHOW_ORIGINAL,
+    SHOW_OVERLAY,
+    SHOW_BOTH,
 )
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPen
@@ -56,3 +62,25 @@ class PlanViewZOrderCompositionTests(unittest.TestCase):
         painter.end()
         self.assertEqual(image.pixelColor(50, 50).getRgb()[:3], (0, 128, 255))
         self.assertEqual(image.pixelColor(15, 15).getRgb()[:3], (255, 255, 178))
+        self.assertEqual(image.pixelColor(5, 5).getRgb()[:3], (255, 255, 255))
+        self.assertEqual(image.pixelColor(85, 85).getRgb()[:3], (255, 255, 178))
+
+    def test_documented_layer_stack_orders_paper_highlight_takeoff(self):
+        self.assertLess(PAGE_IMAGE_Z, PAGE_VISIBLE_FRAME_Z)
+        self.assertLess(PAGE_VISIBLE_FRAME_Z, PAPER_HIGHLIGHT_Z)
+        self.assertLess(PAPER_HIGHLIGHT_Z, TAKEOFF_BODY_Z)
+
+    def test_overlay_visual_z_uses_foreground_layer_only_when_showing_both(self):
+        self.assertEqual(
+            overlay_visual_z(
+                SHOW_BOTH, primary_z=PAGE_IMAGE_Z, foreground_z=FOREGROUND_OVERLAY_Z
+            ),
+            FOREGROUND_OVERLAY_Z,
+        )
+        for mode in (SHOW_ORIGINAL, SHOW_OVERLAY):
+            self.assertEqual(
+                overlay_visual_z(
+                    mode, primary_z=PAGE_IMAGE_Z, foreground_z=FOREGROUND_OVERLAY_Z
+                ),
+                PAGE_IMAGE_Z,
+            )

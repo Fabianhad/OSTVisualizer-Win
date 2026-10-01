@@ -71,6 +71,12 @@ from ost_visualizer.infrastructure.sql.collaboration_store import (
     SqlCollaborationStore,
     _change_from_row,
 )
+from ost_visualizer.infrastructure.sql.database_metadata_contract import (
+    DATABASE_METADATA_CURRENT_DATABASE_PREDICATE,
+)
+from ost_visualizer.infrastructure.sql.descriptor_connection import (
+    SqlDescriptorConnectionFactory,
+)
 from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -81,6 +87,127 @@ from tests.helpers.sql.collaboration import (
     _RemoteReader,
     _batch,
 )
+
+
+class _StoreCursor:
+    def __init__(self, fetchone=None, fetchall=None):
+        self.executions = []
+        self.last_sql = ""
+        self._fetchone = fetchone or (lambda _sql: None)
+        self._fetchall = fetchall or (lambda _sql: [])
+
+    def execute(self, sql, *parameters):
+        self.last_sql = sql
+        self.executions.append((sql, parameters))
+        return self
+
+    def fetchone(self):
+        return self._fetchone(self.last_sql)
+
+    def fetchall(self):
+        return self._fetchall(self.last_sql)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _StoreLease:
+    def __init__(self, cursor):
+        self.cursor_value = cursor
+        self.commits = 0
+        self.rollbacks = 0
+
+    def cursor(self):
+        return self.cursor_value
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+
+class _StoreConnections:
+    def __init__(self, lease):
+        self.lease = lease
+        self.autocommits = []
+
+    @contextmanager
+    def connection(self, _request, *, autocommit=False):
+        self.autocommits.append(autocommit)
+        yield self.lease
+
+
+class _StoreRequests:
+    def __init__(self, request):
+        self._request = request
+        self.calls = []
+
+    def request(self, database_id, *, read_only):
+        self.calls.append((database_id, read_only))
+        return self._request
+
+
+class _RecordingRemoteReader:
+    def __init__(self, lease):
+        self._lease = lease
+        self.hydrated = []
+
+    def hydrate_connection(self, batch, connection):
+        self.hydrated.append((batch, connection, self._lease.commits))
+        return HydratedDatabaseChangeBatch(batch)
+
+
+def _store_with(cursor, request=None, remote_reader=None):
+    lease = _StoreLease(cursor)
+    store = SqlCollaborationStore.__new__(SqlCollaborationStore)
+    store._requests = _StoreRequests(request)
+    store._connections = _StoreConnections(lease)
+    if remote_reader is not None:
+        store._remote_reader = remote_reader(lease)
+    return store, lease
+
+
+def _feed_fetchone(epoch=("epoch",), minimum=(1,), high_water=(12,)):
+    def handler(sql):
+        if "ChangeFeedState" in sql:
+            return epoch
+        if "MIN_VALID_VERSION" in sql:
+            return minimum
+        if "CHANGE_TRACKING_CURRENT_VERSION" in sql:
+            return high_water
+        raise AssertionError(sql)
+
+    return handler
+
+
+def _feed_fetchall(markers=(), log_rows=()):
+    def handler(sql):
+        if "CHANGETABLE" in sql:
+            return list(markers)
+        return list(log_rows)
+
+    return handler
+
+
+def _log_row(sequence, version, transaction_id, session_id, resource_id):
+    return (
+        sequence,
+        version,
+        transaction_id,
+        session_id,
+        8,
+        "condition",
+        resource_id,
+        "update",
+        None,
+        None,
+        None,
+        "ost_visualizer",
+    )
 
 
 class SqlSessionConnectCancellationTests(unittest.TestCase):
@@ -94,7 +221,7 @@ class SqlSessionConnectCancellationTests(unittest.TestCase):
             SqlServerDatabaseLocation(server="localhost", database="TEST")
         )
         store = SqlCollaborationStore.__new__(SqlCollaborationStore)
-        store._requests = Mock()
+        store._requests = Mock(spec=SqlDescriptorConnectionFactory)
         store._requests.request.return_value = request
         store._connections = SqlConnectionManager(
             drivers=["ODBC Driver 18 for SQL Server"]
@@ -144,6 +271,7 @@ class SqlSessionConnectCancellationTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             self.assertEqual(errors, [])
             self.assertEqual(results, [None])
+            store._requests.request.assert_called_once_with("database", read_only=False)
             raw.close.assert_called_once_with()
             raw.cursor.assert_not_called()
             raw.commit.assert_not_called()
@@ -153,8 +281,8 @@ class SqlSessionConnectCancellationTests(unittest.TestCase):
 
     def test_stop_before_connect_does_not_open_connection(self):
         store = SqlCollaborationStore.__new__(SqlCollaborationStore)
-        store._requests = Mock()
-        store._connections = Mock()
+        store._requests = Mock(spec=SqlDescriptorConnectionFactory)
+        store._connections = Mock(spec=SqlConnectionManager)
         self.assertIsNone(
             store.start_session(
                 "database",
@@ -173,6 +301,7 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
     def test_session_rejects_multiple_database_metadata_rows(self):
         expected_guid = "00000000-0000-0000-0000-000000000123"
         inserted_sessions = []
+        statements = []
 
         class _Requests:
             @staticmethod
@@ -192,6 +321,7 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
 
             def execute(self, sql, *parameters):
                 self.last_sql = sql
+                statements.append(sql)
                 if "INSERT INTO [ostv].[Sessions]" in sql:
                     inserted_sessions.append(parameters)
                 return self
@@ -254,6 +384,8 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
         self.assertEqual(inserted_sessions, [])
+        self.assertEqual(len(statements), 1)
+        self.assertIn(DATABASE_METADATA_CURRENT_DATABASE_PREDICATE, statements[0])
         self.assertEqual(lease.commits, 0)
         self.assertEqual(lease.rollbacks, 1)
 
@@ -343,6 +475,7 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
         self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
         self.assertEqual(inserted_sessions, [])
         self.assertEqual(len(statements), 1)
+        self.assertIn(DATABASE_METADATA_CURRENT_DATABASE_PREDICATE, statements[0])
         self.assertIn("COUNT_BIG(*)", statements[0])
         self.assertIn("sys.database_recovery_status", statements[0])
         self.assertEqual(lease.commits, 0)
@@ -354,11 +487,13 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
         class _Cursor:
             def __init__(self):
                 self.statements = []
+                self.parameters = {}
                 self.last_sql = ""
 
             def execute(self, sql, *_parameters):
                 self.last_sql = sql
                 self.statements.append(sql)
+                self.parameters[sql] = _parameters
                 return self
 
             def fetchone(self):
@@ -466,8 +601,19 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
             change_query,
             "A committed transaction must never be delivered with locked rows omitted.",
         )
+        self.assertEqual(store._connections.cursor.parameters[marker_query], (11, 12))
+        self.assertEqual(
+            store._connections.cursor.parameters[change_query], (transaction_id, 12)
+        )
+        self.assertEqual(batch.database_id, "database")
+        self.assertEqual(batch.feed_epoch, "epoch")
+        self.assertEqual(batch.minimum_valid_version, 1)
+        self.assertEqual(batch.high_water_version, 12)
+        self.assertEqual(batch.delivered_through_version, 12)
+        self.assertEqual(len(batch.changes), 1)
         self.assertEqual(batch.changes[0].sequence, 1)
         self.assertEqual(batch.changes[0].commit_version, 12)
+        self.assertEqual(batch.changes[0].transaction_id, transaction_id)
         self.assertEqual(result.remote_batch.batch.changes, batch.changes)
         self.assertEqual(len(hydration_connections), 1)
 
@@ -560,10 +706,12 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
             def __init__(self):
                 self.last_sql = ""
                 self.parameters = ()
+                self.executions = []
 
             def execute(self, sql, *_parameters):
                 self.last_sql = sql
                 self.parameters = _parameters
+                self.executions.append((sql, _parameters))
                 return self
 
             def fetchall(self):
@@ -630,6 +778,25 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
         self.assertEqual(store._connections.lease.commits, 1)
         self.assertEqual(store._connections.lease.rollbacks, 0)
         store._connections.lease.cursor_value.assert_canonical_lock_batch()
+        executions = store._connections.lease.cursor_value.executions
+        self.assertEqual(len(executions), 1)
+        sql, parameters = executions[0]
+        self.assertEqual(sql.count("?"), len(parameters))
+        payload = json.loads(parameters[0])
+        self.assertEqual(
+            [
+                (item["ordinal"], item["resource_type"], item["resource_id"])
+                for item in payload
+            ],
+            [(0, "takeoff", "19"), (1, "takeoffs_collection", "8")],
+        )
+        self.assertEqual([item["bid_uid"] for item in payload], [19, 8])
+        self.assertEqual(parameters[1:], ("session",) * 5 + ("takeoff-placement:test",))
+        self.assertEqual(
+            [lock.lock_token for lock in locks],
+            [item["lock_token"] for item in payload],
+        )
+        self.assertEqual(len({item["lock_token"] for item in payload}), 2)
 
     def test_snapshot_feed_rolls_back_a_retention_gap(self):
         class _Cursor:
@@ -680,9 +847,13 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
         store = SqlCollaborationStore.__new__(SqlCollaborationStore)
         store._requests = _ReadRequestFactory()
         store._connections = _Connections()
-        batch = store.poll_changes("database", 10, 10, "local-session").observed_batch
+        result = store.poll_changes("database", 10, 10, "local-session")
+        batch = result.observed_batch
         self.assertEqual(batch.minimum_valid_version, 20)
+        self.assertEqual(batch.high_water_version, 25)
         self.assertEqual(batch.delivered_through_version, 10)
+        self.assertEqual(batch.changes, ())
+        self.assertEqual(result.remote_batch.batch, batch)
         self.assertEqual(lease.commits, 1)
         self.assertEqual(lease.rollbacks, 1)
 
@@ -748,3 +919,352 @@ class CollaborationStoreCollaborationTests(unittest.TestCase):
         change = _change_from_row(rows[0])
         self.assertEqual(change.transaction_id, transaction_id)
         self.assertEqual(change.source_session_id, session_id.upper())
+        self.assertTrue(session_identities_equal(change.source_session_id, session_id))
+        self.assertEqual(change.resource, ResourceRef("takeoff", "501", 8))
+        self.assertEqual(change.operation, ChangeOperation.CREATE)
+
+    def test_transaction_changes_allow_one_resource_in_distinct_transactions(self):
+        first_transaction = "859945fa-fbf8-4b90-bafe-735976033238"
+        second_transaction = "0e2b1ff2-7e6d-4d5c-9f4c-1c0d8f4a9b11"
+        session_id = "8b2ce0c5-90f8-4580-a5ee-b2f4fdc7581a"
+        cursor = _StoreCursor(
+            fetchall=lambda _sql: [
+                _log_row(1, 12, first_transaction, session_id, "42"),
+                _log_row(2, 13, second_transaction, session_id, "42"),
+            ]
+        )
+        rows = SqlCollaborationStore._load_transaction_changes(
+            cursor, ((first_transaction, 12), (second_transaction, 13))
+        )
+        self.assertEqual([row[0] for row in rows], [1, 2])
+        sql, parameters = cursor.executions[0]
+        self.assertEqual(sql.count("?"), len(parameters))
+        self.assertEqual(
+            parameters,
+            (first_transaction, 12, second_transaction, 13),
+        )
+
+    def test_transaction_changes_without_markers_do_not_query(self):
+        cursor = _StoreCursor()
+        rows = SqlCollaborationStore._load_transaction_changes(cursor, ())
+        self.assertEqual(rows, ())
+        self.assertEqual(cursor.executions, [])
+
+    def test_session_start_registers_canonical_guid_after_cleanup_and_commits(self):
+        expected_guid = "859945fa-fbf8-4b90-bafe-735976033238"
+        cursor = _StoreCursor(
+            fetchone=lambda sql: (
+                (expected_guid.upper(),)
+                if "DatabaseMetadata" in sql
+                else (8,) if "CHANGE_TRACKING_CURRENT_VERSION" in sql else None
+            )
+        )
+        request = SimpleNamespace(
+            location=SqlServerDatabaseLocation(
+                server="localhost", database="TEST", database_guid=expected_guid
+            )
+        )
+        store, lease = _store_with(cursor, request)
+        session_id = str(uuid.uuid4())
+        client_id = str(uuid.uuid4())
+        session = store.start_session(
+            "saved-database-id",
+            session_id,
+            client_id,
+            "test-user",
+            "test-machine",
+            "test-version",
+        )
+        self.assertEqual(
+            session,
+            DatabaseSession(
+                database_id="saved-database-id",
+                session_id=session_id,
+                last_acknowledged_version=8,
+            ),
+        )
+        self.assertEqual(store._requests.calls, [("saved-database-id", False)])
+        self.assertEqual(store._connections.autocommits, [False])
+        statements = [sql for sql, _parameters in cursor.executions]
+        self.assertEqual(len(statements), 4)
+        self.assertIn("DatabaseMetadata", statements[0])
+        self.assertIn("[CloseReason]=N'expired'", statements[1])
+        self.assertIn("CHANGE_TRACKING_CURRENT_VERSION", statements[2])
+        self.assertIn("INSERT INTO [ostv].[Sessions]", statements[3])
+        self.assertEqual(
+            cursor.executions[3][1],
+            (
+                session_id,
+                expected_guid,
+                client_id,
+                "test-user",
+                "test-machine",
+                "test-version",
+                8,
+            ),
+        )
+        self.assertEqual(lease.commits, 1)
+        self.assertEqual(lease.rollbacks, 0)
+
+    def test_session_rejects_saved_connection_without_valid_database_identity(self):
+        cursor = _StoreCursor(
+            fetchone=lambda _sql: ("00000000-0000-0000-0000-000000000123",)
+        )
+        request = SimpleNamespace(
+            location=SqlServerDatabaseLocation(
+                server="localhost", database="TEST", database_guid=""
+            )
+        )
+        store, lease = _store_with(cursor, request)
+        with self.assertRaisesRegex(
+            SqlInfrastructureError, "no valid database identity"
+        ) as raised:
+            store.start_session(
+                "saved-database-id",
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+                "test-user",
+                "test-machine",
+                "test-version",
+            )
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
+        self.assertEqual(len(cursor.executions), 1)
+        self.assertEqual(lease.commits, 0)
+        self.assertEqual(lease.rollbacks, 1)
+
+    def test_lock_acquisition_failures_roll_back_and_name_the_blocking_session(self):
+        resources = (
+            ResourceRef("takeoffs_collection", "8", 8),
+            ResourceRef("takeoff", "19", 19),
+        )
+        cases = (
+            (
+                [(-1, -1, None, None)],
+                SqlErrorCode.LOCKED,
+                "Another session is changing the same SQL resource.",
+            ),
+            (
+                [(-2, -1, None, None)],
+                SqlErrorCode.SESSION_EXPIRED,
+                "The SQL collaboration session expired. Reconnect before editing.",
+            ),
+            (
+                [(-3, 1, "Alice", None)],
+                SqlErrorCode.LOCKED,
+                "takeoffs_collection 8 is being edited by Alice.",
+            ),
+        )
+        for rows, code, message in cases:
+            with self.subTest(status=rows[0][0]):
+                cursor = _StoreCursor(fetchall=lambda _sql, rows=rows: rows)
+                store, lease = _store_with(cursor)
+                with self.assertRaises(SqlInfrastructureError) as raised:
+                    store.acquire_locks("database", "session", resources, "edit")
+                self.assertEqual(raised.exception.details.code, code)
+                self.assertEqual(raised.exception.details.user_message, message)
+                self.assertEqual(lease.commits, 0)
+                self.assertEqual(lease.rollbacks, 1)
+
+    def test_lock_acquisition_rejects_empty_and_incomplete_results(self):
+        resources = (ResourceRef("takeoff", "19", 19), ResourceRef("takeoff", "20", 19))
+        token = str(uuid.uuid4())
+        cases = (
+            ([], "returned no result"),
+            ([(0, 0, None, token)], "incomplete result"),
+            ([(0, 0, None, token), (0, 2, None, token)], "incomplete result"),
+            ([(0, 0, None, token), (1, 1, None, token)], "incomplete result"),
+        )
+        for rows, message in cases:
+            with self.subTest(rows=rows):
+                cursor = _StoreCursor(fetchall=lambda _sql, rows=rows: rows)
+                store, lease = _store_with(cursor)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    store.acquire_locks("database", "session", resources, "edit")
+                self.assertEqual(lease.commits, 0)
+                self.assertEqual(lease.rollbacks, 1)
+
+    def test_lock_acquisition_deduplicates_resources_and_bounds_description(self):
+        resource = ResourceRef("takeoff", "19", 19)
+        token = str(uuid.uuid4())
+        cursor = _StoreCursor(fetchall=lambda _sql: [(0, 0, None, token)])
+        store, lease = _store_with(cursor)
+        locks = store.acquire_locks(
+            "database", "session", (resource, resource), "x" * 300
+        )
+        self.assertEqual(
+            locks,
+            (
+                ResourceLock(
+                    database_id="database", resource=resource, lock_token=token
+                ),
+            ),
+        )
+        _sql, parameters = cursor.executions[0]
+        self.assertEqual(len(json.loads(parameters[0])), 1)
+        self.assertEqual(parameters[-1], "x" * 256)
+        self.assertEqual(lease.commits, 1)
+
+    def test_lock_acquisition_without_resources_does_not_connect(self):
+        cursor = _StoreCursor()
+        store, lease = _store_with(cursor)
+        self.assertEqual(store.acquire_locks("database", "session", (), "edit"), ())
+        self.assertEqual(store._requests.calls, [])
+        self.assertEqual(store._connections.autocommits, [])
+        self.assertEqual(cursor.executions, [])
+
+    def test_snapshot_feed_rolls_back_a_checkpoint_ahead_of_the_high_water_version(
+        self,
+    ):
+        cursor = _StoreCursor(fetchone=_feed_fetchone(minimum=(20,), high_water=(25,)))
+        store, lease = _store_with(cursor, object(), _RecordingRemoteReader)
+        result = store.poll_changes("database", 30, 10, "local-session")
+        batch = result.observed_batch
+        self.assertEqual(batch.delivered_through_version, 30)
+        self.assertEqual(batch.high_water_version, 25)
+        self.assertEqual(batch.changes, ())
+        self.assertEqual(result.remote_batch.batch, batch)
+        self.assertFalse(
+            any("CHANGETABLE" in sql for sql, _parameters in cursor.executions)
+        )
+        self.assertEqual(store._remote_reader.hydrated, [])
+        self.assertEqual(lease.commits, 1)
+        self.assertEqual(lease.rollbacks, 1)
+
+    def test_snapshot_feed_with_zero_checkpoint_reads_from_the_retained_history(self):
+        cursor = _StoreCursor(
+            fetchone=_feed_fetchone(minimum=(20,), high_water=(25,)),
+            fetchall=_feed_fetchall(),
+        )
+        store, lease = _store_with(cursor, object(), _RecordingRemoteReader)
+        result = store.poll_changes("database", 0, 10, "local-session")
+        batch = result.observed_batch
+        marker_executions = [
+            parameters for sql, parameters in cursor.executions if "CHANGETABLE" in sql
+        ]
+        self.assertEqual(marker_executions, [(0, 25)])
+        self.assertEqual(batch.delivered_through_version, 25)
+        self.assertEqual(len(store._remote_reader.hydrated), 1)
+        self.assertEqual(store._remote_reader.hydrated[0][2], 1)
+        self.assertEqual(lease.commits, 2)
+        self.assertEqual(lease.rollbacks, 0)
+
+    def test_snapshot_feed_page_ends_at_last_marker_version_and_limit_is_bounded(self):
+        first_transaction = "00000000-0000-0000-0000-000000000011"
+        second_transaction = "00000000-0000-0000-0000-000000000012"
+        session_id = "8b2ce0c5-90f8-4580-a5ee-b2f4fdc7581a"
+        cursor = _StoreCursor(
+            fetchone=_feed_fetchone(high_water=(20,)),
+            fetchall=_feed_fetchall(
+                markers=[(12, "I", first_transaction), (13, "I", second_transaction)],
+                log_rows=[
+                    _log_row(1, 12, first_transaction, session_id, "1"),
+                    _log_row(2, 13, second_transaction, session_id, "2"),
+                ],
+            ),
+        )
+        store, lease = _store_with(cursor, object(), _RecordingRemoteReader)
+        batch = store.poll_changes("database", 11, 2, "local-session").observed_batch
+        self.assertEqual(batch.delivered_through_version, 13)
+        self.assertEqual(batch.high_water_version, 20)
+        self.assertEqual([change.commit_version for change in batch.changes], [12, 13])
+        self.assertIn(
+            "SELECT TOP (2) WITH TIES",
+            next(sql for sql, _p in cursor.executions if "CHANGETABLE" in sql),
+        )
+        for requested, expected in ((0, 1), (-5, 1), (10_000, 500)):
+            with self.subTest(requested=requested):
+                bounded = _StoreCursor(
+                    fetchone=_feed_fetchone(), fetchall=_feed_fetchall()
+                )
+                bounded_store, _lease = _store_with(
+                    bounded, object(), _RecordingRemoteReader
+                )
+                bounded_store.poll_changes("database", 11, requested, "local")
+                self.assertIn(
+                    f"SELECT TOP ({expected}) WITH TIES",
+                    next(sql for sql, _p in bounded.executions if "CHANGETABLE" in sql),
+                )
+
+    def test_snapshot_feed_hides_own_session_changes_from_remote_batch_only(self):
+        transaction_id = "00000000-0000-0000-0000-000000000011"
+        local_session = "8b2ce0c5-90f8-4580-a5ee-b2f4fdc7581a"
+        other_session = "1f0c9e4a-0f6d-4a64-8c3a-5f8b3f1d2a77"
+        cursor = _StoreCursor(
+            fetchone=_feed_fetchone(),
+            fetchall=_feed_fetchall(
+                markers=[(12, "I", transaction_id)],
+                log_rows=[
+                    _log_row(1, 12, transaction_id, local_session.upper(), "1"),
+                    _log_row(2, 12, transaction_id, other_session.upper(), "2"),
+                ],
+            ),
+        )
+        store, lease = _store_with(cursor, object(), _RecordingRemoteReader)
+        result = store.poll_changes("database", 11, 10, local_session)
+        self.assertEqual(
+            [change.resource.resource_id for change in result.observed_batch.changes],
+            ["1", "2"],
+        )
+        self.assertEqual(
+            [
+                change.resource.resource_id
+                for change in result.remote_batch.batch.changes
+            ],
+            ["2"],
+        )
+        self.assertEqual(
+            result.remote_batch.batch.delivered_through_version,
+            result.observed_batch.delivered_through_version,
+        )
+        self.assertEqual(lease.commits, 2)
+
+    def test_snapshot_feed_rejects_missing_metadata_and_invalid_markers(self):
+        transaction_id = "00000000-0000-0000-0000-000000000011"
+        cases = (
+            (
+                {"epoch": None},
+                _feed_fetchall(),
+                SqlInfrastructureError,
+                "change-feed metadata is missing",
+            ),
+            (
+                {"minimum": (None,)},
+                _feed_fetchall(),
+                ValueError,
+                "Change Tracking metadata is unavailable",
+            ),
+            (
+                {"high_water": None},
+                _feed_fetchall(),
+                ValueError,
+                "Change Tracking metadata is unavailable",
+            ),
+            (
+                {},
+                _feed_fetchall(markers=[(12, "U", transaction_id)]),
+                ValueError,
+                "invalid change",
+            ),
+            (
+                {},
+                _feed_fetchall(
+                    markers=[
+                        (12, "I", transaction_id),
+                        (13, "I", transaction_id.upper()),
+                    ]
+                ),
+                ValueError,
+                "duplicate transaction identity",
+            ),
+        )
+        for fetchone_arguments, fetchall, error_type, message in cases:
+            with self.subTest(message=message, arguments=fetchone_arguments):
+                cursor = _StoreCursor(
+                    fetchone=_feed_fetchone(**fetchone_arguments), fetchall=fetchall
+                )
+                store, lease = _store_with(cursor, object(), _RecordingRemoteReader)
+                with self.assertRaisesRegex(error_type, message):
+                    store.poll_changes("database", 11, 10, "local-session")
+                self.assertEqual(store._remote_reader.hydrated, [])
+                self.assertEqual(lease.commits, 1)
+                self.assertEqual(lease.rollbacks, 1)

@@ -1,32 +1,14 @@
-from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
-from ost_visualizer.infrastructure.database.settings_cardinality import (
-    GlobalSettingsCardinalityError,
-    fetch_optional_global_settings_row,
-)
-from ost_visualizer.infrastructure.database.descriptor_registry import (
-    DatabaseDescriptorRegistry,
-)
-import unittest
-import contextlib
-import json
 import os
-import uuid
+import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 import pyodbc
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
-    CollaborationMutationType,
-    ConcurrencyToken,
-)
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    DatabaseMutationRequest as _DatabaseMutationRequest,
-)
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    ExpectedResourceVersion,
     MutationOutcomeStatus,
     ResourceRef,
-    SynchronizationConflictKind,
 )
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
@@ -37,58 +19,35 @@ from ost_visualizer.application.services.database_session_registry import (
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
-    credential_target_for,
 )
-from ost_visualizer.infrastructure.database.connection_wrapper import ConnectionWrapper
+from ost_visualizer.infrastructure.database.bid_owned_identity import (
+    MissingBidOwnedUidError,
+)
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
+)
+from ost_visualizer.infrastructure.database.settings_cardinality import (
+    fetch_optional_global_settings_row,
+)
+from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
     ACCESS_BULK_CHUNK_SIZE,
 )
 from ost_visualizer.infrastructure.mdb.connection_manager import MdbConnectionManager
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.schema_compatibility import MdbSchemaInspector
-from ost_visualizer.infrastructure.sql.client_permissions import (
-    SQL_CLIENT_DATABASE_ROLES,
-    SQL_CLIENT_DIRECT_WRITE_TABLES,
-    _sql_integer_values_match,
-    apply_sql_client_permissions,
-)
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
-from ost_visualizer.infrastructure.sql.writer import (
-    SqlProjectWriter,
-    _OptimisticConflict,
-    _RecordedMutation,
-    _SqlMutationState,
-)
+from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
 from tests.helpers.sql.cleanup_support import (
     DatabaseMutationRequest as _cleanup_support_DatabaseMutationRequest,
-    _AccessTransactionConnection as _cleanup_support__AccessTransactionConnection,
     _AccessTransactionConnections as _cleanup_support__AccessTransactionConnections,
-    _CreationCursor as _cleanup_support__CreationCursor,
     _CredentialStore as _cleanup_support__CredentialStore,
-    _RawCursor as _cleanup_support__RawCursor,
-    _WriterCursor as _cleanup_support__WriterCursor,
-    _WriterLease as _cleanup_support__WriterLease,
     _WriterManager as _cleanup_support__WriterManager,
-    _canonical_writer_permission_snapshot as _cleanup_support__canonical_writer_permission_snapshot,
-)
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from ost_visualizer.domain.entities.database_descriptor import (
-    DatabaseBackend,
-    DatabaseDescriptor,
-    SqlAuthenticationMode,
-    SqlServerDatabaseLocation,
-    credential_target_for,
-)
-from ost_visualizer.infrastructure.sql.schema_definition import (
-    SQL_SCHEMA_V1,
-    schema_record_is_canonical,
 )
 from tests.helpers.sql.database_foundation_support import (
     _CredentialStore as _database_foundation_support__CredentialStore,
 )
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class _RecordingCursor:
@@ -105,7 +64,6 @@ class _RecordingCursor:
 
 
 class AccessSettingsTableReferenceTests(unittest.TestCase):
-    @staticmethod
     @staticmethod
     def _routed_writer():
         return DatabaseProjectWriter(
@@ -132,6 +90,28 @@ class AccessSettingsTableReferenceTests(unittest.TestCase):
         self.assertNotIn("WITH OWNERACCESS OPTION", cursor.statements[0].upper())
         self.assertNotIn("WITH (", cursor.statements[0].upper())
 
+    def test_routers_supply_backend_specific_settings_table_references(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(object(), registry, object(), object())
+        with writer._backend_scope("normal.mdb"):
+            self.assertEqual(writer._global_settings_read_table_sql(), "[Settings]")
+            self.assertEqual(writer._global_settings_write_table_sql(), "[Settings]")
+        with writer._backend_scope(descriptor.database_id):
+            self.assertEqual(
+                writer._global_settings_read_table_sql(),
+                "[dbo].[Settings] WITH (UPDLOCK, HOLDLOCK)",
+            )
+            self.assertEqual(
+                writer._global_settings_write_table_sql(), "[dbo].[Settings]"
+            )
+        with self.assertRaisesRegex(RuntimeError, "backend scope"):
+            writer._global_settings_read_table_sql()
+
 
 class WriterRouterSqlCleanupTests(unittest.TestCase):
     def test_access_writer_uses_access_schema_inspector(self):
@@ -143,6 +123,22 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
         )
         with writer._backend_scope("example.mdb"):
             self.assertIsInstance(writer._schema(object()), MdbSchemaInspector)
+
+    def test_sql_writer_uses_the_canonical_sql_write_schema(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _cleanup_support__CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with writer._backend_scope(descriptor.database_id):
+            self.assertIsInstance(writer._schema(object()), CurrentSqlWriteSchema)
 
     def test_access_writer_uses_the_common_uid_allocator_contract(self):
         class _Cursor:
@@ -231,8 +227,12 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
             DatabaseSessionRegistry(),
         )
         with (
-            patch.object(MdbWriter, "verify_plan_items_exist") as access_verify,
-            patch.object(SqlProjectWriter, "verify_plan_items_exist") as sql_verify,
+            patch.object(
+                MdbWriter, "verify_plan_items_exist", autospec=True
+            ) as access_verify,
+            patch.object(
+                SqlProjectWriter, "verify_plan_items_exist", autospec=True
+            ) as sql_verify,
         ):
             writer.verify_plan_items_exist("example.mdb", "1", ("2",), ())
             writer.verify_plan_items_exist(
@@ -343,6 +343,33 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
                 "107",
             )
 
+    def test_access_writer_delegates_page_navigation_and_view_state_paths(self):
+        writer = DatabaseProjectWriter(
+            object(),
+            DatabaseDescriptorRegistry(),
+            _cleanup_support__CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with (
+            patch.object(
+                MdbWriter, "save_page_view_state", autospec=True, return_value=True
+            ) as view_state,
+            patch.object(
+                MdbWriter, "save_bid_selected_page", autospec=True, return_value=False
+            ) as selected_page,
+        ):
+            self.assertIs(
+                writer.save_page_view_state("example.mdb", "107", 2.0, 10.0, 20.0),
+                True,
+            )
+            self.assertIs(
+                writer.save_bid_selected_page("example.mdb", "7", "107"), False
+            )
+        view_state.assert_called_once_with(
+            writer, "example.mdb", "107", 2.0, 10.0, 20.0
+        )
+        selected_page.assert_called_once_with(writer, "example.mdb", "7", "107")
+
     def test_writer_router_error_policy_uses_backend_not_sql_context_presence(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -358,16 +385,17 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
         )
         original = RuntimeError("row failure")
         resource_error = pyodbc.Error("HY001", "System resource exceeded")
-        mutation_token = writer._active_mutation.set(
-            SimpleNamespace(operation_error=None)
-        )
+        mutation_state = SimpleNamespace(operation_error=None)
+        mutation_token = writer._active_mutation.set(mutation_state)
         try:
             with writer._backend_scope("example.mdb"):
                 self.assertFalse(writer._record_caught_mutation_error(original))
                 self.assertTrue(writer._is_access_resource_exceeded(resource_error))
+            self.assertIsNone(mutation_state.operation_error)
             with writer._backend_scope(descriptor.database_id):
                 self.assertTrue(writer._record_caught_mutation_error(original))
                 self.assertFalse(writer._is_access_resource_exceeded(resource_error))
+            self.assertIs(mutation_state.operation_error, original)
         finally:
             writer._active_mutation.reset(mutation_token)
 
@@ -383,11 +411,13 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
             patch.object(
                 MdbWriter,
                 "_load_existing_uid_candidates_by_column",
+                autospec=True,
                 return_value={"concrete": ["12"]},
             ) as access_lookup,
             patch.object(
                 SqlProjectWriter,
                 "_load_existing_uid_candidates_by_column",
+                autospec=True,
                 side_effect=AssertionError("Access import dispatched to SQL"),
             ),
             writer._backend_scope("example.mdb"),
@@ -398,6 +428,41 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
         self.assertEqual(result, {"concrete": ["12"]})
         access_lookup.assert_called_once_with(writer, connection, "CdnTypes", "Name")
 
+    def test_sql_import_lookup_never_uses_access_lookup(self):
+        connection = object()
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _cleanup_support__CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with (
+            patch.object(
+                MdbWriter,
+                "_load_existing_uid_candidates_by_column",
+                autospec=True,
+                side_effect=AssertionError("SQL import dispatched to Access"),
+            ),
+            patch.object(
+                SqlProjectWriter,
+                "_load_existing_uid_candidates_by_column",
+                autospec=True,
+                return_value={"concrete": ["12"]},
+            ) as sql_lookup,
+            writer._backend_scope(descriptor.database_id),
+        ):
+            result = writer._load_existing_uid_candidates_by_column(
+                connection, "CdnTypes", "Name"
+            )
+        self.assertEqual(result, {"concrete": ["12"]})
+        sql_lookup.assert_called_once_with(writer, connection, "CdnTypes", "Name")
+
     def test_writer_requires_an_explicit_backend_scope(self):
         writer = DatabaseProjectWriter(
             object(),
@@ -407,6 +472,32 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "backend scope"):
             writer._current_backend()
+
+    def test_backend_scope_restores_the_enclosing_scope_even_after_an_error(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _cleanup_support__CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with writer._backend_scope("outer.mdb") as outer:
+            with self.assertRaisesRegex(RuntimeError, "inner failure"):
+                with writer._backend_scope(descriptor.database_id) as inner:
+                    self.assertNotEqual(inner, outer)
+                    self.assertEqual(writer._current_backend(), inner)
+                    raise RuntimeError("inner failure")
+            self.assertEqual(writer._current_backend(), outer)
+        with self.assertRaisesRegex(RuntimeError, "backend scope"):
+            writer._current_backend()
+        with self.assertRaises(LookupError):
+            with writer._backend_scope("unregistered-sql-id"):
+                pass
 
     def test_access_router_scopes_preconnection_validation_as_access(self):
         connections = _cleanup_support__AccessTransactionConnections()
@@ -812,6 +903,143 @@ class WriterRouterSqlCleanupTests(unittest.TestCase):
             columns, types = writer._get_table_info(_NoMetadataConnection(), "Bids")
         self.assertIn("UID", columns)
         self.assertEqual(types["UID"], "int")
+        canonical = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema).table_info("Bids")
+        self.assertEqual((columns, types), canonical)
+
+    def test_every_backend_specific_inherited_contract_is_dispatched_explicitly(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _cleanup_support__CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        connection, cursor, schema = object(), object(), object()
+        raw_data, transform = object(), object()
+        scoped_calls = (
+            ("_get_table_info", (connection, "Bids")),
+            ("_assign_next_bid_no", (connection, raw_data)),
+            ("_load_existing_employee_uid_candidates_by_key", (connection,)),
+            ("_insert_page_area_selection", (cursor, schema, 7, 8, 1)),
+            ("_next_uid_preserving_references", (cursor, schema, "Bids")),
+            ("_next_uids_preserving_references", (cursor, schema, "Bids", 3)),
+            (
+                "_filter_existing_write_values",
+                (schema, "Bids", {"UID": 1}, ("UID",), "op"),
+            ),
+            (
+                "_execute_insert_values",
+                (cursor, schema, "Bids", {"UID": 1}, ("UID",), "op"),
+            ),
+        )
+        for name, arguments in scoped_calls:
+            for locator, selected_class, other_class in (
+                ("example.mdb", MdbWriter, SqlProjectWriter),
+                (descriptor.database_id, SqlProjectWriter, MdbWriter),
+            ):
+                with self.subTest(method=name, locator=locator):
+                    with (
+                        patch.object(
+                            selected_class, name, autospec=True, return_value="routed"
+                        ) as selected,
+                        patch.object(
+                            other_class,
+                            name,
+                            autospec=True,
+                            side_effect=AssertionError(f"{name} used wrong backend"),
+                        ) as other,
+                        writer._backend_scope(locator),
+                    ):
+                        result = getattr(writer, name)(*arguments)
+                    self.assertEqual(result, "routed")
+                    selected.assert_called_once_with(writer, *arguments)
+                    other.assert_not_called()
+        scopeless_calls = (
+            ("create_project", ("PROJECT", "Name"), "routed-project"),
+            ("import_ost_data", ("DB", raw_data, transform, "5"), True),
+        )
+        for name, arguments, returned in scopeless_calls:
+            for locator, selected_class, other_class in (
+                ("example.mdb", MdbWriter, SqlProjectWriter),
+                (descriptor.database_id, SqlProjectWriter, MdbWriter),
+            ):
+                with self.subTest(method=name, locator=locator):
+                    call_arguments = (locator, *arguments[1:])
+                    with (
+                        patch.object(
+                            selected_class, name, autospec=True, return_value=returned
+                        ) as selected,
+                        patch.object(
+                            other_class,
+                            name,
+                            autospec=True,
+                            side_effect=AssertionError(f"{name} used wrong backend"),
+                        ) as other,
+                    ):
+                        result = getattr(writer, name)(*call_arguments)
+                    self.assertEqual(result, returned)
+                    selected.assert_called_once_with(writer, *call_arguments)
+                    other.assert_not_called()
+
+    def test_access_execute_reports_invalid_owner_as_failed_before_commit(self):
+        connections = _cleanup_support__AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _cleanup_support__CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        request = _cleanup_support_DatabaseMutationRequest(
+            database_id="example.mdb", session_id=None
+        )
+
+        def reject_owner(_recorder):
+            raise MissingBidOwnedUidError("Bids has no row for UID 9")
+
+        with self.assertLogs(writer.logger, level="ERROR"):
+            result = writer.execute(request, reject_owner)
+        self.assertEqual(result.operation_id, request.operation_id)
+        self.assertEqual(
+            result.outcome_status, MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+        )
+        self.assertEqual(result.failure_reason, "Bids has no row for UID 9")
+        self.assertIsNone(result.value)
+        self.assertEqual(connections.connection_value.commits, 0)
+        self.assertEqual(connections.connection_value.rollbacks, 1)
+
+    def test_access_execute_accepts_recorded_changes_without_persisting_them(self):
+        connections = _cleanup_support__AccessTransactionConnections()
+        writer = DatabaseProjectWriter(
+            connections,
+            DatabaseDescriptorRegistry(),
+            _cleanup_support__CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+
+        def operation(recorder):
+            recorder.record(
+                ResourceRef("condition", "5", 1),
+                ChangeOperation.UPDATE,
+                changed_fields=("Name",),
+                payload="{}",
+            )
+            return "recorded"
+
+        result = writer.execute(
+            _cleanup_support_DatabaseMutationRequest(
+                database_id="example.mdb", session_id=None
+            ),
+            operation,
+        )
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(result.value, "recorded")
+        self.assertEqual(result.resulting_versions, {})
+        self.assertEqual(connections.connection_value.commits, 1)
 
 
 class WriterRouterDatabaseDescriptorTests(unittest.TestCase):
@@ -841,8 +1069,20 @@ class WriterRouterDatabaseDescriptorTests(unittest.TestCase):
             DatabaseSessionRegistry(),
         )
         self.assertEqual(writer._convert_sql_import_value("12", "int"), 12)
+        self.assertIsNone(writer._convert_sql_import_value("", "int"))
+        self.assertIsNone(writer._convert_sql_import_value("NULL", "int"))
+        self.assertEqual(writer._convert_sql_import_value("1.5", "float"), 1.5)
         self.assertIs(writer._convert_sql_import_value("True", "bit"), True)
+        self.assertIs(writer._convert_sql_import_value("-1", "bit"), True)
+        self.assertIs(writer._convert_sql_import_value("False", "bit"), False)
+        self.assertIs(writer._convert_sql_import_value("", "bit"), False)
+        self.assertEqual(writer._convert_sql_import_value("text", "nvarchar"), "text")
+        self.assertEqual(writer._convert_sql_import_value(5, "int"), 5)
         with self.assertRaisesRegex(ValueError, "Boolean"):
             writer._convert_sql_import_value("maybe", "bit")
+        with self.assertRaises(ValueError):
+            writer._convert_sql_import_value("12x", "int")
+        with self.assertRaisesRegex(ValueError, "date value is invalid"):
+            writer._convert_sql_import_value("not-a-date", "datetime2")
         with self.assertRaisesRegex(RuntimeError, "Unsupported SQL import type"):
             writer._convert_sql_import_value("value", "xml")

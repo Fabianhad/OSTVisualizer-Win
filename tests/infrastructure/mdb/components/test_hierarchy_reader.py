@@ -221,7 +221,9 @@ class HierarchyReaderTests(unittest.TestCase):
         for project_rows, message in fixtures:
             with self.subTest(project_rows=project_rows):
                 connection = self._hierarchy_connection(project_rows, ())
-                with self.assertRaisesRegex(RuntimeError, message):
+                with self.assertRaisesRegex(
+                    RuntimeError, f"BidProjects contains {message}"
+                ):
                     _SqliteHierarchyReader(connection)._parse_hierarchy(
                         _SqliteConnection(connection), "malformed.mdb"
                     )
@@ -236,7 +238,7 @@ class HierarchyReaderTests(unittest.TestCase):
         for bid_rows, message in fixtures:
             with self.subTest(bid_rows=bid_rows):
                 connection = self._hierarchy_connection(((1, "Project"),), bid_rows)
-                with self.assertRaisesRegex(RuntimeError, message):
+                with self.assertRaisesRegex(RuntimeError, f"Bids contains {message}"):
                     _SqliteHierarchyReader(connection)._parse_hierarchy(
                         _SqliteConnection(connection), "malformed.mdb"
                     )
@@ -267,6 +269,8 @@ class HierarchyReaderTests(unittest.TestCase):
             connection, "1", _Schema()
         )
         self.assertEqual(list(folders), ["10"])
+        self.assertEqual(folders["10"].name, "Recovered")
+        self.assertEqual(folders["10"].subfolders, {})
         self.assertEqual([page.uid for page in folders["10"].pages], ["20"])
         self.assertEqual(pages_without_folder, [])
 
@@ -284,7 +288,10 @@ class HierarchyReaderTests(unittest.TestCase):
             "INSERT INTO BidPageFolders VALUES (?, ?, ?, ?)",
             ((10, 1, "Recovered", 99), (99, 2, "Other bid", None)),
         )
-        connection.execute("INSERT INTO BidPages VALUES (20, 1, 'A-101', 10)")
+        connection.executemany(
+            "INSERT INTO BidPages VALUES (?, ?, ?, ?)",
+            ((20, 1, "A-101", 10), (21, 2, "Other bid page", 99)),
+        )
         folders, pages_without_folder = _SqliteHierarchyReader(
             connection
         )._get_bid_folder_page_structure(
@@ -293,6 +300,7 @@ class HierarchyReaderTests(unittest.TestCase):
             _SqliteHierarchySchema(connection),
         )
         self.assertEqual(list(folders), ["10"])
+        self.assertEqual(folders["10"].subfolders, {})
         self.assertEqual([page.uid for page in folders["10"].pages], ["20"])
         self.assertEqual(pages_without_folder, [])
 
@@ -361,6 +369,8 @@ class HierarchyReaderTests(unittest.TestCase):
             ],
             ["20"],
         )
+        self.assertEqual(folders["10"].pages, [])
+        self.assertEqual(folders["10"].subfolders["11"].pages, [])
         self.assertEqual(pages_without_folder, [])
 
     def test_page_hierarchy_rejects_duplicate_folder_uid(self):
@@ -418,3 +428,120 @@ class HierarchyReaderPersistenceTests(unittest.TestCase):
             MdbReader._load_status_map(
                 _SqliteMdbOps(conn), _SqliteConnectionWrapper(conn)
             )
+
+    def test_hierarchy_reader_rejects_duplicate_employee_uid(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE Employees (UID INTEGER, FirstName TEXT, LastName TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO Employees VALUES (7, ?, 'Smith')",
+            (("Ann",), ("Bob",)),
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Employees contains duplicate UID 7",
+        ):
+            MdbReader._load_employee_map(
+                _SqliteMdbOps(conn), _SqliteConnectionWrapper(conn)
+            )
+
+    def test_status_and_employee_maps_decode_names_and_tolerate_missing_tables(self):
+        conn = sqlite3.connect(":memory:")
+        ops = _SqliteMdbOps(conn)
+        wrapper = _SqliteConnectionWrapper(conn)
+        self.assertEqual(MdbReader._load_status_map(ops, wrapper), {})
+        self.assertEqual(MdbReader._load_employee_map(ops, wrapper), {})
+        conn.execute("CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)")
+        conn.executemany(
+            "INSERT INTO JobStatuses VALUES (?, ?)", ((1, "Open"), (2, None))
+        )
+        conn.execute(
+            "CREATE TABLE Employees (UID INTEGER, FirstName TEXT, LastName TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO Employees VALUES (?, ?, ?)",
+            ((3, " Ann ", "Smith"), (4, None, "Cher"), (5, "Solo", None)),
+        )
+        self.assertEqual(
+            MdbReader._load_status_map(ops, wrapper), {"1": "Open", "2": ""}
+        )
+        self.assertEqual(
+            MdbReader._load_employee_map(ops, wrapper),
+            {"3": "Ann Smith", "4": "Cher", "5": "Solo"},
+        )
+
+    def test_parse_hierarchy_projects_bids_with_counts_status_and_estimator(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE BidProjects (UID INTEGER, Name TEXT, Description TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE Bids (UID INTEGER, BidProjectUID INTEGER, JobName TEXT, "
+            "JobID TEXT, BidNo INTEGER, JobStatusUID INTEGER, EstimatorUID INTEGER, "
+            "MeasureBase INTEGER, TakeoffIncrements REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, "
+            "BidPageFolderUID INTEGER)"
+        )
+        conn.execute("CREATE TABLE BidConditions (UID INTEGER, BidUID INTEGER)")
+        conn.execute("CREATE TABLE JobStatuses (UID INTEGER, Name TEXT)")
+        conn.execute(
+            "CREATE TABLE Employees (UID INTEGER, FirstName TEXT, LastName TEXT)"
+        )
+        conn.execute("INSERT INTO BidProjects VALUES (1, 'Project', 'Described')")
+        conn.executemany(
+            "INSERT INTO Bids VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                (10, 1, "Bid ten", "J-10", 2, 5, 6, 1, 0.5),
+                (11, 99, "Orphan bid", None, 0, None, None, None, None),
+            ),
+        )
+        conn.executemany(
+            "INSERT INTO BidPages VALUES (?, ?, ?, NULL)",
+            ((20, 10, "P1"), (21, 10, "P2"), (22, 11, "P3")),
+        )
+        conn.executemany(
+            "INSERT INTO BidConditions VALUES (?, ?)", ((30, 10), (31, 11), (32, 11))
+        )
+        conn.execute("INSERT INTO JobStatuses VALUES (5, 'Won')")
+        conn.execute("INSERT INTO Employees VALUES (6, 'Eve', 'Estimator')")
+        entry = _SqliteHierarchyReader(conn)._parse_hierarchy(
+            _SqliteConnection(conn), "C:/data/sample.mdb"
+        )
+        self.assertEqual(entry.database_name, "sample")
+        self.assertEqual(list(entry.bid_projects), ["1"])
+        project = entry.bid_projects["1"]
+        self.assertEqual((project.name, project.description), ("Project", "Described"))
+        self.assertEqual([bid.uid for bid in project.bids], ["10"])
+        bid = project.bids[0]
+        self.assertEqual(
+            (
+                bid.name,
+                bid.job_id,
+                bid.bid_no,
+                bid.status,
+                bid.status_uid,
+                bid.estimator,
+                bid.page_count,
+                bid.condition_count,
+                bid.measure_base,
+                bid.takeoff_increments,
+            ),
+            ("Bid ten", "J-10", 2, "Won", "5", "Eve Estimator", 2, 1, 1, 0.5),
+        )
+        self.assertEqual([page.uid for page in bid.pages_without_folder], ["20", "21"])
+        self.assertEqual([item.uid for item in entry.orphan_bids], ["11"])
+        orphan = entry.orphan_bids[0]
+        self.assertEqual(
+            (
+                orphan.status,
+                orphan.status_uid,
+                orphan.estimator,
+                orphan.page_count,
+                orphan.condition_count,
+                orphan.takeoff_increments,
+            ),
+            ("", None, "", 1, 2, 1.0),
+        )

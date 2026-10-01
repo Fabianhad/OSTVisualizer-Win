@@ -63,6 +63,34 @@ class PlanNamedViewHotlinkDeleteTests(unittest.TestCase):
         )
         self.assertEqual(result.annotations_to_delete, [link, view])
 
+    def test_linked_hotlink_sharing_raw_uid_with_selected_view_is_still_added(self):
+        view = named_view("same")
+        link = hotlink("same", "same")
+        result = plan_named_view_hotlink_delete(
+            [view], lambda _uids: [link], lambda _view: True
+        )
+        self.assertEqual(result.annotations_to_delete, [link, view])
+        self.assertEqual(result.skipped_named_view_uids, set())
+
+    def test_confirmation_is_asked_once_per_linked_view_with_that_view(self):
+        linked_view, unlinked_view = named_view("linked"), named_view("free")
+        link = hotlink("h", "linked")
+        confirm = Mock(return_value=True)
+        plan_named_view_hotlink_delete(
+            [linked_view, unlinked_view], lambda _uids: [link], confirm
+        )
+        confirm.assert_called_once_with(linked_view)
+
+    def test_hotlink_without_target_does_not_count_as_link(self):
+        view = named_view("v")
+        blank_target = hotlink("h", "")
+        confirm = Mock()
+        result = plan_named_view_hotlink_delete(
+            [view], lambda _uids: [blank_target], confirm
+        )
+        self.assertEqual(result.annotations_to_delete, [view])
+        confirm.assert_not_called()
+
     def test_unlinked_view_does_not_require_confirmation(self):
         view = named_view("v")
         confirm = Mock()

@@ -42,6 +42,7 @@ from ost_visualizer.presentation.components.plan_view.components.page_loader imp
     VISUAL_KIND_PAGE,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.visualization.pdf.render_priority import RenderPriority
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PASTE_BACKOUT,
@@ -1245,16 +1246,19 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view = self._make_plan_view()
         calls = []
         view._finalize_page_load_if_ready = lambda: calls.append(True)
+        TakeoffPlanView._finalize_queued_page_load_if_valid(view)
+        self.assertEqual(calls, [True])
         delete(view)
         TakeoffPlanView._finalize_queued_page_load_if_valid(view)
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, [True])
 
     def test_plan_view_cleanup_continues_after_independent_stage_failures(self):
         view = self._make_plan_view()
         rendering_service = view._rendering_service
+        inline_edit_commits = []
 
         def fail_inline_edit(*, commit):
-            self.assertTrue(commit)
+            inline_edit_commits.append(commit)
             raise RuntimeError("inline edit failed")
 
         def fail_render_shutdown():
@@ -1270,6 +1274,9 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         messages = "\n".join(captured.output)
         self.assertIn("finish the active inline text edit", messages)
         self.assertIn("shut down page rendering", messages)
+        # Later cleanup stages (clearing the scene) also finish the edit.
+        self.assertEqual(inline_edit_commits[0], True)
+        self.assertEqual(set(inline_edit_commits), {True})
         self.assertEqual(rendering_service.shutdown_calls, 1)
         self.assertIsNone(view._condition_text_toolbar)
         self.assertIsNone(view._rendering_service)
@@ -1292,10 +1299,16 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
                 condition_type=Condition.TYPE_LINEAR,
             ),
         }
+        view._current_conditions["hidden"] = Condition(
+            uid="hidden", layer_visible=False, condition_type=Condition.TYPE_AREA
+        )
         self.assertEqual(
-            view._secondary_place_condition_uids("c2", ["c1", "c1", "linear", "c2"]),
+            view._secondary_place_condition_uids(
+                "c2", ["c1", "c1", "linear", "c2", "hidden", "missing"]
+            ),
             ["c1"],
         )
+        self.assertEqual(view._secondary_place_condition_uids("missing", ["c1"]), [])
 
     def test_render_loading_bar_is_fixed_viewport_overlay(self):
         view = self._make_plan_view()
@@ -1307,6 +1320,12 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             height_pts=792.0,
         )
         self._install_page_canvas(view, page)
+        view.show()
+        # Mark the load as applied so the pending fit does not undo the zoom,
+        # then scale past fit-to-page so both scrollbars have a non-zero range.
+        view._load_view_applied = True
+        view.scale(6.0, 6.0)
+        QApplication.processEvents()
         bar = view._render_loading_bar
         self.assertIs(bar.parent(), view)
         self.assertIsNot(bar.parent(), view.viewport())
@@ -1317,6 +1336,9 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertEqual(bar.geometry().y(), expected.y())
         self.assertEqual(bar.geometry().width(), expected.width())
         initial_pos = bar.pos()
+        initial_width = bar.geometry().width()
+        self.assertGreater(view.horizontalScrollBar().maximum(), 0)
+        self.assertGreater(view.verticalScrollBar().maximum(), 0)
         view.horizontalScrollBar().setValue(view.horizontalScrollBar().maximum())
         view.verticalScrollBar().setValue(view.verticalScrollBar().maximum())
         QApplication.processEvents()
@@ -1324,6 +1346,7 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view.resize(360, 260)
         QApplication.processEvents()
         expected = view.viewport().geometry()
+        self.assertNotEqual(expected.width(), initial_width)
         self.assertEqual(bar.geometry().x(), expected.x())
         self.assertEqual(bar.geometry().y(), expected.y())
         self.assertEqual(bar.geometry().width(), expected.width())
@@ -1339,6 +1362,12 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             height_pts=792.0,
         )
         self._install_page_canvas(view, page)
+        view.show()
+        # Mark the load as applied so the pending fit does not undo the zoom,
+        # then scale past fit-to-page so both scrollbars have a non-zero range.
+        view._load_view_applied = True
+        view.scale(6.0, 6.0)
+        QApplication.processEvents()
         bar = view._missing_file_bar
         self.assertIs(bar.parent(), view)
         self.assertIsNot(bar.parent(), view.viewport())
@@ -1350,6 +1379,9 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertEqual(bar.geometry().y(), expected.y())
         self.assertEqual(bar.geometry().width(), expected.width())
         initial_pos = bar.pos()
+        initial_width = bar.geometry().width()
+        self.assertGreater(view.horizontalScrollBar().maximum(), 0)
+        self.assertGreater(view.verticalScrollBar().maximum(), 0)
         view.horizontalScrollBar().setValue(view.horizontalScrollBar().maximum())
         view.verticalScrollBar().setValue(view.verticalScrollBar().maximum())
         QApplication.processEvents()
@@ -1357,6 +1389,7 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view.resize(360, 260)
         QApplication.processEvents()
         expected = view.viewport().geometry()
+        self.assertNotEqual(expected.width(), initial_width)
         self.assertEqual(bar.geometry().x(), expected.x())
         self.assertEqual(bar.geometry().y(), expected.y())
         self.assertEqual(bar.geometry().width(), expected.width())
@@ -1381,6 +1414,9 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         ordered = [Page(uid="p1", name="P1"), current, Page(uid="p3", name="P3")]
         view.prefetch_nearby_pages(current, ordered, None)
         self.assertEqual(len(coordinator.calls), 1)
+        self.assertIs(coordinator.calls[0][0], current)
+        self.assertEqual(coordinator.calls[0][1], ordered)
+        self.assertIsNone(coordinator.calls[0][2])
         self.assertFalse(view._render_loading_bar.is_loading)
         self.assertTrue(view._render_loading_bar.isHidden())
         view.cleanup()
@@ -1400,10 +1436,13 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view._current_render_identity = {}
         old_token = view._start_visible_frame_render_loading()
         new_token = view._start_current_page_render_loading()
-        view._render_loading_bar.complete(old_token)
+        self.assertNotEqual(old_token, new_token)
+        view._complete_visible_frame_render_loading(old_token)
         self.assertTrue(view._render_loading_bar.is_loading)
-        view._render_loading_bar.complete(new_token)
+        self.assertEqual(view._current_page_loading_token, new_token)
+        view._complete_current_page_render_loading()
         self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertIsNone(view._current_page_loading_token)
         view.cleanup()
 
     def test_rotate_handle_uses_white_fill_and_line_with_black_outline(self):
@@ -1623,6 +1662,12 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view.set_paste_allowed_fn(lambda: False)
         view.paste_clipboard()
         self.assertEqual(calls, ["paste"])
+        view.set_paste_allowed_fn(None)
+        view.paste_clipboard()
+        self.assertEqual(calls, ["paste"])
+        view.set_editing_enabled(True)
+        view.paste_clipboard()
+        self.assertEqual(calls, ["paste", "paste"])
         view.cleanup()
 
     def test_page_scale_reload_preserves_even_and_odd_fractional_zoom_viewports(self):
@@ -1667,6 +1712,11 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
                     )
                     h_scroll = view.horizontalScrollBar()
                     v_scroll = view.verticalScrollBar()
+                    if zoom_percent > 100.0:
+                        # Zoomed past the viewport, so the edge scroll values are
+                        # real positions and not clamped zeros.
+                        self.assertGreater(h_scroll.maximum(), h_scroll.minimum())
+                        self.assertGreater(v_scroll.maximum(), v_scroll.minimum())
                     h_scroll.setValue(
                         self._scroll_value_near_edge(h_scroll, scroll_edge)
                     )
@@ -1752,6 +1802,32 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertEqual(calls, ["fit"])
         view.cleanup()
 
+    def test_restored_in_bounds_page_view_state_is_applied_without_fitting(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=1.332,
+            current_x=408.0,
+            current_y=528.0,
+        )
+        self._install_page_canvas(view, page)
+        view.show()
+        QApplication.processEvents()
+        calls = []
+        view.fit_to_page = lambda: calls.append("fit")
+        view._load_initial_view_mode = "restore"
+        view._load_view_applied = False
+        view._apply_current_view_contract(consume_scroll_state=False)
+        self.assertEqual(calls, [])
+        zoom_fac, current_x, current_y = view.get_view_state()
+        self.assertAlmostEqual(zoom_fac, 1.332, places=3)
+        self.assertAlmostEqual(current_x, 408.0, delta=1.0)
+        self.assertAlmostEqual(current_y, 528.0, delta=1.0)
+        view.cleanup()
+
     def test_condition_text_toolbar_uses_format_icons_and_color_swatch(self):
         view = self._make_plan_view()
         for button in (
@@ -1762,7 +1838,7 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             view._condition_text_align_center_btn,
             view._condition_text_align_right_btn,
         ):
-            self.assertTrue(button.text() == "")
+            self.assertEqual(button.text(), "")
             self.assertFalse(button.icon().isNull())
             self.assertTrue(button.isCheckable())
         self.assertEqual(view._condition_text_bold_btn.toolTip(), "Bold")
@@ -1836,6 +1912,8 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             view._current_annotations = {"a1": selected}
             view._selected_uids = {"a1"}
             view.apply_annotation_style_to_selection(color="#336699", width=7.0)
+            self.assertEqual(selected.color, "#336699")
+            self.assertEqual(selected.width, 7.0)
             default_style = get_annotation_style_for_tool("rect")
             self.assertEqual(default_style.color, "#00aa00")
             self.assertEqual(default_style.line_width, 6.0)
@@ -1849,25 +1927,50 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
 
     def test_default_annotation_style_change_does_not_repaint_existing_annotation(self):
         from ost_visualizer.presentation.utils.annotation_defaults import (
+            get_annotation_style_for_tool,
             set_annotation_style_for_tool,
         )
 
-        view = self._make_plan_view()
+        view = self._make_plan_view(
+            annotation_renderer=AnnotationItemRenderer(FakeCoordinateSystem())
+        )
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
         annotation = BidAnnotation(
             uid="a1",
             annotation_type="rect",
+            page_uid=page.uid,
             position=[1.0, 2.0, 13.0, 14.0],
             color="#336699",
             width=4.0,
         )
-        view._current_annotations = {"a1": annotation}
-        set_annotation_style_for_tool("rect", color="#ff0000", line_width=12.0)
+        self.assertTrue(
+            view.load_page(
+                page,
+                [],
+                {},
+                {},
+                bid_ref=BidRef("bid.mdb", "bid-1"),
+                annotations=[annotation],
+            )
+        )
+        (item,) = view._uid_to_items["a1"]
+        self.assertEqual(item.pen().color().name(), "#336699")
+        self.assertEqual(item.pen().widthF(), 4.0)
+        original_style = get_annotation_style_for_tool("rect")
         try:
+            set_annotation_style_for_tool("rect", color="#ff0000", line_width=12.0)
             view._rebuild_current_overlays_from_model()
             self.assertEqual(annotation.color, "#336699")
             self.assertEqual(annotation.width, 4.0)
+            (rebuilt,) = view._uid_to_items["a1"]
+            self.assertEqual(rebuilt.pen().color().name(), "#336699")
+            self.assertEqual(rebuilt.pen().widthF(), 4.0)
         finally:
-            set_annotation_style_for_tool("rect", color="#ff0000", line_width=4.0)
+            set_annotation_style_for_tool(
+                "rect",
+                color=original_style.color,
+                line_width=original_style.line_width,
+            )
             view.cleanup()
 
     def test_named_view_rename_uses_inline_edit_without_text_toolbar(self):
@@ -1916,8 +2019,11 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             show_duplicate_named_view_name,
         )
 
-        for close_method in ("ok", "close"):
-            with self.subTest(close_method=close_method):
+        for dialog_result in (
+            QtWidgets.QMessageBox.StandardButton.Ok,
+            QtWidgets.QMessageBox.StandardButton.NoButton,
+        ):
+            with self.subTest(dialog_result=dialog_result):
                 view = self._make_plan_view()
                 view._selection_enabled = True
                 emitted = []
@@ -1946,6 +2052,7 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
                 with patch(
                     "ost_visualizer.presentation.utils.named_view_validation.show_warning"
                 ) as warning:
+                    warning.return_value = dialog_result
                     view._finish_named_view_rename(commit=True)
                 self.assertEqual(emitted, [])
                 self.assertEqual(validator_calls, [("Lobby", uid)])
@@ -1964,6 +2071,10 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
                 warning.assert_called_once()
                 view.set_named_view_name_validator(None)
                 view._finish_named_view_rename(commit=False)
+                self.assertIsNone(view._draft_named_view_uid)
+                self.assertNotIn(uid, view._current_annotations)
+                self.assertFalse(view.is_text_annotation_inline_edit_active())
+                self.assertEqual(emitted, [])
                 view.cleanup()
 
     def test_duplicate_named_view_close_then_unique_commit_succeeds_once(self):
@@ -2056,8 +2167,31 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertEqual(item.font().family(), expected.family())
         self.assertEqual(item.font().pointSize(), expected.pointSize())
         self.assertEqual(item.font().bold(), expected.bold())
+        # Independent oracle: the label the real renderer produces for a
+        # committed named view must use the same font as the draft editor.
+        final_view = self._make_plan_view(
+            annotation_renderer=AnnotationItemRenderer(FakeCoordinateSystem())
+        )
+        page = Page(uid="page-1", name="Page 1", width_pts=612.0, height_pts=792.0)
+        committed = self._named_view_annotation(uid="nv-final", page_uid="page-1")
+        self.assertTrue(
+            final_view.load_page(
+                page,
+                [],
+                {},
+                {},
+                bid_ref=BidRef("bid.mdb", "bid-1"),
+                annotations=[committed],
+            )
+        )
+        final_label = final_view._named_view_label_item("nv-final")
+        self.assertIsNotNone(final_label)
+        self.assertEqual(item.font().family(), final_label.font().family())
+        self.assertEqual(item.font().pointSize(), final_label.font().pointSize())
+        self.assertEqual(item.font().bold(), final_label.font().bold())
         view._finish_named_view_rename(commit=False)
         view.cleanup()
+        final_view.cleanup()
 
     def test_select_all_ignores_takeoffs_hidden_by_condition_layer(self):
         view = self._make_plan_view()
@@ -2317,9 +2451,14 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view._scene.addItem(item)
         view._uid_to_items = {"a1": [item]}
         view._current_annotations = {"a1": annotation}
+        view._selection_enabled = True
         view.set_text_annotation_inline_edit_enabled(False)
         self.assertFalse(view._begin_text_annotation_edit("a1"))
         self.assertFalse(view.is_text_annotation_inline_edit_active())
+        view.set_text_annotation_inline_edit_enabled(True)
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        view._finish_active_inline_text_edit(commit=False)
         view.cleanup()
 
     def test_inline_text_annotation_edit_respects_access_callback(self):
@@ -2338,6 +2477,10 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
         view.set_text_annotation_inline_edit_allowed_fn(lambda: False)
         self.assertFalse(view._begin_text_annotation_edit("a1"))
         self.assertFalse(view.is_text_annotation_inline_edit_active())
+        view.set_text_annotation_inline_edit_allowed_fn(lambda: True)
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        view._finish_active_inline_text_edit(commit=False)
         view.cleanup()
 
     def test_same_page_active_area_change_refreshes_mutated_selection_snapshot(self):
@@ -2360,10 +2503,13 @@ class TakeoffPlanViewOverlayRefreshTests(_TakeoffPlanViewOverlayRefreshFixture):
             bid_ref=bid_ref,
             annotations=[],
             page_area_selections=selections,
-            hidden_layer_uids={"layer-change"},
+            hidden_layer_uids=set(),
         )
         self.assertTrue(refreshed)
-        self.assertIn(("refresh_overlays", {"page-1": "area-2"}), calls)
+        self.assertEqual(
+            [call for call in calls if call[0] == "refresh_overlays"],
+            [("refresh_overlays", {"page-1": "area-2"})],
+        )
 
     def test_dirty_positions_preserve_each_table_scoped_annotation_identity(self):
         view = SimpleNamespace(
@@ -2533,8 +2679,11 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         self.assertFalse(view._render_loading_bar.is_loading)
         self.assertTrue(view._missing_file_bar.is_active)
         self.assertFalse(view._missing_file_bar.isHidden())
-        self.assertIn("Page image/PDF", view._missing_file_bar.toolTip())
-        self.assertIn("missing.pdf", view._missing_file_bar.toolTip())
+        self.assertEqual(
+            view._missing_file_bar.toolTip(),
+            "Page image/PDF was not found or could not be loaded: missing.pdf."
+            "\nmissing.pdf\nmissing",
+        )
         view.cleanup()
 
     def test_missing_page_file_bar_hides_when_switching_to_valid_page(self):
@@ -2796,6 +2945,8 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         )
         self.assertFalse(view._render_loading_bar.is_loading)
         self.assertTrue(view._render_loading_bar.isHidden())
+        # The pending reveal must be cancelled so the bar cannot flash later.
+        self.assertFalse(view._render_loading_bar._reveal_timer.isActive())
         view.cleanup()
 
     def test_clear_resets_active_loading_bar(self):
@@ -3137,8 +3288,10 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         )
         self.assertTrue(view.load_page(page, [], {}, {}))
         self.assertFalse(view._load_view_applied)
+        loading_scale = view.transform().m11()
         view.zoom_in()
         zoomed_scale = view.transform().m11()
+        self.assertNotAlmostEqual(zoomed_scale, loading_scale)
         request_id, request = view._rendering_service.page_requests[-1]
         result = RenderResult(
             request_id=request_id,
@@ -3235,10 +3388,13 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
             current_y=528.0,
         )
         self.assertTrue(view.load_page(page, [], {}, {}))
+        center_before_pan = self._viewport_state(view)[1]
         view._panning = True
         view._last_pan_point = QtCore.QPoint(10, 10)
         self.assertTrue(view._apply_pan_update(QtCore.QPoint(20, 20)))
         self.assertTrue(view._load_user_view_changed)
+        panned_center = self._viewport_state(view)[1]
+        self.assertNotEqual(panned_center, center_before_pan)
         request_id, request = view._rendering_service.page_requests[-1]
         result = RenderResult(
             request_id=request_id,
@@ -3249,6 +3405,12 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         request["callback"](result)
         QApplication.processEvents()
         self.assertTrue(view._load_view_applied)
+        self.assertAlmostEqual(
+            self._viewport_state(view)[1].x(), panned_center.x(), delta=0.01
+        )
+        self.assertAlmostEqual(
+            self._viewport_state(view)[1].y(), panned_center.y(), delta=0.01
+        )
         view.cleanup()
 
     def test_async_page_load_still_fits_when_user_does_not_zoom(self):
@@ -3265,6 +3427,10 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         )
         self.assertTrue(view.load_page(page, [], {}, {}))
         loading_scale = view.transform().m11()
+        self.assertFalse(view._load_view_applied)
+        # Resize while the render is in flight; the completed load must refit.
+        view.resize(500, 450)
+        QApplication.processEvents()
         request_id, request = view._rendering_service.page_requests[-1]
         result = RenderResult(
             request_id=request_id,
@@ -3276,7 +3442,10 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         QApplication.processEvents()
         self.assertTrue(view._load_view_applied)
         self.assertFalse(view._load_user_view_changed)
-        self.assertAlmostEqual(view.transform().m11(), loading_scale, delta=0.001)
+        fitted_scale = view.transform().m11()
+        view.fit_to_page()
+        self.assertAlmostEqual(fitted_scale, view.transform().m11(), delta=0.001)
+        self.assertGreater(fitted_scale, loading_scale)
         view.cleanup()
 
     def test_user_zoom_during_failed_async_page_load_leaves_canvas_stable(self):
@@ -3517,6 +3686,7 @@ class TakeoffPlanViewLoadPageTests(_TakeoffPlanViewOverlayRefreshFixture):
         annotation_keys = view.find_annotation_keys_by_uid_type(
             {("2", ANNOTATION_TYPE_TEXT)}
         )
+        self.assertEqual(len(annotation_keys), 1)
         self.assertEqual(view._selected_uids, annotation_keys)
         self.assertNotEqual(view._selected_uids, {"2"})
         view.cleanup()
@@ -3707,6 +3877,10 @@ class TakeoffPlanViewShowOverlayMoveHandleTests(_TakeoffPlanViewOverlayRefreshFi
         self.assertTrue(view.show_overlay_move_handle())
         handle_pos = view.mapFromScene(view._overlay_move_handle_item.pos())
         self.assertEqual(view._resolve_cursor(handle_pos), view._move_overlay_cursor)
+        self.assertEqual(
+            view._resolve_cursor(handle_pos + QtCore.QPoint(80, 80)),
+            QtCore.Qt.CursorShape.ArrowCursor,
+        )
         view.cleanup()
 
     def test_move_overlay_handle_uses_white_fill_with_black_outline(self):
@@ -4149,7 +4323,9 @@ class TakeoffPlanViewShowOverlayMoveHandleTests(_TakeoffPlanViewOverlayRefreshFi
         self.assertEqual(overlay_item.pixmap().toImage().pixelColor(0, 0).alpha(), 0)
         view.cleanup()
 
-    def test_move_overlay_inverted_bitonal_preview_keeps_alpha_and_invert(self):
+    def test_move_overlay_inverted_bitonal_preview_requests_invert_and_keeps_alpha(
+        self,
+    ):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -4165,8 +4341,8 @@ class TakeoffPlanViewShowOverlayMoveHandleTests(_TakeoffPlanViewOverlayRefreshFi
         )
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        _base_request_id, base_options = view._rendering_service.page_requests[-1]
-        _overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
+        base_request_id, base_options = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
         self.assertTrue(base_options["invert"])
@@ -4175,6 +4351,19 @@ class TakeoffPlanViewShowOverlayMoveHandleTests(_TakeoffPlanViewOverlayRefreshFi
         self.assertFalse(base_options["apply_bitonal_effect"])
         self.assertTrue(overlay_options["apply_invert_effect"])
         self.assertFalse(overlay_options["apply_bitonal_effect"])
+        base_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        base_image.fill(QtCore.Qt.GlobalColor.transparent)
+        base_image.setPixelColor(1, 1, QColor(0, 175, 175, 255))
+        base_options["callback"](RenderResult(base_request_id, True, base_image, None))
+        overlay_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        overlay_image.fill(QtCore.Qt.GlobalColor.transparent)
+        overlay_image.setPixelColor(1, 1, QColor(175, 175, 0, 255))
+        overlay_options["callback"](
+            RenderResult(overlay_request_id, True, overlay_image, None)
+        )
+        overlay_pixels = view._overlay_move_preview_overlay_item.pixmap().toImage()
+        self.assertEqual(overlay_pixels.pixelColor(0, 0).alpha(), 0)
+        self.assertEqual(overlay_pixels.pixelColor(1, 1), QColor(175, 175, 0, 255))
         view.cleanup()
 
     def test_move_overlay_enters_mode_from_handle_click(self):
@@ -4954,7 +5143,10 @@ class TakeoffPlanViewSetSelectionEnabledTests(_TakeoffPlanViewOverlayRefreshFixt
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0][0], ANNOTATION_TYPE_DIMENSION)
         self.assertEqual(created[0][2], page.uid)
-        self.assertNotEqual(created[0][1][:2], created[0][1][2:])
+        position = created[0][1]
+        self.assertEqual(len(position), 4)
+        self.assertGreater(position[2], position[0])
+        self.assertAlmostEqual(position[1], position[3])
         view._current_conditions = {
             "c1": Condition(uid="c1", condition_type=Condition.TYPE_LINEAR)
         }
@@ -4995,7 +5187,10 @@ class TakeoffPlanViewSetSelectionEnabledTests(_TakeoffPlanViewOverlayRefreshFixt
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0][0], ANNOTATION_TYPE_DIMENSION)
         self.assertEqual(created[0][2], page.uid)
-        self.assertNotEqual(created[0][1][:2], created[0][1][2:])
+        position = created[0][1]
+        self.assertEqual(len(position), 4)
+        self.assertGreater(position[2], position[0])
+        self.assertAlmostEqual(position[1], position[3])
         view._current_conditions = {
             "c1": Condition(uid="c1", condition_type=Condition.TYPE_LINEAR)
         }
@@ -7319,6 +7514,11 @@ class TakeoffPlanViewRefreshCurrentPageOverlaysTests(
         self.assertEqual(renderer.calls, [])
         self.assertEqual(view._selected_uids, {"ann-1"})
         self.assertIn("selection", calls)
+        (new_item,) = view._uid_to_items["ann-1"]
+        self.assertIsNot(new_item, old_item)
+        self.assertIs(new_item.scene(), view._scene)
+        self.assertEqual(new_item.toPlainText(), "new")
+        self.assertEqual(view._current_annotations["ann-1"].properties["Text"], "new")
 
     def test_annotation_delete_removes_only_annotation_item_and_selection(self):
         renderer = RecordingPathTakeoffRenderer()
@@ -7492,6 +7692,12 @@ class TakeoffPlanViewRefreshCurrentPageOverlaysTests(
         self.assertIs(hotlink_item.scene(), view._scene)
         self.assertEqual(renderer.calls, [])
         self.assertNotIn("refresh_overlays", calls)
+        self.assertEqual(view._current_annotations["shared"].properties["Text"], "new")
+        self.assertEqual(
+            view._current_annotations["shared_hotlink"].annotation_type,
+            ANNOTATION_TYPE_HOTLINK,
+        )
+        self.assertEqual(view._uid_to_items["shared_hotlink"], [hotlink_item])
 
     def test_full_refresh_keeps_annotation_selected_when_takeoff_claims_raw_uid(self):
         renderer = RecordingPathTakeoffRenderer()
@@ -7531,6 +7737,7 @@ class TakeoffPlanViewRefreshCurrentPageOverlaysTests(
             {("2", ANNOTATION_TYPE_TEXT)}
         )
         self.assertTrue(refreshed)
+        self.assertEqual(len(annotation_keys), 1)
         self.assertEqual(view._selected_uids, annotation_keys)
         self.assertNotEqual(view._selected_uids, {"2"})
 
@@ -7676,6 +7883,15 @@ class ViewPreferenceTests(unittest.TestCase):
             QtCore.Qt.ItemSelectionMode.IntersectsItemShape,
         )
 
+    def test_unknown_roping_preference_falls_back_to_touching(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view.set_roping_selection_method("inclusive")
+        view.set_roping_selection_method("bogus")
+        self.assertEqual(
+            view._roping_item_selection_mode(),
+            QtCore.Qt.ItemSelectionMode.IntersectsItemShape,
+        )
+
     def test_crosshair_preference_updates_plan_view_overlay_state(self):
         view, viewport = _preferences_support__plan_view_with_tracking_viewport()
         TakeoffPlanView.set_full_window_crosshairs(view, True, "#123456", 4)
@@ -7695,6 +7911,13 @@ class ViewPreferenceTests(unittest.TestCase):
         self.assertFalse(view._use_full_window_crosshairs)
         self.assertEqual(viewport.tracking, [True])
         self.assertEqual(viewport.updates, 1)
+
+    def test_crosshair_preference_controls_mouse_tracking_outside_passive_modes(self):
+        view, viewport = _preferences_support__plan_view_with_tracking_viewport("pan")
+        TakeoffPlanView.set_full_window_crosshairs(view, True, "#123456", 4)
+        TakeoffPlanView.set_full_window_crosshairs(view, False, "#123456", 4)
+        self.assertEqual(viewport.tracking, [True, False])
+        self.assertEqual(viewport.updates, 2)
 
     def test_cursor_mode_changes_refresh_preview_mouse_tracking(self):
         view, viewport = _preferences_support__plan_view_with_tracking_viewport()
@@ -7763,6 +7986,7 @@ class ViewPreferenceTests(unittest.TestCase):
         self.assertFalse(TakeoffPlanView.begin_paste_backout(view, [hole], {}, "7"))
         self.assertFalse(view._paste_backout_active)
         self.assertEqual(view.cursor_modes, [])
+        self.assertEqual(view.finished_intelligent_paste, 0)
         view._current_takeoffs["host"] = Takeoff(
             uid="host",
             condition_uid="area-condition",
@@ -7771,6 +7995,7 @@ class ViewPreferenceTests(unittest.TestCase):
         )
         self.assertTrue(TakeoffPlanView.begin_paste_backout(view, [hole], {}, "7"))
         self.assertTrue(view._paste_backout_active)
+        self.assertEqual(view.finished_intelligent_paste, 1)
         self.assertEqual(view.cursor_modes, ["paste_backout"])
         self.assertEqual(view.cursor_mode_change_requested.emitted, ["paste_backout"])
 
@@ -7792,11 +8017,15 @@ class ViewPreferenceTests(unittest.TestCase):
         view.page_fully_loaded = SimpleNamespace(emit=lambda: calls.append(("loaded",)))
         self.assertTrue(view._finalize_page_load_if_ready())
         self.assertTrue(view._load_view_applied)
+        self.assertFalse(view._load_waiting_for_visibility)
         self.assertIsNone(view._saved_scroll_state)
         self.assertEqual(
             calls,
             [("view", True), ("tiles", 3.5), ("loaded",)],
         )
+        # A second finalize must not re-apply the view or re-emit the signal.
+        self.assertFalse(view._finalize_page_load_if_ready())
+        self.assertEqual(len(calls), 3)
 
     def test_finalized_page_load_preserves_user_changed_loading_zoom(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -7845,6 +8074,16 @@ class ViewPreferenceTests(unittest.TestCase):
                 "viewport",
             ],
         )
+
+    def test_high_resolution_preference_unchanged_value_does_not_refresh(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        calls = []
+        view._current_page = object()
+        view._disable_high_resolution_images = True
+        view._clear_tiles = lambda: calls.append("clear")
+        view.viewport = lambda: SimpleNamespace(update=lambda: calls.append("viewport"))
+        view.set_disable_high_resolution_images(True)
+        self.assertEqual(calls, [])
 
     def test_page_view_state_uses_ost_page_pixel_coordinates(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -7896,12 +8135,19 @@ class ViewPreferenceTests(unittest.TestCase):
 
     def test_advanced_mouse_controls_preference_toggles_shortcuts(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view._ctrl_held = False
-        view._zoom_press_ctrl = False
+        cursor_updates = []
+        view._update_cursor = lambda: cursor_updates.append("cursor")
+        view._ctrl_held = True
+        view._zoom_press_ctrl = True
         view._advanced_mouse_controls_enabled = True
         self.assertTrue(view._advanced_mouse_controls_active())
         view.set_advanced_mouse_controls_enabled(False)
         self.assertFalse(view._advanced_mouse_controls_active())
+        self.assertFalse(view._ctrl_held)
+        self.assertFalse(view._zoom_press_ctrl)
+        self.assertEqual(cursor_updates, ["cursor"])
+        view.set_advanced_mouse_controls_enabled(True)
+        self.assertTrue(view._advanced_mouse_controls_active())
 
     def test_auto_zoom_preference_applies_only_without_saved_page_zoom(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -8015,6 +8261,15 @@ class ViewPreferenceTests(unittest.TestCase):
         view.finish_intelligent_paste_placement()
         self.assertEqual(view._intelligent_paste_guide_items, [])
 
+    def test_intelligent_paste_axis_snap_threshold_boundary(self):
+        view = self._make_intelligent_paste_snap_view()
+        dx, dy = view.apply_intelligent_paste_axis_snap(0.0, -47.0)
+        self.assertEqual((dx, dy), (0.0, -55.0))
+        self.assertEqual(len(view._intelligent_paste_guide_items), 2)
+        dx, dy = view.apply_intelligent_paste_axis_snap(0.0, -46.0)
+        self.assertEqual((dx, dy), (0.0, -46.0))
+        self.assertEqual(view._intelligent_paste_guide_items, [])
+
     def test_intelligent_paste_snaps_to_original_y_axis_and_shows_edge_guides(self):
         view = self._make_intelligent_paste_snap_view()
         dx, dy = view.apply_intelligent_paste_axis_snap(-35.0, 0.0)
@@ -8097,6 +8352,12 @@ class PdfTextSelectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        # Start every test from an empty clipboard so copy assertions prove that
+        # the view wrote the text, not that a previous test left it behind.
+        QtWidgets.QApplication.clipboard().setText("")
+        self.assertEqual(QtWidgets.QApplication.clipboard().text(), "")
 
     def _make_view(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -8437,12 +8698,71 @@ class PdfTextSelectionTests(unittest.TestCase):
             ],
             _pdf_text_support__page_info(),
         )
+        empty_menu = QtWidgets.QMenu()
+        view._add_pdf_text_context_clipboard_actions(empty_menu)
+        self.assertEqual(empty_menu.actions()[0].text().replace("&", ""), "Copy")
+        self.assertFalse(empty_menu.actions()[0].isEnabled())
         view.select_pdf_text_at(QtCore.QPointF(21.0, 45.0))
         menu = QtWidgets.QMenu()
         view._add_pdf_text_context_clipboard_actions(menu)
         actions = menu.actions()
         self.assertEqual(actions[0].text().replace("&", ""), "Copy")
         self.assertTrue(actions[0].isEnabled())
+
+    def test_pdf_text_context_menu_copy_action_copies_selected_text(self):
+        view = TakeoffPlanView(
+            color_service=FakeColorService(),
+            rendering_service=FakeRenderingService(),
+            load_coordinator=FakeLoadCoordinator(),
+            takeoff_renderer=FakeTakeoffRenderer(),
+            annotation_renderer=FakeAnnotationRenderer(),
+            linear_geometry=FakeLinearGeometry(),
+        )
+        self.addCleanup(lambda: delete(view) if isValid(view) else None)
+        view._current_page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="drawing.pdf",
+            width_pts=200.0,
+            height_pts=100.0,
+        )
+        view._pdf_width_pts = 200.0
+        view._pdf_height_pts = 100.0
+        view._scene_scale = 2.0
+        view._selection_enabled = True
+        view._pdf_text_runs = view._map_pdf_text_runs(
+            [
+                _pdf_text_support__raw_run(
+                    "Beam",
+                    10.0,
+                    20.0,
+                    70.0,
+                    80.0,
+                    [_pdf_text_support__raw_char("B", 10.0, 12.0, 70.0, 80.0)],
+                )
+            ],
+            _pdf_text_support__page_info(),
+        )
+        self.assertTrue(view.select_pdf_text_at(QtCore.QPointF(21.0, 45.0)))
+        menu = QtWidgets.QMenu()
+        view._add_pdf_text_context_clipboard_actions(menu)
+        copy_action = menu.actions()[0]
+        self.assertTrue(copy_action.isEnabled())
+        copy_action.trigger()
+        self.assertEqual(QtWidgets.QApplication.clipboard().text(), "B")
+        # The captured command is invalidated by clearing or replacing the
+        # selection, and by replacing the owning Page.
+        QtWidgets.QApplication.clipboard().setText("")
+        view._clear_pdf_text_selection()
+        copy_action.trigger()
+        self.assertEqual(QtWidgets.QApplication.clipboard().text(), "")
+        self.assertTrue(view.select_pdf_text_at(QtCore.QPointF(21.0, 45.0)))
+        stale_menu = QtWidgets.QMenu()
+        view._add_pdf_text_context_clipboard_actions(stale_menu)
+        view._current_page = replace(view._current_page)
+        stale_menu.actions()[0].trigger()
+        self.assertEqual(QtWidgets.QApplication.clipboard().text(), "")
+        view.cleanup()
 
     def test_pdf_text_extraction_runs_through_rendering_worker_service(self):
         view = self._make_view()
@@ -8451,7 +8771,13 @@ class PdfTextSelectionTests(unittest.TestCase):
             view._rendering_service.requests[0][:2],
             ("drawing.pdf", 0),
         )
+        self.assertEqual(
+            view._rendering_service.requests[0][3], RenderPriority.PDF_TEXT
+        )
+        self.assertEqual(len(view._rendering_service.requests), 1)
         self.assertEqual(view._pdf_text_request_id, "text-request-1")
+        view._request_pdf_text_extraction()
+        self.assertEqual(len(view._rendering_service.requests), 1)
 
     def test_composite_pdf_text_extraction_uses_overlay_source(self):
         view = self._make_view()
@@ -8480,6 +8806,7 @@ class PdfTextSelectionTests(unittest.TestCase):
         view._current_page.overlay_image_path = "overlay.pdf"
         view._current_page.image_show_mode = 1
         first_key = view._pdf_text_extraction_cache_key()
+        self.assertEqual(first_key, view._pdf_text_extraction_cache_key())
         view._current_page.scale_factor1 = 0.125
         second_key = view._pdf_text_extraction_cache_key()
         self.assertNotEqual(first_key, second_key)
@@ -8595,6 +8922,40 @@ class PdfTextSelectionTests(unittest.TestCase):
             )
         )
         self.assertEqual(view._pdf_text_request_id, "current")
+        self.assertEqual(view._pdf_text_runs, [])
+
+    def test_pdf_text_extraction_result_maps_current_request(self):
+        view = self._make_view()
+        view._pdf_text_request_id = "current"
+        view._on_pdf_text_extracted(
+            RenderResult(
+                "current",
+                True,
+                {
+                    "text_runs": [
+                        _pdf_text_support__raw_run(
+                            "Hello",
+                            10.0,
+                            20.0,
+                            70.0,
+                            80.0,
+                            [_pdf_text_support__raw_char("H", 10.0, 12.0, 70.0, 80.0)],
+                        )
+                    ],
+                    "page_info": _pdf_text_support__page_info(),
+                },
+                None,
+            )
+        )
+        self.assertIsNone(view._pdf_text_request_id)
+        self.assertEqual([run.text for run in view._pdf_text_runs], ["Hello"])
+
+    def test_pdf_text_extraction_failure_clears_runs_and_request(self):
+        view = self._make_view()
+        view._pdf_text_request_id = "current"
+        view._pdf_text_runs = ["stale"]
+        view._on_pdf_text_extracted(RenderResult("current", False, None, "boom"))
+        self.assertIsNone(view._pdf_text_request_id)
         self.assertEqual(view._pdf_text_runs, [])
 
 
@@ -8906,13 +9267,24 @@ class UIAccessPlanEditingTests(unittest.TestCase):
             _rebuild_current_overlays_from_model=lambda: None,
         )
         TakeoffPlanView.set_editing_enabled(view, False)
-        self.assertIn(("drag", True), cancellations)
-        self.assertIn(("rotation-drag", True), cancellations)
-        self.assertIn(("overlay", True), cancellations)
-        self.assertIn(("intelligent-paste", True), cancellations)
-        self.assertIn(("paste-backout", True), cancellations)
-        self.assertIn(("placement", True), cancellations)
-        self.assertIn(("inline-text", False), cancellations)
+        self.assertFalse(view._editing_enabled)
+        self.assertEqual(
+            cancellations,
+            [
+                ("inline-text", False),
+                ("overlay", True),
+                ("intelligent-paste", True),
+                ("paste-backout", True),
+                ("placement", True),
+                ("drag", True),
+                ("rotation-drag", True),
+                ("rotate", True),
+            ],
+        )
+        cancellations.clear()
+        TakeoffPlanView.set_editing_enabled(view, True)
+        self.assertTrue(view._editing_enabled)
+        self.assertEqual(cancellations, [])
 
     def test_read_only_plan_rejects_direct_mutation_mode_activation(self):
         calls = []
@@ -8938,6 +9310,21 @@ class UIAccessPlanEditingTests(unittest.TestCase):
         )
         TakeoffPlanView.set_cursor_mode(view, CURSOR_MODE_PLACE)
         self.assertEqual(calls, [])
+        view._editing_enabled = True
+        TakeoffPlanView.set_cursor_mode(view, CURSOR_MODE_PLACE)
+        self.assertEqual(
+            calls,
+            [
+                "finish-text",
+                ("overlay", True),
+                "remove-rotate",
+                "finish-paste",
+                "exit-annotation",
+                "enter-place",
+                ("cursor", CURSOR_MODE_PLACE),
+                ("emit", CURSOR_MODE_PLACE),
+            ],
+        )
 
     def test_read_only_plan_rejects_direct_annotation_style_mutation(self):
         annotation = SimpleNamespace(
@@ -8966,6 +9353,26 @@ class UIAccessPlanEditingTests(unittest.TestCase):
         self.assertEqual(annotation.color, "#112233")
         self.assertEqual(annotation.width, 2.0)
         self.assertEqual(emissions, [])
+        view._editing_enabled = True
+        TakeoffPlanView.apply_annotation_style_to_selection(
+            view, color="#445566", width=4.0
+        )
+        self.assertEqual(annotation.color, "#445566")
+        self.assertEqual(annotation.width, 4.0)
+        self.assertEqual(
+            emissions,
+            [
+                "rebuild",
+                [
+                    (
+                        41,
+                        "rectangle",
+                        {"Color": "#112233", "Width": 2.0},
+                        {"Color": "#445566", "Width": 4.0},
+                    )
+                ],
+            ],
+        )
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
@@ -9078,6 +9485,31 @@ class RemoteProjectionBlockerTests(unittest.TestCase):
     def test_active_selection_box_blocks_projection(self):
         view = self._plan_state(_has_active_drag_interaction=lambda: True)
         self.assertTrue(TakeoffPlanView.has_active_remote_projection_blocker(view))
+
+    def test_idle_plan_does_not_block_projection(self):
+        view = self._plan_state()
+        self.assertFalse(TakeoffPlanView.has_active_remote_projection_blocker(view))
+
+    def test_each_active_edit_state_blocks_projection(self):
+        blockers = {
+            "editing-annotation": {"_editing_annotation_uids": lambda: {"a1"}},
+            "rotation-drag": {"_rotation_drag_active": True},
+            "overlay-move-drag": {"_overlay_move_dragging": True},
+            "annotation-place-drag": {"_annotation_place_dragging": True},
+            "annotation-area-drag": {"_annotation_area_rect_dragging": True},
+            "place-area-drag": {"_place_area_rect_dragging": True},
+            "dirty-takeoff-position": {"_dirty_positions": {"t1": [1.0, 2.0]}},
+            "dirty-annotation-position": {
+                "_dirty_ann_positions": {"a1": (ANNOTATION_TYPE_TEXT, [1.0, 2.0])}
+            },
+            "paste-backout-preview": {"_paste_backout_preview_items": [object()]},
+        }
+        for name, overrides in blockers.items():
+            with self.subTest(blocker=name):
+                view = self._plan_state(**overrides)
+                self.assertTrue(
+                    TakeoffPlanView.has_active_remote_projection_blocker(view)
+                )
 
 
 class CtrlDragTests(unittest.TestCase):
@@ -9491,13 +9923,24 @@ class PresentationChaosHarnessTests(unittest.TestCase):
     def test_known_sequence_page_switch_drops_stale_selection(self):
         harness = PresentationChaosHarness(9001, self)
         try:
+            harness.run_sequence(["select_all"])
+            selected_before_switch = set(harness.view.get_selected_uids())
+            self.assertEqual(
+                selected_before_switch,
+                {"101", "102", "103", "p1-hotlink", "p1-hotlink-empty"}
+                | {"p1-named", "p1-text"},
+            )
+            self.assertEqual(harness.state.active_page_uid, "p1")
             harness.run_sequence(
                 [
-                    "select_all",
                     "switch_page",
                     "refresh_overlays",
                     "apply_pending_visible_state",
                 ]
+            )
+            self.assertNotEqual(harness.state.active_page_uid, "p1")
+            self.assertEqual(
+                harness.view.current_page_uid, harness.state.active_page_uid
             )
             self.assertEqual(set(harness.view.get_selected_uids()), set())
         finally:
@@ -9510,20 +9953,40 @@ class PresentationChaosHarnessTests(unittest.TestCase):
                 [
                     "delete_named_view_and_linked_hotlinks",
                     "refresh_overlays",
-                    "switch_page",
-                    "switch_page",
                 ]
             )
+            self.assertEqual(
+                harness.state.deleted_annotation_uids, {"p1-named", "p1-hotlink"}
+            )
+            self.assertEqual(
+                sorted(harness.view._current_annotations),
+                ["p1-hotlink-empty", "p1-text"],
+            )
+            self.assertEqual(
+                [hotlink.uid for _item, hotlink in harness.view._hotlink_items],
+                ["p1-hotlink-empty"],
+            )
+            self.assertNotIn("p1-named", harness.view._uid_to_items)
+            self.assertNotIn("p1-hotlink", harness.view._uid_to_items)
+            harness.run_sequence(["switch_page", "switch_page"])
         finally:
             harness.cleanup()
 
     def test_known_sequence_cancel_placement_clears_preview_and_mode(self):
-        harness = PresentationChaosHarness(9003, self)
+        # Seed 9004 enters hotlink placement and the random pointer position
+        # lands on the page, so a placement preview exists before cancelling.
+        harness = PresentationChaosHarness(9004, self)
         try:
             harness.run_sequence(
+                ["enter_annotation_placement", "mouse_move_during_placement"]
+            )
+            self.assertEqual(harness.view._cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+            self.assertEqual(
+                harness.view.annotation_place_type, ANNOTATION_TYPE_HOTLINK
+            )
+            self.assertNotEqual(harness.view._place_preview_items, [])
+            harness.run_sequence(
                 [
-                    "enter_annotation_placement",
-                    "mouse_move_during_placement",
                     "resize_viewport",
                     "cancel_placement",
                     "apply_pending_visible_state",

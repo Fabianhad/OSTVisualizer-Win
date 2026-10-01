@@ -31,6 +31,9 @@ from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH
 from ost_visualizer.presentation.components.condition_summary import ConditionSummaryTab
+from ost_visualizer.application.dtos.condition_summary_dtos import (
+    ConditionSummaryGrouping,
+)
 from ost_visualizer.presentation.utils.persistent_header import (
     PersistentHeaderController,
 )
@@ -45,6 +48,13 @@ def _app():
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+def _flatten_tree_item(item):
+    result = [item]
+    for index in range(item.childCount()):
+        result.extend(_flatten_tree_item(item.child(index)))
+    return result
 
 
 def _attach_summary_header(tab):
@@ -127,6 +137,7 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
                 )
                 for submenu in submenus:
                     with self.subTest(submenu=submenu.title()):
+                        self.assertTrue(submenu.isEnabled())
                         self.assertTrue(submenu.property("ost_compact_overflow_menu"))
                         self.assertEqual(
                             submenu.property("ost_compact_overflow_max_visible_rows"),
@@ -202,6 +213,53 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         ).trigger()
         self.assertEqual(assigned, [])
 
+    def test_condition_assignment_overflow_page_requests_assignment_for_current_tree(
+        self,
+    ):
+        for edit_allowed in (True, False):
+            with self.subTest(edit_allowed=edit_allowed):
+                sidebar = ConditionsSidebar(None)
+                self.addCleanup(sidebar.deleteLater)
+                assigned = []
+                sidebar.condition_layer_change_requested.connect(
+                    lambda uids, layer_uid: assigned.append((list(uids), layer_uid))
+                )
+                sidebar.load_conditions(self._make_conditions(1), {}, "Project")
+                sidebar.set_edit_enabled(edit_allowed)
+                sidebar.set_available_layers(
+                    [
+                        BidLayer(
+                            uid=f"layer-{index}",
+                            bid_uid="bid",
+                            name=f"Layer {index:02d}",
+                            show=True,
+                            sequence=index,
+                        )
+                        for index in range(1, 81)
+                    ]
+                )
+                menu = QtWidgets.QMenu()
+                self.addCleanup(menu.deleteLater)
+                sidebar._add_layer_submenu(menu, ["c1"], True)
+                submenu = menu.actions()[0].menu()
+                self.assertTrue(submenu.isEnabled())
+                submenu.show()
+                submenu.actions()[-1].defaultWidget().click()
+                self.app.processEvents()
+                submenu.close()
+                layer_actions = [
+                    action
+                    for action in submenu.actions()
+                    if action.data() and str(action.data()).startswith("layer-")
+                ]
+                self.assertTrue(layer_actions)
+                self.assertNotEqual(layer_actions[0].data(), "layer-1")
+                layer_actions[0].trigger()
+                self.assertEqual(
+                    assigned,
+                    [(["c1"], layer_actions[0].data())] if edit_allowed else [],
+                )
+
     def test_condition_sidebar_rebuild_clears_stale_selection_cache(self):
         sidebar = ConditionsSidebar(None)
         sidebar.load_conditions(
@@ -209,14 +267,21 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
             {},
             "Project",
         )
+        sidebar.set_delete_enabled(True)
+        sidebar.set_duplicate_enabled(True)
         sidebar.highlight_conditions({"c1"})
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertTrue(sidebar._delete_btn.isEnabled())
+        self.assertTrue(sidebar._duplicate_btn.isEnabled())
         sidebar.load_conditions(
             {"c2": Condition(uid="c2", name="Condition 2", ref_no=2)},
             {},
             "Project",
         )
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
+        self.assertIsNone(sidebar.get_active_condition_uid())
+        self.assertFalse(sidebar._delete_btn.isEnabled())
+        self.assertFalse(sidebar._duplicate_btn.isEnabled())
 
     def test_condition_sidebar_passive_reload_does_not_reapply_stale_scroll(self):
         sidebar = ConditionsSidebar(None)
@@ -230,6 +295,11 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar.load_conditions(self._make_conditions(80, "b"), {}, "Project B")
         self.app.processEvents()
         self.assertEqual(scrollbar.value(), 0)
+        # A different project loads fully expanded, so the zero scroll position is
+        # not an artifact of collapsed branches.
+        self.assertTrue(sidebar.tree.topLevelItem(0).isExpanded())
+        self.assertTrue(sidebar.tree.topLevelItem(0).child(0).isExpanded())
+        self.assertGreater(scrollbar.maximum(), 0)
 
     def test_condition_sidebar_highlight_scrolls_to_revealed_condition(self):
         sidebar = ConditionsSidebar(None)
@@ -243,6 +313,12 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.app.processEvents()
         self.assertGreater(scrollbar.value(), 0)
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c80"])
+        item = sidebar._condition_items["c80"]
+        self.assertIs(sidebar.tree.currentItem(), item)
+        rect = sidebar.tree.visualItemRect(item)
+        viewport_rect = sidebar.tree.viewport().rect()
+        self.assertGreaterEqual(rect.top(), viewport_rect.top())
+        self.assertLessEqual(rect.bottom(), viewport_rect.bottom())
 
     def test_condition_sidebar_explicit_highlight_expands_condition_path(self):
         sidebar = ConditionsSidebar(None)
@@ -257,6 +333,9 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertTrue(folder.isExpanded())
         self.assertTrue(cdn_type.isExpanded())
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertIs(sidebar.tree.currentItem(), sidebar._condition_items["c1"])
+        self.assertTrue(sidebar._condition_items["c1"].isSelected())
+        self.assertFalse(sidebar._folder_items["f2"].isSelected())
 
     def test_programmatic_multi_highlight_uses_focused_condition_as_active(self):
         class OrderedUidSet(set):
@@ -338,6 +417,8 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar._restore_context_selection(["c1"], [])
         self.assertFalse(folder.isExpanded())
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertTrue(sidebar._condition_items["c1"].isSelected())
+        self.assertIsNot(sidebar.tree.currentItem(), sidebar._condition_items["c1"])
 
     def test_condition_sidebar_passive_reload_preserves_visible_highlight_without_scroll(
         self,
@@ -380,6 +461,7 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         scrollbar = sidebar.tree.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum() // 2)
         expected = scrollbar.value()
+        self.assertGreater(expected, 0)
         sidebar.load_conditions(self._make_conditions(80), {}, "Project")
         self.app.processEvents()
         self.assertEqual(scrollbar.value(), expected)
@@ -424,6 +506,33 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
             rect.center().y(), sidebar.tree.viewport().rect().center().y()
         )
 
+    def test_condition_sidebar_reveal_positions_item_without_qt_auto_scroll(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        self._show_compact_sidebar(sidebar)
+        sidebar.load_conditions(self._make_conditions(80), {}, "Project")
+        self.app.processEvents()
+        sidebar.tree.setAutoScroll(False)
+        scrollbar = sidebar.tree.verticalScrollBar()
+        viewport_center = sidebar.tree.viewport().rect().center().y()
+        scrollbar.setValue(scrollbar.maximum())
+        sidebar.highlight_conditions({"c20"})
+        self.app.processEvents()
+        rect = sidebar.tree.visualItemRect(sidebar._condition_items["c20"])
+        self.assertGreaterEqual(rect.top(), 0)
+        self.assertLess(rect.center().y(), viewport_center)
+        scrollbar.setValue(0)
+        sidebar.highlight_conditions({"c60"})
+        self.app.processEvents()
+        rect = sidebar.tree.visualItemRect(sidebar._condition_items["c60"])
+        self.assertLessEqual(rect.bottom(), sidebar.tree.viewport().rect().bottom())
+        self.assertGreater(rect.center().y(), viewport_center)
+        scrollbar.setValue(0)
+        value = scrollbar.value()
+        sidebar.highlight_conditions({"c1"})
+        self.app.processEvents()
+        self.assertEqual(scrollbar.value(), value)
+
     def test_condition_sidebar_reload_preserves_expanded_state(self):
         sidebar = ConditionsSidebar(None)
         self.addCleanup(sidebar.close)
@@ -443,10 +552,10 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar._folder_items["f1"].setExpanded(False)
         sidebar._folder_items["f2"].setExpanded(False)
         replacement_uid = sidebar.condition_selection_after_delete(["c2"])
+        self.assertEqual(replacement_uid, "c1")
         remaining = {"c1": conditions["c1"]}
         sidebar.load_conditions(remaining, folders, "Project")
-        if replacement_uid:
-            sidebar.highlight_conditions({replacement_uid}, reveal=False)
+        sidebar.highlight_conditions({replacement_uid}, reveal=False)
         self.assertFalse(sidebar._folder_items["f1"].isExpanded())
         self.assertFalse(sidebar._folder_items["f2"].isExpanded())
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
@@ -498,6 +607,16 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar.load_conditions(conditions, {}, "Project")
         self.assertIsNone(sidebar.condition_selection_after_delete(["c1", "c2"]))
 
+    def test_condition_sidebar_delete_replacement_skips_deleted_neighbours(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        sidebar.load_conditions(self._make_conditions(4), {}, "Project")
+        self.assertEqual(sidebar.condition_selection_after_delete(["c1", "c2"]), "c3")
+        self.assertEqual(sidebar.condition_selection_after_delete(["c2", "c4"]), "c1")
+        self.assertEqual(sidebar.condition_selection_after_delete(["c2", "c3"]), "c1")
+        self.assertIsNone(sidebar.condition_selection_after_delete([]))
+        self.assertIsNone(sidebar.condition_selection_after_delete(["missing"]))
+
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
         sidebar = ConditionsSidebar(None)
         condition = Condition(uid="c1", name="Condition 1", ref_no=1)
@@ -505,10 +624,16 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar.update_quantities({"c1": (12.0, 0.0, 0.0)})
         item = sidebar._condition_items["c1"]
         before = [item.text(col) for col in range(2, 5)]
+        self.assertEqual(before[0], "12")
+        self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
         condition.layer_visible = False
         sidebar.apply_layer_visibility_state({"c1": condition})
         self.assertEqual([item.text(col) for col in range(2, 5)], before)
         self.assertFalse(sidebar.is_condition_placeable("c1"))
+        self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+        self.assertEqual(
+            item.foreground(1).color(), conditions_sidebar_module._DISABLED_TEXT_COLOR
+        )
 
     def test_condition_sidebar_layer_visibility_updates_only_matching_layer_rows(self):
         sidebar = ConditionsSidebar(None)
@@ -535,6 +660,14 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
             self.assertEqual(make_icon.call_count, 1)
             self.assertFalse(sidebar.is_condition_placeable("c1"))
             self.assertTrue(sidebar.is_condition_placeable("c2"))
+            item_a = sidebar._condition_items["c1"]
+            item_b = sidebar._condition_items["c2"]
+            self.assertFalse(item_a.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertEqual(
+                item_a.foreground(1).color(),
+                conditions_sidebar_module._DISABLED_TEXT_COLOR,
+            )
+            self.assertTrue(item_b.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
         finally:
             sidebar.deleteLater()
 
@@ -550,6 +683,7 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar.load_conditions({"c1": condition}, {}, "Project")
         sidebar.apply_layer_visibility_state({"c1": condition})
         sidebar.update_quantities({"c1": (12.0, 0.0, 0.0)})
+        self.assertEqual(sidebar._condition_items["c1"].text(2), "12")
         self.assertFalse(sidebar.tree.isSortingEnabled())
         self.assertFalse(sidebar.tree.updatesEnabled())
         self.assertTrue(sidebar.tree.signalsBlocked())
@@ -602,10 +736,60 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertTrue(sidebar._can_paste_to_item(root))
         self.assertTrue(sidebar._can_paste_context_target("root", root))
         sidebar._paste_copied_conditions(folder)
+        self.assertEqual(len(pasted), 1)
         self.assertEqual(pasted[0][0], ["c1"])
         self.assertEqual(pasted[0][1]["kind"], "folder")
         self.assertEqual(pasted[0][1]["folder_uid"], "f1")
         self.assertTrue(pasted[0][1]["cut"])
+        self.assertEqual(
+            pasted[0][1]["clipboard_revision"], sidebar._condition_clipboard_revision
+        )
+        sidebar._paste_copied_conditions(root)
+        self.assertEqual(pasted[1][1]["kind"], "root")
+        self.assertIsNone(pasted[1][1]["folder_uid"])
+
+    def test_condition_clipboard_paste_permission_follows_clipboard_mode(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        pasted = []
+        sidebar.paste_requested.connect(
+            lambda uids, target: pasted.append((list(uids), dict(target)))
+        )
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Condition 1", ref_no=1)},
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        folder = sidebar._folder_items["f1"]
+        sidebar.set_copy_enabled(True)
+        sidebar.set_duplicate_enabled(True)
+        sidebar.highlight_conditions({"c1"})
+        # Cutting needs structure permission, which this user lacks.
+        sidebar._cut_selected_conditions()
+        self.assertEqual(sidebar._copied_condition_uids, [])
+        self.assertFalse(sidebar._condition_clipboard_cut)
+        sidebar._copy_selected_conditions()
+        self.assertEqual(sidebar._copied_condition_uids, ["c1"])
+        self.assertFalse(sidebar._condition_clipboard_cut)
+        self.assertTrue(sidebar._can_paste_to_item(folder))
+        sidebar._paste_copied_conditions(folder)
+        self.assertEqual(len(pasted), 1)
+        self.assertFalse(pasted[0][1]["cut"])
+        self.assertEqual(
+            pasted[0][1]["clipboard_revision"], sidebar._condition_clipboard_revision
+        )
+        sidebar.set_duplicate_enabled(False)
+        self.assertFalse(sidebar._can_paste_to_item(folder))
+        sidebar._paste_copied_conditions(folder)
+        self.assertEqual(len(pasted), 1)
+        sidebar.set_create_folder_enabled(True)
+        sidebar._cut_selected_conditions()
+        self.assertTrue(sidebar._condition_clipboard_cut)
+        self.assertTrue(sidebar._can_paste_to_item(folder))
+        sidebar.set_create_folder_enabled(False)
+        self.assertFalse(sidebar._can_paste_to_item(folder))
+        sidebar._paste_copied_conditions(folder)
+        self.assertEqual(len(pasted), 1)
 
     def test_condition_cut_clipboard_retains_unconfirmed_and_partial_sources(self):
         sidebar = ConditionsSidebar(None)
@@ -689,6 +873,18 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
             sidebar.tree.state(),
             QtWidgets.QAbstractItemView.State.EditingState,
         )
+        # The same operations are accepted for the rebuilt tree's live item.
+        self.addCleanup(sidebar.close)
+        sidebar.show()
+        self.app.processEvents()
+        current_item = sidebar._condition_items["c1"]
+        sidebar._paste_copied_conditions(current_item)
+        self.assertEqual([uids for uids, _target in pasted], [["c1"]])
+        sidebar._rename_context_target(current_item)
+        self.assertEqual(
+            sidebar.tree.state(),
+            QtWidgets.QAbstractItemView.State.EditingState,
+        )
 
     def test_condition_clipboard_drops_sources_deleted_by_remote_rebuild(self):
         sidebar = ConditionsSidebar(None)
@@ -711,6 +907,8 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertFalse(sidebar._can_paste_to_item(root))
         sidebar._paste_copied_conditions(root)
         self.assertEqual(pasted, [])
+        self.assertEqual(sidebar._copied_condition_uids, [])
+        self.assertFalse(sidebar._condition_clipboard_cut)
 
     def test_condition_clipboard_pastes_only_survivors_of_remote_rebuild(self):
         sidebar = ConditionsSidebar(None)
@@ -738,7 +936,10 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         )
         root = sidebar.tree.topLevelItem(0)
         sidebar._paste_copied_conditions(root)
+        self.assertEqual(len(pasted), 1)
         self.assertEqual(pasted[0][0], ["c2"])
+        self.assertEqual(pasted[0][1]["kind"], "root")
+        self.assertFalse(pasted[0][1]["cut"])
 
     def test_condition_context_delete_keeps_original_selection_target(self):
         sidebar = ConditionsSidebar(None)
@@ -759,6 +960,48 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar.highlight_conditions({"c2"})
         next(action for action in menu.actions() if action.text() == "Delete").trigger()
         self.assertEqual(deleted, [["c1"]])
+
+    def test_condition_context_folder_delete_keeps_original_selection_target(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        deleted_folders = []
+        deleted_conditions = []
+        sidebar.folder_delete_requested.connect(
+            lambda uids: deleted_folders.append(list(uids))
+        )
+        sidebar.delete_requested.connect(
+            lambda uids: deleted_conditions.append(list(uids))
+        )
+        sidebar.load_conditions(
+            {},
+            {
+                "f1": BidConditionFolder(uid="f1", name="First"),
+                "f2": BidConditionFolder(uid="f2", name="Second"),
+            },
+            "Project",
+        )
+        sidebar.set_create_folder_enabled(True)
+        sidebar.tree.clearSelection()
+        sidebar._folder_items["f1"].setSelected(True)
+        menu = QtWidgets.QMenu()
+        self.addCleanup(menu.deleteLater)
+        sidebar._add_condition_command_actions(
+            menu,
+            sidebar._folder_items["f1"],
+            conditions_sidebar_module._TYPE_FOLDER,
+            [],
+            False,
+            False,
+        )
+        sidebar.tree.clearSelection()
+        sidebar._folder_items["f2"].setSelected(True)
+        delete_action = next(
+            action for action in menu.actions() if action.text() == "Delete"
+        )
+        self.assertTrue(delete_action.isEnabled())
+        delete_action.trigger()
+        self.assertEqual(deleted_folders, [["f1"]])
+        self.assertEqual(deleted_conditions, [])
 
     def test_condition_context_new_keeps_right_clicked_folder_target(self):
         sidebar = ConditionsSidebar(None)
@@ -787,6 +1030,63 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
             action for action in new_menu.actions() if action.text() == "Condition"
         ).trigger()
         self.assertEqual(created, ["f1"])
+
+    def test_condition_context_new_folder_uses_clicked_target_and_root_is_top_level(
+        self,
+    ):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        created_folders = []
+        created_conditions = []
+        sidebar.create_folder_requested.connect(created_folders.append)
+        sidebar.create_requested.connect(created_conditions.append)
+        sidebar.load_conditions(
+            {},
+            {
+                "f1": BidConditionFolder(uid="f1", name="First"),
+                "f2": BidConditionFolder(uid="f2", name="Second"),
+            },
+            "Project",
+        )
+        sidebar.set_create_enabled(True)
+        sidebar.set_create_folder_enabled(True)
+        first = sidebar._folder_items["f1"]
+        root = sidebar.tree.topLevelItem(0)
+        sidebar.tree.setCurrentItem(first)
+        for target in (first, root):
+            menu = QtWidgets.QMenu(sidebar)
+            sidebar._add_new_submenu(menu, target)
+            sidebar.tree.setCurrentItem(sidebar._folder_items["f2"])
+            new_menu = menu.actions()[0].menu()
+            actions = {action.text(): action for action in new_menu.actions()}
+            self.assertTrue(actions["Folder"].isEnabled())
+            actions["Folder"].trigger()
+            actions["Condition"].trigger()
+        # Menus were built for a different current item than the one used at
+        # trigger time; the clicked target decides the parent folder.
+        self.assertEqual(created_folders, ["f1", ""])
+        self.assertEqual(created_conditions, ["f1", ""])
+
+    def test_condition_context_new_actions_are_disabled_without_permission(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        created = []
+        sidebar.create_requested.connect(created.append)
+        sidebar.create_folder_requested.connect(created.append)
+        sidebar.load_conditions(
+            {}, {"f1": BidConditionFolder(uid="f1", name="First")}, "Project"
+        )
+        first = sidebar._folder_items["f1"]
+        sidebar.tree.setCurrentItem(first)
+        menu = QtWidgets.QMenu(sidebar)
+        sidebar._add_new_submenu(menu, first)
+        new_menu = menu.actions()[0].menu()
+        for action in new_menu.actions():
+            self.assertFalse(action.isEnabled(), action.text())
+            action.trigger()
+        sidebar._request_create_in_context(first, folder=False)
+        sidebar._request_create_in_context(first, folder=True)
+        self.assertEqual(created, [])
 
     def test_condition_tree_rebuild_cancels_active_drag_identity(self):
         sidebar = ConditionsSidebar(None)
@@ -828,6 +1128,49 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(ignored, [True])
         self.assertEqual(moved, [])
 
+    def test_condition_drop_requests_move_only_for_valid_targets_and_permission(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        moved = []
+        sidebar.condition_folder_move_requested.connect(
+            lambda condition_uid, folder_uid: moved.append((condition_uid, folder_uid))
+        )
+        sidebar.load_conditions(
+            self._make_conditions(1),
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        root = sidebar.tree.topLevelItem(0)
+        folder = sidebar._folder_items["f1"]
+        condition_item = sidebar._condition_items["c1"]
+
+        def drop_on(target):
+            accepted = []
+            ignored = []
+            sidebar.tree.itemAt = lambda _position: target
+            event = SimpleNamespace(
+                position=lambda: QtCore.QPointF(),
+                acceptProposedAction=lambda: accepted.append(True),
+                ignore=lambda: ignored.append(True),
+            )
+            sidebar.tree.dropEvent(event)
+            return accepted, ignored
+
+        sidebar.tree._drag_uid = "c1"
+        self.assertEqual(drop_on(folder), ([], [True]))
+        self.assertEqual(moved, [])
+        sidebar.set_create_folder_enabled(True)
+        self.assertEqual(drop_on(condition_item), ([], [True]))
+        self.assertEqual(drop_on(None), ([], [True]))
+        self.assertEqual(moved, [])
+        self.assertEqual(drop_on(folder), ([True], []))
+        self.assertEqual(moved, [("c1", "f1")])
+        self.assertEqual(drop_on(root), ([True], []))
+        self.assertEqual(moved, [("c1", "f1"), ("c1", "")])
+        sidebar.tree.cancel_drag()
+        self.assertEqual(drop_on(folder), ([], [True]))
+        self.assertEqual(len(moved), 2)
+
     def test_condition_tree_rebuild_cancels_active_folder_editor(self):
         sidebar = ConditionsSidebar(None)
         sidebar.load_conditions(
@@ -836,9 +1179,12 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         sidebar.set_create_folder_enabled(True)
         sidebar.start_folder_edit("f1")
         self.assertIsNotNone(sidebar._editing_folder)
+        self.assertTrue(sidebar._folder_editor_connected)
         sidebar.load_conditions(
             {}, {"f1": BidConditionFolder(uid="f1", name="Replacement")}, "Project"
         )
+        self.assertIsNone(sidebar._editing_folder)
+        self.assertFalse(sidebar._folder_editor_connected)
         sidebar._on_folder_editor_closed()
         self.assertIsNone(sidebar._editing_folder)
         self.assertEqual(sidebar._folder_items["f1"].text(0), "Replacement")
@@ -866,6 +1212,69 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         )
         sidebar.start_folder_edit("f1")
         self.assertIsNone(sidebar._editing_folder)
+
+    def test_pending_condition_folder_edit_is_rejected_when_access_is_lost_before_rebuild(
+        self,
+    ):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        sidebar.set_create_folder_enabled(True)
+        sidebar.show()
+        self.app.processEvents()
+        sidebar.load_conditions({}, {}, "Project")
+        sidebar.set_pending_folder_edit("f1")
+        sidebar.set_create_folder_enabled(False)
+        with patch.object(
+            sidebar.tree, "editItem", wraps=sidebar.tree.editItem
+        ) as edit:
+            sidebar.load_conditions(
+                {}, {"f1": BidConditionFolder(uid="f1", name="Original")}, "Project"
+            )
+            self.assertEqual(edit.call_count, 0)
+        self.assertIsNone(sidebar._editing_folder)
+        self.assertIsNone(sidebar._pending_folder_edit_uid)
+        # With access retained the same pending request opens the editor.
+        sidebar.set_create_folder_enabled(True)
+        sidebar.load_conditions({}, {}, "Project")
+        sidebar.set_pending_folder_edit("f1")
+        sidebar.load_conditions(
+            {}, {"f1": BidConditionFolder(uid="f1", name="Original")}, "Project"
+        )
+        self.assertIsNotNone(sidebar._editing_folder)
+        self.assertEqual(sidebar._editing_folder[1], "f1")
+
+    def test_condition_folder_rename_emits_trimmed_name_and_keeps_label_authoritative(
+        self,
+    ):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        renamed = []
+        sidebar.folder_renamed.connect(lambda uid, name: renamed.append((uid, name)))
+        sidebar.load_conditions(
+            {},
+            {
+                "f1": BidConditionFolder(uid="f1", name="Original"),
+                "f2": BidConditionFolder(uid="f2", name="Other"),
+            },
+            "Project",
+        )
+        sidebar.set_create_folder_enabled(True)
+        item = sidebar._folder_items["f1"]
+        with patch.object(conditions_sidebar_module, "show_warning") as warning:
+            for typed, expected_label in (
+                ("  Renamed  ", "Original"),
+                ("   ", "Original"),
+                ("Original", "Original"),
+                ("other", "Original"),
+            ):
+                sidebar.start_folder_edit("f1")
+                item.setText(0, typed)
+                sidebar._on_folder_editor_closed()
+                self.assertEqual(item.text(0), expected_label, typed)
+                self.assertIsNone(sidebar._editing_folder)
+        self.assertEqual(renamed, [("f1", "Renamed")])
+        self.assertEqual(warning.call_count, 1)
+        self.assertEqual(warning.call_args.args[1], "Duplicate Folder")
 
     def test_condition_folder_delete_uses_structure_not_condition_delete(self):
         sidebar = ConditionsSidebar(None)
@@ -925,6 +1334,71 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(cdn_type_item.text(0), "Type 1")
         self.assertTrue(cdn_type_item.font(0).bold())
         self.assertFalse(condition_item.font(0).bold())
+        self.assertEqual(
+            cdn_type_item.data(0, QtCore.Qt.ItemDataRole.UserRole)[1], "type-1"
+        )
+        self.assertEqual(condition_item.text(1), "Condition 1")
+        self.assertTrue(root.font(0).bold())
+
+    def test_condition_sidebar_groups_unassigned_conditions_before_named_types(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = {
+            "c1": Condition(
+                uid="c1",
+                name="Typed",
+                ref_no=1,
+                cdn_type_uid="type-1",
+                cdn_type_name="Type B",
+            ),
+            "c2": Condition(uid="c2", name="Untyped", ref_no=2),
+        }
+        sidebar.load_conditions(conditions, {}, "Project")
+        root = sidebar.tree.topLevelItem(0)
+        groups = [root.child(index) for index in range(root.childCount())]
+        self.assertEqual(
+            [(group.text(0), group.child(0).text(1)) for group in groups],
+            [("(unassigned)", "Untyped"), ("Type B", "Typed")],
+        )
+        self.assertEqual(
+            groups[0].data(0, QtCore.Qt.ItemDataRole.UserRole), ("cdn_type", "")
+        )
+
+    def test_group_by_type_toggle_rebuilds_tree_restores_selection_and_notifies(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        notifications = []
+        sidebar.group_by_type_changed.connect(notifications.append)
+        sidebar.load_conditions(
+            {
+                "c1": Condition(
+                    uid="c1",
+                    name="Typed",
+                    ref_no=1,
+                    cdn_type_uid="type-1",
+                    cdn_type_name="Type 1",
+                )
+            },
+            {},
+            "Project",
+        )
+        sidebar.highlight_conditions({"c1"})
+        root = sidebar.tree.topLevelItem(0)
+        self.assertTrue(sidebar.is_group_by_type_enabled())
+        self.assertEqual(root.child(0).text(0), "Type 1")
+        sidebar.set_group_by_type(False)
+        root = sidebar.tree.topLevelItem(0)
+        self.assertFalse(sidebar.is_group_by_type_enabled())
+        self.assertEqual(root.childCount(), 1)
+        self.assertEqual(root.child(0).text(1), "Typed")
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertEqual(notifications, [False])
+        sidebar.set_group_by_type(False)
+        self.assertEqual(notifications, [False])
+        sidebar.set_group_by_type(True, notify=False)
+        self.assertEqual(sidebar.tree.topLevelItem(0).child(0).text(0), "Type 1")
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertEqual(notifications, [False])
 
     @classmethod
     def setUpClass(cls):
@@ -938,6 +1412,11 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
 
     def tearDown(self):
         self.app.processEvents()
+
+    @staticmethod
+    def _ctrl_key_click(widget, key):
+        QTest.keyClick(widget, key, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyRelease(widget, Qt.Key.Key_Control)
 
     def _make_sidebar_with_selected_condition(self):
         sidebar = ConditionsSidebar(None)
@@ -961,6 +1440,36 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(deleted, [["c1"]])
         sidebar.close()
+
+    def test_delete_key_respects_condition_and_folder_permissions(self):
+        sidebar, deleted = self._make_sidebar_with_selected_condition()
+        self.addCleanup(sidebar.close)
+        deleted_folders = []
+        sidebar.folder_delete_requested.connect(
+            lambda uids: deleted_folders.append(list(uids))
+        )
+        sidebar.show()
+        sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        sidebar.set_delete_enabled(False)
+        QTest.keyClick(sidebar.tree, Qt.Key.Key_Delete)
+        self.app.processEvents()
+        self.assertEqual(deleted, [])
+        self.assertEqual(deleted_folders, [])
+        sidebar.load_conditions(
+            {}, {"f1": BidConditionFolder(uid="f1", name="Folder")}, "Project"
+        )
+        sidebar.tree.clearSelection()
+        sidebar._folder_items["f1"].setSelected(True)
+        sidebar.tree.setCurrentItem(sidebar._folder_items["f1"])
+        QTest.keyClick(sidebar.tree, Qt.Key.Key_Delete)
+        self.app.processEvents()
+        self.assertEqual(deleted_folders, [])
+        sidebar.set_create_folder_enabled(True)
+        QTest.keyClick(sidebar.tree, Qt.Key.Key_Delete)
+        self.app.processEvents()
+        self.assertEqual(deleted_folders, [["f1"]])
+        self.assertEqual(deleted, [])
 
     def test_condition_delete_shortcut_wins_over_enabled_window_action(self):
         window = QtWidgets.QMainWindow()
@@ -1033,6 +1542,69 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(sidebar._copied_condition_uids, ["c1"])
         self.assertTrue(sidebar._condition_clipboard_cut)
 
+    def test_condition_copy_and_paste_shortcuts_own_condition_clipboard(self):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        self.addCleanup(self.app.processEvents)
+        self.addCleanup(sidebar.close)
+        pasted = []
+        sidebar.paste_requested.connect(
+            lambda uids, target: pasted.append((list(uids), dict(target)))
+        )
+        sidebar.set_copy_enabled(True)
+        sidebar.set_duplicate_enabled(True)
+        sidebar.show()
+        sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        self._ctrl_key_click(sidebar.tree, Qt.Key.Key_V)
+        self.assertEqual(pasted, [])
+        self._ctrl_key_click(sidebar.tree, Qt.Key.Key_C)
+        self.assertEqual(sidebar._copied_condition_uids, ["c1"])
+        self.assertFalse(sidebar._condition_clipboard_cut)
+        self._ctrl_key_click(sidebar.tree, Qt.Key.Key_V)
+        self.assertEqual(len(pasted), 1)
+        self.assertEqual(pasted[0][0], ["c1"])
+        self.assertEqual(pasted[0][1]["kind"], "cdn_type")
+        self.assertFalse(pasted[0][1]["cut"])
+
+    def test_cut_shortcut_without_structure_permission_leaves_clipboard_untouched(
+        self,
+    ):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        self.addCleanup(sidebar.close)
+        sidebar.show()
+        sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        self._ctrl_key_click(sidebar.tree, Qt.Key.Key_X)
+        self.assertEqual(sidebar._copied_condition_uids, [])
+        self.assertFalse(sidebar._condition_clipboard_cut)
+
+    def test_delete_shortcut_override_is_claimed_by_tree_unless_text_input_has_focus(
+        self,
+    ):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        self.addCleanup(sidebar.close)
+        text_input = QtWidgets.QLineEdit(sidebar)
+        sidebar.show()
+        text_input.show()
+        sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+
+        def delete_override_accepted():
+            event = QtGui.QKeyEvent(
+                QtCore.QEvent.Type.ShortcutOverride,
+                Qt.Key.Key_Delete,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            event.ignore()
+            QtWidgets.QApplication.sendEvent(sidebar.tree, event)
+            return event.isAccepted()
+
+        self.assertTrue(delete_override_accepted())
+        text_input.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        self.app.processEvents()
+        self.assertIs(QtWidgets.QApplication.focusWidget(), text_input)
+        self.assertFalse(delete_override_accepted())
+
     def test_delete_key_is_ignored_while_text_input_has_focus(self):
         sidebar, deleted = self._make_sidebar_with_selected_condition()
         text_input = QtWidgets.QLineEdit(sidebar.tree)
@@ -1055,12 +1627,49 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(edits, [["c1"]])
         sidebar.close()
 
+    def test_double_click_edit_dialog_follows_properties_permission_and_placeability(
+        self,
+    ):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        self.addCleanup(sidebar.close)
+        edits = []
+        sidebar.edit_requested.connect(lambda uids: edits.append(list(uids)))
+        item = sidebar._condition_items["c1"]
+        sidebar._on_item_double_clicked(item, 0)
+        self.assertEqual(edits, [])
+        sidebar.set_edit_enabled(False, read_only_enabled=True)
+        sidebar._on_item_double_clicked(item, 0)
+        self.assertEqual(edits, [["c1"]])
+        edits.clear()
+        sidebar.set_edit_enabled(True)
+        folder_conditions = {
+            "c1": Condition(uid="c1", name="Condition 1", ref_no=1, layer_visible=False)
+        }
+        sidebar.load_conditions(folder_conditions, {}, "Project")
+        sidebar._on_item_double_clicked(sidebar._condition_items["c1"], 0)
+        self.assertEqual(edits, [])
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Condition 1", ref_no=1)},
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        sidebar._on_item_double_clicked(sidebar._folder_items["f1"], 0)
+        sidebar._on_item_double_clicked(sidebar.tree.topLevelItem(0), 0)
+        self.assertEqual(edits, [])
+
     def test_double_click_name_condition_cell_keeps_inline_rename_behavior(self):
         sidebar, _deleted = self._make_sidebar_with_selected_condition()
         edits = []
         sidebar.edit_requested.connect(lambda uids: edits.append(list(uids)))
         sidebar.set_edit_enabled(True)
-        sidebar._on_item_double_clicked(sidebar._condition_items["c1"], 1)
+        item = sidebar._condition_items["c1"]
+        with patch.object(sidebar.tree, "editItem") as edit_item:
+            sidebar._on_item_double_clicked(item, 1)
+            edit_item.assert_called_once_with(item, 1)
+            edit_item.reset_mock()
+            sidebar.set_edit_enabled(False, read_only_enabled=True)
+            sidebar._on_item_double_clicked(item, 1)
+            edit_item.assert_not_called()
         self.assertEqual(edits, [])
         sidebar.close()
 
@@ -1075,6 +1684,41 @@ class ConditionsSidebarConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(renamed, [])
         self.assertEqual(item.text(1), "Condition 1")
         sidebar.close()
+
+    def test_inline_condition_rename_requests_trimmed_name_and_keeps_label_authoritative(
+        self,
+    ):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        self.addCleanup(sidebar.close)
+        sidebar.load_conditions(
+            {
+                "c1": Condition(uid="c1", name="Condition 1", ref_no=1),
+                "c2": Condition(uid="c2", name="Condition 2", ref_no=2),
+            },
+            {},
+            "Project",
+        )
+        renamed = []
+        sidebar.condition_renamed.connect(lambda uid, name: renamed.append((uid, name)))
+        sidebar.set_edit_enabled(True)
+        item = sidebar._condition_items["c1"]
+        with patch.object(conditions_sidebar_module, "show_warning") as warning:
+            item.setText(1, "  Renamed  ")
+            self.assertEqual(renamed, [("c1", "Renamed")])
+            self.assertEqual(item.text(1), "Condition 1")
+            self.assertEqual(
+                item.data(1, conditions_sidebar_module._SORT_ROLE), "Condition 1"
+            )
+            warning.assert_not_called()
+            item.setText(1, "   ")
+            self.assertEqual(item.text(1), "Condition 1")
+            item.setText(1, "Condition 1")
+            self.assertEqual(renamed, [("c1", "Renamed")])
+            item.setText(1, " condition 2 ")
+            self.assertEqual(renamed, [("c1", "Renamed")])
+            self.assertEqual(item.text(1), "Condition 1")
+            self.assertEqual(warning.call_count, 1)
+            self.assertEqual(warning.call_args.args[1], "Duplicate Condition")
 
 
 class ConditionFolderContinuationTests(unittest.TestCase):
@@ -1130,7 +1774,10 @@ class ConditionFolderContinuationTests(unittest.TestCase):
                         self.assertEqual(
                             edit.call_count, int(transition in ("current", "repeat"))
                         )
-                        if transition not in ("current", "repeat"):
+                        self.assertIsNone(sidebar._pending_folder_edit_uid)
+                        if transition in ("current", "repeat"):
+                            self.assertEqual(sidebar._editing_folder[1], "new")
+                        else:
                             self.assertIsNone(sidebar._editing_folder)
                 finally:
                     sidebar.close()
@@ -1186,6 +1833,9 @@ class ConditionsSidebarReactivationTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         set(sidebar.get_selected_condition_uids()), expected
+                    )
+                    self.assertEqual(
+                        sorted(sidebar._condition_items), sorted(surviving)
                     )
                     current = sidebar.tree.currentItem()
                     if change == "rename":
@@ -1285,6 +1935,35 @@ class ConditionsSidebarUnusedRowsTests(unittest.TestCase):
             self.assertEqual(
                 set(sidebar.collect_ordered_condition_uids()), {"c1", "unused"}
             )
+            root = sidebar.tree.topLevelItem(0)
+            groups = {
+                root.child(index).text(0): root.child(index).child(0).text(1)
+                for index in range(root.childCount())
+            }
+            self.assertEqual(
+                groups, {"AB - Spread Interior FTG": "Fdn1", "(unassigned)": "Unused"}
+            )
+            # The Summary projection of the same data has no row for the Condition
+            # without takeoffs; only the sidebar lists it.
+            summary_root = self.service.build_summary(
+                conditions={
+                    "c1": self.condition,
+                    "unused": sidebar._conditions["unused"],
+                },
+                folders={},
+                takeoffs=self.takeoffs,
+                pages=self.pages,
+                areas=self.areas,
+                grouping=ConditionSummaryGrouping(by_type=True),
+            )
+            self.tab.load_summary(summary_root, ConditionSummaryGrouping(by_type=True))
+            summary_names = {
+                item.text(1)
+                for index in range(self.tab.tree.topLevelItemCount())
+                for item in _flatten_tree_item(self.tab.tree.topLevelItem(index))
+            }
+            self.assertIn("Fdn1", summary_names)
+            self.assertNotIn("Unused", summary_names)
         finally:
             sidebar.deleteLater()
 
@@ -1306,5 +1985,30 @@ class ConditionsSidebarZeroQuantityTests(unittest.TestCase):
             sidebar.update_quantities({})
             item = sidebar._condition_items[condition.uid]
             self.assertEqual(item.text(2), "0 EA")
+            self.assertEqual(item.data(2, conditions_sidebar_module._SORT_ROLE), 0.0)
+            sidebar.update_quantities({condition.uid: (4.0, 0.0, 0.0)})
+            self.assertEqual(item.text(2), "4 EA")
+            sidebar.update_quantities({})
+            self.assertEqual(item.text(2), "0 EA")
+        finally:
+            sidebar.deleteLater()
+
+    def test_partial_quantity_update_leaves_unlisted_conditions_untouched(self):
+        sidebar = ConditionsSidebar(
+            None, uom_label_fn=lambda code: {7: "EA"}.get(code, "")
+        )
+        first = Condition(uid="c1", name="First", ref_no=1, uom1=7)
+        second = Condition(uid="c2", name="Second", ref_no=2, uom1=7)
+        try:
+            sidebar.load_conditions({"c1": first, "c2": second}, {}, "Bid")
+            sidebar.update_quantities({"c1": (1.0, 0.0, 0.0), "c2": (2.0, 0.0, 0.0)})
+            sidebar.update_quantities({"c1": (5.0, 0.0, 0.0)}, partial=True)
+            self.assertEqual(sidebar._condition_items["c1"].text(2), "5 EA")
+            self.assertEqual(sidebar._condition_items["c2"].text(2), "2 EA")
+            sidebar.update_quantities({"unknown": (9.0, 0.0, 0.0)}, partial=True)
+            self.assertEqual(sidebar._condition_items["c2"].text(2), "2 EA")
+            sidebar.update_quantities({"c1": (6.0, 0.0, 0.0)})
+            self.assertEqual(sidebar._condition_items["c1"].text(2), "6 EA")
+            self.assertEqual(sidebar._condition_items["c2"].text(2), "0 EA")
         finally:
             sidebar.deleteLater()

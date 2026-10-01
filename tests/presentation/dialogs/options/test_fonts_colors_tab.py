@@ -36,17 +36,24 @@ class FontsColorsTabTests(unittest.TestCase):
     def test_category_selection_refreshes_matching_previews(self):
         config = Config(
             default_area_label_font=FontDefinition(
-                "Arial", "Bold", 10, 700, False, False
+                "Arial", "Bold", 14, 700, False, False
             ),
+            default_text_color="#abcdef",
             inactive_object_color="#123456",
         )
         tab = FontsColorsTab()
         try:
             tab.load_config(config)
+            self.assertEqual(tab.font_preview.text(), "AaBbYyZz\nArial, Bold, 12 pt")
+            self.assertEqual(tab.color_preview.toolTip(), "#abcdef")
             tab.font_list.setCurrentRow(1)
-            self.assertIn("10 pt", tab.font_preview.text())
+            self.assertEqual(tab.font_preview.text(), "AaBbYyZz\nArial, Bold, 14 pt")
             tab.color_list.setCurrentRow(5)
             self.assertEqual(tab.color_preview.toolTip(), "#123456")
+            tab.font_list.setCurrentRow(0)
+            tab.color_list.setCurrentRow(0)
+            self.assertEqual(tab.font_preview.text(), "AaBbYyZz\nArial, Bold, 12 pt")
+            self.assertEqual(tab.color_preview.toolTip(), "#abcdef")
         finally:
             tab.close()
 
@@ -54,6 +61,8 @@ class FontsColorsTabTests(unittest.TestCase):
         tab = FontsColorsTab()
         tab.load_config(Config())
         observed_parents = []
+        changed_count = []
+        tab.changed.connect(lambda: changed_count.append(1))
         real_color_dialog = QtWidgets.QColorDialog
 
         def create_color_dialog(color, parent):
@@ -76,6 +85,7 @@ class FontsColorsTabTests(unittest.TestCase):
                 self.assertEqual(
                     tab.apply_to_config(Config()).inactive_object_color, original
                 )
+                self.assertEqual(changed_count, [])
             with mock.patch(
                 "ost_visualizer.presentation.dialogs.options.fonts_colors_tab."
                 "QtWidgets.QColorDialog",
@@ -93,6 +103,9 @@ class FontsColorsTabTests(unittest.TestCase):
             self.assertEqual(
                 tab.apply_to_config(Config()).inactive_object_color, "#123456"
             )
+            self.assertEqual(tab.color_preview.toolTip(), "#123456")
+            self.assertEqual(changed_count, [1])
+            self.assertEqual(len(observed_parents), 2)
             self.assertTrue(
                 all(parent is tab.change_color_button for parent in observed_parents)
             )
@@ -103,6 +116,9 @@ class FontsColorsTabTests(unittest.TestCase):
         tab = FontsColorsTab()
         tab.load_config(Config())
         tab.color_list.setCurrentRow(5)
+        changed_count = []
+        tab.changed.connect(lambda: changed_count.append(1))
+        original = tab.apply_to_config(Config())
 
         class DestroyingColorDialog(QtWidgets.QColorDialog):
             def exec(self):
@@ -118,12 +134,16 @@ class FontsColorsTabTests(unittest.TestCase):
             DestroyingColorDialog,
         ):
             tab._change_color()
+        self.assertEqual(tab.apply_to_config(Config()), original)
+        self.assertEqual(changed_count, [])
         tab.close()
 
     def test_change_font_accepts_and_cancels_with_button_parent(self):
         tab = FontsColorsTab()
         tab.load_config(Config())
         observed_parents = []
+        changed_count = []
+        tab.changed.connect(lambda: changed_count.append(1))
         real_font_dialog = FontDialog
 
         def create_rejected_dialog(definition, parent):
@@ -153,6 +173,7 @@ class FontsColorsTabTests(unittest.TestCase):
                 self.assertEqual(
                     tab.apply_to_config(Config()).default_text_font, original
                 )
+                self.assertEqual(changed_count, [])
             with mock.patch(
                 "ost_visualizer.presentation.dialogs.options.fonts_colors_tab."
                 "FontDialog",
@@ -163,6 +184,9 @@ class FontsColorsTabTests(unittest.TestCase):
                 tab.apply_to_config(Config()).default_text_font.point_size,
                 72,
             )
+            self.assertIn("72 pt", tab.font_preview.text())
+            self.assertEqual(changed_count, [1])
+            self.assertEqual(len(observed_parents), 2)
             self.assertTrue(
                 all(parent is tab.change_font_button for parent in observed_parents)
             )
@@ -172,6 +196,9 @@ class FontsColorsTabTests(unittest.TestCase):
     def test_change_font_stops_when_owning_button_is_destroyed(self):
         tab = FontsColorsTab()
         tab.load_config(Config())
+        changed_count = []
+        tab.changed.connect(lambda: changed_count.append(1))
+        original = tab.apply_to_config(Config())
 
         class DestroyingFontDialog(QtWidgets.QDialog):
             def __init__(self, _definition, parent=None):
@@ -190,6 +217,8 @@ class FontsColorsTabTests(unittest.TestCase):
             DestroyingFontDialog,
         ):
             tab._change_font()
+        self.assertEqual(tab.apply_to_config(Config()), original)
+        self.assertEqual(changed_count, [])
         tab.close()
 
     def test_repeated_font_and_color_cancellation_releases_nested_dialogs(self):

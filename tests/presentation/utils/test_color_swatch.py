@@ -25,4 +25,19 @@ class ColorSwatchPreferenceTests(unittest.TestCase):
         pixmap = rounded_color_swatch(QtGui.QColor("#123456"), 24)
         image = pixmap.toImage()
         self.assertEqual(image.pixelColor(12, 12).name(), "#123456")
+        self.assertEqual(image.pixelColor(12, 12).alpha(), 255)
         self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
+        self.assertLess(image.pixelColor(1, 1).alpha(), 64)
+        self.assertEqual(image.pixelColor(12, 1).alpha(), 255)
+        self.assertEqual(image.pixelColor(1, 12).alpha(), 255)
+
+    def test_zero_radius_swatch_keeps_square_inset_corner(self):
+        image = rounded_color_swatch(QtGui.QColor("#123456"), 24, radius=0).toImage()
+        self.assertEqual(image.pixelColor(1, 1).name(), "#123456")
+        self.assertEqual(image.pixelColor(1, 1).alpha(), 255)
+        self.assertEqual(image.pixelColor(22, 22).alpha(), 255)
+        self.assertEqual(image.pixelColor(0, 0).alpha(), 0)
+
+    def test_swatch_pixmap_has_requested_square_size(self):
+        pixmap = rounded_color_swatch(QtGui.QColor("#123456"), 18)
+        self.assertEqual((pixmap.width(), pixmap.height()), (18, 18))

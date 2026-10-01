@@ -120,3 +120,59 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertEqual(delivered, [])
         self.assertIsNone(coordinator.event_bus)
         self.assertEqual(coordinator._subscriptions, [])
+
+    def test_event_coordinator_retry_after_partial_failure_only_unsubscribes_failed(
+        self,
+    ):
+        class FlakyEventBus(_dialog_lifecycle_support_FakeEventBus):
+            def __init__(self):
+                super().__init__()
+                self.fail_next = True
+
+            def unsubscribe(self, event_type, callback):
+                super().unsubscribe(event_type, callback)
+                if event_type is AppEvents.FILE_OPENED and self.fail_next:
+                    self.fail_next = False
+                    raise RuntimeError("flaky")
+
+        event_bus = FlakyEventBus()
+        coordinator = EventCoordinator(event_bus)
+        first = lambda **_: None
+        second = lambda **_: None
+        coordinator.register(AppEvents.LICENSE_STATUS_CHANGED, first)
+        coordinator.register(AppEvents.FILE_OPENED, second)
+        with self.assertRaisesRegex(RuntimeError, "flaky"):
+            coordinator.cleanup()
+        self.assertIs(coordinator.event_bus, event_bus)
+        self.assertEqual(coordinator._subscriptions, [(AppEvents.FILE_OPENED, second)])
+        coordinator.cleanup()
+        self.assertEqual(
+            event_bus.unsubscriptions,
+            [
+                (AppEvents.LICENSE_STATUS_CHANGED, first),
+                (AppEvents.FILE_OPENED, second),
+                (AppEvents.FILE_OPENED, second),
+            ],
+        )
+        self.assertIsNone(coordinator.event_bus)
+        self.assertEqual(coordinator._subscriptions, [])
+
+    def test_event_coordinator_register_many_accepts_dict_and_pairs_in_order(self):
+        event_bus = _dialog_lifecycle_support_FakeEventBus()
+        coordinator = EventCoordinator(event_bus)
+        first = lambda **_: None
+        second = lambda **_: None
+        third = lambda **_: None
+        coordinator.register_many({AppEvents.LICENSE_STATUS_CHANGED: first})
+        coordinator.register_many(
+            [(AppEvents.FILE_OPENED, second), (AppEvents.FILE_OPENED, third)]
+        )
+        expected = [
+            (AppEvents.LICENSE_STATUS_CHANGED, first),
+            (AppEvents.FILE_OPENED, second),
+            (AppEvents.FILE_OPENED, third),
+        ]
+        self.assertEqual(event_bus.subscriptions, expected)
+        self.assertEqual(coordinator._subscriptions, expected)
+        coordinator.cleanup()
+        self.assertEqual(event_bus.unsubscriptions, expected)

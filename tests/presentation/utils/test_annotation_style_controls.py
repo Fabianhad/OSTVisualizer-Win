@@ -11,11 +11,13 @@ from ost_visualizer.presentation.managers.icon_manager import (
     IconManager,
 )
 from ost_visualizer.presentation.utils.annotation_defaults import (
+    get_annotation_style_for_tool,
     set_annotation_style_for_tool,
 )
 from ost_visualizer.presentation.utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,
     create_annotation_style_button,
+    create_annotation_style_menu,
     create_annotation_tool_split_button,
 )
 from ost_visualizer.presentation.utils.plan_tool_registry import (
@@ -71,6 +73,40 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             set_annotation_style_for_tool("dimension", color="#ff0000", line_width=4.0)
             set_annotation_style_for_tool("rect", color="#ff0000", line_width=4.0)
 
+    def test_annotation_tool_icon_color_applies_each_tools_own_style_color(self):
+        targets = {
+            spec.action_key: QtGui.QAction(spec.label, None)
+            for spec in PLAN_ANNOTATION_TOOL_SPECS
+        }
+        del targets["rectangle_annotation_tool"]
+        set_annotation_style_for_tool("dimension", color="#336699")
+        set_annotation_style_for_tool("text", color="#00aa00")
+        try:
+            with mock.patch.object(IconManager, "apply_colored") as apply_colored:
+                apply_annotation_tool_icon_color(targets, "dimension")
+                apply_colored.assert_called_once_with(
+                    targets["dimension_tool"], IconId.DIMENSION_TOOL, "#336699"
+                )
+                apply_colored.reset_mock()
+                apply_annotation_tool_icon_color(targets)
+            expected = [
+                mock.call(
+                    targets[spec.action_key],
+                    spec.icon_id,
+                    get_annotation_style_for_tool(spec.annotation_type).color,
+                )
+                for spec in PLAN_ANNOTATION_TOOL_SPECS
+                if spec.action_key in targets
+            ]
+            self.assertEqual(apply_colored.call_args_list, expected)
+            self.assertEqual(len(expected), len(PLAN_ANNOTATION_TOOL_SPECS) - 1)
+            colors = {call.args[2] for call in expected}
+            self.assertIn("#336699", colors)
+            self.assertIn("#00aa00", colors)
+        finally:
+            set_annotation_style_for_tool("dimension", color="#ff0000")
+            set_annotation_style_for_tool("text", color="#ff0000")
+
     def test_highlight_annotation_style_button_opens_direct_color_picker(self):
         _preferences_support__app()
         selected = []
@@ -99,10 +135,41 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
                 QtWidgets.QColorDialog,
                 "getColor",
                 return_value=QtGui.QColor("#445566"),
-            ):
+            ) as get_color:
                 button.click()
+            self.assertEqual(len(selected), 1)
             self.assertEqual(selected[-1].color, "#445566")
             self.assertEqual(selected[-1].line_width, 4.0)
+            initial_color, dialog_parent = get_color.call_args.args
+            self.assertEqual(initial_color.name(), "#ff0000")
+            self.assertIs(dialog_parent, parent)
+        finally:
+            parent.deleteLater()
+
+    def test_cancelled_color_picker_leaves_style_unchanged(self):
+        _preferences_support__app()
+        selected = []
+        parent = QtWidgets.QWidget()
+        highlight_button = create_annotation_style_button(
+            parent,
+            lambda: AnnotationStyle("#ff0000", 4.0),
+            lambda **updates: selected.append(updates),
+            annotation_type="highlight",
+        )
+        rect_button = create_annotation_style_button(
+            parent,
+            lambda: AnnotationStyle("#ff0000", 4.0),
+            lambda **updates: selected.append(updates),
+        )
+        try:
+            with mock.patch.object(
+                QtWidgets.QColorDialog,
+                "getColor",
+                return_value=QtGui.QColor(),
+            ):
+                highlight_button.click()
+                rect_button.menu().actions()[-1].trigger()
+            self.assertEqual(selected, [])
         finally:
             parent.deleteLater()
 
@@ -159,8 +226,17 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
                 [action.text() for action in width_actions],
                 [f"{width}px" for width in range(1, 17)],
             )
+            self.assertEqual(
+                [action.isChecked() for action in width_actions],
+                [width == 4 for width in range(1, 17)],
+            )
             width_actions[7].trigger()
             self.assertEqual(selected[-1].line_width, 8.0)
+            self.assertEqual(
+                [action.isChecked() for action in width_actions],
+                [width == 8 for width in range(1, 17)],
+            )
+            self.assertEqual(menu.actions()[-1].text(), "Select Color...")
             with mock.patch.object(
                 QtWidgets.QColorDialog,
                 "getColor",
@@ -168,6 +244,8 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             ):
                 menu.actions()[-1].trigger()
             self.assertEqual(selected[-1].color, "#445566")
+            self.assertEqual(selected[-1].line_width, 8.0)
+            self.assertEqual(len(selected), 2)
         finally:
             parent.deleteLater()
 
@@ -271,7 +349,32 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             bold_action.trigger()
             italic_action.trigger()
             self.assertTrue(selected[-2].font_bold)
+            self.assertFalse(selected[-2].font_italic)
+            self.assertTrue(selected[-1].font_bold)
             self.assertTrue(selected[-1].font_italic)
+            underline_action.trigger()
+            self.assertTrue(selected[-1].font_underline)
+            bold_action.trigger()
+            self.assertFalse(selected[-1].font_bold)
+            self.assertTrue(selected[-1].font_italic)
+            self.assertEqual(
+                [(a.text(), a.data()) for a in alignment_menu.actions()],
+                [("Left", 0), ("Center", 1), ("Right", 2)],
+            )
+            alignment_menu.actions()[2].trigger()
+            self.assertEqual(selected[-1].text_align, 2)
+            self.assertEqual(
+                [a.isChecked() for a in alignment_menu.actions()],
+                [False, False, True],
+            )
+            font_combo = next(
+                widget
+                for widget in font_widgets
+                if isinstance(widget, QtWidgets.QFontComboBox)
+            )
+            self.assertEqual(selected[-1].font_name, "Arial")
+            font_combo.setCurrentFont(QtGui.QFont("Courier New"))
+            self.assertEqual(selected[-1].font_name, "Courier New")
             with mock.patch.object(
                 QtWidgets.QColorDialog,
                 "getColor",
@@ -374,8 +477,10 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
             selected.append(current)
             return current
 
+        covered = set()
         try:
             for spec in PLAN_ANNOTATION_TOOL_SPECS:
+                covered.add(spec.annotation_type)
                 with self.subTest(action_key=spec.action_key):
                     triggered = []
                     action = QtGui.QAction(spec.label, parent)
@@ -456,17 +561,64 @@ class AnnotationStyleControlsPreferenceTests(unittest.TestCase):
                         self.assertEqual(len(width_actions), 16)
                         width_actions[11].trigger()
                         self.assertEqual(selected[-1].line_width, 12.0)
+            self.assertEqual(
+                covered,
+                {
+                    "dimension",
+                    "text",
+                    "highlight",
+                    "arrow",
+                    "line",
+                    "rect",
+                    "oval",
+                    "polygon",
+                    "cloud",
+                    "ink",
+                    "hotlink",
+                    "namedview",
+                },
+            )
         finally:
             parent.deleteLater()
 
-    def test_plain_non_annotation_tool_button_has_no_style_dropdown_property(self):
+    def test_split_button_marks_only_its_own_tool_button_as_annotation_main(self):
         _preferences_support__app()
         parent = QtWidgets.QWidget()
         try:
-            action = QtGui.QAction("Select", parent)
-            button = QtWidgets.QToolButton(parent)
-            button.setDefaultAction(action)
-            self.assertFalse(bool(button.property("annotationStyleDropdown")))
-            self.assertFalse(bool(button.property("annotationToolMainButton")))
+            plain = QtWidgets.QToolButton(parent)
+            plain.setDefaultAction(QtGui.QAction("Select", parent))
+            tool = QtWidgets.QToolButton(parent)
+            tool.setDefaultAction(QtGui.QAction("Rect", parent))
+            self.assertFalse(bool(tool.property("annotationToolMainButton")))
+            container, dropdown = create_annotation_tool_split_button(
+                parent,
+                tool,
+                lambda: AnnotationStyle("#ff0000", 4.0),
+                lambda **updates: AnnotationStyle(),
+                annotation_type="rect",
+            )
+            self.assertTrue(tool.property("annotationToolMainButton"))
+            self.assertIs(tool.parentWidget(), container)
+            self.assertIs(dropdown.parentWidget(), container)
+            self.assertEqual(dropdown.property("annotationType"), "rect")
+            self.assertFalse(bool(plain.property("annotationStyleDropdown")))
+            self.assertFalse(bool(plain.property("annotationToolMainButton")))
+            self.assertFalse(bool(tool.property("annotationStyleDropdown")))
+        finally:
+            parent.deleteLater()
+
+    def test_style_controls_require_tool_specific_getter_and_setter(self):
+        _preferences_support__app()
+        parent = QtWidgets.QWidget()
+        try:
+            for factory in (
+                create_annotation_style_button,
+                create_annotation_style_menu,
+            ):
+                with self.subTest(factory=factory.__name__):
+                    with self.assertRaisesRegex(ValueError, "getter"):
+                        factory(parent, None, lambda **updates: None)
+                    with self.assertRaisesRegex(ValueError, "setter"):
+                        factory(parent, lambda: AnnotationStyle(), None)
         finally:
             parent.deleteLater()

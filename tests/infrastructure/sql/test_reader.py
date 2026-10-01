@@ -21,6 +21,13 @@ from ost_visualizer.infrastructure.sql.client_permissions import (
     _sql_integer_values_match,
     apply_sql_client_permissions,
 )
+from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
+    BidDataReaderMixin,
+)
+from ost_visualizer.infrastructure.sql.errors import (
+    SqlErrorCode,
+    SqlInfrastructureError,
+)
 from ost_visualizer.infrastructure.sql.reader import SqlProjectReader
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import (
@@ -48,31 +55,55 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 class ReaderSqlCleanupTests(unittest.TestCase):
     def test_sql_shared_annotation_reader_does_not_acknowledge_partial_data(self):
-        class _FailingCursor:
+        class _ScriptedCursor:
+            def __init__(self, fail_on):
+                self.fail_on = fail_on
+                self.executes = 0
+
             def __enter__(self):
                 return self
 
             def __exit__(self, _exc_type, _exc_value, _traceback):
                 return False
 
+            def execute(self, _sql, *_params):
+                self.executes += 1
+                if self.executes == self.fail_on:
+                    raise pyodbc.Error("08S01", "snapshot hydration failed")
+                return self
+
             @staticmethod
-            def execute(_sql, *_params):
-                raise pyodbc.Error("08S01", "snapshot hydration failed")
+            def fetchall():
+                return []
 
         class _Connection:
-            @staticmethod
-            def cursor():
-                return _FailingCursor()
+            def __init__(self, cursor):
+                self._cursor = cursor
+
+            def cursor(self):
+                return self._cursor
 
         reader = SqlProjectReader.__new__(SqlProjectReader)
         reader.logger = logging.getLogger("tests.sql_strict_shared_reader")
-        with self.assertRaisesRegex(pyodbc.Error, "snapshot hydration failed"):
+        schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+        complete = _ScriptedCursor(fail_on=0)
+        self.assertEqual(
             reader._parse_bid_annotations_for_bid(
-                _Connection(),
-                "1",
-                [],
-                CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema),
-            )
+                _Connection(complete), "1", [], schema
+            ),
+            [],
+        )
+        self.assertGreater(complete.executes, 1)
+        # A failure in ANY annotation table, not just the first, must abort the
+        # whole read instead of returning the annotations read so far.
+        for failing_query in range(1, complete.executes + 1):
+            with self.subTest(failing_query=failing_query):
+                cursor = _ScriptedCursor(fail_on=failing_query)
+                with self.assertRaisesRegex(pyodbc.Error, "snapshot hydration failed"):
+                    reader._parse_bid_annotations_for_bid(
+                        _Connection(cursor), "1", [], schema
+                    )
+                self.assertEqual(cursor.executes, failing_query)
 
     def test_sql_parse_file_uses_one_snapshot_transaction(self):
         class _Cursor:
@@ -110,7 +141,8 @@ class ReaderSqlCleanupTests(unittest.TestCase):
                 self.autocommit = None
 
             @contextlib.contextmanager
-            def connection(self, _request, *, autocommit=False):
+            def connection(self, request, *, autocommit=False):
+                self.request = request
                 self.autocommit = autocommit
                 yield self.lease
 
@@ -133,6 +165,8 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         ) as parse:
             result = reader.parse_file(descriptor.database_id)
         self.assertEqual(result, ("hierarchy", {}))
+        self.assertTrue(connections.request.read_only)
+        self.assertEqual(connections.request.location, descriptor.sql_location)
         self.assertFalse(connections.autocommit)
         self.assertEqual(
             connections.lease.cursor_value.executed,
@@ -271,21 +305,98 @@ class ReaderSqlCleanupTests(unittest.TestCase):
             schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
+        manager = _cleanup_support__InspectionManager()
         reader = SqlProjectReader(
             registry,
             _cleanup_support__CredentialStore(),
-            _cleanup_support__InspectionManager(),
+            manager,
         )
-        reader._inspector.inspect_request = (
-            lambda _request: _cleanup_support__empty_inventory()
-        )
-        with patch.object(
-            MdbReader,
-            "parse_file",
-            side_effect=AssertionError("domain query ran before schema validation"),
+        with (
+            patch.object(
+                reader,
+                "_parse_hierarchy",
+                side_effect=AssertionError("hierarchy query ran before validation"),
+            ),
+            patch.object(
+                reader,
+                "_parse_cdn_types",
+                side_effect=AssertionError("domain query ran before validation"),
+            ),
+            self.assertRaises(SqlInfrastructureError) as raised,
         ):
-            with self.assertRaisesRegex(Exception, "Schema mismatch"):
-                reader.parse_file(descriptor.database_id)
+            reader.parse_file(descriptor.database_id)
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SCHEMA_MISMATCH)
+        self.assertEqual(
+            str(raised.exception),
+            "Schema mismatch: ostv.DatabaseMetadata.SchemaVersion",
+        )
+        self.assertTrue(raised.exception.read_only_required)
+        # The failed validation still ends the snapshot transaction cleanly.
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_sql_reader_rejects_unregistered_descriptor_before_connecting(self):
+        class _NeverConnects:
+            def connection(self, _request, *, autocommit=False):
+                raise AssertionError("must not connect for an unknown database")
+
+        reader = SqlProjectReader(
+            DatabaseDescriptorRegistry(),
+            _cleanup_support__CredentialStore(),
+            _NeverConnects(),
+        )
+        with self.assertRaises(SqlInfrastructureError) as raised:
+            reader.parse_file("not-registered")
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.DATABASE_MISSING)
+
+    def test_failed_rollback_does_not_mask_the_original_read_error(self):
+        class _Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                return False
+
+            def execute(self, _sql, *_params):
+                return self
+
+        class _Lease:
+            @staticmethod
+            def cursor():
+                return _Cursor()
+
+            @staticmethod
+            def commit():
+                pass
+
+            @staticmethod
+            def rollback():
+                raise pyodbc.Error("08S01", "rollback failed")
+
+        class _Connections:
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                yield _Lease()
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        reader = SqlProjectReader(
+            registry,
+            _cleanup_support__CredentialStore(),
+            connection_manager=_Connections(),
+        )
+        with (
+            patch.object(
+                reader,
+                "parse_file_connection",
+                side_effect=RuntimeError("hierarchy failed"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "hierarchy failed"),
+        ):
+            reader.parse_file(descriptor.database_id)
 
     def test_sql_reader_returns_canonical_descriptor_hierarchy_identity(self):
         registry = DatabaseDescriptorRegistry()
@@ -313,6 +424,8 @@ class ReaderSqlCleanupTests(unittest.TestCase):
         self.assertEqual(hierarchy.file_path, descriptor.database_id)
         self.assertEqual(hierarchy.database_name, descriptor.display_name)
         self.assertEqual(hierarchy.display_name, descriptor.display_name)
+        self.assertEqual(descriptor.display_name, "SQL Test Database")
+        self.assertNotEqual(hierarchy.file_path, "")
 
 
 class TakeoffHydrationContractTests(unittest.TestCase):
@@ -321,5 +434,14 @@ class TakeoffHydrationContractTests(unittest.TestCase):
             SqlProjectReader.__new__(SqlProjectReader)
         )
         self.assertTrue(takeoff.has_valid_contract())
+        self.assertEqual(
+            takeoff, _takeoff_hydration_support__hydrate(BidDataReaderMixin())
+        )
+        self.assertEqual(takeoff.uid, "4485")
+        self.assertEqual(takeoff.position, [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(
+            (takeoff.page_uid, takeoff.area_uid, takeoff.parent_uid, takeoff.curve),
+            ("20", "0", "0", 0),
+        )
         self.assertEqual(takeoff.condition_uid, "10")
         self.assertFalse(hasattr(takeoff, "layer_uid"))

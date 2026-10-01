@@ -1,12 +1,12 @@
 import unittest
-from ost_visualizer.infrastructure.database.descriptor_registry import (
-    DatabaseDescriptorRegistry,
-)
 from ost_visualizer.infrastructure.database.settings_cardinality import (
+    BidNumberAllocationUnavailableError,
     GlobalSettingsCardinalityError,
     fetch_optional_global_settings_row,
+    normalize_next_bid_number,
+    persist_next_bid_number,
+    require_writable_bid_number_allocator,
 )
-from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 
 
 class _RecordingCursor:
@@ -14,40 +14,93 @@ class _RecordingCursor:
         self._rows = iter(rows)
         self.statements = []
 
-    def execute(self, sql):
-        self.statements.append(sql)
+    def execute(self, sql, *params):
+        self.statements.append((sql, params))
         return self
 
     def fetchone(self):
         return next(self._rows, None)
 
 
-class GlobalSettingsCardinalityTests(unittest.TestCase):
-    @staticmethod
-    @staticmethod
-    def _routed_writer():
-        return DatabaseProjectWriter(
-            object(),
-            DatabaseDescriptorRegistry(),
-            object(),
-            object(),
-        )
+class _SettingsSchema:
+    def __init__(self, tables):
+        self._tables = tables
 
+    def optional_table_missing(self, table):
+        return table not in self._tables
+
+    def column_exists(self, table, column):
+        return column in self._tables.get(table, ())
+
+
+class GlobalSettingsCardinalityTests(unittest.TestCase):
     def test_zero_global_settings_rows_remain_valid(self):
         cursor = _RecordingCursor([])
         row = fetch_optional_global_settings_row(cursor, "[NextBidNo]")
         self.assertIsNone(row)
         self.assertEqual(
             cursor.statements,
-            ["SELECT [NextBidNo] FROM [Settings]"],
+            [("SELECT [NextBidNo] FROM [Settings]", ())],
         )
 
     def test_one_global_settings_row_is_returned(self):
         cursor = _RecordingCursor([(42,)])
         row = fetch_optional_global_settings_row(cursor, "[NextBidNo]")
         self.assertEqual(row, (42,))
+        self.assertEqual(
+            cursor.statements,
+            [("SELECT [NextBidNo] FROM [Settings]", ())],
+        )
 
     def test_duplicate_global_settings_rows_still_reject(self):
         cursor = _RecordingCursor([(42,), (43,)])
-        with self.assertRaises(GlobalSettingsCardinalityError):
+        with self.assertRaisesRegex(GlobalSettingsCardinalityError, "multiple rows"):
             fetch_optional_global_settings_row(cursor, "[NextBidNo]")
+        self.assertEqual(len(cursor.statements), 1)
+
+    def test_backend_table_reference_is_used_for_the_settings_read(self):
+        cursor = _RecordingCursor([(5,)])
+        row = fetch_optional_global_settings_row(
+            cursor, "[NextBidNo]", table_sql="[dbo].[Settings] WITH (UPDLOCK)"
+        )
+        self.assertEqual(row, (5,))
+        self.assertEqual(
+            cursor.statements,
+            [("SELECT [NextBidNo] FROM [dbo].[Settings] WITH (UPDLOCK)", ())],
+        )
+
+
+class BidNumberAllocationTests(unittest.TestCase):
+    def test_empty_settings_table_is_initialized_and_present_row_is_updated(self):
+        cursor = _RecordingCursor([])
+        persist_next_bid_number(cursor, None, 8)
+        persist_next_bid_number(cursor, (7,), 8, table_sql="[dbo].[Settings]")
+        self.assertEqual(
+            cursor.statements,
+            [
+                ("INSERT INTO [Settings] ([NextBidNo]) VALUES (?)", (8,)),
+                ("UPDATE [dbo].[Settings] SET [NextBidNo] = ?", (8,)),
+            ],
+        )
+
+    def test_next_bid_number_defaults_blank_and_zero_values_to_one(self):
+        for value in (None, "", 0, "0"):
+            with self.subTest(value=value):
+                self.assertEqual(normalize_next_bid_number(value), 1)
+        self.assertEqual(normalize_next_bid_number("12"), 12)
+        self.assertEqual(normalize_next_bid_number(7), 7)
+
+    def test_legacy_database_without_durable_allocator_is_rejected(self):
+        require_writable_bid_number_allocator(
+            _SettingsSchema({"Settings": {"NextBidNo"}})
+        )
+        with self.assertRaisesRegex(
+            BidNumberAllocationUnavailableError, "Settings table is unavailable"
+        ):
+            require_writable_bid_number_allocator(_SettingsSchema({}))
+        with self.assertRaisesRegex(
+            BidNumberAllocationUnavailableError, "Settings.NextBidNo is unavailable"
+        ):
+            require_writable_bid_number_allocator(
+                _SettingsSchema({"Settings": {"Other"}})
+            )

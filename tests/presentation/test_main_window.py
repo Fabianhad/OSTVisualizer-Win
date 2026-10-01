@@ -1,4 +1,5 @@
 from __future__ import annotations
+import ast
 from ost_visualizer.presentation.config import MAIN_WINDOW_TITLE
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.bid import Bid
@@ -154,14 +155,33 @@ def _attach_summary_header(tab):
 
 class MainWindowHandlerCompositionTests(unittest.TestCase):
     def test_main_window_handler_factory_uses_owned_app_controller(self):
-        source = Path("ost_visualizer/presentation/main_window.py").read_text(
-            encoding="utf-8"
+        tree = ast.parse(
+            Path("ost_visualizer/presentation/main_window.py").read_text(
+                encoding="utf-8"
+            )
         )
-        handler_factory = source.split("    def _create_handlers", maxsplit=1)[1].split(
-            "\n    def ", maxsplit=1
-        )[0]
-        self.assertNotIn("=app_controller.get_service", handler_factory)
-        self.assertIn("=self.app_controller.get_service", handler_factory)
+        handler_factory = next(
+            node
+            for class_node in ast.walk(tree)
+            if isinstance(class_node, ast.ClassDef) and class_node.name == "MainWindow"
+            for node in class_node.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_create_handlers"
+        )
+        bare_app_controller_names = [
+            node
+            for node in ast.walk(handler_factory)
+            if isinstance(node, ast.Name) and node.id == "app_controller"
+        ]
+        owned_app_controller_reads = [
+            node
+            for node in ast.walk(handler_factory)
+            if isinstance(node, ast.Attribute)
+            and node.attr == "app_controller"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        ]
+        self.assertEqual(bare_app_controller_names, [])
+        self.assertGreaterEqual(len(owned_app_controller_reads), 4)
 
 
 class MainWindowSummaryActionTests(unittest.TestCase):
@@ -226,6 +246,44 @@ class MainWindowSummaryActionTests(unittest.TestCase):
         )
         MainWindow._delete_selected(window)
         self.assertEqual(calls, ["summary-delete"])
+
+    def test_main_window_summary_delete_is_blocked_without_delete_condition_access(
+        self,
+    ):
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _action: False
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_SUMMARY)
+        window._condition_summary_tab = SimpleNamespace(
+            delete_current_row=lambda: self.fail("Denied access must not delete")
+        )
+        window.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature != Feature.DELETE_CONDITION
+        )
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(
+                delete_selected=lambda *_args: self.fail("bid delete should not run")
+            )
+        )
+        MainWindow._delete_selected(window)
+
+    def test_main_window_summary_paste_does_nothing(self):
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _action: False
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_SUMMARY)
+        window.plan_view = SimpleNamespace(
+            paste_clipboard=lambda: self.fail("plan paste must not run on Summary")
+        )
+        MainWindow._paste_clipboard(window)
+
+    def test_main_window_inline_text_shortcut_consumes_delete_copy_and_paste(self):
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _action: True
+        window.tab_widget = SimpleNamespace(
+            currentIndex=lambda: self.fail("a consumed shortcut must not route tabs")
+        )
+        MainWindow._delete_selected(window)
+        MainWindow._copy_selected(window)
+        MainWindow._paste_clipboard(window)
 
     def test_main_window_summary_copy_routes_to_summary_tab(self):
         calls = []
@@ -375,6 +433,10 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             MainWindow._resume_shutdown_deferred_callbacks(window)
             while scheduled:
                 scheduled.pop(0)()
+            self.assertEqual(calls, ["first", "second", "third"])
+            self.assertEqual(window._shutdown_deferred_callbacks, {})
+            MainWindow._resume_shutdown_deferred_callbacks(window)
+            self.assertEqual(scheduled, [])
         self.assertEqual(calls, ["first", "second", "third"])
 
     def test_callbacks_crossing_repeated_tentative_shutdown_stay_discarded(self):
@@ -397,7 +459,11 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             window._collaboration_shutdown_pending = True
             scheduled.pop(0)()
             window._collaboration_shutdown_complete = True
+            self.assertEqual(list(window._shutdown_deferred_callbacks), ["work"])
             MainWindow._discard_shutdown_deferred_callbacks(window)
+            self.assertEqual(window._shutdown_deferred_callbacks, {})
+            window._collaboration_shutdown_pending = False
+            MainWindow._resume_shutdown_deferred_callbacks(window)
             while scheduled:
                 scheduled.pop(0)()
         self.assertEqual(calls, [])
@@ -421,14 +487,92 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             MainWindow._defer_during_application_shutdown(window, key, callback)
         )
         window._check_for_updates = lambda: MainWindow._check_for_updates(window)
-        thread = SimpleNamespace(start=lambda: None)
+        started = []
+        thread = SimpleNamespace(start=lambda: started.append(True))
         with patch(
             "ost_visualizer.presentation.main_window.threading.Thread",
             return_value=thread,
         ) as thread_factory:
             MainWindow._check_for_updates(window)
+        self.assertEqual(started, [True])
+        self.assertTrue(thread_factory.call_args.kwargs["daemon"])
+        self.assertEqual(emitted, [])
         thread_factory.call_args.kwargs["target"]()
         self.assertEqual(emitted, [{"version": "2.0"}])
+
+    def _update_check_window(self, check_for_updates):
+        window = SimpleNamespace(
+            _update_service=SimpleNamespace(check_for_updates=check_for_updates),
+            _collaboration_shutdown_pending=False,
+            _collaboration_shutdown_complete=False,
+            _application_shutdown_finalized=False,
+            _shutdown_deferred_callbacks={},
+            update_dialog_requested=SimpleNamespace(
+                emit=lambda info: self.fail(f"Unexpected update dialog: {info}")
+            ),
+        )
+        window._application_shutdown_terminal = lambda: (
+            MainWindow._application_shutdown_terminal(window)
+        )
+        window._defer_during_application_shutdown = lambda key, callback: (
+            MainWindow._defer_during_application_shutdown(window, key, callback)
+        )
+        window._check_for_updates = lambda: MainWindow._check_for_updates(window)
+        return window
+
+    def test_update_check_without_available_update_does_not_emit(self):
+        for result in ((False, {"version": "2.0"}), (True, None), (True, {})):
+            with self.subTest(result=result):
+                window = self._update_check_window(lambda result=result: result)
+                with patch(
+                    "ost_visualizer.presentation.main_window.threading.Thread"
+                ) as thread_factory:
+                    MainWindow._check_for_updates(window)
+                thread_factory.call_args.kwargs["target"]()
+
+    def test_update_check_failure_is_logged_and_not_raised(self):
+        def explode():
+            raise RuntimeError("update server down")
+
+        window = self._update_check_window(explode)
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread"
+        ) as thread_factory:
+            MainWindow._check_for_updates(window)
+        with self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured:
+            thread_factory.call_args.kwargs["target"]()
+        self.assertIn("update server down", captured.output[0])
+
+    def test_update_check_without_service_starts_no_thread(self):
+        window = self._update_check_window(lambda: (True, {"version": "2.0"}))
+        window._update_service = None
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread"
+        ) as thread_factory:
+            MainWindow._check_for_updates(window)
+        thread_factory.assert_not_called()
+
+    def test_update_check_requested_during_tentative_shutdown_is_queued_not_started(
+        self,
+    ):
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = True
+        window._collaboration_shutdown_complete = False
+        window._application_shutdown_finalized = False
+        window._shutdown_deferred_callbacks = {}
+        window._update_service = SimpleNamespace(
+            check_for_updates=lambda: self.fail("must not check during shutdown")
+        )
+        with patch(
+            "ost_visualizer.presentation.main_window.threading.Thread"
+        ) as thread_factory:
+            MainWindow._check_for_updates(window)
+        thread_factory.assert_not_called()
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["check_for_updates"]
+        )
 
     def test_update_check_completion_after_shutdown_does_not_emit(self):
         emitted = []
@@ -476,6 +620,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             side_effect=AssertionError("A queued update dialog must not open"),
         ):
             MainWindow._show_update_dialog(window, object())
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["show_update_dialog"]
+        )
 
     def test_queued_update_dialog_replays_when_shutdown_is_aborted(self):
         active_states = []
@@ -509,7 +656,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             side_effect=lambda _delay, callback: scheduled.append(callback),
         ), patch(
             "ost_visualizer.presentation.main_window.show_critical"
-        ):
+        ) as critical:
             MainWindow._show_update_dialog(window, {"version": "2.0"})
             self.assertEqual(calls, [])
             MainWindow._on_shutdown_mutation_drain_complete(
@@ -517,6 +664,10 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             )
             for callback in list(scheduled):
                 callback()
+        critical.assert_called_once_with(
+            window, "Shutdown Incomplete", "shutdown aborted"
+        )
+        self.assertFalse(window._collaboration_shutdown_pending)
         self.assertEqual(shown, [True])
         self.assertEqual(calls, ["show", "delete"])
         self.assertEqual(active_states, [True, False])
@@ -680,7 +831,7 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         self.assertFalse(MainWindow._flush_deferred_persistence_before_close(window))
         self.assertEqual(calls, ["capture_state", "begin_shutdown", "prepare_shutdown"])
 
-    def test_app_close_continues_when_pending_page_view_cannot_be_persisted(self):
+    def test_app_close_abandons_noncritical_page_view_without_blocking_shutdown(self):
         service = FakeProjectWriteService()
         service.fail_methods.add("save_page_view_state")
         manager = DeferredPersistenceManager(
@@ -698,13 +849,15 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_pending = True
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
+        pending_after_capture = []
+
+        def capture_page_state():
+            manager.schedule_page_view_state("a.mdb", "b1", "p1", 2.0, 10.0, 20.0)
+            pending_after_capture.append(manager.pending_count)
+
         window.handlers = SimpleNamespace(
             ui_event=SimpleNamespace(
-                capture_current_page_state_for_shutdown=lambda: (
-                    manager.schedule_page_view_state(
-                        "a.mdb", "b1", "p1", 2.0, 10.0, 20.0
-                    )
-                )
+                capture_current_page_state_for_shutdown=capture_page_state
             )
         )
         window._deferred_persistence_manager = manager
@@ -712,7 +865,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window.show = lambda: self.fail("A noncritical view-state failure reopened UI")
         with self.assertNoLogs("tests.close_pending_page_view", level="WARNING"):
             MainWindow._begin_application_shutdown(window)
+        self.assertEqual(pending_after_capture, [1])
         self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(service.calls, [])
         self.assertEqual(len(shutdown_requests), 1)
 
     def test_app_close_rejects_close_when_deferred_cleanup_fails(self):
@@ -722,11 +877,13 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._collaboration_shutdown_complete = False
         window._collaboration_shutdown_failed = False
         window._shutdown_deferred_callbacks = {}
+        aborts = []
+        shows = []
         window._deferred_persistence_manager = SimpleNamespace(
-            abort_shutdown=lambda: None
+            abort_shutdown=lambda: aborts.append(True)
         )
         window.hide = lambda: None
-        window.show = lambda: None
+        window.show = lambda: shows.append(True)
         window._flush_deferred_persistence_before_close = lambda: False
         event = FakeCloseEvent()
         with patch.object(
@@ -743,6 +900,9 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             scheduled.pop()()
         self.assertTrue(event.ignored)
         self.assertFalse(window._collaboration_shutdown_pending)
+        self.assertFalse(window._collaboration_shutdown_complete)
+        self.assertEqual(aborts, [True])
+        self.assertEqual(shows, [True])
 
     def test_failed_sql_drain_restores_deferred_persistence_after_close_abort(self):
         service = FakeProjectWriteService()
@@ -771,9 +931,19 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
         window._deferred_persistence_manager = manager
         window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
         window.show = lambda: None
-        with patch("ost_visualizer.presentation.main_window.show_critical"):
+        with patch("ost_visualizer.presentation.main_window.show_critical") as critical:
             MainWindow._begin_application_shutdown(window)
+            self.assertFalse(
+                manager.schedule(
+                    "setting",
+                    ("setting", "during-shutdown.mdb"),
+                    "setting",
+                    lambda: True,
+                )
+            )
             drain_callbacks.pop()(False, "drain failed")
+        critical.assert_called_once_with(window, "Shutdown Incomplete", "drain failed")
+        self.assertFalse(window._collaboration_shutdown_pending)
         self.assertTrue(
             manager.schedule(
                 "setting",
@@ -1063,6 +1233,14 @@ class MainWindowDeferredShutdownTests(unittest.TestCase):
             )
             MainWindow.closeEvent(window, event)
         self.assertEqual(len(captured.output), 3)
+        for description in (
+            "flush workspace state",
+            "clean up UI event coordinator",
+            "shut down application lifecycle services",
+        ):
+            self.assertTrue(
+                any(description in line for line in captured.output), description
+            )
         self.assertEqual(
             calls,
             [
@@ -1262,11 +1440,39 @@ class MainWindowTitleRefreshTests(unittest.TestCase):
             ],
         )
 
+    def test_bid_title_omits_zero_bid_number_and_blank_name(self):
+        bid_ref = BidRef(TEST_DB_PATH, TEST_BID_UID)
+        for bid, label in (
+            (Bid(uid=TEST_BID_UID, name="Only Name", bid_no=0), "Only Name"),
+            (Bid(uid=TEST_BID_UID, name="  ", bid_no=24), "[24]"),
+            (Bid(uid=TEST_BID_UID, name="", bid_no=0), None),
+        ):
+            with self.subTest(bid_no=bid.bid_no, name=bid.name):
+                window, titles, _project_data = self._window(bid_ref=bid_ref, bid=bid)
+                MainWindow.refresh_window_title(window)
+                self.assertEqual(
+                    titles,
+                    [_database_title() if label is None else _bid_title(label)],
+                )
+
+    def test_bid_title_uses_bid_database_not_selected_file_path(self):
+        bid_ref = BidRef(r"C:\jobs\Other.mdb", TEST_BID_UID)
+        bid = Bid(uid=TEST_BID_UID, name=TEST_BID_NAME, bid_no=TEST_BID_NO)
+        window, titles, _project_data = self._window(
+            selected_file_path=TEST_DB_PATH, bid_ref=bid_ref, bid=bid
+        )
+        MainWindow.refresh_window_title(window)
+        self.assertEqual(
+            titles,
+            [_bid_title(f"[{TEST_BID_NO}] {TEST_BID_NAME}", "Other.mdb")],
+        )
+
     def test_opened_database_title_uses_event_file_path(self):
         titles = []
         window = SimpleNamespace(setWindowTitle=titles.append)
         MainWindow.set_database_window_title(window, TEST_DB_PATH)
-        self.assertEqual(titles, [_database_title()])
+        MainWindow.set_database_window_title(window, None)
+        self.assertEqual(titles, [_database_title(), MAIN_WINDOW_TITLE])
 
 
 class MainWindowPreferenceTests(unittest.TestCase):
@@ -1283,6 +1489,58 @@ class MainWindowPreferenceTests(unittest.TestCase):
     def test_decode_workspace_geometry_rejects_corrupted_non_string_state(self):
         decoded = MainWindow._decode_workspace_geometry(123)
         self.assertTrue(decoded.isEmpty())
+        self.assertTrue(MainWindow._decode_workspace_geometry("g\u00e9om").isEmpty())
+
+    def test_decode_workspace_geometry_keeps_missing_state_and_decodes_base64(self):
+        self.assertIsNone(MainWindow._decode_workspace_geometry(None))
+        self.assertEqual(
+            bytes(MainWindow._decode_workspace_geometry("c2F2ZWQ=")), b"saved"
+        )
+
+    def _page_navigation_window(self, *, allow_add, locked=False, bid=True, tab=1):
+        window = MainWindow.__new__(MainWindow)
+        window._config_model = SimpleNamespace(
+            allow_add_page_from_takeoff_tab=allow_add
+        )
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: tab)
+        window.ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
+        window._project_data_service = SimpleNamespace(
+            is_current_bid_locked=lambda: locked
+        )
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: object() if bid else None
+        )
+        window.takeoff_sidebar = SimpleNamespace(
+            get_page_order=lambda: ["p1", "p2"],
+            get_active_page_uid=lambda: "p2",
+        )
+        return window
+
+    def test_takeoff_next_page_add_requires_unlocked_selected_bid_on_takeoff_tab(self):
+        self.assertTrue(
+            MainWindow.can_go_next_takeoff_page(
+                self._page_navigation_window(allow_add=True)
+            )
+        )
+        for label, window in (
+            ("locked bid", self._page_navigation_window(allow_add=True, locked=True)),
+            ("no bid", self._page_navigation_window(allow_add=True, bid=False)),
+            ("other tab", self._page_navigation_window(allow_add=True, tab=0)),
+        ):
+            with self.subTest(label):
+                self.assertFalse(MainWindow.can_go_next_takeoff_page(window))
+
+    def test_takeoff_next_page_does_not_navigate_when_add_page_fails(self):
+        window = self._page_navigation_window(allow_add=True)
+        window.handlers = SimpleNamespace(
+            cover_sheet=SimpleNamespace(add_blank_page_from_takeoff_tab=lambda: False),
+            ui_event=SimpleNamespace(
+                navigate_to_takeoff_page=lambda _page_uid: self.fail(
+                    "A failed add must not navigate"
+                )
+            ),
+        )
+        MainWindow.go_next_takeoff_page(window)
 
     def test_takeoff_next_page_allows_add_only_on_last_page_when_enabled(self):
         class FakePageCombo:
@@ -1514,6 +1772,9 @@ class MainWindowPreferenceTests(unittest.TestCase):
                 self.takeoff_sidebar = None
                 self.plan_view = FakePlanView()
                 self.cover_sheet_button = QtWidgets.QToolButton()
+                self.cover_sheet_button.setToolButtonStyle(
+                    QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+                )
                 self.annotation_style_refreshes = 0
 
             def apply_takeoff_toolbar_visibility(self, hidden_items):
@@ -1538,6 +1799,10 @@ class MainWindowPreferenceTests(unittest.TestCase):
         MainWindow.apply_config_preferences(window)
         self.assertEqual(window.annotation_style_refreshes, 1)
         self.assertEqual(window.hidden_toolbar_items, ())
+        self.assertEqual(
+            window.cover_sheet_button.toolButtonStyle(),
+            QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly,
+        )
         self.assertEqual(
             window.plan_view.calls,
             [
@@ -1627,6 +1892,56 @@ class MainWindowStartupImportTests(unittest.TestCase):
         target = MainWindow._current_project_import_target(window)
         self.assertEqual(target.file_path, "second.mdb")
         self.assertEqual(target.project_uid, "1")
+
+    def test_current_project_import_target_prefers_bid_then_file_then_loaded_file(
+        self,
+    ):
+        hierarchy = HierarchyData(loaded_files=[])
+        bid_ref = BidRef("bid.mdb", "7")
+
+        def window(selected_bid_ref, selected_project_uid, selected_file_path):
+            return SimpleNamespace(
+                ui_state_manager=SimpleNamespace(
+                    get_selected_bid_ref=lambda: selected_bid_ref,
+                    selected_project_uid=selected_project_uid,
+                    selected_file_path=selected_file_path,
+                ),
+                _project_data_service=SimpleNamespace(
+                    get_hierarchy=lambda: hierarchy,
+                    get_current_file_path=lambda: "current.mdb",
+                    find_project_uid_for_bid=lambda _ref: "bid-project",
+                ),
+            )
+
+        bid_target = MainWindow._current_project_import_target(
+            window(bid_ref, "ignored", "selected.mdb")
+        )
+        self.assertEqual(
+            (bid_target.file_path, bid_target.project_uid), ("bid.mdb", "bid-project")
+        )
+        file_target = MainWindow._current_project_import_target(
+            window(None, None, "selected.mdb")
+        )
+        self.assertEqual(
+            (file_target.file_path, file_target.project_uid), ("selected.mdb", None)
+        )
+        unresolved_project_target = MainWindow._current_project_import_target(
+            window(None, "missing-project", "selected.mdb")
+        )
+        self.assertEqual(
+            (
+                unresolved_project_target.file_path,
+                unresolved_project_target.project_uid,
+            ),
+            ("selected.mdb", None),
+        )
+        current_target = MainWindow._current_project_import_target(
+            window(None, None, None)
+        )
+        self.assertEqual(
+            (current_target.file_path, current_target.project_uid),
+            ("current.mdb", None),
+        )
 
     def test_startup_import_waits_for_config_load_and_main_window_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1787,6 +2102,9 @@ class MainWindowStartupImportTests(unittest.TestCase):
         )
         MainWindow._load_files_from_config(window)
         self.assertFalse(window._startup_load_complete)
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["load_files_from_config"]
+        )
 
     def test_queued_startup_load_replays_when_shutdown_is_aborted(self):
         window = _startup_import__startup_import_window()
@@ -1884,7 +2202,10 @@ class MainWindowStartupImportTests(unittest.TestCase):
         finally:
             main_window_module.QtCore.QTimer.singleShot = original_single_shot
         self.assertEqual(restores, [])
-        self.assertTrue(window._shutdown_deferred_callbacks)
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks),
+            ["restore_deferred_workspace_state"],
+        )
 
     def test_queued_main_window_show_is_ignored_after_shutdown_starts(self):
         window = _startup_import__startup_import_window()
@@ -1895,6 +2216,25 @@ class MainWindowStartupImportTests(unittest.TestCase):
             )
         )
         MainWindow._show_main_window(window)
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["show_main_window"]
+        )
+
+    def test_main_window_show_without_update_service_or_prompt_schedules_nothing(
+        self,
+    ):
+        window = _startup_import__startup_import_window()
+        window._workspace_state_coordinator = SimpleNamespace(
+            show_main_window=lambda: None
+        )
+        window.raise_ = lambda: None
+        window.activateWindow = lambda: None
+        window._update_service = None
+        window._needs_create_database_prompt = False
+        timer = _startup_import_FakeTimerQueue()
+        with patch.object(QtCore.QTimer, "singleShot", timer.singleShot):
+            MainWindow._show_main_window(window)
+        self.assertEqual(timer.callbacks, [])
 
     def test_normal_main_window_show_schedules_update_and_database_prompt(self):
         window = _startup_import__startup_import_window()
@@ -1929,6 +2269,19 @@ class MainWindowStartupImportTests(unittest.TestCase):
             )
         )
         MainWindow._prompt_create_database(window)
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["prompt_create_database"]
+        )
+
+    def test_create_database_prompt_without_access_never_opens_the_dialog(self):
+        window = _startup_import__startup_import_window()
+        window.ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: False)
+        with patch.object(
+            main_window_module,
+            "CreateDatabaseDialog",
+            side_effect=AssertionError("Denied access must not open the dialog"),
+        ):
+            MainWindow._prompt_create_database(window)
 
     def test_create_database_prompt_does_not_continue_when_shutdown_starts_in_dialog(
         self,
@@ -1960,6 +2313,10 @@ class MainWindowStartupImportTests(unittest.TestCase):
         finally:
             main_window_module.CreateDatabaseDialog = original_dialog
         self.assertTrue(ShutdownDialog.deleted)
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks),
+            ["create_database_after_prompt"],
+        )
 
     def test_create_database_prompt_completes_normally_before_shutdown(self):
         window = _startup_import__startup_import_window()
@@ -2020,7 +2377,9 @@ class MainWindowStartupImportTests(unittest.TestCase):
         window._file_loading_service = SimpleNamespace(load_file=loads.append)
         MainWindow._complete_create_database_prompt(window)
         self.assertEqual(loads, [])
-        self.assertTrue(window._shutdown_deferred_callbacks)
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["complete_created_database"]
+        )
 
     def test_database_creation_failure_notice_waits_when_shutdown_starts_in_progress(
         self,
@@ -2040,7 +2399,40 @@ class MainWindowStartupImportTests(unittest.TestCase):
         finally:
             main_window_module.show_warning = original_show_warning
         self.assertEqual(warnings, [])
-        self.assertTrue(window._shutdown_deferred_callbacks)
+        self.assertEqual(
+            list(window._shutdown_deferred_callbacks), ["complete_created_database"]
+        )
+
+    def test_database_creation_failure_warns_and_does_not_load(self):
+        window = _startup_import__startup_import_window()
+        warnings = []
+        window._create_database_with_progress = lambda: None
+        window._file_loading_service = SimpleNamespace(
+            load_file=lambda _path: self.fail("A failed creation must not load")
+        )
+        with patch.object(
+            main_window_module,
+            "show_warning",
+            lambda parent, title, message: warnings.append((parent, title, message)),
+        ):
+            MainWindow._complete_create_database_prompt(window)
+        self.assertEqual(
+            warnings,
+            [(window, "Error", "Failed to create database. Check logs for details.")],
+        )
+
+    def test_database_creation_that_cannot_be_loaded_publishes_no_file_opened(self):
+        window = _startup_import__startup_import_window()
+        window._create_database_with_progress = lambda: "new.mdb"
+        window._file_loading_service = SimpleNamespace(
+            load_file=lambda path: SimpleNamespace(success=False, file_path=path)
+        )
+        window.event_bus = SimpleNamespace(
+            publish=lambda *_args, **_kwargs: self.fail(
+                "A failed load must not publish"
+            )
+        )
+        MainWindow._complete_create_database_prompt(window)
 
     def test_database_prompt_tolerates_parent_destroying_dialog(self):
         from shiboken6 import delete
@@ -2309,8 +2701,80 @@ class MainWindowStartupImportTests(unittest.TestCase):
             MainWindow._show_project_file_import_result(window, result)
         finally:
             main_window_module.show_info = original_show_info
-        self.assertEqual(calls[0][0], window)
+        self.assertEqual(len(calls), 1)
+        self.assertIs(calls[0][0], window)
         self.assertEqual(calls[0][1], "Import Complete")
+        self.assertEqual(
+            calls[0][2], "Successfully imported 'source.ost' into the database."
+        )
+
+    def test_startup_import_summary_severity_follows_success_and_failure_mix(self):
+        window = _startup_import__startup_import_window()
+        ok = import_args_use_case.ProjectFileImportResult(
+            source_path="ok.ost", success=True, message="Imported successfully."
+        )
+        bad = import_args_use_case.ProjectFileImportResult(
+            source_path="bad.ost", success=False, message="Corrupt file."
+        )
+        calls = []
+        recorder = lambda level: (
+            lambda parent, title, details: calls.append((level, title, details))
+        )
+        with patch.object(
+            main_window_module, "show_info", recorder("info")
+        ), patch.object(
+            main_window_module, "show_warning", recorder("warning")
+        ), patch.object(
+            main_window_module, "show_critical", recorder("critical")
+        ):
+            for results in ([ok], [ok, bad], [bad]):
+                MainWindow._show_project_file_import_result(
+                    window,
+                    import_args_use_case.ProjectFileImportBatchResult(
+                        results=results, target_db_path="target.mdb"
+                    ),
+                )
+            MainWindow._show_project_file_import_result(
+                window,
+                import_args_use_case.ProjectFileImportBatchResult(
+                    target_db_path="target.mdb"
+                ),
+            )
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "info",
+                    "Import Complete",
+                    "Successfully imported 'ok.ost' into the database.",
+                ),
+                (
+                    "warning",
+                    "Import Complete",
+                    "Successfully imported 'ok.ost' into the database.\nbad.ost: Corrupt file.",
+                ),
+                ("critical", "Import Error", "bad.ost: Corrupt file."),
+            ],
+        )
+
+    def test_startup_import_multi_file_message_counts_successes(self):
+        results = [
+            import_args_use_case.ProjectFileImportResult(
+                source_path=f"{name}.ost",
+                success=True,
+                message="Imported successfully.",
+            )
+            for name in ("a", "b")
+        ]
+        details = MainWindow._format_project_file_import_details(
+            _startup_import__startup_import_window(),
+            import_args_use_case.ProjectFileImportBatchResult(
+                results=results, target_db_path="target.mdb"
+            ),
+        )
+        self.assertEqual(
+            details, "Successfully imported 2 project files into the database."
+        )
 
     def test_startup_import_success_message_uses_source_path(self):
         source = "C:/Users/fabia/Downloads/Woodside Village.osp"
@@ -2398,6 +2862,29 @@ class MainWindowStartupImportTests(unittest.TestCase):
         self.assertEqual(window.project_view.project_selections, [])
         self.assertEqual(window.project_view.file_selections, [])
 
+    def test_main_window_ignores_selected_bid_that_is_no_longer_loaded(self):
+        window = SimpleNamespace(
+            project_view=_startup_import_FakeProjectView(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("target.mdb", "gone")
+            ),
+            _project_data_service=SimpleNamespace(get_bid=lambda _bid_ref: None),
+        )
+        MainWindow._select_project_file_import_result(
+            window,
+            import_args_use_case.ProjectFileImportBatchResult(
+                target_db_path="target.mdb", selected_project_uid="comparison"
+            ),
+        )
+        MainWindow._select_project_file_import_result(
+            window, import_args_use_case.ProjectFileImportBatchResult()
+        )
+        self.assertEqual(window.project_view.bid_selections, [])
+        self.assertEqual(
+            window.project_view.project_selections, [("comparison", "target.mdb")]
+        )
+        self.assertEqual(window.project_view.file_selections, [])
+
 
 class MainWindowMaintenanceShutdownTests(unittest.TestCase):
     @classmethod
@@ -2449,6 +2936,27 @@ class ProjectTreeMasterDataReadTests(unittest.TestCase):
             MainWindow._get_project_tree_job_statuses(owner, "sql-database"),
             expected,
         )
+
+    def test_mdb_job_status_menu_reads_the_database_synchronously(self):
+        expected = [JobStatus(uid="status-1", name="Open")]
+        reads = []
+        owner = SimpleNamespace(
+            _project_write_service=SimpleNamespace(
+                uses_sql_collaboration_mutations=lambda _file_path: False
+            ),
+            _project_data_service=SimpleNamespace(
+                get_job_status_snapshot=lambda _file_path: self.fail(
+                    "MDB job statuses are not model snapshots"
+                )
+            ),
+            _project_read_service=SimpleNamespace(
+                get_job_statuses=lambda file_path: reads.append(file_path) or expected
+            ),
+        )
+        self.assertEqual(
+            MainWindow._get_project_tree_job_statuses(owner, "access.mdb"), expected
+        )
+        self.assertEqual(reads, ["access.mdb"])
 
 
 class DialogLifecycleTests(unittest.TestCase):
@@ -2515,6 +3023,28 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertEqual(dialog.delete_calls, 1)
         self.assertTrue(dialog.cleaned_up)
         self.assertTrue(dialog.deleted)
+
+    def test_create_database_worker_error_is_logged_and_reports_no_path(self):
+        window = MainWindow.__new__(MainWindow)
+        window.app_controller = SimpleNamespace(
+            create_new_database=lambda *_args, **_kwargs: None
+        )
+
+        class FailingProgressDialog(_dialog_lifecycle_support_FakeProgressDialog):
+            result_code = QtWidgets.QDialog.DialogCode.Rejected
+
+            def exec(self):
+                self.error = RuntimeError("schema failed")
+                return self.result_code
+
+        with patch.object(
+            main_window_module, "ProgressDialog", FailingProgressDialog
+        ), self.assertLogs(
+            "ost_visualizer.presentation.main_window", level="ERROR"
+        ) as captured:
+            result = MainWindow._create_database_with_progress(window)
+        self.assertIsNone(result)
+        self.assertIn("schema failed", captured.output[0])
 
     def test_create_database_prompt_stops_after_main_window_destruction(self):
         _dialog_lifecycle_support__app()
@@ -2588,6 +3118,56 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         self.assertIsNone(MainWindow._get_bid_paste_target(window))
 
+    def _paste_target_window(self):
+        ui_state = UIStateManager(
+            SimpleNamespace(
+                display_modes_synced=True,
+                display_mode_3d="solid",
+                display_mode_2d="solid",
+                grayscale_enabled=False,
+            )
+        )
+        window = MainWindow.__new__(MainWindow)
+        window.ui_state_manager = ui_state
+        window._project_data_service = SimpleNamespace(
+            find_project_uid_for_bid=lambda ref: (
+                DELETED_BIDS_PROJECT_UID
+                if ref.bid_uid == "deleted"
+                else "active-project"
+            )
+        )
+        return window, ui_state
+
+    def test_shared_paste_targets_single_project_bid_or_database(self):
+        window, ui_state = self._paste_target_window()
+        ui_state.set_project_multi_selection(["project-8"], "C:/jobs/other.mdb")
+        self.assertEqual(
+            MainWindow._get_bid_paste_target(window), ("C:/jobs/other.mdb", "project-8")
+        )
+        ui_state.set_project_multi_selection(
+            [DELETED_BIDS_PROJECT_UID], "C:/jobs/other.mdb"
+        )
+        self.assertIsNone(MainWindow._get_bid_paste_target(window))
+        active_ref = BidRef("C:/jobs/active.mdb", "7")
+        ui_state.set_bid_selection(active_ref)
+        ui_state.set_bid_multi_selection([active_ref])
+        self.assertEqual(
+            MainWindow._get_bid_paste_target(window),
+            ("C:/jobs/active.mdb", "active-project"),
+        )
+        deleted_ref = BidRef("C:/jobs/active.mdb", "deleted")
+        ui_state.set_bid_selection(deleted_ref)
+        ui_state.set_bid_multi_selection([deleted_ref])
+        self.assertIsNone(MainWindow._get_bid_paste_target(window))
+
+    def test_shared_paste_has_no_target_when_projects_and_bids_are_both_selected(self):
+        window, ui_state = self._paste_target_window()
+        active_ref = BidRef("C:/jobs/active.mdb", "7")
+        ui_state.set_bid_selection(active_ref)
+        ui_state.set_bid_multi_selection([active_ref])
+        ui_state.set_project_multi_selection(["project-8"], "C:/jobs/other.mdb")
+        self.assertIsNone(MainWindow._get_bid_paste_target(window))
+
 
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
     def test_explicit_annotation_window_state_overrides_saved_fullscreen(self):
@@ -2618,9 +3198,48 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             initial_is_maximized=False,
             initial_is_fullscreen=False,
         )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], (BidRef("job.mdb", "bid-1"), "page-1", None))
         self.assertEqual(calls[0][1]["initial_geometry"], explicit_geometry)
         self.assertFalse(calls[0][1]["initial_is_maximized"])
         self.assertFalse(calls[0][1]["initial_is_fullscreen"])
+        self.assertTrue(window._annotation_window_action.checked)
+
+    def test_annotation_window_without_explicit_state_restores_saved_state(self):
+        calls = []
+        state = WorkspaceState()
+        saved = state.detached_windows.annotation_view
+        saved.geometry_b64 = _detached_support__encoded_geometry(b"saved")
+        saved.is_maximized = True
+        saved.is_fullscreen = True
+        window = MainWindow.__new__(MainWindow)
+        window._workspace_state_model = SimpleNamespace(state=state)
+        window._annotation_window_action = _detached_support_FakeCheckAction()
+        window._annotation_view_manager = SimpleNamespace(
+            is_view_open=lambda: False,
+            open_view=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+        window._view_window_manager = SimpleNamespace(is_view_open=lambda: False)
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("job.mdb", "bid-1")
+        )
+        window.can_restore_annotation_window = lambda: True
+        window.get_active_takeoff_page_uid = lambda: "page-1"
+        MainWindow.set_annotation_window_visible(window, True)
+        self.assertEqual(bytes(calls[0][1]["initial_geometry"]), b"saved")
+        self.assertTrue(calls[0][1]["initial_is_maximized"])
+        self.assertTrue(calls[0][1]["initial_is_fullscreen"])
+
+    def test_annotation_window_stays_closed_when_it_cannot_be_restored(self):
+        window = MainWindow.__new__(MainWindow)
+        window._annotation_window_action = _detached_support_FakeCheckAction()
+        window._annotation_window_action.checked = True
+        window._annotation_view_manager = SimpleNamespace(
+            open_view=lambda *_args, **_kwargs: self.fail("must not open")
+        )
+        window.can_restore_annotation_window = lambda: False
+        MainWindow.set_annotation_window_visible(window, True)
+        self.assertFalse(window._annotation_window_action.checked)
 
     def test_explicit_view_window_state_overrides_saved_fullscreen(self):
         calls = []
@@ -2650,9 +3269,47 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             initial_is_maximized=False,
             initial_is_fullscreen=False,
         )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], (BidRef("job.mdb", "bid-1"), "page-1", None))
         self.assertEqual(calls[0][1]["initial_geometry"], explicit_geometry)
         self.assertFalse(calls[0][1]["initial_is_maximized"])
         self.assertFalse(calls[0][1]["initial_is_fullscreen"])
+        self.assertTrue(window._view_window_action.checked)
+
+    def test_view_window_without_explicit_state_restores_saved_state(self):
+        calls = []
+        state = WorkspaceState()
+        saved = state.detached_windows.view_window
+        saved.geometry_b64 = _detached_support__encoded_geometry(b"saved")
+        saved.is_maximized = True
+        saved.is_fullscreen = True
+        window = MainWindow.__new__(MainWindow)
+        window._workspace_state_model = SimpleNamespace(state=state)
+        window._view_window_action = _detached_support_FakeCheckAction()
+        window._view_window_manager = SimpleNamespace(
+            is_view_open=lambda: False,
+            open_view=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+        window._annotation_view_manager = SimpleNamespace(
+            get_active_view=lambda: SimpleNamespace(
+                bid_ref=BidRef("annotation.mdb", "bid-9"),
+                target_page_uid="annotation-page",
+                target_named_view_uid="named-view",
+            )
+        )
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("job.mdb", "bid-1")
+        )
+        window.can_restore_view_window = lambda: True
+        window.get_active_takeoff_page_uid = lambda: "page-1"
+        MainWindow.set_view_window_visible(window, True)
+        self.assertEqual(
+            calls[0][0],
+            (BidRef("annotation.mdb", "bid-9"), "annotation-page", "named-view"),
+        )
+        self.assertEqual(bytes(calls[0][1]["initial_geometry"]), b"saved")
+        self.assertTrue(calls[0][1]["initial_is_maximized"])
+        self.assertTrue(calls[0][1]["initial_is_fullscreen"])
 
     def test_hidden_left_splitter_size_does_not_replace_last_good_layout(self):
         window = MainWindow.__new__(MainWindow)
@@ -2669,6 +3326,28 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         MainWindow.set_left_splitter_sizes(window, [260, 340])
         self.assertEqual(window._last_left_splitter_sizes, [260, 340])
         self.assertEqual(window._left_splitter.applied_sizes, [[260, 340]])
+
+    def test_empty_or_zero_total_splitter_sizes_are_not_applied(self):
+        window = MainWindow.__new__(MainWindow)
+        window._left_splitter = _detached_support_FakeSplitterForSidebarSizes()
+        window._takeoff_splitter = _detached_support_FakeSplitterForSidebarSizes()
+        window._last_left_splitter_sizes = [220, 380]
+        window._last_takeoff_splitter_sizes = [360, 1640]
+        for sizes in ([], [0, 0], [-5, -7]):
+            MainWindow.set_left_splitter_sizes(window, sizes)
+            MainWindow.set_takeoff_splitter_sizes(window, sizes)
+        self.assertEqual(window._left_splitter.applied_sizes, [])
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [])
+        self.assertEqual(window._last_left_splitter_sizes, [220, 380])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [360, 1640])
+
+    def test_hidden_takeoff_sidebar_size_does_not_replace_last_good_width(self):
+        window = MainWindow.__new__(MainWindow)
+        window._takeoff_splitter = _detached_support_FakeSplitterForSidebarSizes()
+        window._last_takeoff_splitter_sizes = [360, 1640]
+        MainWindow.set_takeoff_splitter_sizes(window, [0, 2000])
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [[0, 2000]])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [360, 1640])
 
     def test_restart_restore_applies_saved_sidebar_column_width_exactly(self):
         window = MainWindow.__new__(MainWindow)
@@ -2689,6 +3368,26 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         MainWindow._ensure_left_splitter_pane_visible(window, 1)
         self.assertEqual(window._left_splitter.applied_sizes, [[655, 243]])
 
+    def test_showing_hidden_layer_without_saved_layout_splits_evenly(self):
+        for hidden_index, sizes in ((1, [898, 0]), (0, [0, 898])):
+            with self.subTest(hidden_index=hidden_index):
+                window = MainWindow.__new__(MainWindow)
+                window._left_splitter = _detached_support_FakeSplitterForSidebarSizes(
+                    sizes, height=898
+                )
+                window._last_left_splitter_sizes = []
+                MainWindow._ensure_left_splitter_pane_visible(window, hidden_index)
+                self.assertEqual(window._left_splitter.applied_sizes, [[449, 449]])
+
+    def test_showing_visible_layer_pane_does_not_resize(self):
+        window = MainWindow.__new__(MainWindow)
+        window._left_splitter = _detached_support_FakeSplitterForSidebarSizes(
+            [500, 398], height=898
+        )
+        window._last_left_splitter_sizes = [651, 242]
+        MainWindow._ensure_left_splitter_pane_visible(window, 1)
+        self.assertEqual(window._left_splitter.applied_sizes, [])
+
     def test_showing_single_hidden_sidebar_keeps_visible_column_width(self):
         window = MainWindow.__new__(MainWindow)
         window._takeoff_splitter = _detached_support_FakeSplitterForSidebarSizes(
@@ -2708,6 +3407,15 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         MainWindow._ensure_sidebar_column_visible(window)
         self.assertEqual(window._takeoff_splitter.applied_sizes, [[360, 1640]])
         self.assertEqual(window._last_takeoff_splitter_sizes, [360, 1640])
+
+    def test_showing_hidden_sidebar_column_without_saved_width_uses_default(self):
+        window = MainWindow.__new__(MainWindow)
+        window._takeoff_splitter = _detached_support_FakeSplitterForSidebarSizes(
+            [0, 2000], width=2000
+        )
+        window._last_takeoff_splitter_sizes = []
+        MainWindow._ensure_sidebar_column_visible(window)
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [[500, 1500]])
 
     def test_repeated_hidden_sidebar_column_restore_keeps_exact_saved_width(self):
         window = MainWindow.__new__(MainWindow)
@@ -2759,6 +3467,19 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         DetachedPageViewWindow._focus_named_view_timeout_fallback(window)
         self.assertEqual(calls, [])
 
+    def test_named_view_timeout_callback_runs_only_for_a_live_open_window(self):
+        for is_closing, expected in ((False, ["focus", "reveal"]), (True, [])):
+            with self.subTest(is_closing=is_closing):
+                window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+                QtWidgets.QMainWindow.__init__(window)
+                self.addCleanup(window.deleteLater)
+                window._is_closing = is_closing
+                calls = []
+                window._focus_on_named_view = lambda: calls.append("focus")
+                window._reveal_named_view_blank_canvas = lambda: calls.append("reveal")
+                DetachedPageViewWindow._focus_named_view_timeout_fallback(window)
+                self.assertEqual(calls, expected)
+
     def test_projects_transition_cancels_an_inflight_detached_window_lifecycle(self):
         calls = []
 
@@ -2801,6 +3522,64 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ],
         )
 
+    def _tab_change_window(self, calls, *, view_active, annotation_active, mesh=None):
+        class FakeLifecycleManager:
+            def __init__(self, active):
+                self.active = active
+
+            def has_active_view_lifecycle(self):
+                return self.active
+
+        window = MainWindow.__new__(MainWindow)
+        window._view_window_manager = FakeLifecycleManager(view_active)
+        window._annotation_view_manager = FakeLifecycleManager(annotation_active)
+        window._apply_workspace_toolbar_visibility = lambda: None
+        window._workspace_state_coordinator = SimpleNamespace(
+            request_view_restore=lambda: calls.append("restore-view"),
+            request_annotation_restore=lambda: calls.append("restore-annotation"),
+            request_mesh_restore=lambda: calls.append("restore-mesh"),
+            on_main_tab_changed=lambda: calls.append("tab-changed"),
+        )
+        window.set_view_window_visible = lambda visible: calls.append(
+            ("view-visible", visible)
+        )
+        window.set_annotation_window_visible = lambda visible: calls.append(
+            ("annotation-visible", visible)
+        )
+        window.set_mesh_window_visible = lambda visible: calls.append(
+            ("mesh-visible", visible)
+        )
+        window.get_mesh_window = lambda: mesh
+        window.menu_controller = None
+        return window
+
+    def test_leaving_takeoff_tab_closes_every_detached_window_in_order(self):
+        calls = []
+        window = self._tab_change_window(
+            calls, view_active=True, annotation_active=True, mesh=object()
+        )
+        MainWindow._on_tab_changed(window, TAB_INDEX_PROJECTS)
+        self.assertEqual(
+            calls,
+            [
+                "restore-view",
+                ("view-visible", False),
+                "restore-annotation",
+                ("annotation-visible", False),
+                "restore-mesh",
+                ("mesh-visible", False),
+                "tab-changed",
+            ],
+        )
+
+    def test_switching_to_takeoff_tab_keeps_detached_windows_open(self):
+        calls = []
+        window = self._tab_change_window(
+            calls, view_active=True, annotation_active=True, mesh=object()
+        )
+        MainWindow._on_tab_changed(window, TAB_INDEX_TAKEOFF)
+        self.assertEqual(calls, ["tab-changed"])
+
     def test_closing_annotation_cancels_inflight_dependent_view_lifecycle(self):
         calls = []
         window = MainWindow.__new__(MainWindow)
@@ -2820,3 +3599,20 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             calls,
             [("view-visible", False), "close-annotation"],
         )
+
+    def test_closing_annotation_without_view_lifecycle_only_closes_annotation(self):
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window._annotation_window_action = _detached_support_FakeCheckAction()
+        window._view_window_manager = SimpleNamespace(
+            is_view_open=lambda: False,
+            has_active_view_lifecycle=lambda: False,
+        )
+        window._annotation_view_manager = SimpleNamespace(
+            close_view=lambda: calls.append("close-annotation")
+        )
+        window.set_view_window_visible = lambda visible: self.fail(
+            "An idle view window must not be touched"
+        )
+        MainWindow.set_annotation_window_visible(window, False)
+        self.assertEqual(calls, ["close-annotation"])

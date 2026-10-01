@@ -13,6 +13,7 @@ from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.presentation.utils.annotation_defaults import (
     apply_config_owned_annotation_defaults,
     build_placed_annotation_spec,
+    get_annotation_styles_by_tool,
     set_annotation_style_for_tool,
     set_annotation_styles_by_tool,
 )
@@ -51,6 +52,7 @@ class AnnotationFontColorDefaultsTests(unittest.TestCase):
                 "dimension": {"color": "#111111"},
                 "highlight": {"color": "#222222"},
                 "hotlink": {"color": "#333333"},
+                "rect": {"color": "#445566", "line_width": 9},
             },
             config,
         )
@@ -58,6 +60,11 @@ class AnnotationFontColorDefaultsTests(unittest.TestCase):
         self.assertEqual(styles["text"].color, "#123456")
         self.assertEqual(styles["text"].font_name, "Arial")
         self.assertEqual(styles["text"].font_size, 24)
+        self.assertTrue(styles["text"].font_bold)
+        self.assertTrue(styles["text"].font_italic)
+        self.assertTrue(styles["text"].font_underline)
+        self.assertEqual(styles["rect"].color, "#445566")
+        self.assertEqual(styles["rect"].line_width, 9.0)
         self.assertEqual(styles["dimension"].color, "#654321")
         self.assertEqual(styles["highlight"].color, "#abcdef")
         self.assertEqual(styles["hotlink"].color, "#fedcba")
@@ -78,11 +85,15 @@ class AnnotationFontColorDefaultsTests(unittest.TestCase):
             "highlight", "p1", [1.0, 2.0, 3.0, 4.0]
         )
         self.assertEqual(text_spec.color, "#123456")
+        self.assertEqual(text_spec.properties["FontColor"], 0x563412)
+        self.assertEqual(text_spec.properties["FontName"], "Arial")
         self.assertEqual(text_spec.properties["FontSize"], 24)
         self.assertTrue(text_spec.properties["FontBold"])
         self.assertTrue(text_spec.properties["FontItalic"])
         self.assertTrue(text_spec.properties["FontUnderline"])
         self.assertEqual(highlight_spec.color, "#abcdef")
+        self.assertEqual(highlight_spec.width, 0.0)
+        self.assertEqual(highlight_spec.properties, {})
 
 
 class AnnotationPlacementDefaultsTests(unittest.TestCase):
@@ -222,6 +233,40 @@ class AnnotationPlacementDefaultsTests(unittest.TestCase):
                 Config(),
             )
             self.assertEqual(styles["rect"].color, "#123456")
+            self.assertEqual(styles["rect"].line_width, 6.0)
             self.assertNotIn("retired-tool", styles)
+            self.assertEqual(
+                set(styles), set(get_annotation_styles_by_tool()) - {"retired-tool"}
+            )
+            self.assertEqual(styles["line"], AnnotationStyle())
         finally:
             set_annotation_styles_by_tool({}, Config())
+
+    def test_hotlink_and_named_view_defaults_use_fixed_width_and_own_colors(self):
+        hotlink_spec = build_placed_annotation_spec("hotlink", "p1", [1.0, 2.0])
+        named_view_spec = build_placed_annotation_spec(
+            "namedview", "p1", [1.0, 2.0, 13.0, 14.0]
+        )
+        self.assertEqual(hotlink_spec.color, "#ff0000")
+        self.assertEqual(hotlink_spec.width, 2.0)
+        self.assertEqual(hotlink_spec.properties, {"BidPageViewUID": ""})
+        self.assertEqual(named_view_spec.color, "#008000")
+        self.assertEqual(named_view_spec.width, 2.0)
+        self.assertEqual(named_view_spec.properties, {"Text": ""})
+
+    def test_unknown_tool_type_builds_no_spec_and_rejects_style_changes(self):
+        self.assertIsNone(build_placed_annotation_spec("retired-tool", "p1", [1.0]))
+        with self.assertRaises(ValueError):
+            set_annotation_style_for_tool("retired-tool", color="#123456")
+
+    def test_line_width_is_ignored_for_tools_with_fixed_width(self):
+        before = {
+            key: get_annotation_styles_by_tool()[key].line_width
+            for key in ("dimension", "text", "highlight", "hotlink", "namedview")
+        }
+        for key in before:
+            style = set_annotation_style_for_tool(key, line_width=9.0)
+            self.assertEqual(style.line_width, before[key], key)
+        self.assertEqual(
+            set_annotation_style_for_tool("rect", line_width=99.0).line_width, 16.0
+        )

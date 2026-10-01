@@ -11,8 +11,10 @@ from PySide6 import QtCore, QtWidgets
 from shiboken6 import delete
 from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.presentation.components.project_tree_view import (
+    _BID_STATUS_UID_ROLE,
     _DELETED_PROJECT_UID,
     ProjectView,
+    SortableTreeWidgetItem,
 )
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
@@ -211,6 +213,24 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.app.processEvents()
         return selected
 
+    def _context_menu_for(self, item):
+        self.view._prepare_context_menu_selection(item)
+        context = self.view._context_for_item(item)
+        menu = QtWidgets.QMenu(self.view)
+        self.view._build_project_context_menu(menu, context)
+        return menu
+
+    @staticmethod
+    def _menu_action(menu, text):
+        return next(action for action in menu.actions() if action.text() == text)
+
+    def _submenu(self, menu, title):
+        return next(
+            submenu
+            for submenu in menu.findChildren(QtWidgets.QMenu)
+            if submenu.title() == title
+        )
+
     def test_authoritative_master_labels_project_by_bid_identity(self):
         loaded = self._loaded_file(["bid-1", "bid-2"])
         loaded[0].projects[0].bids[0].estimator = "Old employee"
@@ -248,11 +268,40 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         item = self._find_item(bid.uid)
         self.assertEqual((item.text(6), item.text(7)), ("3", "4"))
 
+    def test_bid_content_count_update_is_partial_and_ignores_unknown_bids(self):
+        loaded = self._loaded_file(["bid-1", "bid-2"])
+        for bid in loaded[0].projects[0].bids:
+            bid.page_count = 1
+            bid.condition_count = 2
+        self.view.build_complete_structure(loaded)
+        bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
+        self.view.update_bid_content_counts(bid_ref, page_count=7)
+        item = self._find_item("bid-1")
+        self.assertEqual((item.text(6), item.text(7)), ("7", "2"))
+        self.view.update_bid_content_counts(bid_ref, condition_count=9)
+        self.assertEqual((item.text(6), item.text(7)), ("7", "9"))
+        self.view.update_bid_content_counts(bid_ref)
+        self.view.update_bid_content_counts(
+            BidRef("C:/jobs/test.mdb", "missing"), page_count=5, condition_count=5
+        )
+        self.view.update_bid_content_counts(
+            BidRef("C:/jobs/other.mdb", "bid-1"), page_count=5, condition_count=5
+        )
+        other = self._find_item("bid-2")
+        self.assertEqual((item.text(6), item.text(7)), ("7", "9"))
+        self.assertEqual((other.text(6), other.text(7)), ("1", "2"))
+        bids = loaded[0].projects[0].bids
+        self.assertEqual(
+            [(bid.page_count, bid.condition_count) for bid in bids],
+            [(7, 9), (1, 2)],
+        )
+
     def test_delete_replacement_selects_next_bid_in_same_folder(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
         self._select_bid_items("bid-1")
         state = self.view.get_delete_replacement_selection_state()
         self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["file_path"], "C:/jobs/test.mdb")
         self.assertEqual(state["bid_uid"], "bid-2")
 
     def test_delete_replacement_selects_next_bid_for_middle_selection(self):
@@ -262,6 +311,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self._select_bid_items("bid-2")
         state = self.view.get_delete_replacement_selection_state()
         self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["file_path"], "C:/jobs/test.mdb")
         self.assertEqual(state["bid_uid"], "bid-3")
 
     def test_delete_replacement_selects_previous_bid_for_last_selection(self):
@@ -271,6 +321,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self._select_bid_items("bid-3")
         state = self.view.get_delete_replacement_selection_state()
         self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["file_path"], "C:/jobs/test.mdb")
         self.assertEqual(state["bid_uid"], "bid-2")
 
     def test_delete_replacement_falls_back_to_parent_when_only_bid_selected(self):
@@ -278,6 +329,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self._select_bid_items("bid-1")
         state = self.view.get_delete_replacement_selection_state()
         self.assertEqual(state["kind"], "project")
+        self.assertEqual(state["file_path"], "C:/jobs/test.mdb")
         self.assertEqual(state["project_uid"], "project-1")
 
     def test_project_copy_shortcut_wins_over_enabled_window_action(self):
@@ -320,7 +372,19 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(
             set(submenus), {"New", "Import", "Export", "Change Job Status"}
         )
-        self.assertTrue(all(isValid(submenu) for submenu in submenus.values()))
+        for title, submenu in submenus.items():
+            with self.subTest(submenu=title):
+                self.assertIsNotNone(submenu)
+                self.assertTrue(isValid(submenu))
+                self.assertIs(submenu.parent(), menu)
+        self.assertEqual(
+            [
+                action.text()
+                for action in submenus["New"].actions()
+                if not action.isSeparator()
+            ],
+            ["Project", "Folder", "Database"],
+        )
 
     def test_job_status_submenu_uses_uid_when_display_names_collide(self):
         bid = Bid(
@@ -336,16 +400,54 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             JobStatus(uid="status-current", name="Duplicate"),
         ]
         self.view.on_can_update_bid_job_status = lambda _bid_ref: True
+        updates = []
+        self.view.on_update_bid_job_status = lambda bid_ref, status_uid: updates.append(
+            (bid_ref, status_uid)
+        )
         self.view.build_complete_structure(loaded)
         item = self._select_bid_items("bid-1")[0]
         context = self.view._context_for_item(item)
         menu = QtWidgets.QMenu(self.view)
         self.view._add_job_status_submenu(menu, context)
         actions = menu.actions()[0].menu().actions()
+        self.assertEqual([action.text() for action in actions], ["Duplicate"] * 2)
         self.assertFalse(actions[0].isChecked())
         self.assertTrue(actions[0].isEnabled())
         self.assertTrue(actions[1].isChecked())
         self.assertFalse(actions[1].isEnabled())
+        actions[0].trigger()
+        self.assertEqual(
+            updates, [(BidRef("C:/jobs/test.mdb", "bid-1"), "status-other")]
+        )
+
+    def test_job_status_submenu_is_disabled_for_project_and_unauthorized_bid(self):
+        self.view.on_get_job_statuses = lambda _file_path: [
+            JobStatus(uid="status-a", name="Won")
+        ]
+        self.view.on_can_update_bid_job_status = lambda _bid_ref: False
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        project_item, _ = self.view._find_project_item("project-1", "C:/jobs/test.mdb")
+        for label, item in (
+            ("project", project_item),
+            ("unauthorized bid", self._find_item("bid-1")),
+        ):
+            with self.subTest(context=label):
+                context = self.view._context_for_item(item)
+                menu = QtWidgets.QMenu(self.view)
+                self.view._add_job_status_submenu(menu, context)
+                status_menu = menu.actions()[0].menu()
+                self.assertEqual(
+                    [action.isEnabled() for action in status_menu.actions()], [False]
+                )
+                self.assertEqual(status_menu.isEnabled(), label == "unauthorized bid")
+        self.view.on_can_update_bid_job_status = lambda _bid_ref: True
+        context = self.view._context_for_item(self._find_item("bid-1"))
+        menu = QtWidgets.QMenu(self.view)
+        self.view._add_job_status_submenu(menu, context)
+        self.assertEqual(
+            [action.isEnabled() for action in menu.actions()[0].menu().actions()],
+            [True],
+        )
 
     def test_delete_replacement_selects_orphan_sibling_in_same_database(self):
         self.view.build_complete_structure(
@@ -374,6 +476,27 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         state = self.view.get_delete_replacement_selection_state()
         self.assertEqual(state["kind"], "bid")
         self.assertEqual(state["bid_uid"], "bid-3")
+
+    def test_delete_replacement_skips_selected_siblings_in_both_directions(self):
+        self.view.build_complete_structure(
+            self._loaded_file(["bid-1", "bid-2", "bid-3", "bid-4"])
+        )
+        for selected, expected in (
+            (("bid-3", "bid-4"), "bid-2"),
+            (("bid-1", "bid-3"), "bid-4"),
+            (("bid-2", "bid-4"), "bid-1"),
+            (("bid-1", "bid-2", "bid-3"), "bid-4"),
+        ):
+            with self.subTest(selected=selected):
+                self._select_bid_items(*selected)
+                state = self.view.get_delete_replacement_selection_state()
+                self.assertEqual(state["kind"], "bid")
+                self.assertEqual(state["file_path"], "C:/jobs/test.mdb")
+                self.assertEqual(state["bid_uid"], expected)
+        self._select_bid_items("bid-1", "bid-2", "bid-3", "bid-4")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "project")
+        self.assertEqual(state["project_uid"], "project-1")
 
     def test_delete_replacement_selects_next_deleted_bid_for_permanent_delete(self):
         self.view.build_complete_structure(
@@ -405,6 +528,15 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assert_item_icon(database_item, IconId.PROJECT_TREE_DATABASE)
         self.assert_item_icon(project_item, IconId.FOLDER)
         self.assert_item_icon(bid_item, IconId.PROJECT_TREE_BID)
+        self.assertEqual(
+            len(
+                {
+                    item.icon(0).cacheKey()
+                    for item in (database_item, project_item, bid_item)
+                }
+            ),
+            3,
+        )
 
     def test_project_tree_status_groups_use_folder_icon(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
@@ -426,6 +558,14 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
         source_project = self._find_item("project-1")
         self.assertTrue(source_project.isExpanded())
+        self.assertTrue(self._find_item("C:/jobs/test.mdb").isExpanded())
+        self.assertEqual(
+            self.view.get_expanded_node_keys(),
+            [
+                "file_root|C:/jobs/test.mdb|C:/jobs/test.mdb",
+                "project|C:/jobs/test.mdb|project-1",
+            ],
+        )
 
     def test_missing_saved_bid_selection_falls_back_to_its_database(self):
         self.view.set_selected_node_state(
@@ -467,6 +607,16 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         bid_item = self._find_item("bid-1")
         self.assertEqual("(unassigned)", bid_item.text(2))
+        for status, expected in (
+            ("", "(unassigned)"),
+            ("   ", "(unassigned)"),
+            (" Won ", "Won"),
+        ):
+            with self.subTest(status=status):
+                self.assertEqual(self.view._display_status(status), expected)
+
+    def test_default_expansion_is_recorded_and_survives_rebuild(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         self.assertIn(
             "project|C:/jobs/test.mdb|project-1",
             self.view.get_expanded_node_keys(),
@@ -474,6 +624,13 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.view.build_complete_structure(self._loaded_file(["bid-2"], ["bid-1"]))
         source_project = self._find_item("project-1")
         self.assertTrue(source_project.isExpanded())
+        self.view.top_tree.collapseItem(source_project)
+        self.assertNotIn(
+            "project|C:/jobs/test.mdb|project-1",
+            self.view.get_expanded_node_keys(),
+        )
+        self.view.build_complete_structure(self._loaded_file(["bid-2"], ["bid-1"]))
+        self.assertFalse(self._find_item("project-1").isExpanded())
 
     def test_multi_select_bids_does_not_switch_active_bid(self):
         bid_selections = []
@@ -492,6 +649,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual([ref.bid_uid for ref in bid_selections], ["bid-1"])
         bid_2.setSelected(True)
         self.assertEqual([ref.bid_uid for ref in bid_selections], ["bid-1"])
+        self.assertEqual(self.view.current_bid_ref.bid_uid, "bid-1")
         self.assertEqual(
             sorted(ref.bid_uid for ref in multi_selections[-1][0]),
             ["bid-1", "bid-2"],
@@ -507,9 +665,8 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         project_two, _ = self.view._find_project_item("project-two", "C:/jobs/two.mdb")
         project_one.setSelected(True)
         project_two.setSelected(True)
-        _bid_refs, project_uids, project_file_path = (
-            self.view._collect_multi_selection()
-        )
+        bid_refs, project_uids, project_file_path = self.view._collect_multi_selection()
+        self.assertEqual(bid_refs, [])
         self.assertEqual(project_uids, [])
         self.assertIsNone(project_file_path)
 
@@ -585,6 +742,55 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             ["Duplicate", "Duplicate"],
         )
 
+    def test_group_by_job_status_merges_same_status_uid_and_same_unidentified_label(
+        self,
+    ):
+        loaded_file = LoadedFile(
+            file_path="C:/jobs/test.mdb",
+            display_name="test.mdb",
+            projects=[
+                Project(
+                    uid="project-1",
+                    name="Project",
+                    bids=[
+                        Bid(uid="a", name="A", status="Won", status_uid="status-won"),
+                        Bid(uid="b", name="B", status="Won", status_uid="status-won"),
+                        Bid(uid="c", name="C", status="Lost"),
+                        Bid(uid="d", name="D", status="Lost"),
+                        Bid(uid="e", name="E", status=""),
+                    ],
+                )
+            ],
+        )
+        self.view._group_by_job_status = True
+        self.view.build_complete_structure([loaded_file])
+        file_item = self.view.top_tree.topLevelItem(0)
+        groups = {
+            file_item.child(index).text(0): file_item.child(index)
+            for index in range(file_item.childCount())
+        }
+        self.assertEqual(file_item.childCount(), 3)
+        self.assertEqual(set(groups), {"Won", "Lost", "(unassigned)"})
+        for label, expected in (
+            ("Won", ["a", "b"]),
+            ("Lost", ["c", "d"]),
+            ("(unassigned)", ["e"]),
+        ):
+            with self.subTest(group=label):
+                self.assertEqual(groups[label].childCount(), 1)
+                project_item = groups[label].child(0)
+                self.assertEqual(
+                    self.view._get_item_info(project_item)[:2],
+                    ("project", "project-1"),
+                )
+                self.assertEqual(
+                    sorted(
+                        self.view._get_item_info(project_item.child(index))[1]
+                        for index in range(project_item.childCount())
+                    ),
+                    expected,
+                )
+
     def test_queued_project_rename_does_not_edit_replacement_or_hidden_owner(self):
         for transition in (
             "current",
@@ -637,6 +843,11 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.view.schedule_rename("project-shared", "C:/jobs/two.mdb")
         self.app.processEvents()
         self.assertIsNotNone(self.view._rename_item)
+        second_project, _ = self.view._find_project_item(
+            "project-shared", "C:/jobs/two.mdb"
+        )
+        self.assertIs(self.view._rename_item[0], second_project)
+        self.assertEqual(self.view._rename_item[1], "project-shared")
         self.assertEqual(self.view._rename_item[2], "C:/jobs/two.mdb")
         self.view.reset()
 
@@ -666,9 +877,53 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
                 self.view.top_tree.setFocus()
                 self.app.processEvents()
                 self.assertEqual(item.text(0), "Source")
-                self.assertEqual(len(calls), 0 if completion == "escape" else 1)
+                self.assertEqual(
+                    calls,
+                    (
+                        []
+                        if completion == "escape"
+                        else [("project-1", "Rejected name", "C:/jobs/test.mdb")]
+                    ),
+                )
                 self.assertIs(self.view.top_tree.currentItem(), item)
                 self.assertIsNone(self.view._rename_item)
+
+    def _rename_project_through_editor(self, text):
+        self.view.build_complete_structure(self._loaded_file([]))
+        self.view.show()
+        item = self._find_item("project-1")
+        self.view._start_project_rename(item, "project-1", "C:/jobs/test.mdb")
+        self.app.processEvents()
+        editor = self.view.top_tree.viewport().focusWidget()
+        self.assertIsInstance(editor, QtWidgets.QLineEdit)
+        if text is not None:
+            editor.setText(text)
+        QtTest.QTest.keyClick(editor, QtCore.Qt.Key.Key_Return)
+        self.app.processEvents()
+        return item
+
+    def test_project_inline_rename_commits_changed_name_and_ignores_blank_or_unchanged(
+        self,
+    ):
+        for text, expected_label, expected_calls in (
+            (
+                "  Renamed  ",
+                "  Renamed  ",
+                [("project-1", "Renamed", "C:/jobs/test.mdb")],
+            ),
+            (None, "Source", []),
+            ("Source", "Source", []),
+            ("   ", "Source", []),
+        ):
+            with self.subTest(text=text):
+                calls = []
+                self.view.on_rename_project = lambda *args: calls.append(args)
+                item = self._rename_project_through_editor(text)
+                self.assertEqual(calls, expected_calls)
+                self.assertEqual(item.text(0), expected_label)
+                self.assertIsNone(self.view._rename_item)
+                self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+                self.view.reset()
 
     def test_reset_cancels_active_rename_before_deleting_tree_item(self):
         rename_calls = []
@@ -728,7 +983,8 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             ],
             ["project-2"],
         )
-        self.assertEqual(len(emitted_positions), 1)
+        self.assertEqual(emitted_positions, [pos])
+        self.assertIs(self.view.top_tree.currentItem(), target_project)
 
     def test_right_click_selected_bid_preserves_multi_selection(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
@@ -737,7 +993,8 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         bid_2 = self._find_item("bid-2")
         bid_1.setSelected(True)
         bid_2.setSelected(True)
-        self.view.top_tree._set_current_item_preserving_selection(bid_1)
+        self.view.top_tree._set_current_item_preserving_selection(bid_2)
+        self.assertIs(self.view.top_tree.currentItem(), bid_2)
         emitted_positions = []
         self.view.top_tree.customContextMenuRequested.disconnect()
         self.view.top_tree.customContextMenuRequested.connect(
@@ -759,7 +1016,8 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             ),
             ["bid-1", "bid-2"],
         )
-        self.assertEqual(len(emitted_positions), 1)
+        self.assertEqual(emitted_positions, [pos])
+        self.assertIs(self.view.top_tree.currentItem(), bid_1)
 
     def test_context_duplicate_rejects_rebuilt_tree_owner(self):
         duplicate_calls = []
@@ -774,9 +1032,11 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         duplicate_action = next(
             action for action in menu.actions() if action.text() == "Duplicate"
         )
+        duplicate_action.trigger()
+        self.assertEqual(duplicate_calls, [BidRef("C:/jobs/test.mdb", "bid-1")])
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         duplicate_action.trigger()
-        self.assertEqual(duplicate_calls, [])
+        self.assertEqual(duplicate_calls, [BidRef("C:/jobs/test.mdb", "bid-1")])
 
     def test_context_import_targets_right_clicked_project(self):
         imports = []
@@ -791,7 +1051,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         self.view.on_menu_command = lambda command: (
             imports.append((command, *active_target))
-            if command == "import_ost"
+            if command in {"import_ost", "import_osp"}
             else None
         )
         self.view.on_menu_command_enabled = lambda _command: True
@@ -813,16 +1073,45 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             for submenu in menu.findChildren(QtWidgets.QMenu)
             if submenu.title() == "Import"
         )
-        import_ost_action = next(
-            action
-            for action in import_menu.actions()
-            if action.text() == ".ost File..."
-        )
-        import_ost_action.trigger()
+        import_actions = {action.text(): action for action in import_menu.actions()}
+        self.assertEqual(set(import_actions), {".ost File...", ".osp File..."})
+        import_actions[".ost File..."].trigger()
+        import_actions[".osp File..."].trigger()
         self.assertEqual(
             imports,
-            [("ost", "C:/jobs/other.mdb", "other-project")],
+            [
+                ("ost", "C:/jobs/other.mdb", "other-project"),
+                ("osp", "C:/jobs/other.mdb", "other-project"),
+            ],
         )
+
+    def test_context_new_project_and_import_are_unavailable_for_deleted_bids_folder(
+        self,
+    ):
+        self.view.on_can_create_bid = lambda _file_path, _project_uid: True
+        self.view.on_can_create_project = lambda _file_path: True
+        self.view.on_can_import_project_file = lambda *_args: True
+        self.view.on_menu_command_enabled = lambda _command: True
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        deleted, _ = self.view._find_project_item(
+            _DELETED_PROJECT_UID, "C:/jobs/test.mdb"
+        )
+        menu = self._context_menu_for(deleted)
+        new_actions = {
+            action.text(): action.isEnabled()
+            for action in self._submenu(menu, "New").actions()
+            if action.text()
+        }
+        self.assertEqual(
+            new_actions, {"Project": False, "Folder": True, "Database": True}
+        )
+        self.assertFalse(self._submenu(menu, "Import").isEnabled())
+        source, _ = self.view._find_project_item("project-1", "C:/jobs/test.mdb")
+        menu = self._context_menu_for(source)
+        self.assertTrue(
+            self._menu_action(self._submenu(menu, "New"), "Project").isEnabled()
+        )
+        self.assertTrue(self._submenu(menu, "Import").isEnabled())
 
     def test_context_new_commands_use_right_clicked_database_and_project(self):
         creates = []
@@ -911,6 +1200,11 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         self.assertFalse(export_menu.isEnabled())
         self.assertFalse(renumber_action.isEnabled())
+        active_menu = self._context_menu_for(bid_1)
+        self.assertTrue(self._submenu(active_menu, "Export").isEnabled())
+        self.assertTrue(
+            self._menu_action(active_menu, "Renumber Conditions").isEnabled()
+        )
 
     def test_active_bid_export_rechecks_owner_before_trigger(self):
         active = {"uid": "bid-1"}
@@ -938,9 +1232,11 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             if action.text() == "To .pdf File"
         )
         self.assertTrue(pdf_action.isEnabled())
+        pdf_action.trigger()
+        self.assertEqual(commands, ["export_as_pdf"])
         active["uid"] = "bid-2"
         pdf_action.trigger()
-        self.assertEqual(commands, [])
+        self.assertEqual(commands, ["export_as_pdf"])
 
     def test_project_context_delete_is_disabled_for_mixed_bid_selection(self):
         self.view.on_menu_command_enabled = lambda _command: True
@@ -1064,7 +1360,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             ],
             ["bid-1"],
         )
-        self.assertEqual(len(emitted_positions), 1)
+        self.assertEqual(emitted_positions, [pos])
 
     def test_tree_rebuild_cancels_context_menu_press_from_previous_rows(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
@@ -1102,11 +1398,63 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             lambda file_path, project_uid: file_path == "C:/jobs/test.mdb"
             and project_uid == "project-2"
         )
+        self.assertEqual(
+            self.view._paste_target_for_item(target_project),
+            ("C:/jobs/test.mdb", "project-2"),
+        )
         self.assertTrue(
             self.view._can_paste_to_target(
                 self.view._paste_target_for_item(target_project)
             )
         )
+        self.assertFalse(
+            self.view._can_paste_to_target(
+                self.view._paste_target_for_item(self._find_item("project-1"))
+            )
+        )
+
+    def test_paste_targets_follow_node_kind_and_paste_only_when_authorized(self):
+        files = self._loaded_file(
+            ["bid-1"], deleted_bid_uids=["deleted-1"], orphan_bid_uids=["orphan-1"]
+        )
+        self.view.build_complete_structure(files)
+        file_path = "C:/jobs/test.mdb"
+        deleted_project, _ = self.view._find_project_item(
+            _DELETED_PROJECT_UID, file_path
+        )
+        for label, item, expected in (
+            ("database", self._find_item(file_path), (file_path, None)),
+            ("project", self._find_item("project-2"), (file_path, "project-2")),
+            ("bid", self._find_item("bid-1"), (file_path, "project-1")),
+            ("orphan bid", self._find_item("orphan-1"), (file_path, None)),
+            ("deleted folder", deleted_project, None),
+            ("deleted bid", self._find_item("deleted-1"), None),
+        ):
+            with self.subTest(item=label):
+                self.assertEqual(self.view._paste_target_for_item(item), expected)
+        self.assertIsNone(self.view._paste_target_for_item(None))
+        self.view._group_by_job_status = True
+        self.view.build_complete_structure(files)
+        self.assertEqual(
+            self.view._paste_target_for_item(self._find_item("orphan-1")),
+            (file_path, None),
+        )
+        self.assertEqual(
+            self.view._paste_target_for_item(self._find_item("bid-1")),
+            (file_path, "project-1"),
+        )
+        pastes = []
+        self.view.on_paste_bids = lambda path, project_uid: pastes.append(
+            (path, project_uid)
+        )
+        self.view.on_can_paste_bids = lambda _path, project_uid: (
+            project_uid == "project-2"
+        )
+        self.view._paste_to_target((file_path, "project-1"))
+        self.view._paste_to_target(None)
+        self.assertEqual(pastes, [])
+        self.view._paste_to_target((file_path, "project-2"))
+        self.assertEqual(pastes, [(file_path, "project-2")])
 
     def test_context_copy_uses_right_clicked_unselected_bid(self):
         copied = []
@@ -1122,6 +1470,47 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             [[ref.bid_uid for ref in refs] for refs in copied], [["bid-2"]]
         )
 
+    def test_copy_refs_follow_selection_scope_permission_and_deleted_folder(self):
+        self.view.build_complete_structure(
+            self._loaded_file(["bid-1", "bid-2"], deleted_bid_uids=["deleted-1"])
+        )
+        bid_1 = self._find_item("bid-1")
+        bid_2 = self._find_item("bid-2")
+        deleted = self._find_item("deleted-1")
+        self._select_bid_items("bid-1", "bid-2")
+        refs = self.view._copy_bid_refs_for_context(bid_1)
+        self.assertEqual(sorted(ref.bid_uid for ref in refs), ["bid-1", "bid-2"])
+        self.assertEqual({ref.file_path for ref in refs}, {"C:/jobs/test.mdb"})
+        self.assertEqual(self.view._copy_bid_refs_for_context(deleted), [])
+        self._select_bid_items("bid-1", "deleted-1")
+        refs = self.view._copy_bid_refs_for_context(bid_1)
+        self.assertEqual([ref.bid_uid for ref in refs], ["bid-1"])
+        copied = []
+        self.view.on_copy_bids = lambda refs: copied.append(list(refs))
+        self.view._copy_selected_bids()
+        self.assertEqual(
+            [[ref.bid_uid for ref in refs] for refs in copied], [["bid-1"]]
+        )
+        self.view.set_ui_access_manager(
+            SimpleNamespace(is_allowed=lambda feature: feature != Feature.COPY_BID)
+        )
+        self.assertEqual(self.view._copy_bid_refs_for_context(bid_1), [])
+        self.assertEqual(self.view._copy_bid_refs_for_context(bid_2), [])
+        self.view._copy_selected_bids()
+        self.assertEqual(len(copied), 1)
+
+    def test_copy_refs_are_empty_when_selection_spans_databases(self):
+        files = self._loaded_file(["bid-1"], file_path="C:/jobs/one.mdb")
+        files.extend(self._loaded_file(["bid-2"], file_path="C:/jobs/two.mdb"))
+        self.view.build_complete_structure(files)
+        self._select_bid_items("bid-1", "bid-2")
+        self.assertEqual(self.view._selected_copy_bid_refs(), [])
+        self._select_bid_items("bid-2")
+        self.assertEqual(
+            self.view._selected_copy_bid_refs(),
+            [BidRef("C:/jobs/two.mdb", "bid-2")],
+        )
+
     def test_stale_project_context_rename_is_rejected_after_tree_rebuild(self):
         self.view.build_complete_structure(self._loaded_file([]))
         original_item = self._find_item("project-1")
@@ -1132,6 +1521,11 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.view._rename_context(context)
         self.assertIsNone(self.view._rename_item)
         self.assertEqual(self._find_item("project-1").text(0), "Replacement")
+        fresh = self.view._context_for_item(self._find_item("project-1"))
+        self.view._rename_context(fresh)
+        self.assertIs(self.view._rename_item[0], self._find_item("project-1"))
+        self.assertEqual(self.view._rename_item[1], "project-1")
+        self.view.reset()
 
     def test_context_rename_uses_right_clicked_project_permission(self):
         self.view.set_ui_access_manager(
@@ -1152,6 +1546,22 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         )
         context = self.view._context_for_item(other_project)
         self.assertFalse(self.view._can_rename_context(context))
+        active_project, _ = self.view._find_project_item(
+            "project-1", "C:/jobs/active.mdb"
+        )
+        self.assertTrue(
+            self.view._can_rename_context(self.view._context_for_item(active_project))
+        )
+        deleted_project, _ = self.view._find_project_item(
+            _DELETED_PROJECT_UID, "C:/jobs/active.mdb"
+        )
+        self.assertFalse(
+            self.view._can_rename_context(self.view._context_for_item(deleted_project))
+        )
+        file_item = self._find_item("C:/jobs/active.mdb")
+        self.assertFalse(
+            self.view._can_rename_context(self.view._context_for_item(file_item))
+        )
 
     def test_project_tree_rebuild_cancels_active_drag_items(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
@@ -1188,55 +1598,152 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(ignored, [True])
         self.assertEqual(moved, [])
 
+    def test_project_drop_moves_bids_only_onto_valid_same_database_targets(self):
+        files = self._loaded_file(["bid-1"])
+        files.extend(self._loaded_file([], file_path="C:/jobs/other.mdb"))
+        self.view.build_complete_structure(files)
+        tree = self.view.top_tree
+        moved = []
+        authorized = []
+        tree.on_move_bids = lambda refs, project_uid: moved.append(
+            (list(refs), project_uid)
+        )
+        tree.on_can_move_bids = lambda refs, project_uid: (
+            authorized.append((list(refs), project_uid)) or True
+        )
+        source_ref = BidRef("C:/jobs/test.mdb", "bid-1")
+        source = self._find_item("bid-1")
+        targets = {
+            "other folder": (
+                self.view._find_project_item("project-2", "C:/jobs/test.mdb")[0],
+                True,
+                "project-2",
+            ),
+            "database root": (self._find_item("C:/jobs/test.mdb"), True, None),
+            "current folder": (
+                self.view._find_project_item("project-1", "C:/jobs/test.mdb")[0],
+                False,
+                None,
+            ),
+            "deleted folder": (
+                self.view._find_project_item(_DELETED_PROJECT_UID, "C:/jobs/test.mdb")[
+                    0
+                ],
+                False,
+                None,
+            ),
+            "other database folder": (
+                self.view._find_project_item("project-2", "C:/jobs/other.mdb")[0],
+                False,
+                None,
+            ),
+            "bid row": (source, False, None),
+        }
+        for label, (target, expect_move, project_uid) in targets.items():
+            with self.subTest(target=label):
+                tree._drag_items = [source]
+                tree._drag_file_path = "C:/jobs/test.mdb"
+                moved.clear()
+                authorized.clear()
+                tree.itemAt = lambda _position, item=target: item
+                accepted = []
+                ignored = []
+                event = SimpleNamespace(
+                    position=lambda: QtCore.QPointF(),
+                    acceptProposedAction=lambda: accepted.append(True),
+                    ignore=lambda: ignored.append(True),
+                )
+                tree.dropEvent(event)
+                self.assertEqual(accepted, [True] if expect_move else [])
+                self.assertEqual(ignored, [] if expect_move else [True])
+                self.assertEqual(
+                    moved, [([source_ref], project_uid)] if expect_move else []
+                )
+                self.assertEqual(
+                    authorized, [([source_ref], project_uid)] if expect_move else []
+                )
+        tree.on_can_move_bids = lambda _refs, _project_uid: False
+        tree._drag_items = [source]
+        tree._drag_file_path = "C:/jobs/test.mdb"
+        moved.clear()
+        ignored = []
+        tree.itemAt = lambda _position: targets["other folder"][0]
+        tree.dropEvent(
+            SimpleNamespace(
+                position=lambda: QtCore.QPointF(),
+                acceptProposedAction=lambda: self.fail("unauthorized drop accepted"),
+                ignore=lambda: ignored.append(True),
+            )
+        )
+        self.assertEqual(ignored, [True])
+        self.assertEqual(moved, [])
+
     def test_project_context_command_rejects_replaced_tree_owner(self):
-        commands = []
-        self.view.on_menu_command = commands.append
-        self.view.on_menu_command_enabled = lambda _key: True
+        deletes = []
+        self.view.on_delete_bids = lambda refs, _state: deletes.append(list(refs))
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         bid_item = self._find_item("bid-1")
         self.view._prepare_context_menu_selection(bid_item)
         context = self.view._context_for_item(bid_item)
         menu = QtWidgets.QMenu()
         self.view._build_project_context_menu(menu, context)
-        delete_action = next(
-            action for action in menu.actions() if action.text() == "Delete"
-        )
+        delete_action = self._menu_action(menu, "Delete")
+        self.assertTrue(delete_action.isEnabled())
+        delete_action.trigger()
+        self.assertEqual(deletes, [[BidRef("C:/jobs/test.mdb", "bid-1")]])
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         delete_action.trigger()
-        self.assertEqual(commands, [])
+        self.assertEqual(deletes, [[BidRef("C:/jobs/test.mdb", "bid-1")]])
 
     def test_project_context_command_rejects_changed_selection(self):
-        commands = []
-        self.view.on_menu_command = commands.append
-        self.view.on_menu_command_enabled = lambda _key: True
+        deletes = []
+        self.view.on_delete_bids = lambda refs, _state: deletes.append(list(refs))
         self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
         bid_1 = self._find_item("bid-1")
         self.view._prepare_context_menu_selection(bid_1)
         context = self.view._context_for_item(bid_1)
         menu = QtWidgets.QMenu()
         self.view._build_project_context_menu(menu, context)
-        delete_action = next(
-            action for action in menu.actions() if action.text() == "Delete"
-        )
+        delete_action = self._menu_action(menu, "Delete")
+        delete_action.trigger()
+        self.assertEqual(deletes, [[BidRef("C:/jobs/test.mdb", "bid-1")]])
         bid_2 = self._find_item("bid-2")
         self.view.top_tree.clearSelection()
         self.view.top_tree.setCurrentItem(bid_2)
         bid_2.setSelected(True)
         delete_action.trigger()
-        self.assertEqual(commands, [])
+        self.assertEqual(deletes, [[BidRef("C:/jobs/test.mdb", "bid-1")]])
+        fresh_menu = self._context_menu_for(bid_2)
+        self._menu_action(fresh_menu, "Delete").trigger()
+        self.assertEqual(
+            deletes,
+            [
+                [BidRef("C:/jobs/test.mdb", "bid-1")],
+                [BidRef("C:/jobs/test.mdb", "bid-2")],
+            ],
+        )
 
-    def test_project_context_expand_action_ignores_qaction_checked_argument(self):
+    def test_project_context_expand_and_collapse_actions_ignore_checked_argument(self):
+        option_changes = []
+        self.view.on_project_view_options_changed = lambda: option_changes.append(True)
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         bid_item = self._find_item("bid-1")
+        project_item = bid_item.parent()
+        project_item.setExpanded(False)
+        self.assertFalse(project_item.isExpanded())
         self.view._prepare_context_menu_selection(bid_item)
         context = self.view._context_for_item(bid_item)
         menu = QtWidgets.QMenu()
         self.view._build_project_context_menu(menu, context)
-        expand_action = next(
-            action for action in menu.actions() if action.text() == "Expand All"
+        self._menu_action(menu, "Expand All").trigger()
+        self.assertTrue(project_item.isExpanded())
+        self.assertIn(
+            "project|C:/jobs/test.mdb|project-1", self.view.get_expanded_node_keys()
         )
-        expand_action.trigger()
-        self.assertTrue(bid_item.parent().isExpanded())
+        self._menu_action(menu, "Collapse All").trigger()
+        self.assertFalse(project_item.isExpanded())
+        self.assertEqual(self.view.get_expanded_node_keys(), [])
+        self.assertEqual(option_changes, [True, True])
 
     def test_context_paste_blocks_different_database_target(self):
         self.view.build_complete_structure(
@@ -1262,14 +1769,182 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
             ]
         )
         target_project = self._find_item("project-target")
-        self.view.on_can_paste_bids = (
-            lambda file_path, _project_uid: file_path == "C:/jobs/source.mdb"
+        checked = []
+        self.view.on_can_paste_bids = lambda file_path, project_uid: (
+            checked.append((file_path, project_uid))
+            or file_path == "C:/jobs/source.mdb"
         )
         self.assertFalse(
             self.view._can_paste_to_target(
                 self.view._paste_target_for_item(target_project)
             )
         )
+        self.assertEqual(checked, [("C:/jobs/target.mdb", "project-target")])
+        self.assertTrue(
+            self.view._can_paste_to_target(
+                self.view._paste_target_for_item(self._find_item("project-source"))
+            )
+        )
+        self.assertEqual(checked[-1], ("C:/jobs/source.mdb", "project-source"))
+
+    def test_context_close_restore_and_empty_deleted_use_right_clicked_owner(self):
+        closed = []
+        emptied = []
+        restored = []
+        self.view.on_can_close_database = lambda file_path: (
+            file_path == "C:/jobs/other.mdb"
+        )
+        self.view.on_close_database = closed.append
+        self.view.on_empty_deleted_bids = lambda refs: emptied.append(list(refs))
+        self.view.on_restore_bid = lambda refs: restored.append(list(refs))
+        self.view.on_menu_command_enabled = lambda _command: True
+        files = self._loaded_file(
+            ["active-bid"],
+            deleted_bid_uids=["active-deleted"],
+            file_path="C:/jobs/active.mdb",
+        )
+        files.extend(
+            self._loaded_file(
+                ["other-bid"],
+                deleted_bid_uids=["deleted-1", "deleted-2"],
+                file_path="C:/jobs/other.mdb",
+            )
+        )
+        self.view.build_complete_structure(files)
+        active_menu = self._context_menu_for(self._find_item("C:/jobs/active.mdb"))
+        self.assertFalse(self._menu_action(active_menu, "Close").isEnabled())
+        other_menu = self._context_menu_for(self._find_item("C:/jobs/other.mdb"))
+        close_action = self._menu_action(other_menu, "Close")
+        self.assertTrue(close_action.isEnabled())
+        close_action.trigger()
+        self.assertEqual(closed, ["C:/jobs/other.mdb"])
+        empty_action = self._menu_action(other_menu, "Empty Deleted Bids Folder")
+        self.assertTrue(empty_action.isEnabled())
+        empty_action.trigger()
+        self.assertEqual(
+            emptied,
+            [
+                [
+                    BidRef("C:/jobs/other.mdb", "deleted-1"),
+                    BidRef("C:/jobs/other.mdb", "deleted-2"),
+                ]
+            ],
+        )
+        bid_menu = self._context_menu_for(self._find_item("other-bid"))
+        self.assertFalse(
+            self._menu_action(bid_menu, "Empty Deleted Bids Folder").isEnabled()
+        )
+        self.assertNotIn("Restore", [action.text() for action in bid_menu.actions()])
+        self._select_bid_items("deleted-1")
+        single_menu = self._context_menu_for(self._find_item("deleted-1"))
+        self._menu_action(single_menu, "Restore").trigger()
+        self.assertEqual(restored, [[BidRef("C:/jobs/other.mdb", "deleted-1")]])
+        self._select_bid_items("deleted-1", "deleted-2")
+        pair_menu = self._context_menu_for(self._find_item("deleted-1"))
+        self._menu_action(pair_menu, "Restore 2 bids").trigger()
+        self.assertEqual(
+            sorted(ref.bid_uid for ref in restored[-1]), ["deleted-1", "deleted-2"]
+        )
+        self.assertEqual(len(restored), 2)
+
+    def test_double_click_activates_bid_and_edits_project_but_not_database(self):
+        activated = []
+        self.view.on_bid_activated = activated.append
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        self.view._on_item_double_clicked(self._find_item("C:/jobs/test.mdb"), 0)
+        self.assertEqual(activated, [])
+        self.assertIsNone(self.view._rename_item)
+        self.view._on_item_double_clicked(self._find_item("bid-1"), 0)
+        self.assertEqual(activated, [BidRef("C:/jobs/test.mdb", "bid-1")])
+        self.assertIsNone(self.view._rename_item)
+        project_item = self._find_item("project-1")
+        self.view._on_item_double_clicked(project_item, 0)
+        self.assertEqual(
+            self.view._rename_item,
+            (project_item, "project-1", "C:/jobs/test.mdb", "Source"),
+        )
+        self.view._on_item_double_clicked(self._find_item("bid-1"), 0)
+        self.assertEqual(len(activated), 1)
+        self.view.reset()
+
+    def test_drag_eligibility_excludes_deleted_bids_and_cross_database_selection(
+        self,
+    ):
+        files = self._loaded_file(["bid-1", "bid-2"], deleted_bid_uids=["deleted-1"])
+        files.extend(self._loaded_file(["other-bid"], file_path="C:/jobs/other.mdb"))
+        self.view.build_complete_structure(files)
+        tree = self.view.top_tree
+
+        def eligible():
+            return sorted(
+                item.data(0, tree._ITEM_ROLE)[1] for item in tree._eligible_drag_items()
+            )
+
+        self._select_bid_items("bid-1", "deleted-1", "bid-2")
+        self.assertEqual(eligible(), ["bid-1", "bid-2"])
+        self._select_bid_items("bid-1", "other-bid")
+        self.assertEqual(eligible(), [])
+        self._select_bid_items("deleted-1")
+        self.assertEqual(eligible(), [])
+        tree.clearSelection()
+        self.view._find_project_item("project-1", "C:/jobs/test.mdb")[0].setSelected(
+            True
+        )
+        self.assertEqual(eligible(), [])
+
+    def test_default_bid_order_is_numeric_and_keeps_status_uid_separate_from_sort_value(
+        self,
+    ):
+        bids = [
+            Bid(
+                uid=f"bid-{number}", name=f"Bid {number}", bid_no=number, status_uid="s"
+            )
+            for number in (10, 2, 33, 1, 100)
+        ]
+        loaded = self._loaded_file([])
+        loaded[0].projects[0].bids = bids
+        self.view.build_complete_structure(loaded)
+        project_item = self._find_item("project-1")
+        self.assertEqual(
+            [project_item.child(index).text(0) for index in range(5)],
+            ["1", "2", "10", "33", "100"],
+        )
+        bid_item = self._find_item("bid-10")
+        self.assertEqual(bid_item.data(0, SortableTreeWidgetItem._SORT_ROLE), 10)
+        self.assertEqual(bid_item.data(0, _BID_STATUS_UID_ROLE), "s")
+        self.view.set_group_by_job_status(True, notify=False)
+        self.assertEqual(
+            self.view._context_for_item(self._find_item("bid-10")).bid_status_uid, "s"
+        )
+
+    def test_bid_columns_sort_by_typed_values_not_display_text(self):
+        bids = [
+            Bid(uid="a", name="Zed", bid_no=10),
+            Bid(uid="b", name="alpha", bid_no=2),
+            Bid(uid="c", name="Mid", bid_no=33),
+        ]
+        for bid, pages in zip(bids, (3, 12, 100)):
+            bid.page_count = pages
+        loaded = self._loaded_file([])
+        loaded[0].projects[0].bids = bids
+        self.view.build_complete_structure(loaded)
+        project_item = self._find_item("project-1")
+
+        def order():
+            return [
+                project_item.child(index).data(0, self.view._ITEM_ROLE)[1]
+                for index in range(project_item.childCount())
+            ]
+
+        tree = self.view.top_tree
+        tree.sortByColumn(6, QtCore.Qt.SortOrder.DescendingOrder)
+        self.assertEqual(order(), ["c", "b", "a"])
+        tree.sortByColumn(6, QtCore.Qt.SortOrder.AscendingOrder)
+        self.assertEqual(order(), ["a", "b", "c"])
+        tree.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
+        self.assertEqual(order(), ["b", "a", "c"])
+        tree.sortByColumn(1, QtCore.Qt.SortOrder.AscendingOrder)
+        self.assertEqual(order(), ["b", "c", "a"])
 
 
 class BidLockPermissionTests(unittest.TestCase):
@@ -1278,23 +1953,32 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertIsNotNone(app)
 
         class Access:
+            def __init__(self):
+                self.allowed = False
+                self.checked = []
+
             @staticmethod
             def is_allowed(_feature):
                 return True
 
-            @staticmethod
-            def can_edit_bid_structure(_bid_refs):
-                return False
+            def can_edit_bid_structure(self, bid_refs):
+                self.checked.append(list(bid_refs))
+                return self.allowed
 
+        access = Access()
         tree = _BidTreeWidget()
         self.addCleanup(tree.deleteLater)
-        tree.set_ui_access_manager(Access())
+        tree.set_ui_access_manager(access)
         item = QtWidgets.QTreeWidgetItem(["Bid"])
         item.setData(0, tree._ITEM_ROLE, ("bid", "bid-1", "db.mdb"))
         tree.addTopLevelItem(item)
         tree._drag_items = [item]
         tree._drag_file_path = "db.mdb"
         self.assertFalse(tree._move_bids_allowed())
+        self.assertEqual(access.checked, [[BidRef("db.mdb", "bid-1")]])
+        access.allowed = True
+        self.assertTrue(tree._move_bids_allowed())
+        self.assertEqual(access.checked[-1], [BidRef("db.mdb", "bid-1")])
 
     def test_project_tree_drop_affordance_uses_exact_destination_authorization(self):
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -1320,3 +2004,7 @@ class BidLockPermissionTests(unittest.TestCase):
             checked,
             [([BidRef("db.mdb", "bid-1")], "project-2")],
         )
+        tree.on_can_move_bids = lambda _refs, _project_uid: True
+        self.assertTrue(tree._move_bids_allowed(target))
+        tree.on_can_move_bids = None
+        self.assertFalse(tree._move_bids_allowed(target))

@@ -22,10 +22,26 @@ class AreaComboConditionBehaviorTests(unittest.TestCase):
             selected_uid="a1",
         )
         self.assertEqual(combo.get_current_area_uid(), "a1")
+        self.assertEqual(combo.lineEdit().text(), "Area 1")
         combo.load_areas([], selected_uid=None)
         self.assertEqual(combo.get_current_area_uid(), "")
+        self.assertEqual(combo.lineEdit().text(), "(All Areas)")
         combo.set_current_area_uid("deleted")
         self.assertEqual(combo.get_current_area_uid(), "")
+        self.assertEqual(combo.lineEdit().text(), "(All Areas)")
+
+    def test_area_combo_reload_keeps_surviving_selection_and_rejects_unknown_uid(self):
+        combo = AreaComboBox(None)
+        areas = [
+            BidArea(uid="a1", bid_uid="b1", parent_uid="", name="Area 1", sequence=1)
+        ]
+        combo.load_areas(areas, selected_uid="a1")
+        combo.load_areas(areas)
+        self.assertEqual(combo.get_current_area_uid(), "a1")
+        self.assertEqual(combo.lineEdit().text(), "Area 1")
+        combo.load_areas(areas, selected_uid="deleted")
+        self.assertEqual(combo.get_current_area_uid(), "")
+        self.assertEqual(combo.lineEdit().text(), "(All Areas)")
 
     def test_area_combo_popup_bold_state_does_not_style_display_text(self):
         combo = AreaComboBox(None)
@@ -35,6 +51,8 @@ class AreaComboConditionBehaviorTests(unittest.TestCase):
             selected_uid="0",
         )
         self.assertTrue(combo._area_items["0"].font().bold())
+        self.assertFalse(combo._area_items["a1"].font().bold())
+        self.assertFalse(combo._area_items[""].font().bold())
         self.assertEqual(combo.lineEdit().text(), "(Unassigned)")
         self.assertFalse(combo.lineEdit().font().bold())
         combo.set_current_area_uid("")

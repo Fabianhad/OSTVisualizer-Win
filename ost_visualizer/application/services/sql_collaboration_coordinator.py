@@ -2489,6 +2489,12 @@ class SqlCollaborationCoordinator:
         return max(0.05, base + random.uniform(-jitter, jitter))
 
     def _on_session_started(self, payload) -> None:
+        try:
+            self._project_session_start(payload)
+        finally:
+            self._complete_mutation_drain_if_ready(payload[0])
+
+    def _project_session_start(self, payload) -> None:
         database_id, generation, session_generation, hydrated, navigation_owner = (
             payload
         )

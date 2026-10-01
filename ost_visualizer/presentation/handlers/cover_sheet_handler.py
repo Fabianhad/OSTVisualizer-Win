@@ -363,9 +363,16 @@ class CoverSheetHandler:
         if lease_session is None:
             execute_dialog()
             return
+
+        def release_denied_lease() -> None:
+            lease_session.close()
+            dialog.deleteLater()
+
         lease_session.bind_dialog(dialog)
         lease_session.request_initial(
-            lambda result: execute_dialog() if result.granted else dialog.deleteLater()
+            lambda result: (
+                execute_dialog() if result.granted else release_denied_lease()
+            )
         )
 
     def _save_master_data_async(

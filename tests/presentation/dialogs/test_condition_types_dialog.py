@@ -40,6 +40,15 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             menu_mode=menu_mode,
         )
 
+    def _button_column(self, dialog):
+        content_row = dialog.layout().itemAt(1).layout()
+        column = content_row.itemAt(1).layout()
+        return [
+            column.itemAt(index).widget().text()
+            for index in range(column.count())
+            if column.itemAt(index).widget() is not None
+        ]
+
     def test_condition_types_picker_keeps_select_and_cancel_buttons(self):
         dialog = self._condition_types_dialog()
         try:
@@ -47,6 +56,15 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             self.assertIsNotNone(dialog.btn_cancel)
             self.assertEqual(dialog.btn_cancel.text(), "Cancel")
             self.assertFalse(dialog.btn_select.isEnabled())
+            self.assertEqual(
+                self._button_column(dialog), ["Select", "Cancel", "New", "Delete"]
+            )
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            self.assertTrue(dialog.btn_select.isEnabled())
+            dialog.btn_select.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.selected_uid(), "type-1")
+            self.assertEqual(dialog.selected_name(), "Concrete")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -60,6 +78,10 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             self.assertTrue(dialog.btn_select.isEnabled())
             self.assertEqual(dialog.btn_new.text(), "New")
             self.assertEqual(dialog.btn_delete.text(), "Delete")
+            self.assertEqual(self._button_column(dialog), ["OK", "New", "Delete"])
+            dialog.btn_select.click()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.selected_uid(), "")
         finally:
             dialog.close()
             dialog.cleanup()
@@ -73,8 +95,10 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                 persisted = [
                     CdnType(uid=str(i), name=f"Match {i:02}") for i in range(60)
                 ]
+                saved_deletions = []
 
                 def save(changes):
+                    saved_deletions.append(list(changes["deleted_uids"]))
                     persisted[:] = [
                         item
                         for item in persisted
@@ -106,9 +130,21 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                     with patch(
                         "ost_visualizer.presentation.dialogs.condition_types_dialog.confirm_multi_delete",
                         return_value=[("Match 31", "31")],
-                    ):
+                    ) as confirm:
                         dialog.btn_delete.click()
                     self.app.processEvents()
+                    self.assertEqual(
+                        sorted(confirm.call_args.args[2]),
+                        [("Match 30", "30"), ("Match 31", "31"), ("Match 32", "32")],
+                    )
+                    self.assertEqual(saved_deletions, [["31"]])
+                    self.assertEqual(dialog.tree.topLevelItemCount(), 60)
+                    uids = {
+                        dialog.tree.topLevelItem(row).data(0, dialog._UID_ROLE)
+                        for row in range(dialog.tree.topLevelItemCount())
+                    }
+                    self.assertNotIn("31", uids)
+                    self.assertIn("new", uids)
                     self.assertEqual(
                         {
                             item.data(0, dialog._UID_ROLE)
@@ -170,11 +206,24 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                             ),
                             patch(
                                 "ost_visualizer.presentation.dialogs.condition_types_dialog.show_warning"
-                            ),
+                            ) as warning,
                         ):
                             dialog.btn_delete.click()
                         self.assertEqual(dialog.edit_find.text(), "Match")
+                        if not success and not asynchronous:
+                            warning.assert_called_once_with(
+                                dialog,
+                                "Condition Types",
+                                "Failed to delete condition type.",
+                            )
+                        else:
+                            warning.assert_not_called()
+                        self.assertEqual(
+                            [item.uid for item in persisted],
+                            ["a", "c"] if success else ["a", "b", "c"],
+                        )
                         if success:
+                            self.assertEqual(dialog.tree.topLevelItemCount(), 2)
                             self.assertIsNone(dialog.tree.currentItem())
                             self.assertEqual(dialog.tree.selectedItems(), [])
                             self.assertFalse(dialog.btn_select.isEnabled())
@@ -207,32 +256,46 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             )
             dialog._on_select()
             self.assertEqual(dialog.selected_uid(), "type-2")
+            self.assertEqual(dialog.selected_name(), "Concrete")
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         finally:
             dialog.close()
             dialog.deleteLater()
 
     def test_condition_type_rename_rolls_back_when_save_fails(self):
-        reload_calls = []
-        dialog = _master_data_support_MasterConditionTypesDialog(
-            _master_data_support_FakeIconProvider(),
-            condition_types=[CdnType(uid="type-1", name="Concrete")],
-            save_fn=lambda _changes: False,
-            reload_fn=lambda: reload_calls.append("reload") or [],
-            menu_mode=True,
-        )
-        try:
-            item = dialog.tree.topLevelItem(0)
-            dialog._set_item_text(item, "Asphalt")
-            with patch(
-                "ost_visualizer.presentation.dialogs.condition_types_dialog.show_warning"
-            ):
-                dialog._on_item_changed(item, 0)
-            self.assertEqual(item.text(0), "Concrete")
-            self.assertEqual(reload_calls, [])
-        finally:
-            dialog.close()
-            dialog.cleanup()
-            dialog.deleteLater()
+        def raising_save(_changes):
+            raise RuntimeError("write unavailable")
+
+        for label, save_fn in (
+            ("returns_false", lambda _changes: False),
+            ("raises", raising_save),
+        ):
+            with self.subTest(save=label):
+                reload_calls = []
+                dialog = _master_data_support_MasterConditionTypesDialog(
+                    _master_data_support_FakeIconProvider(),
+                    condition_types=[CdnType(uid="type-1", name="Concrete")],
+                    save_fn=save_fn,
+                    reload_fn=lambda: reload_calls.append("reload") or [],
+                    menu_mode=True,
+                )
+                try:
+                    item = dialog.tree.topLevelItem(0)
+                    dialog._set_item_text(item, "Asphalt")
+                    with patch(
+                        "ost_visualizer.presentation.dialogs."
+                        "condition_types_dialog.show_warning"
+                    ) as warning:
+                        dialog._on_item_changed(item, 0)
+                    warning.assert_called_once_with(
+                        dialog, "Condition Types", "Failed to rename condition type."
+                    )
+                    self.assertEqual(item.text(0), "Concrete")
+                    self.assertEqual(reload_calls, [])
+                finally:
+                    dialog.close()
+                    dialog.cleanup()
+                    dialog.deleteLater()
 
     def test_condition_type_async_create_rejection_removes_provisional_row(self):
         async_calls = []
@@ -254,7 +317,53 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             dialog.tree.blockSignals(False)
             dialog._on_item_changed(item, 0)
             self.assertEqual(len(async_calls), 1)
+            self.assertEqual(
+                async_calls[0],
+                {
+                    "new": [{"uid": "new_condition_type", "name": "Concrete"}],
+                    "updated": [],
+                    "deleted_uids": [],
+                },
+            )
             self.assertEqual(dialog.tree.topLevelItemCount(), 0)
+            self.assertIsNone(dialog._pending_new_item)
+            self.assertTrue(dialog._is_interactive)
+            self.assertTrue(dialog.btn_new.isEnabled())
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_condition_type_async_create_success_reloads_and_selects_created_uid(self):
+        async_calls = []
+        persisted = []
+
+        def queue(changes, completed):
+            async_calls.append(changes)
+            persisted.append(CdnType(uid="type-9", name="Concrete"))
+            completed(True, {"new_condition_type": "type-9"})
+            return True
+
+        dialog = _master_data_support_MasterConditionTypesDialog(
+            _master_data_support_FakeIconProvider(),
+            condition_types=[],
+            save_fn=lambda _changes: self.fail("sync save must not run"),
+            save_async_fn=queue,
+            reload_fn=lambda: list(persisted),
+            menu_mode=True,
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Concrete")
+            dialog.tree.blockSignals(False)
+            dialog._on_item_changed(item, 0)
+            self.assertEqual(len(async_calls), 1)
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+            created = dialog.tree.topLevelItem(0)
+            self.assertEqual(created.data(0, dialog._UID_ROLE), "type-9")
+            self.assertIs(dialog.tree.currentItem(), created)
             self.assertIsNone(dialog._pending_new_item)
             self.assertTrue(dialog._is_interactive)
         finally:
@@ -282,9 +391,12 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                 ),
                 patch(
                     "ost_visualizer.presentation.dialogs.condition_types_dialog.show_warning"
-                ),
+                ) as warning,
             ):
                 dialog._on_delete()
+            warning.assert_called_once_with(
+                dialog, "Condition Types", "Failed to delete condition type."
+            )
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
             self.assertEqual(dialog.tree.topLevelItem(0).text(0), "Concrete")
             self.assertEqual(reload_calls, [])
@@ -319,6 +431,36 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             self.assertEqual(validate_calls, [["type-1"]])
             self.assertEqual(delete_calls, [["type-1"]])
             self.assertEqual(confirm_delete.call_args.args[3], set())
+            self.assertEqual(dialog.tree.topLevelItemCount(), 0)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_condition_type_delete_passes_blocked_uids_and_skips_declined_delete(self):
+        delete_calls = []
+        dialog = _master_data_support_MasterConditionTypesDialog(
+            _master_data_support_FakeIconProvider(),
+            condition_types=[CdnType(uid="type-1", name="Concrete")],
+            save_fn=lambda _changes: self.fail("delete_fn owns deletion"),
+            blocked_delete_uids_fn=lambda _uids: {"type-1"},
+            delete_fn=lambda uids: delete_calls.append(list(uids)) or True,
+            reload_fn=lambda: [],
+            menu_mode=True,
+        )
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            with patch(
+                "ost_visualizer.presentation.dialogs."
+                "condition_types_dialog.confirm_multi_delete",
+                return_value=None,
+            ) as confirm_delete:
+                dialog._on_delete()
+            confirm_delete.assert_called_once_with(
+                dialog, "Delete Condition Type", [("Concrete", "type-1")], {"type-1"}
+            )
+            self.assertEqual(delete_calls, [])
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
         finally:
             dialog.close()
             dialog.cleanup()
@@ -345,6 +487,22 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
             dialog._on_item_changed(item, 0)
             self.assertEqual(item.text(0), "Concrete")
             self.assertEqual(save_calls, [])
+            dialog.tree.setCurrentItem(item)
+            dialog._on_new()
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+            self.assertIsNone(dialog._pending_new_item)
+            self.assertFalse(dialog.btn_new.isEnabled())
+            self.assertFalse(dialog.btn_delete.isEnabled())
+            with patch(
+                "ost_visualizer.presentation.dialogs."
+                "condition_types_dialog.confirm_multi_delete"
+            ) as confirm_delete:
+                dialog._on_delete()
+            confirm_delete.assert_not_called()
+            self.assertEqual(save_calls, [])
+            dialog.set_interactive(True)
+            self.assertTrue(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertTrue(dialog.btn_new.isEnabled())
         finally:
             dialog.close()
             dialog.cleanup()
@@ -383,6 +541,7 @@ class ConditionTypeDialogEditingTests(unittest.TestCase):
                 "Failed to validate condition type deletion.",
             )
             self.assertEqual(delete_calls, [])
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
         finally:
             dialog.close()
             dialog.cleanup()

@@ -4,6 +4,10 @@ from ost_visualizer.presentation.coordinators.remote_plan_update_pipeline import
     RemotePlanUpdatePipeline,
 )
 
+_PIPELINE_LOGGER = (
+    "ost_visualizer.presentation.coordinators.remote_plan_update_pipeline"
+)
+
 
 class _QueuedBridge:
     def __init__(self) -> None:
@@ -91,9 +95,11 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
         self.assertEqual(application_threads, [])
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
-        self.assertNotEqual(preparation_threads, [caller_thread])
+        self.assertEqual(len(preparation_threads), 1)
+        self.assertNotEqual(preparation_threads[0], caller_thread)
         self.assertEqual(application_threads, [caller_thread])
         self.assertEqual(completed, [True])
+        self.assertEqual(bridge.callbacks, [])
 
     def test_coalesces_pending_updates_without_losing_completion(self) -> None:
         bridge = _QueuedBridge()
@@ -131,17 +137,19 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
         callback(payload)
         self.assertEqual(prepared, [1, 6])
         self.assertEqual(completed, [(1, True), (2, True), (4, True)])
+        self.assertEqual(bridge.callbacks, [])
 
     def test_incompatible_pending_update_is_rejected_before_replacement(self) -> None:
         bridge = _QueuedBridge()
         pool = _ManualThreadPool()
         current_context = {"value": "new"}
         completed = []
+        applied = []
         pipeline = RemotePlanUpdatePipeline(
             callback_bridge=bridge,
             thread_pool=pool,
             prepare=lambda request: request,
-            apply=lambda _request: True,
+            apply=lambda request: applied.append(request) or True,
             is_current=lambda request: request[0] == current_context["value"],
             coalesce=lambda previous, current: (
                 current[0],
@@ -166,8 +174,11 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
             completed,
             [("old", False), ("in-flight", False), ("new", True)],
         )
+        self.assertEqual(applied, [("new", 4)])
 
-    def test_stale_result_is_not_applied_and_cleanup_rejects_pending(self) -> None:
+    def test_stale_result_is_not_applied_and_submit_after_cleanup_is_rejected(
+        self,
+    ) -> None:
         bridge = _QueuedBridge()
         pool = _ThreadPool()
         current = {"value": True}
@@ -191,6 +202,65 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
         pipeline.cleanup()
         pipeline.submit(2, completed.append)
         self.assertEqual(completed, [False, False])
+
+    def test_compatible_pending_update_is_coalesced_when_can_coalesce_allows(
+        self,
+    ) -> None:
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        completed = []
+        prepared = []
+        pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=bridge,
+            thread_pool=pool,
+            prepare=lambda request: prepared.append(request) or request,
+            apply=lambda _request: True,
+            is_current=lambda _request: True,
+            coalesce=lambda previous, current: (current[0], previous[1] + current[1]),
+            can_coalesce=lambda previous, current: previous[0] == current[0],
+        )
+        pipeline.submit(("a", 1), lambda success: completed.append(("first", success)))
+        pipeline.submit(("a", 2), lambda success: completed.append(("second", success)))
+        pipeline.submit(("a", 4), lambda success: completed.append(("third", success)))
+        self.assertEqual(completed, [])
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        self.assertEqual(prepared, [("a", 1), ("a", 6)])
+        self.assertEqual(
+            completed, [("first", True), ("second", True), ("third", True)]
+        )
+
+    def test_cleanup_rejects_in_flight_and_pending_and_ignores_late_result(
+        self,
+    ) -> None:
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        applied = []
+        completed = []
+        pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=bridge,
+            thread_pool=pool,
+            prepare=lambda value: value,
+            apply=lambda value: applied.append(value) or True,
+            is_current=lambda _request: True,
+            coalesce=lambda previous, current: previous + current,
+        )
+        pipeline.submit(1, lambda success: completed.append((1, success)))
+        pipeline.submit(2, lambda success: completed.append((2, success)))
+        pool.run_next()
+        self.assertEqual(completed, [])
+        pipeline.cleanup()
+        self.assertEqual(completed, [(1, False), (2, False)])
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        pipeline.cleanup()
+        self.assertEqual(applied, [])
+        self.assertEqual(completed, [(1, False), (2, False)])
+        self.assertEqual(pool.runnables, [])
 
     def test_completion_cleanup_does_not_start_a_queued_worker(self) -> None:
         bridge = _QueuedBridge()
@@ -238,11 +308,42 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
         pipeline.submit(2, lambda success: completed.append((2, success)))
         pool.finish()
         callback, payload = bridge.callbacks.pop(0)
-        callback(payload)
+        with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+            callback(payload)
         pool.finish()
         callback, payload = bridge.callbacks.pop(0)
         callback(payload)
         self.assertEqual(completed, [(2, True)])
+
+    def test_completion_exception_does_not_skip_coalesced_sibling_completions(
+        self,
+    ) -> None:
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        completed = []
+        pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=bridge,
+            thread_pool=pool,
+            prepare=lambda value: value,
+            apply=lambda _value: True,
+            is_current=lambda _request: True,
+            coalesce=lambda previous, current: previous + current,
+        )
+
+        def broken_completion(_success):
+            raise RuntimeError("completion failed")
+
+        pipeline.submit(1, lambda success: completed.append((1, success)))
+        pipeline.submit(2, broken_completion)
+        pipeline.submit(4, lambda success: completed.append((4, success)))
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+            callback(payload)
+        self.assertEqual(completed, [(1, True), (4, True)])
 
     def test_worker_start_failure_rejects_submission_and_allows_retry(self) -> None:
         bridge = _QueuedBridge()
@@ -256,7 +357,9 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
             is_current=lambda _request: True,
             coalesce=lambda _previous, current: current,
         )
-        pipeline.submit(1, lambda success: completed.append((1, success)))
+        with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+            pipeline.submit(1, lambda success: completed.append((1, success)))
+        self.assertEqual(completed, [(1, False)])
         pipeline.submit(2, lambda success: completed.append((2, success)))
         pool.finish()
         callback, payload = bridge.callbacks.pop(0)
@@ -284,11 +387,105 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
         submitter = threading.Thread(
             target=lambda: pipeline.submit(1, first_completion)
         )
-        submitter.start()
-        self.assertTrue(pool.entered.wait(timeout=1.0))
-        pipeline.submit(2, lambda success: completed.append((2, success)))
-        pool.release.set()
-        submitter.join(timeout=2.0)
+        with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+            submitter.start()
+            self.assertTrue(pool.entered.wait(timeout=1.0))
+            pipeline.submit(2, lambda success: completed.append((2, success)))
+            pool.release.set()
+            submitter.join(timeout=2.0)
         pool.finish()
         self.assertEqual(pool.start_count, 1)
         self.assertEqual(completed, [(1, False), (2, False)])
+
+    def test_start_failure_starts_pending_submission_after_rejecting_failed_one(
+        self,
+    ) -> None:
+        bridge = _QueuedBridge()
+        pool = _BlockingFailingOnceThreadPool()
+        completed = []
+        pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=bridge,
+            thread_pool=pool,
+            prepare=lambda value: value,
+            apply=lambda _value: True,
+            is_current=lambda _request: True,
+            coalesce=lambda _previous, current: current,
+        )
+        submitter = threading.Thread(
+            target=lambda: pipeline.submit(
+                1, lambda success: completed.append((1, success))
+            )
+        )
+        with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+            submitter.start()
+            self.assertTrue(pool.entered.wait(timeout=1.0))
+            pipeline.submit(2, lambda success: completed.append((2, success)))
+            pool.release.set()
+            submitter.join(timeout=2.0)
+        pool.finish()
+        self.assertEqual(pool.start_count, 2)
+        self.assertEqual(completed, [(1, False)])
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        self.assertEqual(completed, [(1, False), (2, True)])
+
+    def test_preparation_error_rejects_submission_without_applying(self) -> None:
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        applied = []
+        completed = []
+
+        def prepare(_request):
+            raise ValueError("prepare failed")
+
+        pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=bridge,
+            thread_pool=pool,
+            prepare=prepare,
+            apply=lambda value: applied.append(value) or True,
+            is_current=lambda _request: True,
+            coalesce=lambda _previous, current: current,
+        )
+        pipeline.submit(1, lambda success: completed.append((1, success)))
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+            callback(payload)
+        self.assertEqual(applied, [])
+        self.assertEqual(completed, [(1, False)])
+        pipeline.submit(2, lambda success: completed.append((2, success)))
+        self.assertEqual(len(pool.runnables), 1)
+
+    def test_apply_failure_or_false_result_reports_unsuccessful_completion(
+        self,
+    ) -> None:
+        for outcome in (False, RuntimeError("apply failed")):
+            with self.subTest(outcome=outcome):
+                bridge = _QueuedBridge()
+                pool = _ManualThreadPool()
+                completed = []
+
+                def apply(_value, outcome=outcome):
+                    if isinstance(outcome, Exception):
+                        raise outcome
+                    return outcome
+
+                pipeline = RemotePlanUpdatePipeline(
+                    callback_bridge=bridge,
+                    thread_pool=pool,
+                    prepare=lambda value: value,
+                    apply=apply,
+                    is_current=lambda _request: True,
+                    coalesce=lambda _previous, current: current,
+                )
+                pipeline.submit(1, completed.append)
+                pool.run_next()
+                callback, payload = bridge.callbacks.pop(0)
+                if isinstance(outcome, Exception):
+                    with self.assertLogs(_PIPELINE_LOGGER, level="ERROR"):
+                        callback(payload)
+                else:
+                    callback(payload)
+                self.assertEqual(completed, [False])
+                pipeline.submit(2, completed.append)
+                self.assertEqual(len(pool.runnables), 1)

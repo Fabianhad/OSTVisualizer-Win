@@ -1,6 +1,7 @@
 import logging
 import unittest
 from types import SimpleNamespace
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.coordinators.navigation_state_machine import (
     NavigationStateMachine,
     NavState,
@@ -150,6 +151,7 @@ class NavigationStateMachineTests(unittest.TestCase):
             for target in NavState:
                 with self.subTest(source=source, target=target):
                     nav = machine_in(source)
+                    self.assertEqual(nav.current_state, source)
                     if target in allowed[source]:
                         with self.assertNoLogs(self.logger, level="WARNING"):
                             self.assertTrue(nav.transition_to(target))
@@ -284,3 +286,124 @@ class NavigationStateMachineTests(unittest.TestCase):
             ),
             NavState.BID_ACTIVE_NO_PAGES,
         )
+        self.assertEqual(
+            nav.compute_state_for(
+                has_file=True,
+                bid_ref=None,
+                active_page_uid="p1",
+            ),
+            NavState.FILE_LOADED_NO_BID,
+        )
+        self.assertEqual(
+            nav.compute_state_for(
+                has_file=False,
+                bid_ref=bid_ref,
+                active_page_uid="p1",
+            ),
+            NavState.NO_FILE,
+        )
+
+    def test_begin_bid_load_keeps_every_loaded_state_unchanged(self):
+        paths = {
+            NavState.FILE_LOADED_NO_BID: [NavState.FILE_LOADED_NO_BID],
+            NavState.BID_ACTIVE_NO_PAGES: [
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+            ],
+            NavState.PLACE_MODE: [
+                NavState.FILE_LOADED_NO_BID,
+                NavState.BID_ACTIVE_NO_PAGES,
+                NavState.BID_ACTIVE_PAGES_SELECTED,
+                NavState.PLACE_MODE,
+            ],
+        }
+        for source, path in paths.items():
+            with self.subTest(source=source):
+                nav = NavigationStateMachine()
+                for state in path:
+                    nav.transition_to(state)
+                with self.assertNoLogs(self.logger, level="WARNING"):
+                    self.assertTrue(nav.begin_bid_load(has_file=True))
+                self.assertEqual(nav.current_state, source)
+                with self.assertLogs(self.logger, level="WARNING"):
+                    self.assertFalse(nav.begin_bid_load(has_file=False))
+                self.assertEqual(nav.current_state, source)
+
+    def test_start_refresh_snapshots_selection_and_placement_only_when_active(self):
+        bid_ref = BidRef("a.mdb", "b1")
+        ui_state = FakeUiState(bid_ref, database_selected=True)
+        for placement_active in (True, False):
+            with self.subTest(placement_active=placement_active):
+                nav = NavigationStateMachine()
+                nav.transition_to(NavState.FILE_LOADED_NO_BID)
+                self.assertTrue(
+                    nav.start_refresh(
+                        ui_state,
+                        FakePlacement(active=placement_active),
+                        selected_area_uid="area-1",
+                    )
+                )
+                snapshot = nav.refresh_snapshot
+                self.assertEqual(snapshot.bid_ref, bid_ref)
+                self.assertEqual(snapshot.page_uids, ["p1"])
+                self.assertIsNot(snapshot.page_uids, ui_state.selected_page_uids)
+                self.assertEqual(snapshot.active_page_uid, "p1")
+                self.assertEqual(snapshot.highlighted_condition_uids, {"c1"})
+                self.assertEqual(snapshot.project_uid, "project-1")
+                self.assertTrue(snapshot.database_selected)
+                self.assertEqual(snapshot.selected_file_path, "a.mdb")
+                self.assertEqual(snapshot.selected_area_uid, "area-1")
+                if placement_active:
+                    self.assertEqual(snapshot.place_condition_uid, "c1")
+                    self.assertEqual(snapshot.place_condition_uids, ["c1"])
+                    self.assertIsNot(
+                        snapshot.place_condition_uids, ui_state.place_condition_uids
+                    )
+                else:
+                    self.assertIsNone(snapshot.place_condition_uid)
+                    self.assertEqual(snapshot.place_condition_uids, [])
+
+    def test_start_refresh_failure_leaves_state_unchanged_and_machine_usable(self):
+        class BrokenUiState(FakeUiState):
+            def get_selected_bid_ref(self):
+                raise RuntimeError("ui state unavailable")
+
+        nav = NavigationStateMachine()
+        nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        with self.assertRaisesRegex(RuntimeError, "ui state unavailable"):
+            nav.start_refresh(BrokenUiState(), FakePlacement())
+        self.assertEqual(nav.current_state, NavState.FILE_LOADED_NO_BID)
+        self.assertFalse(nav.is_refreshing)
+        self.assertIsNone(nav.refresh_snapshot)
+        with self.assertNoLogs(self.logger, level="WARNING"):
+            self.assertTrue(nav.transition_to(NavState.BID_ACTIVE_NO_PAGES))
+        self.assertEqual(nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
+
+    def test_finish_refresh_reaches_every_valid_target(self):
+        targets = [
+            NavState.NO_FILE,
+            NavState.FILE_LOADED_NO_BID,
+            NavState.BID_ACTIVE_NO_PAGES,
+            NavState.BID_ACTIVE_PAGES_SELECTED,
+            NavState.PLACE_MODE,
+        ]
+        for target in targets:
+            with self.subTest(target=target):
+                nav = NavigationStateMachine()
+                nav.transition_to(NavState.FILE_LOADED_NO_BID)
+                self.assertTrue(nav.start_refresh(FakeUiState(), FakePlacement()))
+                self.assertTrue(nav.is_refreshing)
+                with self.assertNoLogs(self.logger, level="WARNING"):
+                    self.assertTrue(nav.finish_refresh(target))
+                self.assertEqual(nav.current_state, target)
+                self.assertFalse(nav.is_refreshing)
+                self.assertIsNone(nav.refresh_snapshot)
+
+    def test_finish_refresh_after_completed_refresh_is_rejected(self):
+        nav = NavigationStateMachine()
+        nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        self.assertTrue(nav.start_refresh(FakeUiState(), FakePlacement()))
+        self.assertTrue(nav.finish_refresh(NavState.BID_ACTIVE_NO_PAGES))
+        with self.assertLogs(self.logger, level="WARNING"):
+            self.assertFalse(nav.finish_refresh(NavState.NO_FILE))
+        self.assertEqual(nav.current_state, NavState.BID_ACTIVE_NO_PAGES)

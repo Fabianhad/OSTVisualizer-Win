@@ -28,8 +28,12 @@ class NewDatabaseTypeDialogSqlDialogTests(unittest.TestCase):
     def test_new_database_type_panels_select_expected_backend(self):
         access = NewDatabaseTypeDialog(self.icon_provider)
         try:
+            self.assertIsNone(access.selected_backend())
             access.access_button.click()
             self.assertEqual(access.selected_backend(), DatabaseBackend.ACCESS)
+            self.assertEqual(access.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            access.reject()
+            self.assertIsNone(access.selected_backend())
         finally:
             access.cleanup()
             access.deleteLater()
@@ -37,6 +41,7 @@ class NewDatabaseTypeDialogSqlDialogTests(unittest.TestCase):
         try:
             sql.sql_server_button.click()
             self.assertEqual(sql.selected_backend(), DatabaseBackend.SQL_SERVER)
+            self.assertEqual(sql.result(), QtWidgets.QDialog.DialogCode.Accepted)
         finally:
             sql.cleanup()
             sql.deleteLater()

@@ -35,7 +35,15 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer
 )
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QBrush, QColor, QPainterPath, QPen, QTransform
+from PySide6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QFontMetrics,
+    QPainterPath,
+    QPen,
+    QTransform,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsItem,
@@ -376,6 +384,22 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_uid_orig_items = {"a1": list(items)}
         return view, ann, items[0]
 
+    def _handle_positions(self, view, count=None):
+        infos = view._handle_infos if count is None else view._handle_infos[:count]
+        return [(info.item.pos().x(), info.item.pos().y()) for info in infos]
+
+    def _dimension_label_center(self, label):
+        # Production anchors the label box (font-metric height, not document
+        # layout height) so the center is independent of installed fonts.
+        metrics_height = QFontMetrics(label.font()).height()
+        return label.mapToScene(
+            QtCore.QPointF(label.textWidth() / 2.0, metrics_height / 2.0)
+        )
+
+    def _dimension_label_offset(self, label):
+        metrics_height = QFontMetrics(label.font()).height()
+        return max(6.0, min(18.0, metrics_height * 0.45))
+
     def _dimension_label(self, view):
         for item in view._uid_to_items["d1"]:
             if isinstance(item, QGraphicsTextItem):
@@ -391,41 +415,100 @@ class CtrlDragTests(unittest.TestCase):
         view, main_item, old_pattern = self._make_pattern_resize_view(
             Condition.TYPE_AREA
         )
-        view.update_drag_handle_positions(
-            [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0], "t1"
-        )
+        new_pos = [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0]
+        view.update_drag_handle_positions(new_pos, "t1")
         self.assertIsNone(old_pattern.scene())
         self.assertEqual(len(view._uid_to_items["t1"]), 2)
         self.assertIs(view._uid_to_items["t1"][0], main_item)
-        self.assertIsNot(view._uid_to_items["t1"][1], old_pattern)
-        self.assertEqual(main_item.path().boundingRect().right(), 20.0)
+        new_pattern = view._uid_to_items["t1"][1]
+        self.assertIsNot(new_pattern, old_pattern)
+        self.assertIs(new_pattern.scene(), view._scene)
+        self.assertEqual(new_pattern.data(0), "t1")
+        self.assertEqual(new_pattern.data(1), "c1")
+        self.assertEqual(view._takeoff_items, [main_item, new_pattern])
         self.assertEqual(
-            view._uid_to_items["t1"][1].path().boundingRect().right(), 20.0
+            main_item.path().boundingRect(), QtCore.QRectF(0.0, 0.0, 20.0, 12.0)
+        )
+        self.assertEqual(new_pattern.path().boundingRect().right(), 20.0)
+        self.assertEqual(main_item.pen().color().name(), "#123456")
+        self.assertEqual(view._drag_last_valid_new_pos, new_pos)
+        self.assertEqual(
+            self._handle_positions(view),
+            [
+                (0.0, 0.0),
+                (20.0, 0.0),
+                (20.0, 12.0),
+                (0.0, 12.0),
+                (10.0, 0.0),
+                (20.0, 6.0),
+                (10.0, 12.0),
+                (0.0, 6.0),
+            ],
         )
 
     def test_inactive_area_resize_preview_uses_configured_appearance(self):
-        view, main_item, _old_pattern = self._make_pattern_resize_view(
-            Condition.TYPE_AREA
-        )
-        view._current_color_map = {"c1": "#00aa00"}
-        view._current_page_area_selections = {"page-1": "area-2"}
-        view.update_drag_handle_positions(
-            [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0], "t1"
-        )
-        self.assertEqual(main_item.pen().color().name(), "#d0d0d0")
+        new_pos = [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0]
+        for page_area, inactive_color, expected in (
+            ("area-2", None, "#d0d0d0"),
+            ("area-2", "#aa0000", "#aa0000"),
+            ("area-1", "#aa0000", "#00aa00"),
+        ):
+            with self.subTest(page_area=page_area, inactive_color=inactive_color):
+                view, main_item, _old_pattern = self._make_pattern_resize_view(
+                    Condition.TYPE_AREA
+                )
+                view._current_color_map = {"c1": "#00aa00"}
+                view._current_page_area_selections = {"page-1": page_area}
+                if inactive_color is not None:
+                    view._inactive_object_color = inactive_color
+                view.update_drag_handle_positions(new_pos, "t1")
+                self.assertEqual(main_item.pen().color().name(), expected)
+                new_pattern = view._uid_to_items["t1"][1]
+                self.assertEqual(new_pattern.pen().color().name(), expected)
 
     def test_hole_resize_preview_keeps_child_item_invisible(self):
         view, parent_item, hole_item, stale_hole_pattern = self._make_hole_resize_view()
-        view.update_drag_handle_positions(
-            [4.0, 4.0, 10.0, 4.0, 14.0, 14.0, 4.0, 10.0], "hole"
-        )
+        new_pos = [4.0, 4.0, 10.0, 4.0, 14.0, 14.0, 4.0, 10.0]
+        hole_item.setPen(QPen(QColor("#ff00ff")))
+        hole_item.setBrush(QBrush(QColor("#00ff00")))
+        view.update_drag_handle_positions(new_pos, "hole")
         self.assertEqual(hole_item.pen().style(), Qt.PenStyle.NoPen)
         self.assertEqual(hole_item.brush().style(), Qt.BrushStyle.NoBrush)
+        self.assertEqual(
+            hole_item.path().boundingRect(), QtCore.QRectF(4.0, 4.0, 10.0, 10.0)
+        )
         self.assertEqual(view._uid_to_items["hole"], [hole_item])
         self.assertIsNone(stale_hole_pattern.scene())
+        self.assertNotIn(stale_hole_pattern, view._takeoff_items)
         self.assertFalse(parent_item.path().contains(QtCore.QPointF(8.0, 8.0)))
         self.assertTrue(parent_item.path().contains(QtCore.QPointF(2.0, 2.0)))
         self.assertEqual(len(view._scene_builder.pattern_angles), 1)
+        self.assertEqual(view._drag_last_valid_new_pos, new_pos)
+        self.assertEqual(
+            self._handle_positions(view, 4),
+            [(4.0, 4.0), (10.0, 4.0), (14.0, 14.0), (4.0, 10.0)],
+        )
+
+    def test_hole_resize_outside_parent_keeps_previous_valid_geometry(self):
+        view, parent_item, hole_item, stale_hole_pattern = self._make_hole_resize_view()
+        del view._validate_hole_position
+        del view._validate_parent_contains_holes
+        original_valid = list(view._drag_last_valid_new_pos)
+        original_hole_bounds = hole_item.path().boundingRect()
+        original_handles = self._handle_positions(view)
+        view.update_drag_handle_positions(
+            [4.0, 4.0, 10.0, 4.0, 24.0, 24.0, 4.0, 10.0], "hole"
+        )
+        self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+        self.assertEqual(hole_item.path().boundingRect(), original_hole_bounds)
+        self.assertIs(stale_hole_pattern.scene(), view._scene)
+        self.assertTrue(parent_item.path().contains(QtCore.QPointF(8.0, 8.0)))
+        self.assertEqual(view._scene_builder.pattern_angles, [])
+        self.assertEqual(self._handle_positions(view), original_handles)
+        inside = [4.0, 4.0, 10.0, 4.0, 14.0, 14.0, 4.0, 10.0]
+        view.update_drag_handle_positions(inside, "hole")
+        self.assertEqual(view._drag_last_valid_new_pos, inside)
+        self.assertNotEqual(hole_item.path().boundingRect(), original_hole_bounds)
 
     def test_area_resize_preview_recenters_condition_labels(self):
         view, main_item, _old_pattern = self._make_pattern_resize_view(
@@ -469,66 +552,137 @@ class CtrlDragTests(unittest.TestCase):
         self.assertIsNone(old_pattern.scene())
         self.assertEqual(len(view._uid_to_items["t1"]), 2)
         self.assertIs(view._uid_to_items["t1"][0], main_item)
-        self.assertIsNot(view._uid_to_items["t1"][1], old_pattern)
-        self.assertEqual(main_item.path().boundingRect().right(), 20.0)
+        new_pattern = view._uid_to_items["t1"][1]
+        self.assertIsNot(new_pattern, old_pattern)
+        self.assertIs(new_pattern.scene(), view._scene)
+        self.assertEqual(new_pattern.data(0), "t1")
+        self.assertEqual(view._takeoff_items, [main_item, new_pattern])
         self.assertEqual(
-            view._uid_to_items["t1"][1].path().boundingRect().right(), 20.0
+            main_item.path().boundingRect(), QtCore.QRectF(0.0, -1.0, 20.0, 2.0)
         )
+        self.assertEqual(new_pattern.path().boundingRect().right(), 20.0)
         self.assertEqual(view._scene_builder.pattern_angles, [0.0])
+        self.assertEqual(self._handle_positions(view, 2), [(0.0, 0.0), (20.0, 0.0)])
 
     def test_diagonal_linear_pattern_preview_uses_drag_direction(self):
-        view, _main_item, _old_pattern = self._make_pattern_resize_view(
+        for end_x, end_y, expected in (
+            (20.0, 20.0, math.pi / 4.0),
+            (-20.0, 20.0, 3.0 * math.pi / 4.0),
+            (-20.0, -20.0, -3.0 * math.pi / 4.0),
+            (20.0, -20.0, -math.pi / 4.0),
+        ):
+            with self.subTest(end=(end_x, end_y)):
+                view, _main_item, _old_pattern = self._make_pattern_resize_view(
+                    Condition.TYPE_LINEAR
+                )
+                view.update_drag_handle_positions([0.0, 0.0, end_x, end_y], "t1")
+                self.assertEqual(len(view._scene_builder.pattern_angles), 1)
+                self.assertAlmostEqual(view._scene_builder.pattern_angles[-1], expected)
+
+    def test_axis_aligned_linear_pattern_preview_uses_drag_direction(self):
+        for end_x, end_y, expected in (
+            (0.0, 20.0, math.pi / 2.0),
+            (-20.0, 0.0, math.pi),
+            (0.0, -20.0, -math.pi / 2.0),
+        ):
+            with self.subTest(end=(end_x, end_y)):
+                view, main_item, _old_pattern = self._make_pattern_resize_view(
+                    Condition.TYPE_LINEAR
+                )
+                view.update_drag_handle_positions([0.0, 0.0, end_x, end_y], "t1")
+                self.assertAlmostEqual(view._scene_builder.pattern_angles[-1], expected)
+                bounds = main_item.path().boundingRect()
+                self.assertAlmostEqual(max(bounds.width(), bounds.height()), 20.0)
+                self.assertAlmostEqual(min(bounds.width(), bounds.height()), 2.0)
+
+    def test_zero_length_linear_resize_preview_keeps_previous_path_and_pattern(self):
+        view, main_item, old_pattern = self._make_pattern_resize_view(
             Condition.TYPE_LINEAR
         )
-        view.update_drag_handle_positions([0.0, 0.0, 20.0, 20.0], "t1")
-        self.assertAlmostEqual(view._scene_builder.pattern_angles[-1], math.pi / 4.0)
+        original_bounds = main_item.path().boundingRect()
+        view.update_drag_handle_positions([0.0, 0.0, 0.0, 0.0], "t1")
+        self.assertEqual(main_item.path().boundingRect(), original_bounds)
+        self.assertIs(old_pattern.scene(), view._scene)
+        self.assertEqual(view._uid_to_items["t1"], [main_item, old_pattern])
+        self.assertEqual(view._scene_builder.pattern_angles, [])
 
     def test_area_invalid_resize_keeps_previous_valid_geometry(self):
-        view, main_item, _old_pattern = self._make_pattern_resize_view(
+        view, main_item, old_pattern = self._make_pattern_resize_view(
             Condition.TYPE_AREA
         )
         original_bounds = main_item.path().boundingRect()
         original_valid = list(view._drag_last_valid_new_pos)
+        original_handles = self._handle_positions(view)
         invalid_pos = [0.0, 0.0, 10.0, 10.0, 10.0, 0.0, 0.0, 10.0]
         view.update_drag_handle_positions(invalid_pos, "t1")
         self.assertEqual(view._drag_last_valid_new_pos, original_valid)
         self.assertEqual(main_item.path().boundingRect(), original_bounds)
+        self.assertEqual(self._handle_positions(view), original_handles)
+        self.assertIs(old_pattern.scene(), view._scene)
+        self.assertEqual(view._uid_to_items["t1"], [main_item, old_pattern])
+        self.assertEqual(view._scene_builder.pattern_angles, [])
+
+    def test_area_resize_that_reverses_winding_keeps_previous_valid_geometry(self):
+        view, main_item, old_pattern = self._make_pattern_resize_view(
+            Condition.TYPE_AREA
+        )
+        original_valid = list(view._drag_last_valid_new_pos)
+        original_bounds = main_item.path().boundingRect()
+        reversed_square = [0.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0, 0.0]
+        view.update_drag_handle_positions(reversed_square, "t1")
+        self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+        self.assertEqual(main_item.path().boundingRect(), original_bounds)
+        self.assertIs(old_pattern.scene(), view._scene)
+        self.assertEqual(view._scene_builder.pattern_angles, [])
 
     def test_horizontal_bid_dimension_resize_updates_label_live(self):
         view, _ann = self._make_dimension_resize_view()
         view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "d1")
         label = self._dimension_label(view)
-        bounds = label.boundingRect()
-        label_center_x = label.pos().x() + bounds.width() / 2.0
+        center = self._dimension_label_center(label)
         self.assertEqual(label.toPlainText(), format_dimension_distance(255.0))
-        self.assertAlmostEqual(label_center_x, 127.5, delta=0.5)
-        self.assertEqual(self._dimension_path(view).path().elementCount(), 6)
+        self.assertAlmostEqual(center.x(), 127.5, delta=0.5)
+        self.assertAlmostEqual(
+            center.y(), -self._dimension_label_offset(label), delta=0.01
+        )
+        path = self._dimension_path(view).path()
+        self.assertEqual(path.elementCount(), 6)
+        self.assertEqual(path.boundingRect(), QtCore.QRectF(0.0, -5.0, 255.0, 10.0))
+        self.assertEqual(self._handle_positions(view), [(0.0, 0.0), (255.0, 0.0)])
 
     def test_vertical_bid_dimension_resize_updates_label_live(self):
         view, _ann = self._make_dimension_resize_view([0.0, 0.0, 0.0, 60.0])
         view.update_drag_handle_positions([0.0, 0.0, 0.0, 120.0], "d1")
         label = self._dimension_label(view)
+        center = self._dimension_label_center(label)
         self.assertEqual(label.toPlainText(), "10' - 0\"")
         self.assertAlmostEqual(abs(label.rotation()), 90.0, delta=0.01)
+        self.assertAlmostEqual(
+            center.x(), self._dimension_label_offset(label), delta=0.01
+        )
+        self.assertAlmostEqual(center.y(), 60.0, delta=0.01)
         path = self._dimension_path(view).path()
         tick_start = path.elementAt(2)
         tick_end = path.elementAt(3)
         self.assertAlmostEqual(tick_start.y, tick_end.y)
         self.assertNotAlmostEqual(tick_start.x, tick_end.x)
+        self.assertEqual(path.boundingRect(), QtCore.QRectF(-5.0, 0.0, 10.0, 120.0))
 
     def test_angled_bid_dimension_resize_updates_label_rotation_live(self):
         view, _ann = self._make_dimension_resize_view([0.0, 0.0, 36.0, 0.0])
         view.update_drag_handle_positions([0.0, 0.0, 36.0, 48.0], "d1")
         label = self._dimension_label(view)
-        bounds = label.boundingRect()
-        label_center = QtCore.QPointF(
-            label.pos().x() + bounds.width() / 2.0,
-            label.pos().y() + bounds.height() / 2.0,
-        )
+        center = self._dimension_label_center(label)
+        path = self._dimension_path(view).path()
+        label_offset = self._dimension_label_offset(label)
         self.assertEqual(label.toPlainText(), "5' - 0\"")
         self.assertAlmostEqual(label.rotation(), 53.130102, places=3)
-        self.assertLess(abs(label_center.x() - 18.0), 12.0)
-        self.assertLess(abs(label_center.y() - 24.0), 12.0)
+        # Unit normal of the (36, 48) dimension is (-0.8, 0.6); the label sits
+        # one offset against it from the midpoint.
+        self.assertAlmostEqual(center.x(), 18.0 + 0.8 * label_offset, delta=0.01)
+        self.assertAlmostEqual(center.y(), 24.0 - 0.6 * label_offset, delta=0.01)
+        self.assertEqual(path.elementAt(1).x, 36.0)
+        self.assertEqual(path.elementAt(1).y, 48.0)
 
     def test_bid_dimension_commit_text_matches_last_preview(self):
         view, ann = self._make_dimension_resize_view()
@@ -540,16 +694,23 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(ann.position, new_pos)
 
     def test_cancel_bid_dimension_resize_restores_label_and_path(self):
-        view, _ann = self._make_dimension_resize_view()
-        original_label = self._dimension_label(view).toPlainText()
+        view, ann = self._make_dimension_resize_view()
+        label = self._dimension_label(view)
+        original_label = label.toPlainText()
+        original_pos = label.pos()
+        original_rotation = label.rotation()
         original_path_bounds = self._dimension_path(view).path().boundingRect()
         view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "d1")
         self.assertEqual(self._dimension_label(view).toPlainText(), "21' - 3\"")
         view._clear_drag_tracking(restore_preview=True)
-        self.assertEqual(self._dimension_label(view).toPlainText(), original_label)
+        self.assertIs(self._dimension_label(view), label)
+        self.assertEqual(label.toPlainText(), original_label)
+        self.assertEqual(label.pos(), original_pos)
+        self.assertEqual(label.rotation(), original_rotation)
         self.assertEqual(
             self._dimension_path(view).path().boundingRect(), original_path_bounds
         )
+        self.assertEqual(ann.position, [0.0, 0.0, 120.0, 0.0])
 
     def test_repeated_bid_dimension_resize_preview_reuses_label_item(self):
         view, _ann = self._make_dimension_resize_view()
@@ -570,10 +731,33 @@ class CtrlDragTests(unittest.TestCase):
         view.update_drag_handle_positions([0.0, 0.0, 120.0, 0.0], "d1")
         replacement_label = self._dimension_label(view)
         self.assertIsNot(replacement_label, original_label)
+        self.assertEqual(
+            replacement_label.toPlainText(), format_dimension_distance(120.0)
+        )
+        self.assertIs(replacement_label.scene(), view._scene)
+        self.assertIn(replacement_label, view._takeoff_items)
         self.assertEqual(replacement_label.data(0), "d1")
         self.assertEqual(replacement_label.data(2), DIMENSION_LABEL_ITEM_KIND)
         self.assertTrue(
             replacement_label.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        )
+
+    def test_cancel_after_collapsed_bid_dimension_preview_restores_original_label(
+        self,
+    ):
+        view, _ann = self._make_dimension_resize_view()
+        original_label = self._dimension_label(view)
+        original_text = original_label.toPlainText()
+        original_path_bounds = self._dimension_path(view).path().boundingRect()
+        view.update_drag_handle_positions([0.0, 0.0, 0.0, 0.0], "d1")
+        self.assertIsNone(original_label.scene())
+        view._clear_drag_tracking(restore_preview=True)
+        self.assertIs(self._dimension_label(view), original_label)
+        self.assertIs(original_label.scene(), view._scene)
+        self.assertIn(original_label, view._takeoff_items)
+        self.assertEqual(original_label.toPlainText(), original_text)
+        self.assertEqual(
+            self._dimension_path(view).path().boundingRect(), original_path_bounds
         )
 
     def test_bid_aline_resize_preview_remains_path_only(self):
@@ -598,105 +782,198 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_handle_index = 1
         view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "l1")
         self.assertEqual(view._uid_to_items["l1"], [line_item])
-        self.assertEqual(line_item.path().elementCount(), 2)
+        self.assertEqual(len(view._scene.items()), len(view._takeoff_items) + 1)
+        path = line_item.path()
+        self.assertEqual(path.elementCount(), 2)
+        self.assertEqual((path.elementAt(0).x, path.elementAt(0).y), (0.0, 0.0))
+        self.assertEqual((path.elementAt(1).x, path.elementAt(1).y), (255.0, 0.0))
+        self.assertEqual(self._handle_positions(view), [(0.0, 0.0), (255.0, 0.0)])
 
     def test_cloud_resize_preview_from_corner_keeps_cloud_silhouette(self):
         view, ann, item = self._make_area_annotation_resize_view("cloud")
         original_position = list(ann.position)
+        original_bounds = item.path().boundingRect()
         self.assertTrue(_interaction_support__path_has_curve(item.path()))
         view._drag_handle_index = 2
-        view.update_drag_handle_positions(
-            [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0], "a1"
-        )
+        new_pos = [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0]
+        view.update_drag_handle_positions(new_pos, "a1")
         self.assertTrue(_interaction_support__path_has_curve(item.path()))
+        bounds = item.path().boundingRect()
+        self.assertGreater(bounds.width(), original_bounds.width())
+        self.assertGreater(bounds.height(), original_bounds.height())
+        self.assertGreater(bounds.right(), 80.0)
         self.assertEqual(ann.position, original_position)
+        self.assertEqual(view._drag_last_valid_new_pos, new_pos)
+        self.assertEqual(
+            self._handle_positions(view),
+            [
+                (0.0, 0.0),
+                (80.0, 0.0),
+                (80.0, 50.0),
+                (0.0, 40.0),
+                (40.0, 0.0),
+                (80.0, 25.0),
+                (40.0, 45.0),
+                (0.0, 20.0),
+            ],
+        )
 
     def test_cloud_resize_preview_from_midpoint_keeps_cloud_silhouette(self):
         view, ann, item = self._make_area_annotation_resize_view("cloud")
         original_position = list(ann.position)
+        original_bounds = item.path().boundingRect()
         self.assertTrue(_interaction_support__path_has_curve(item.path()))
         view._drag_handle_index = 5
-        view.update_drag_handle_positions(
-            [0.0, 0.0, 60.0, 0.0, 70.0, 50.0, -10.0, 50.0], "a1"
-        )
+        new_pos = [0.0, 0.0, 60.0, 0.0, 70.0, 50.0, -10.0, 50.0]
+        view.update_drag_handle_positions(new_pos, "a1")
         self.assertTrue(_interaction_support__path_has_curve(item.path()))
+        bounds = item.path().boundingRect()
+        self.assertGreater(bounds.height(), original_bounds.height())
+        self.assertLess(bounds.left(), -10.0)
         self.assertEqual(ann.position, original_position)
+        self.assertEqual(view._drag_last_valid_new_pos, new_pos)
+        self.assertEqual(
+            self._handle_positions(view),
+            [
+                (0.0, 0.0),
+                (60.0, 0.0),
+                (70.0, 50.0),
+                (-10.0, 50.0),
+                (30.0, 0.0),
+                (65.0, 25.0),
+                (30.0, 50.0),
+                (-5.0, 25.0),
+            ],
+        )
 
     def test_polygon_point_edit_cannot_create_self_intersection(self):
-        view, _ann, item = self._make_area_annotation_resize_view("polygon")
+        view, ann, item = self._make_area_annotation_resize_view("polygon")
         original_bounds = item.path().boundingRect()
         original_valid = list(view._drag_last_valid_new_pos)
+        original_position = list(ann.position)
+        original_handles = self._handle_positions(view)
         view._drag_handle_index = 1
         view.update_drag_handle_positions(
             [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
         )
         self.assertEqual(view._drag_last_valid_new_pos, original_valid)
         self.assertEqual(item.path().boundingRect(), original_bounds)
+        self.assertEqual(ann.position, original_position)
+        self.assertEqual(self._handle_positions(view), original_handles)
+        self.assertFalse(_interaction_support__path_has_curve(item.path()))
 
     def test_cloud_point_edit_cannot_create_self_intersection(self):
-        view, _ann, item = self._make_area_annotation_resize_view("cloud")
+        view, ann, item = self._make_area_annotation_resize_view("cloud")
         original_bounds = item.path().boundingRect()
         original_valid = list(view._drag_last_valid_new_pos)
+        original_position = list(ann.position)
+        original_handles = self._handle_positions(view)
         view._drag_handle_index = 1
         view.update_drag_handle_positions(
             [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
         )
         self.assertEqual(view._drag_last_valid_new_pos, original_valid)
         self.assertEqual(item.path().boundingRect(), original_bounds)
+        self.assertEqual(ann.position, original_position)
+        self.assertEqual(self._handle_positions(view), original_handles)
         self.assertTrue(_interaction_support__path_has_curve(item.path()))
 
     def test_polygon_corner_resize_cannot_create_invalid_geometry(self):
-        view, _ann, item = self._make_area_annotation_resize_view("polygon")
+        view, ann, item = self._make_area_annotation_resize_view("polygon")
         original_bounds = item.path().boundingRect()
         original_valid = list(view._drag_last_valid_new_pos)
+        original_position = list(ann.position)
+        original_handles = self._handle_positions(view)
         view._drag_handle_index = 2
         view.update_drag_handle_positions(
             [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
         )
         self.assertEqual(view._drag_last_valid_new_pos, original_valid)
         self.assertEqual(item.path().boundingRect(), original_bounds)
+        self.assertEqual(ann.position, original_position)
+        self.assertEqual(self._handle_positions(view), original_handles)
+        self.assertFalse(_interaction_support__path_has_curve(item.path()))
 
     def test_cloud_midpoint_resize_cannot_create_invalid_geometry(self):
-        view, _ann, item = self._make_area_annotation_resize_view("cloud")
+        view, ann, item = self._make_area_annotation_resize_view("cloud")
         original_bounds = item.path().boundingRect()
         original_valid = list(view._drag_last_valid_new_pos)
+        original_position = list(ann.position)
+        original_handles = self._handle_positions(view)
         view._drag_handle_index = 5
         view.update_drag_handle_positions(
             [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
         )
         self.assertEqual(view._drag_last_valid_new_pos, original_valid)
         self.assertEqual(item.path().boundingRect(), original_bounds)
+        self.assertEqual(ann.position, original_position)
+        self.assertEqual(self._handle_positions(view), original_handles)
         self.assertTrue(_interaction_support__path_has_curve(item.path()))
 
     def test_valid_polygon_and_cloud_edits_update_last_valid_geometry(self):
         valid_pos = [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0]
         for annotation_type in ("polygon", "cloud"):
             with self.subTest(annotation_type=annotation_type):
-                view, _ann, item = self._make_area_annotation_resize_view(
+                view, ann, item = self._make_area_annotation_resize_view(
                     annotation_type
                 )
                 original_bounds = item.path().boundingRect()
+                original_position = list(ann.position)
                 view._drag_handle_index = 2
                 view.update_drag_handle_positions(valid_pos, "a1")
                 self.assertEqual(view._drag_last_valid_new_pos, valid_pos)
                 self.assertNotEqual(item.path().boundingRect(), original_bounds)
+                self.assertEqual(ann.position, original_position)
+                self.assertEqual(
+                    self._handle_positions(view),
+                    [
+                        (0.0, 0.0),
+                        (80.0, 0.0),
+                        (80.0, 50.0),
+                        (0.0, 40.0),
+                        (40.0, 0.0),
+                        (80.0, 25.0),
+                        (40.0, 45.0),
+                        (0.0, 20.0),
+                    ],
+                )
+
+    def test_polygon_and_cloud_edits_that_reverse_winding_keep_previous_geometry(
+        self,
+    ):
+        reversed_rectangle = [0.0, 0.0, 0.0, 40.0, 60.0, 40.0, 60.0, 0.0]
+        for annotation_type in ("polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                view, _ann, item = self._make_area_annotation_resize_view(
+                    annotation_type
+                )
+                original_bounds = item.path().boundingRect()
+                original_valid = list(view._drag_last_valid_new_pos)
+                view._drag_handle_index = 2
+                view.update_drag_handle_positions(reversed_rectangle, "a1")
+                self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+                self.assertEqual(item.path().boundingRect(), original_bounds)
 
     def test_polygon_resize_preview_stays_straight_polygon(self):
         view, ann, item = self._make_area_annotation_resize_view("polygon")
         original_position = list(ann.position)
         self.assertFalse(_interaction_support__path_has_curve(item.path()))
         view._drag_handle_index = 2
-        view.update_drag_handle_positions(
-            [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0], "a1"
-        )
+        new_pos = [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0]
+        view.update_drag_handle_positions(new_pos, "a1")
         self.assertFalse(_interaction_support__path_has_curve(item.path()))
+        self.assertEqual(
+            item.path().boundingRect(), QtCore.QRectF(0.0, 0.0, 80.0, 50.0)
+        )
         self.assertEqual(ann.position, original_position)
+        self.assertEqual(view._drag_last_valid_new_pos, new_pos)
 
     def test_cancel_resize_restores_original_pattern_items(self):
         view, main_item, old_pattern = self._make_pattern_resize_view(
             Condition.TYPE_AREA
         )
         original_bounds = main_item.path().boundingRect()
+        original_pattern_bounds = old_pattern.path().boundingRect()
         view._drag_plan_item_uid = "t1"
         view._drag_item_orig_paths = {
             id(item): QPainterPath(item.path()) for item in view._uid_to_items["t1"]
@@ -706,11 +983,15 @@ class CtrlDragTests(unittest.TestCase):
             [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0], "t1"
         )
         new_pattern = view._uid_to_items["t1"][1]
+        self.assertIsNot(new_pattern, old_pattern)
+        self.assertIsNone(old_pattern.scene())
         view._clear_drag_tracking(restore_preview=True)
         self.assertIsNone(new_pattern.scene())
         self.assertIs(old_pattern.scene(), view._scene)
         self.assertEqual(view._uid_to_items["t1"], [main_item, old_pattern])
+        self.assertEqual(view._takeoff_items, [main_item, old_pattern])
         self.assertEqual(main_item.path().boundingRect(), original_bounds)
+        self.assertEqual(old_pattern.path().boundingRect(), original_pattern_bounds)
 
 
 class AttachmentMovementTests(unittest.TestCase):
@@ -779,6 +1060,11 @@ class AttachmentMovementTests(unittest.TestCase):
         view._handle_infos = [SimpleNamespace(item=fixtures.FakeItem())]
         view.update_drag_handle_positions([1, 1, 9, 1, 5, 5, 1, 9], "backout")
         self.assertEqual(view._drag_last_valid_new_pos, original)
+        self.assertEqual(view._handle_infos[0].item.pos(), QPointF(0.0, 0.0))
+        still_containing = [1, 1, 9, 1, 8.5, 8.5, 1, 9]
+        view.update_drag_handle_positions(still_containing, "backout")
+        self.assertEqual(view._drag_last_valid_new_pos, still_containing)
+        self.assertEqual(view._handle_infos[0].item.pos(), QPointF(1.0, 1.0))
 
     def test_mouse_preview_collides_at_every_edge(self):
         for position in ([-1.0, 5.0], [11.0, 5.0], [5.0, -1.0], [5.0, 11.0]):
@@ -787,6 +1073,12 @@ class AttachmentMovementTests(unittest.TestCase):
                 view._drag_last_valid_new_pos = [5.0, 5.0]
                 view.update_drag_handle_positions(position, "attachment")
                 self.assertEqual(view._handle_infos[0].item.pos(), QPointF(5.0, 5.0))
+                self.assertEqual(view._drag_last_valid_new_pos, [5.0, 5.0])
+        view = self.make_view()
+        view._drag_last_valid_new_pos = [5.0, 5.0]
+        view.update_drag_handle_positions([6.0, 4.0], "attachment")
+        self.assertEqual(view._drag_last_valid_new_pos, [6.0, 4.0])
+        self.assertEqual(view._handle_infos[0].item.pos(), QPointF(6.0, 4.0))
 
     def test_parent_resize_cannot_exclude_attachment(self):
         view = self.make_view()
@@ -800,6 +1092,19 @@ class AttachmentMovementTests(unittest.TestCase):
                 "parent", [0.0, 0.0, 8.0, 0.0, 8.0, 8.0, 0.0, 8.0]
             )
         )
+        original = list(view._current_takeoffs["parent"].position)
+        view._uid_to_items = {}
+        view._drag_handle_index = 2
+        view._drag_handle_corner_count = 4
+        view._drag_last_valid_new_pos = list(original)
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0], "parent"
+        )
+        self.assertEqual(view._drag_last_valid_new_pos, original)
+        self.assertEqual(view._handle_infos[0].item.pos(), QPointF(5.0, 5.0))
+        enlarged = [0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0]
+        view.update_drag_handle_positions(enlarged, "parent")
+        self.assertEqual(view._drag_last_valid_new_pos, enlarged)
 
 
 class PlanViewInteractionTests(unittest.TestCase):
@@ -828,6 +1133,9 @@ class PlanViewInteractionTests(unittest.TestCase):
         view._drag_handle_index = 0
         cs = view._scene_builder.get_coordinate_system()
         view._update_ann_drag(annotation, [100.0, 100.0, 120.0, 60.0], "a1", cs, 0, 0)
+        self.assertEqual(item.pos(), QtCore.QPointF(40.0, 70.0))
+        self.assertEqual(item.textWidth(), 120.0)
+        self.assertEqual(view._drag_last_valid_new_pos, [100.0, 100.0, 120.0, 60.0])
         outline = self._first_selection_outline(view)
         self.assertEqual(
             outline.polygon().boundingRect(),
@@ -863,6 +1171,7 @@ class PlanViewInteractionTests(unittest.TestCase):
         view._drag_handle_index = 0
         cs = view._scene_builder.get_coordinate_system()
         view._update_ann_drag(annotation, [100.0, 100.0, 120.0, 60.0], "a1", cs, 0, 0)
+        self.assertEqual(item.pos(), QtCore.QPointF(40.0, 70.0))
         self.assertEqual(item.textWidth(), 120.0)
         self.assertEqual(item.clip_rect(), QtCore.QRectF(0.0, 0.0, 120.0, 60.0))
         view.cleanup()

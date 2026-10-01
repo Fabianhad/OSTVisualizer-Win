@@ -7,6 +7,7 @@ from ost_visualizer.presentation.components.conditions_sidebar import Conditions
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.bid import Bid
 from types import SimpleNamespace
 import unittest
@@ -36,7 +37,7 @@ class SidebarCoordinatorConditionBehaviorTests(unittest.TestCase):
             for index in range(1, count + 1)
         }
 
-    def _make_sidebar_coordinator(self, conditions, highlighted=()):
+    def _make_sidebar_coordinator(self, conditions, highlighted=(), folders=None):
         sidebar = ConditionsSidebar(None)
         self.addCleanup(sidebar.close)
 
@@ -55,7 +56,7 @@ class SidebarCoordinatorConditionBehaviorTests(unittest.TestCase):
         ui_state = UiState(highlighted)
         project_data = SimpleNamespace(
             get_bid_conditions=lambda: conditions,
-            get_bid_condition_folders=lambda: {},
+            get_bid_condition_folders=lambda: folders or {},
             get_bid=lambda _bid_ref: SimpleNamespace(name="Project"),
             set_bid_layer_visibility=lambda _layers: None,
         )
@@ -69,12 +70,15 @@ class SidebarCoordinatorConditionBehaviorTests(unittest.TestCase):
 
     def test_layer_coordinator_keeps_empty_loaded_bid_distinct_from_no_bid(self):
         calls = []
-        bid_ref = BidRef("db.mdb", "bid-1")
-        ui_state = SimpleNamespace(get_selected_bid_ref=lambda: bid_ref)
+        visibility_calls = []
+        selected = {"bid_ref": BidRef("db.mdb", "bid-1")}
+        ui_state = SimpleNamespace(get_selected_bid_ref=lambda: selected["bid_ref"])
         project_data = SimpleNamespace(
             get_bid_layer_snapshot=lambda: [],
             get_layer_uids_in_use=lambda: set(),
-            set_bid_layer_visibility=lambda _layers: None,
+            set_bid_layer_visibility=lambda layers: visibility_calls.append(
+                list(layers)
+            ),
         )
         read_service = SimpleNamespace(
             get_merged_bid_layers=lambda _path, _bid_uid: [],
@@ -90,6 +94,13 @@ class SidebarCoordinatorConditionBehaviorTests(unittest.TestCase):
         coordinator.load_bid_layers_sidebar()
         coordinator.load_bid_layers_sidebar_from_memory()
         self.assertEqual(calls, [("load", [], set()), ("load", [], set())])
+        self.assertEqual(visibility_calls, [[]])
+        calls.clear()
+        selected["bid_ref"] = None
+        coordinator.load_bid_layers_sidebar()
+        coordinator.load_bid_layers_sidebar_from_memory()
+        self.assertEqual(calls, [("clear",), ("clear",)])
+        self.assertEqual(visibility_calls, [[]])
 
     def test_memory_page_refresh_rebuilds_picker_from_authoritative_pages(self):
         bid_ref = BidRef("db.mdb", "bid-1")
@@ -115,6 +126,28 @@ class SidebarCoordinatorConditionBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(set(page_combo._page_items), {current_page.uid})
         self.assertEqual(cached_bid.pages_without_folder, [current_page])
+
+    def test_memory_page_refresh_clears_picker_when_bid_is_not_cached(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        stale_page = Page(uid="old-page", name="Old page", sequence=1)
+        cached_bid = Bid(
+            uid=bid_ref.bid_uid,
+            name="Bid",
+            page_count=1,
+            pages_without_folder=[stale_page],
+        )
+        page_combo = PageComboBox()
+        self.addCleanup(page_combo.close)
+        page_combo.load_bid(cached_bid, pages_with_takeoffs=set())
+        self.assertEqual(set(page_combo._page_items), {stale_page.uid})
+        coordinator = SidebarCoordinator(
+            SimpleNamespace(),
+            SimpleNamespace(get_selected_bid_ref=lambda: bid_ref),
+            SimpleNamespace(get_all_pages=lambda: [stale_page]),
+        )
+        coordinator.takeoff_sidebar = page_combo
+        coordinator.load_takeoff_sidebar_from_memory(bid_ref, {})
+        self.assertEqual(page_combo._page_items, {})
 
     def test_sidebar_coordinator_load_applies_internal_highlight_by_uid(self):
         conditions = {
@@ -160,6 +193,20 @@ class SidebarCoordinatorConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
         self.assertEqual(emitted, [])
 
+    def test_sidebar_coordinator_load_sync_does_not_expand_collapsed_folder(self):
+        conditions = {
+            "c1": Condition(uid="c1", name="Condition 1", ref_no=1, folder_uid="f1"),
+        }
+        folders = {"f1": BidConditionFolder(uid="f1", name="Folder")}
+        coordinator, sidebar, _ui_state = self._make_sidebar_coordinator(
+            conditions, highlighted={"c1"}, folders=folders
+        )
+        coordinator.load_conditions_sidebar()
+        sidebar._folder_items["f1"].setExpanded(False)
+        coordinator.load_conditions_sidebar()
+        self.assertFalse(sidebar._folder_items["f1"].isExpanded())
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+
     @classmethod
     def setUpClass(cls):
         cls.app = _app()
@@ -181,16 +228,22 @@ class SidebarQuantityProjectionTests(unittest.TestCase):
 
     def test_sidebar_quantities_include_hidden_layer_conditions(self):
         quantity_payloads = []
+        compute_calls = []
         visible = Condition(uid="c1", name="Visible", layer_uid="l1")
         hidden = Condition(uid="c2", name="Hidden", layer_uid="l2")
         hidden.layer_visible = False
+
+        def compute_quantities(page_uids):
+            compute_calls.append(list(page_uids))
+            return {
+                "c1": (1.0, 0.0, 0.0),
+                "c2": (2.0, 0.0, 0.0),
+            }
+
         project_data = SimpleNamespace(
             get_selected_page_uids=lambda: ["p1"],
             get_bid_conditions=lambda: {"c1": visible, "c2": hidden},
-            compute_quantities_for_pages=lambda page_uids: {
-                "c1": (1.0, 0.0, 0.0),
-                "c2": (2.0, 0.0, 0.0),
-            },
+            compute_quantities_for_pages=compute_quantities,
         )
         sidebar = SidebarCoordinator(
             project_read_service=SimpleNamespace(),
@@ -201,10 +254,57 @@ class SidebarQuantityProjectionTests(unittest.TestCase):
             update_quantities=lambda quantities: quantity_payloads.append(quantities)
         )
         sidebar.update_conditions_quantities()
+        self.assertEqual(compute_calls, [["p1"]])
         self.assertEqual(
             quantity_payloads,
             [{"c1": (1.0, 0.0, 0.0), "c2": (2.0, 0.0, 0.0)}],
         )
+
+    def test_sidebar_quantities_use_selected_pages_in_3d_view(self):
+        compute_calls = []
+        sidebar_calls = []
+        project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["p3", "p4"],
+            compute_quantities_for_pages=lambda page_uids: (
+                compute_calls.append(list(page_uids)) or {"c1": (4.0, 0.0, 0.0)}
+            ),
+        )
+        coordinator = SidebarCoordinator(
+            project_read_service=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(active_page_uid="p1"),
+            project_data=project_data,
+        )
+        coordinator.set_view_stack(SimpleNamespace(currentIndex=lambda: 0))
+        coordinator.conditions_sidebar = SimpleNamespace(
+            update_quantities=lambda quantities, partial=False: sidebar_calls.append(
+                (dict(quantities), partial)
+            )
+        )
+        coordinator.update_conditions_quantities()
+        self.assertEqual(compute_calls, [["p3", "p4"]])
+        self.assertEqual(sidebar_calls, [({"c1": (4.0, 0.0, 0.0)}, False)])
+
+    def test_sidebar_quantities_clear_without_active_page(self):
+        sidebar_calls = []
+
+        def compute_quantities(*_args, **_kwargs):
+            raise AssertionError("quantities must not be computed without a page")
+
+        coordinator = SidebarCoordinator(
+            project_read_service=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(active_page_uid=None),
+            project_data=SimpleNamespace(
+                compute_quantities_for_pages=compute_quantities
+            ),
+        )
+        coordinator.conditions_sidebar = SimpleNamespace(
+            update_quantities=lambda quantities, partial=False: sidebar_calls.append(
+                (dict(quantities), partial)
+            )
+        )
+        coordinator.update_conditions_quantities()
+        coordinator.update_conditions_quantities(condition_uids=["c1"])
+        self.assertEqual(sidebar_calls, [({}, False), ({}, True)])
 
     def test_sidebar_quantity_update_accepts_partial_condition_uids(self):
         quantity_calls = []
@@ -231,3 +331,26 @@ class SidebarQuantityProjectionTests(unittest.TestCase):
         sidebar.update_conditions_quantities(condition_uids=["c2"])
         self.assertEqual(quantity_calls, [(["p1"], {"c2"})])
         self.assertEqual(sidebar_calls, [({"c2": (3.0, 0.0, 0.0)}, True)])
+
+    def test_sidebar_quantity_update_ignores_empty_partial_condition_uids(self):
+        sidebar_calls = []
+
+        def compute_quantities(*_args, **_kwargs):
+            raise AssertionError("empty partial update must not compute quantities")
+
+        coordinator = SidebarCoordinator(
+            project_read_service=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(active_page_uid="p1"),
+            project_data=SimpleNamespace(
+                get_selected_page_uids=lambda: ["p1"],
+                compute_quantities_for_pages=compute_quantities,
+            ),
+        )
+        coordinator.conditions_sidebar = SimpleNamespace(
+            update_quantities=lambda quantities, partial=False: sidebar_calls.append(
+                (dict(quantities), partial)
+            )
+        )
+        coordinator.update_conditions_quantities(condition_uids=[])
+        coordinator.update_conditions_quantities(condition_uids=["", None])
+        self.assertEqual(sidebar_calls, [])

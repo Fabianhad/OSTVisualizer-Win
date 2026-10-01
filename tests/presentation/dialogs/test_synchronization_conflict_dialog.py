@@ -31,6 +31,10 @@ class SynchronizationConflictDialogTests(unittest.TestCase):
                 )
                 self.addCleanup(delete, dialog)
                 box = dialog.findChild(QtWidgets.QDialogButtonBox)
+                self.assertCountEqual([b.text() for b in box.buttons()], list(labels))
+                self.assertEqual(
+                    dialog.selected_action(), ConflictResolutionAction.CANCEL_READ_ONLY
+                )
                 next(
                     button for button in box.buttons() if button.text() == label
                 ).click()
@@ -42,6 +46,8 @@ class SynchronizationConflictDialogTests(unittest.TestCase):
             Mock(), "Conflict", (ConflictResolutionAction.RELOAD,)
         )
         self.addCleanup(delete, dialog)
+        box = dialog.findChild(QtWidgets.QDialogButtonBox)
+        self.assertEqual([b.text() for b in box.buttons()], ["Reload"])
         dialog.reject()
         self.assertEqual(
             dialog.selected_action(), ConflictResolutionAction.CANCEL_READ_ONLY

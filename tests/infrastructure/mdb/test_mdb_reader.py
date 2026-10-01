@@ -60,9 +60,31 @@ class MdbReaderPersistenceTests(unittest.TestCase):
                 _SqliteMdbOps(conn), _SqliteConnectionWrapper(conn)
             )
 
+    def test_condition_type_reader_returns_unique_types_and_tolerates_missing_table(
+        self,
+    ):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        ops = _SqliteMdbOps(conn)
+        wrapper = _SqliteConnectionWrapper(conn)
+        self.assertEqual(MdbReader._parse_cdn_types(ops, wrapper), {})
+        conn.execute("CREATE TABLE CdnTypes (UID INTEGER, Name TEXT)")
+        conn.executemany(
+            "INSERT INTO CdnTypes VALUES (?, ?)",
+            ((7, "Walls"), (8, "Floors")),
+        )
+        cdn_types = MdbReader._parse_cdn_types(ops, wrapper)
+        self.assertEqual(list(cdn_types), ["7", "8"])
+        self.assertEqual(
+            [(cdn.uid, cdn.name) for cdn in cdn_types.values()],
+            [("7", "Walls"), ("8", "Floors")],
+        )
+
 
 class MdbReaderSqlCleanupTests(unittest.TestCase):
     def test_access_shared_annotation_reader_retains_optional_table_tolerance(self):
+        attempted_tables = []
+
         class _FailingCursor:
             def __enter__(self):
                 return self
@@ -71,7 +93,8 @@ class MdbReaderSqlCleanupTests(unittest.TestCase):
                 return False
 
             @staticmethod
-            def execute(_sql, *_params):
+            def execute(sql, *_params):
+                attempted_tables.append(sql.split("FROM", 1)[1].split()[0])
                 raise pyodbc.Error("42S02", "optional Access table is missing")
 
         class _Connection:
@@ -88,3 +111,21 @@ class MdbReaderSqlCleanupTests(unittest.TestCase):
             CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema),
         )
         self.assertEqual(annotations, [])
+        self.assertEqual(
+            attempted_tables,
+            [
+                "BidAnnotationClouds",
+                "BidAnnotationOvals",
+                "BidAnnotationPolygons",
+                "BidAnnotationRects",
+                "BidAnnoInk",
+                "BidALines",
+                "BidDimensions",
+                "BidArrows",
+                "BidTexts",
+                "BidHighlights",
+                "BidNamedViews",
+                "BidHotLinks",
+                "BidCallOuts",
+            ],
+        )

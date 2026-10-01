@@ -17,6 +17,9 @@ from ost_visualizer.presentation.components.plan_view.components.page_loader imp
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.scene.plan_view_z_order import PAPER_HIGHLIGHT_Z
+from ost_visualizer.presentation.visualization.pdf.render_priority import (
+    RenderPriority,
+)
 from PySide6 import QtCore, QtGui, QtWidgets
 from tests.presentation.components.plan_view.visible_frame_support import (
     FakeVisibleFrameRenderingService as _preferences_support_FakeVisibleFrameRenderingService,
@@ -37,6 +40,8 @@ from ost_visualizer.presentation.components.plan_view.components.graphics_items 
     TileGraphicsItem,
 )
 from ost_visualizer.presentation.scene.plan_view_z_order import (
+    FOREGROUND_OVERLAY_Z,
+    PAGE_IMAGE_Z,
     PAGE_VISIBLE_FRAME_Z,
     PAPER_HIGHLIGHT_Z,
     TAKEOFF_BODY_Z,
@@ -165,6 +170,19 @@ class PageLoaderPreferenceTests(unittest.TestCase):
             ),
             INTERACTIVE_PDF_RENDER_SCALE,
         )
+        # A low zoom that would otherwise target the zoom floor (1.0) must
+        # still resolve to the baseline only while the preference is on.
+        view._scene_scale = 1.0
+        self.assertEqual(view._target_base_raster_scale(1.0, view_m11=0.5), 1.0)
+        view._disable_high_resolution_images = True
+        self.assertEqual(
+            view._target_base_raster_scale(1.0, view_m11=0.5),
+            INTERACTIVE_PDF_RENDER_SCALE,
+        )
+        # Without zoom re-rendering the caller's default scale is used.
+        view._disable_high_resolution_images = False
+        view._can_zoom_rerender = False
+        self.assertEqual(view._target_base_raster_scale(1.5, view_m11=4.0), 1.5)
 
     def test_high_resolution_frame_scale_includes_view_scale_and_device_pixel_ratio(
         self,
@@ -175,11 +193,13 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         view._device_pixel_ratio = lambda: 1.5
         self.assertEqual(view._compute_frame_scale(0.5), 2.25)
         self.assertEqual(view._compute_frame_scale(10.0), 36.0)
+        self.assertEqual(view._compute_frame_scale(0.001), 0.1)
 
     def test_frame_scale_quantization_uses_stable_log_steps(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         self.assertEqual(view._quantize_frame_scale(0.75), 1.0)
         self.assertEqual(view._quantize_frame_scale(1.0), 1.0)
+        self.assertEqual(view._quantize_frame_scale(2.0), 2.0)
         self.assertAlmostEqual(
             view._quantize_frame_scale(2.01),
             2.181,
@@ -342,6 +362,9 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         )
         self.assertAlmostEqual(rect.width(), 101 * view._scene_scale / 3.25)
         self.assertAlmostEqual(rect.height(), 83 * view._scene_scale / 3.25)
+        self.assertIsNone(view._visible_frame_request_id)
+        self.assertEqual(view._visible_frame_item.zValue(), PAGE_VISIBLE_FRAME_Z)
+        self.assertIs(view._visible_frame_item.scene(), view._scene)
 
     def test_visible_frame_quality_threshold_keeps_canonical_page_geometry(self):
         view = _preferences_support__visible_frame_lifecycle_view()
@@ -452,10 +475,16 @@ class PageLoaderPreferenceTests(unittest.TestCase):
                 ),
                 initial_scroll_values,
             )
+            self.assertEqual(
+                view._visible_frame_item is not None,
+                view_m11 > 0.54,
+            )
             if view._visible_frame_item is not None:
                 self.assertTrue(
                     page_rect.contains(view._visible_frame_item.sceneBoundingRect())
                 )
+        # The geometry guards above only run when frames were really requested.
+        self.assertGreaterEqual(len(view._rendering_service.frame_calls), 3)
 
     def test_high_dpi_visible_frame_changes_sampling_not_logical_geometry(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -479,6 +508,8 @@ class PageLoaderPreferenceTests(unittest.TestCase):
             QtCore.QRectF(0.0, 0.0, 202.0, 166.0),
         )
         self.assertEqual(high_dpi.devicePixelRatio(), 2.0)
+        self.assertAlmostEqual(standard_rect.width(), 101 * 2.0 / 3.25)
+        self.assertAlmostEqual(standard_rect.height(), 83 * 2.0 / 3.25)
         self.assertEqual(high_dpi_rect, standard_rect)
         self.assertEqual(high_dpi_item.boundingRect(), standard_item.boundingRect())
 
@@ -531,6 +562,12 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         rect = view._visible_frame_local_rect(context, image)
         self.assertEqual(rect.x(), 21.0)
         self.assertEqual(rect.y(), 41.0)
+        # Origins below the half-pixel boundary round down to the pixel grid.
+        context["frame_x_pts"] = 10.2
+        context["frame_y_pts"] = 20.2
+        rect = view._visible_frame_local_rect(context, image)
+        self.assertEqual(rect.x(), 20.0)
+        self.assertEqual(rect.y(), 40.0)
 
     def test_visible_frame_keeps_low_res_background_visible_after_install(self):
         view = _preferences_support__visible_frame_lifecycle_view()
@@ -549,6 +586,8 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertLess(
             view._background_item.zValue(), view._visible_frame_item.zValue()
         )
+        self.assertEqual(view._visible_frame_item.zValue(), PAGE_VISIBLE_FRAME_Z)
+        self.assertTrue(view._visible_frame_item.isVisible())
 
     def test_both_mode_visible_frame_keeps_low_res_composite_background_visible(self):
         view = _preferences_support__visible_frame_lifecycle_view(kind="composite")
@@ -567,6 +606,8 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertLess(
             view._background_item.zValue(), view._visible_frame_item.zValue()
         )
+        self.assertEqual(view._visible_frame_item.zValue(), PAGE_VISIBLE_FRAME_Z)
+        self.assertTrue(view._visible_frame_item.isVisible())
 
     def test_overlay_only_visible_frame_stays_below_paper_highlight_band(self):
         view = _preferences_support__visible_frame_lifecycle_view(kind="overlay")
@@ -582,6 +623,39 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         )
         self.assertIsNotNone(view._visible_frame_item)
         self.assertLess(view._visible_frame_item.zValue(), PAPER_HIGHLIGHT_Z)
+        self.assertEqual(view._visible_frame_item.zValue(), PAGE_VISIBLE_FRAME_Z)
+        self.assertIsNone(frame_options["tint_rgb"])
+
+    def test_both_mode_overlay_visible_frame_uses_foreground_z_and_blue_tint(self):
+        view = _preferences_support__visible_frame_lifecycle_view(kind="overlay")
+        view._current_page.image_show_mode = SHOW_BOTH
+        view._update_tile_coverage(4.0)
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        self.assertEqual(frame_options["file_path"], "overlay.pdf")
+        self.assertEqual(frame_options["tint_rgb"], (80, 80, 255))
+        frame_options["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _preferences_support__visible_frame_result_image(frame_options),
+                None,
+            )
+        )
+        self.assertIsNotNone(view._visible_frame_item)
+        self.assertEqual(view._visible_frame_item.zValue(), FOREGROUND_OVERLAY_Z)
+        self.assertLess(view._visible_frame_item.zValue(), PAPER_HIGHLIGHT_Z)
+
+    def test_both_mode_base_visible_frame_is_red_tinted_only_with_overlay(self):
+        view = _preferences_support__visible_frame_lifecycle_view()
+        view._current_page.image_show_mode = SHOW_BOTH
+        view._update_tile_coverage(4.0)
+        _, frame_options = view._rendering_service.frame_calls[-1]
+        self.assertEqual(frame_options["file_path"], "base.pdf")
+        self.assertEqual(frame_options["tint_rgb"], (255, 80, 80))
+        plain_view = _preferences_support__visible_frame_lifecycle_view()
+        plain_view._update_tile_coverage(4.0)
+        _, plain_options = plain_view._rendering_service.frame_calls[-1]
+        self.assertIsNone(plain_options["tint_rgb"])
 
     def test_visible_frame_reuses_current_buffered_coverage_on_small_scroll(self):
         view = _preferences_support__visible_frame_lifecycle_view()
@@ -602,6 +676,8 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertEqual(len(view._rendering_service.frame_calls), 1)
         self.assertIs(view._visible_frame_item, initial_item)
         self.assertEqual(view._visible_frame_key, initial_key)
+        self.assertIsNone(view._visible_frame_request_id)
+        self.assertEqual(view._rendering_service.cancelled_requests, [])
 
     def test_visible_frame_scroll_outside_coverage_replaces_only_after_success(self):
         view = _preferences_support__visible_frame_lifecycle_view()
@@ -634,6 +710,51 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertIsNone(old_item.scene())
         self.assertTrue(view._background_item.isVisible())
 
+    def test_visible_frame_result_is_dropped_unless_pending_request_is_still_current(
+        self,
+    ):
+        def invalidate_load_token(view):
+            view._current_load_token = "load-2"
+
+        def advance_generation(view):
+            view._page_render_generation_id += 1
+
+        def replace_key(view):
+            view._visible_frame_key = ("other",)
+
+        def start_overlay_move(view):
+            view._overlay_move_suppresses_normal_tiles = lambda: True
+
+        for name, invalidate, request_cleared in (
+            ("load token", invalidate_load_token, False),
+            ("generation", advance_generation, True),
+            ("key", replace_key, True),
+            ("overlay move", start_overlay_move, True),
+        ):
+            with self.subTest(name):
+                view = _preferences_support__visible_frame_lifecycle_view()
+                view._update_tile_coverage(4.0)
+                request_id, frame_options = view._rendering_service.frame_calls[-1]
+                self.assertIsNotNone(view._visible_frame_loading_token)
+                invalidate(view)
+                frame_options["callback"](
+                    RenderResult(
+                        request_id,
+                        True,
+                        _preferences_support__visible_frame_result_image(frame_options),
+                        None,
+                    )
+                )
+                self.assertIsNone(view._visible_frame_item)
+                self.assertEqual(len(view._scene.items()), 1)
+                self.assertIsNone(view._visible_frame_loading_token)
+                self.assertEqual(
+                    view._visible_frame_request_id is None, request_cleared
+                )
+                if request_cleared:
+                    self.assertIsNone(view._pending_visible_frame_metadata)
+                    self.assertIsNone(view._visible_frame_key)
+
     def test_visible_frame_pending_coverage_suppresses_duplicate_request(self):
         view = _preferences_support__visible_frame_lifecycle_view()
         view._update_tile_coverage(4.0)
@@ -652,7 +773,11 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         view._viewport_scene_rect = QtCore.QRectF(82.0, 0.0, 50.0, 50.0)
         view._update_tile_coverage(4.0)
         self.assertEqual(len(view._rendering_service.frame_calls), 2)
-        self.assertIsNotNone(view._visible_frame_request_id)
+        self.assertEqual(
+            view._visible_frame_request_id,
+            view._rendering_service.frame_calls[-1][0],
+        )
+        self.assertEqual(view._rendering_service.cancelled_requests, [])
 
     def test_visible_frame_render_failure_keeps_old_frame_and_low_res_visible(self):
         view = _preferences_support__visible_frame_lifecycle_view()
@@ -783,6 +908,9 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertEqual(call["frame_y_pts"], 0.0)
         self.assertEqual(call["frame_w_pts"], 31.25)
         self.assertEqual(call["frame_h_pts"], 31.25)
+        self.assertEqual(call["priority"], RenderPriority.VISIBLE_FRAME)
+        self.assertIsNone(call["tint_rgb"])
+        self.assertEqual(view._visible_frame_request_id, "frame-request")
 
     def test_both_mode_zoom_requests_composite_visible_frame(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -871,12 +999,15 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertEqual(calls, ["cancel_base"])
         self.assertEqual(len(rendering_service.composite_frame_calls), 1)
         call = rendering_service.composite_frame_calls[0]
-        self.assertEqual(call["page"], view._current_page)
+        self.assertIs(call["page"], view._current_page)
         self.assertEqual(call["scale"], 8.0)
+        self.assertEqual(call["rotation"], 0)
         self.assertEqual(call["frame_x_pts"], 0.0)
         self.assertEqual(call["frame_y_pts"], 0.0)
         self.assertEqual(call["frame_w_pts"], 31.25)
         self.assertEqual(call["frame_h_pts"], 31.25)
+        self.assertEqual(call["priority"], RenderPriority.VISIBLE_FRAME)
+        self.assertEqual(view._visible_frame_request_id, "composite-frame-request")
 
     def test_composite_visible_frame_key_changes_with_overlay_rect(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -910,6 +1041,7 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
         first_context = view._build_visible_frame_context(8.0)
+        repeat_context = view._build_visible_frame_context(8.0)
         view._current_page.overlay_rect = (64.0, 32.0, 88.888889, 88.888889)
         second_context = view._build_visible_frame_context(8.0)
         view._current_page.overlay_rect = (0.0, 0.0, 88.888889, 88.888889)
@@ -918,8 +1050,13 @@ class PageLoaderPreferenceTests(unittest.TestCase):
         self.assertIsNotNone(first_context)
         self.assertIsNotNone(second_context)
         self.assertIsNotNone(calibrated_context)
+        self.assertEqual(first_context["key"], repeat_context["key"])
+        self.assertEqual(first_context["identity"], repeat_context["identity"])
         self.assertNotEqual(first_context["key"], second_context["key"])
         self.assertNotEqual(first_context["key"], calibrated_context["key"])
+        # Coverage reuse compares identity, so overlay edits must change it too.
+        self.assertNotEqual(first_context["identity"], second_context["identity"])
+        self.assertNotEqual(first_context["identity"], calibrated_context["identity"])
         self.assertIn((64.0, 32.0, 88.888889, 88.888889), second_context["key"][-1])
 
     def test_overlay_only_pdf_high_resolution_disabled_requests_low_scale_base(self):
@@ -955,17 +1092,54 @@ class PageLoaderPreferenceTests(unittest.TestCase):
             ],
         )
 
+    def test_overlay_only_pdf_high_resolution_disabled_keeps_base_already_at_baseline(
+        self,
+    ):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        calls = []
+        view._current_page = Page(
+            uid="page-1",
+            name="Page 1",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=1,
+            width_pts=100.0,
+            height_pts=100.0,
+        )
+        view._loaded_visual_kind = VISUAL_KIND_OVERLAY
+        view._can_zoom_rerender = False
+        view._disable_high_resolution_images = True
+        view._base_raster_scale = INTERACTIVE_PDF_RENDER_SCALE
+        view._scene_scale = 2.0
+        view._overlay_move_original_rect = None
+        view._clear_tiles = lambda: calls.append("clear")
+        view._cancel_optional_base_correction = lambda: calls.append("cancel")
+        view._advance_render_generation = lambda: 5
+        view._request_optional_overlay_base_correction = (
+            lambda scale, generation: calls.append(("overlay_base", scale, generation))
+        )
+        view._update_tile_coverage(4.0)
+        self.assertEqual(calls, ["clear", "cancel"])
+
     def test_failed_page_render_releases_pending_request_id(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._current_render_requests = ["req-1"]
         view._current_load_token = "token"
         view._current_render_identity = {}
-        view._pending_page_data = {"load_token": "token", "render_identity": {}}
-        view._mark_load_geometry_ready = lambda: None
+        view._pending_page_data = {
+            "load_token": "token",
+            "render_identity": {},
+            "page": Page(uid="p1", name="P1", image_path="C:/plans/a.pdf"),
+        }
+        geometry_ready = []
+        statuses = []
+        view._mark_load_geometry_ready = lambda: geometry_ready.append(True)
+        view._show_missing_page_file_status = lambda message, tooltip: (
+            statuses.append((message, tooltip))
+        )
         with self.assertLogs(
             "ost_visualizer.presentation.components.plan_view.components.page_loader",
             level="WARNING",
-        ):
+        ) as logs:
             data = view._resolve_pending_render(
                 RenderResult(
                     request_id="req-1",
@@ -973,9 +1147,89 @@ class PageLoaderPreferenceTests(unittest.TestCase):
                     image=None,
                     error="render failed",
                 ),
-                "Page",
+                VISUAL_KIND_PAGE,
             )
         self.assertIsNone(data)
+        self.assertEqual(view._current_render_requests, [])
+        self.assertIsNone(view._pending_page_data)
+        self.assertEqual(geometry_ready, [True])
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(
+            statuses,
+            [
+                (
+                    "Page image/PDF was not found or could not be loaded: a.pdf.",
+                    "Page image/PDF was not found or could not be loaded: a.pdf."
+                    "\nC:/plans/a.pdf\nrender failed",
+                )
+            ],
+        )
+
+    def test_failed_render_of_unknown_request_leaves_pending_load_untouched(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        pending = {"load_token": "token", "render_identity": {}}
+        view._current_render_requests = ["req-1"]
+        view._current_load_token = "token"
+        view._current_render_identity = {}
+        view._pending_page_data = pending
+        view._mark_load_geometry_ready = lambda: self.fail("geometry marked ready")
+        view._show_missing_page_file_status = lambda *_args: self.fail("status shown")
+        data = view._resolve_pending_render(
+            RenderResult(
+                request_id="old-req",
+                success=False,
+                image=None,
+                error="render failed",
+            ),
+            VISUAL_KIND_PAGE,
+        )
+        self.assertIsNone(data)
+        self.assertEqual(view._current_render_requests, ["req-1"])
+        self.assertIs(view._pending_page_data, pending)
+
+    def test_failed_render_from_superseded_load_does_not_report_missing_file(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        pending = {"load_token": "old-token", "render_identity": {}}
+        view._current_render_requests = ["req-1"]
+        view._current_load_token = "new-token"
+        view._current_render_identity = {}
+        view._pending_page_data = pending
+        view._mark_load_geometry_ready = lambda: self.fail("geometry marked ready")
+        view._show_missing_page_file_status = lambda *_args: self.fail("status shown")
+        with self.assertLogs(
+            "ost_visualizer.presentation.components.plan_view.components.page_loader",
+            level="WARNING",
+        ):
+            data = view._resolve_pending_render(
+                RenderResult("req-1", False, None, "render failed"),
+                VISUAL_KIND_PAGE,
+            )
+        self.assertIsNone(data)
+        self.assertEqual(view._current_render_requests, [])
+        self.assertIs(view._pending_page_data, pending)
+
+    def test_successful_render_of_current_load_returns_pending_data(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        pending = {"load_token": "token", "render_identity": {"page": "p1"}}
+        view._current_render_requests = ["req-1"]
+        view._current_load_token = "token"
+        view._current_render_identity = {"page": "p1"}
+        view._pending_page_data = pending
+        image = QtGui.QImage(4, 4, QtGui.QImage.Format.Format_ARGB32)
+        self.assertIs(
+            view._resolve_pending_render(
+                RenderResult("req-1", True, image, None), VISUAL_KIND_PAGE
+            ),
+            pending,
+        )
+        self.assertEqual(view._current_render_requests, [])
+        view._current_render_requests = ["req-2"]
+        view._current_render_identity = {"page": "p2"}
+        self.assertIsNone(
+            view._resolve_pending_render(
+                RenderResult("req-2", True, image, None), VISUAL_KIND_PAGE
+            )
+        )
         self.assertEqual(view._current_render_requests, [])
 
 
@@ -987,19 +1241,8 @@ class PlanViewInteractionTests(unittest.TestCase):
         else:
             cls.app = QApplication.instance()
 
-    def test_zoom_visible_frame_render_starts_and_completes_loading_bar(self):
-        view = self._make_plan_view()
-        page = Page(
-            uid="p1",
-            name="P1",
-            image_path="page.pdf",
-            width_pts=612.0,
-            height_pts=792.0,
-        )
-        self._install_page_canvas(view, page)
-        view._current_load_token = "load-token"
-        view._current_render_identity = {}
-        context = {
+    def _visible_frame_context(self):
+        return {
             "kind": "base",
             "page_uid": "p1",
             "file_path": "page.pdf",
@@ -1021,7 +1264,24 @@ class PlanViewInteractionTests(unittest.TestCase):
             "identity": ("base", "p1"),
             "key": ("base", "page.pdf", 0, 4.0),
         }
-        view._request_visible_frame(context)
+
+    def _make_loading_bar_view(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self._install_page_canvas(view, page)
+        view._current_load_token = "load-token"
+        view._current_render_identity = {}
+        return view
+
+    def test_zoom_visible_frame_render_starts_and_completes_loading_bar(self):
+        view = self._make_loading_bar_view()
+        view._request_visible_frame(self._visible_frame_context())
         self.assertTrue(view._render_loading_bar.is_loading)
         request_id, request = view._rendering_service.frame_requests[-1]
         request["callback"](
@@ -1034,6 +1294,19 @@ class PlanViewInteractionTests(unittest.TestCase):
         )
         QApplication.processEvents()
         self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertIsNotNone(view._visible_frame_item)
+        view.cleanup()
+
+    def test_failed_zoom_visible_frame_render_completes_loading_bar(self):
+        view = self._make_loading_bar_view()
+        view._request_visible_frame(self._visible_frame_context())
+        self.assertTrue(view._render_loading_bar.is_loading)
+        request_id, request = view._rendering_service.frame_requests[-1]
+        request["callback"](RenderResult(request_id, False, None, "render failed"))
+        QApplication.processEvents()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertIsNone(view._visible_frame_item)
+        self.assertIsNone(view._visible_frame_request_id)
         view.cleanup()
 
     def test_show_both_overlay_item_stays_between_base_tiles_and_highlights(self):
@@ -1054,6 +1327,7 @@ class PlanViewInteractionTests(unittest.TestCase):
             view_scale=2.0,
             show_mode=SHOW_BOTH,
         )
+        self.assertEqual(item.zValue(), FOREGROUND_OVERLAY_Z)
         self.assertGreater(item.zValue(), PAGE_VISIBLE_FRAME_Z)
         self.assertLess(item.zValue(), PAPER_HIGHLIGHT_Z)
         self.assertLess(item.zValue(), TAKEOFF_BODY_Z)
@@ -1077,6 +1351,7 @@ class PlanViewInteractionTests(unittest.TestCase):
             view_scale=2.0,
             show_mode=SHOW_OVERLAY,
         )
+        self.assertEqual(item.zValue(), PAGE_IMAGE_Z)
         self.assertLess(item.zValue(), PAPER_HIGHLIGHT_Z)
         view.cleanup()
 
@@ -1114,6 +1389,12 @@ class PlanViewInteractionTests(unittest.TestCase):
         self.assertEqual(call["show_mode"], 2)
         self.assertEqual(call["rotation"], 90)
         self.assertEqual(call["render_scale"], 3.0)
+        self.assertEqual(call["priority"], RenderPriority.OPTIONAL_BASE)
+        self.assertEqual(
+            view._base_raster_request_id, rendering_service.overlay_requests[0][0]
+        )
+        self.assertEqual(view._base_raster_request_scale, 3.0)
+        self.assertEqual(view._base_correction_request_generation_id, 7)
         view.cleanup()
 
     def test_show_both_overlay_visible_frame_transform_matches_low_res_overlay_item(
@@ -1200,7 +1481,13 @@ class PlanViewInteractionTests(unittest.TestCase):
 
     def test_page_result_keeps_white_canvas_behind_transparent_raster(self):
         view = self._make_plan_view()
-        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
         self._install_page_canvas(view, page)
         canvas = view._white_canvas_item
         image = QImage(20, 20, QImage.Format.Format_ARGB32)
@@ -1221,6 +1508,9 @@ class PlanViewInteractionTests(unittest.TestCase):
         self.assertIs(view._white_canvas_item, canvas)
         self.assertIs(canvas.scene(), view._scene)
         self.assertLess(canvas.zValue(), view._background_item.zValue())
+        self.assertEqual(canvas.rect(), QtCore.QRectF(0.0, 0.0, 1224.0, 1584.0))
+        self.assertTrue(canvas.isVisible())
+        self.assertEqual(view._loaded_visual_kind, VISUAL_KIND_PAGE)
         view.cleanup()
 
     def test_move_overlay_hides_late_normal_overlay_result_during_preview(self):

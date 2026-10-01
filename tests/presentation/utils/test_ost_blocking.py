@@ -54,3 +54,98 @@ class DialogLifecycleTests(unittest.TestCase):
         ):
             result = exec_with_ost_blocking(dialog, event_bus)
         self.assertEqual(result, QtWidgets.QDialog.DialogCode.Rejected)
+
+
+class _Signal:
+    def __init__(self):
+        self.callback = None
+
+    def connect(self, callback):
+        self.callback = callback
+
+    def emit(self, active):
+        self.callback(active)
+
+
+def _fake_signaler(deleted):
+    class Signaler:
+        def __init__(self):
+            self.ost_changed = _Signal()
+
+        def deleteLater(self):
+            deleted.append(True)
+
+    return Signaler
+
+
+OST_SIGNALER = "ost_visualizer.presentation.utils.ost_blocking.OstSignaler"
+
+
+class OstBlockingLifecycleTests(unittest.TestCase):
+    def test_active_ost_disables_dialog_and_inactive_reenables_it(self):
+        _dialog_lifecycle_support__app()
+        event_bus = EventBus()
+        states = []
+
+        class Dialog(QtWidgets.QDialog):
+            def set_interactive(self, enabled):
+                states.append(enabled)
+
+            def exec(self):
+                event_bus.publish(AppEvents.OST_STATUS_CHANGED, active=True)
+                event_bus.publish(AppEvents.OST_STATUS_CHANGED, active=False)
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+        dialog = Dialog()
+        try:
+            with patch(OST_SIGNALER, _fake_signaler([])):
+                result = exec_with_ost_blocking(dialog, event_bus)
+            self.assertEqual(result, QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(states, [False, True])
+        finally:
+            dialog.deleteLater()
+
+    def test_subscription_and_signaler_are_released_after_exec(self):
+        _dialog_lifecycle_support__app()
+        event_bus = EventBus()
+        states = []
+
+        class Dialog(QtWidgets.QDialog):
+            def set_interactive(self, enabled):
+                states.append(enabled)
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+        dialog = Dialog()
+        deleted = []
+        try:
+            with patch(OST_SIGNALER, _fake_signaler(deleted)):
+                exec_with_ost_blocking(dialog, event_bus)
+            event_bus.publish(AppEvents.OST_STATUS_CHANGED, active=True)
+            self.assertEqual(states, [])
+            self.assertEqual(deleted, [True])
+        finally:
+            dialog.deleteLater()
+
+    def test_subscription_is_released_when_exec_raises(self):
+        _dialog_lifecycle_support__app()
+        event_bus = EventBus()
+        deleted = []
+
+        class Dialog(QtWidgets.QDialog):
+            def set_interactive(self, enabled):
+                pass
+
+            def exec(self):
+                raise RuntimeError("exec failed")
+
+        dialog = Dialog()
+        try:
+            with patch(OST_SIGNALER, _fake_signaler(deleted)):
+                with self.assertRaises(RuntimeError):
+                    exec_with_ost_blocking(dialog, event_bus)
+            self.assertEqual(deleted, [True])
+            self.assertNotIn(AppEvents.OST_STATUS_CHANGED, event_bus._subscribers)
+        finally:
+            dialog.deleteLater()

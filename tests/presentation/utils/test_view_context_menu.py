@@ -1,6 +1,11 @@
 from PySide6 import QtWidgets
 from ost_visualizer.presentation.utils.view_context_menu import (
+    CONTEXT_CLIPBOARD_ACTIONS,
     add_common_context_submenus,
+    add_context_clipboard_actions,
+    add_context_command_submenu,
+    add_context_page_actions,
+    context_command_state,
     add_reassign_condition_submenu,
     add_selected_annotation_style_actions,
     build_selected_annotation_style_context_state,
@@ -19,6 +24,7 @@ from ost_visualizer.presentation.managers.icon_manager import IconId, IconManage
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.pattern import SOLID
 import unittest
 import os
 
@@ -106,6 +112,107 @@ class ViewContextMenuTests(unittest.TestCase):
         finally:
             menu.deleteLater()
 
+    def test_reassign_condition_submenu_icons_show_each_condition_color(self):
+        menu = QtWidgets.QMenu()
+        try:
+            reassign_menu = add_reassign_condition_submenu(
+                menu,
+                {
+                    "red": Condition(
+                        uid="red",
+                        name="Red",
+                        ref_no=1,
+                        condition_type=Condition.TYPE_LINEAR,
+                        color_fill=0x0000FF,
+                        pattern=SOLID,
+                    ),
+                    "green": Condition(
+                        uid="green",
+                        name="Green",
+                        ref_no=2,
+                        condition_type=Condition.TYPE_LINEAR,
+                        color_fill=0x00FF00,
+                        pattern=SOLID,
+                    ),
+                    "hidden": Condition(
+                        uid="hidden",
+                        name="Hidden",
+                        ref_no=3,
+                        condition_type=Condition.TYPE_LINEAR,
+                        color_fill=0x0000FF,
+                        pattern=SOLID,
+                        layer_visible=False,
+                    ),
+                },
+                Condition.TYPE_LINEAR,
+            )
+            colors = {
+                reassign_menu.actions[action]: action.icon()
+                .pixmap(12, 12)
+                .toImage()
+                .pixelColor(6, 6)
+                for action in reassign_menu.submenu.actions()
+            }
+            self.assertEqual(colors["red"].name(), "#ff0000")
+            self.assertEqual(colors["green"].name(), "#00ff00")
+            self.assertEqual(
+                (colors["hidden"].red(), colors["hidden"].green()),
+                (colors["hidden"].green(), colors["hidden"].blue()),
+            )
+            self.assertNotEqual(colors["hidden"].name(), "#ff0000")
+        finally:
+            menu.deleteLater()
+
+    def test_reassign_condition_labels_use_name_or_uid_when_ref_no_is_missing(self):
+        menu = QtWidgets.QMenu()
+        try:
+            reassign_menu = add_reassign_condition_submenu(
+                menu,
+                {
+                    "named": Condition(
+                        uid="named", name="Named", condition_type=Condition.TYPE_AREA
+                    ),
+                    "unnamed": Condition(
+                        uid="unnamed", name="", condition_type=Condition.TYPE_AREA
+                    ),
+                    "numbered": Condition(
+                        uid="numbered",
+                        name="",
+                        ref_no=7,
+                        condition_type=Condition.TYPE_AREA,
+                    ),
+                },
+                Condition.TYPE_AREA,
+            )
+            self.assertEqual(
+                [action.text() for action in reassign_menu.submenu.actions()],
+                ["unnamed", "Named", "7 - numbered"],
+            )
+        finally:
+            menu.deleteLater()
+
+    def test_reassign_condition_submenu_can_be_disabled(self):
+        menu = QtWidgets.QMenu()
+        try:
+            for enabled in (True, False):
+                with self.subTest(enabled=enabled):
+                    reassign_menu = add_reassign_condition_submenu(
+                        menu,
+                        {
+                            "1": Condition(
+                                uid="1",
+                                name="One",
+                                ref_no=1,
+                                condition_type=Condition.TYPE_LINEAR,
+                            )
+                        },
+                        Condition.TYPE_LINEAR,
+                        enabled=enabled,
+                    )
+                    self.assertEqual(reassign_menu.submenu.isEnabled(), enabled)
+        finally:
+            menu.deleteLater()
+
     def test_reassign_condition_submenu_uses_compact_overflow_menu(self):
         menu = QtWidgets.QMenu()
         try:
@@ -153,7 +260,9 @@ class ViewContextMenuTests(unittest.TestCase):
         finally:
             menu.deleteLater()
 
-    def test_reassign_condition_submenu_sizes_naturally_when_under_limit(self):
+    def test_reassign_condition_submenu_lists_all_conditions_without_overflow_under_limit(
+        self,
+    ):
         menu = QtWidgets.QMenu()
         try:
             reassign_menu = add_reassign_condition_submenu(
@@ -176,10 +285,20 @@ class ViewContextMenuTests(unittest.TestCase):
             )
             submenu = reassign_menu.submenu
             self.assertTrue(submenu.property("ost_compact_overflow_menu"))
+            self.assertEqual(submenu.property("ost_compact_overflow_item_count"), 2)
             self.assertEqual(
                 [action.text() for action in submenu.actions()],
                 ["1 - First", "2 - Second"],
             )
+            self.assertEqual(
+                [
+                    action
+                    for action in submenu.actions()
+                    if isinstance(action, QtWidgets.QWidgetAction)
+                ],
+                [],
+            )
+            self.assertEqual(set(reassign_menu.actions.values()), {"1", "2"})
         finally:
             menu.deleteLater()
 
@@ -250,6 +369,10 @@ class ViewContextMenuTests(unittest.TestCase):
             )
             self.assertEqual(menu.actions(), [])
             self.assertEqual(reassign_menu.actions, {})
+            self.assertEqual(reassign_menu.submenu.actions(), [])
+            empty_menu = add_reassign_condition_submenu(menu, {}, Condition.TYPE_LINEAR)
+            self.assertEqual(menu.actions(), [])
+            self.assertEqual(empty_menu.actions, {})
         finally:
             menu.deleteLater()
 
@@ -267,10 +390,107 @@ class ViewContextMenuTests(unittest.TestCase):
             ["l1", "l2"], takeoffs.get, conditions
         )
         self.assertEqual(linear_state.reassign_geometry_type, Condition.TYPE_LINEAR)
+        self.assertEqual(linear_state.takeoff_uids, ["l1", "l2"])
+        self.assertTrue(linear_state.show_assign)
+        self.assertTrue(linear_state.show_negative)
+        self.assertFalse(linear_state.show_curved)
         mixed_state = build_selected_takeoff_context_state(
             ["l1", "a1"], takeoffs.get, conditions
         )
         self.assertIsNone(mixed_state.reassign_geometry_type)
+        self.assertEqual(mixed_state.takeoff_uids, ["l1", "a1"])
+        unknown_condition = build_selected_takeoff_context_state(
+            ["l1", "orphan"],
+            {**takeoffs, "orphan": Takeoff(uid="orphan", condition_uid="gone")}.get,
+            conditions,
+        )
+        self.assertIsNone(unknown_condition.reassign_geometry_type)
+        count_conditions = {
+            "count": Condition(uid="count", condition_type=Condition.TYPE_COUNT),
+            "attachment": Condition(
+                uid="attachment", condition_type=Condition.TYPE_ATTACHMENT
+            ),
+        }
+        count_state = build_selected_takeoff_context_state(
+            ["c1", "c2"],
+            {
+                "c1": Takeoff(uid="c1", condition_uid="count"),
+                "c2": Takeoff(uid="c2", condition_uid="attachment"),
+            }.get,
+            count_conditions,
+        )
+        self.assertEqual(count_state.reassign_geometry_type, Condition.TYPE_COUNT)
+
+    def test_selected_takeoff_context_state_skips_unresolved_uids(self):
+        conditions = {
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR)
+        }
+        takeoffs = {"l1": Takeoff(uid="l1", condition_uid="linear")}
+        state = build_selected_takeoff_context_state(
+            ["missing", "l1"], takeoffs.get, conditions
+        )
+        self.assertEqual(state.takeoff_uids, ["l1"])
+        self.assertTrue(state.show_curved)
+        empty = build_selected_takeoff_context_state(
+            ["missing"], takeoffs.get, conditions
+        )
+        self.assertEqual(empty.takeoff_uids, [])
+        self.assertFalse(empty.show_assign)
+        self.assertFalse(empty.show_negative)
+        self.assertFalse(empty.show_curved)
+        self.assertFalse(empty.all_negative)
+        self.assertFalse(empty.all_curved)
+        self.assertIsNone(empty.reassign_geometry_type)
+
+    def test_selected_takeoff_context_state_tracks_curve_and_negative_flags(self):
+        conditions = {
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+        }
+        straight = Takeoff(uid="s", condition_uid="linear", curve=-1)
+        curved = Takeoff(uid="c", condition_uid="linear", curve=0)
+        negative_a = Takeoff(uid="n1", condition_uid="area", is_negative=True)
+        negative_b = Takeoff(uid="n2", condition_uid="area", is_negative=True)
+        positive = Takeoff(uid="p", condition_uid="area")
+        every = {t.uid: t for t in (straight, curved, negative_a, negative_b, positive)}
+
+        def state_for(*uids):
+            return build_selected_takeoff_context_state(
+                list(uids), every.get, conditions
+            )
+
+        self.assertTrue(state_for("s").show_curved)
+        self.assertFalse(state_for("s").all_curved)
+        self.assertTrue(state_for("c").all_curved)
+        self.assertFalse(state_for("s", "c").show_curved)
+        self.assertFalse(state_for("s", "c").all_curved)
+        self.assertFalse(state_for("p").show_curved)
+        self.assertTrue(state_for("n1", "n2").all_negative)
+        self.assertFalse(state_for("n1", "p").all_negative)
+        self.assertFalse(state_for("p").all_negative)
+
+    def test_selected_hole_takeoffs_hide_assign_and_negative_actions(self):
+        conditions = {"area": Condition(uid="area", condition_type=Condition.TYPE_AREA)}
+        parent = Takeoff(uid="parent", condition_uid="area")
+        hole = Takeoff(uid="hole", condition_uid="area", parent_uid="parent")
+        every = {"parent": parent, "hole": hole}
+
+        def state_for(*uids):
+            return build_selected_takeoff_context_state(
+                list(uids), every.get, conditions
+            )
+
+        only_hole = state_for("hole")
+        self.assertEqual(only_hole.takeoff_uids, ["hole"])
+        self.assertFalse(only_hole.show_assign)
+        self.assertFalse(only_hole.show_negative)
+        self.assertFalse(only_hole.all_negative)
+        both = state_for("parent", "hole")
+        self.assertTrue(both.show_assign)
+        self.assertFalse(both.show_negative)
+        only_parent = state_for("parent")
+        self.assertTrue(only_parent.show_assign)
+        self.assertTrue(only_parent.show_negative)
 
     def test_plan_tools_context_submenu_uses_shared_tool_registry(self):
         menu, tools_menu = _build_tools_context_menu()
@@ -299,6 +519,117 @@ class ViewContextMenuTests(unittest.TestCase):
                     "Backout",
                 ],
             )
+        finally:
+            menu.deleteLater()
+
+    def test_command_submenu_triggers_with_action_key_and_applies_state(self):
+        menu = QtWidgets.QMenu()
+        triggered = []
+        states = {
+            "first": {"text": "First (shortcut)", "enabled": True},
+            "second": {"enabled": True, "checkable": True, "checked": True},
+        }
+        try:
+            result = add_context_command_submenu(
+                menu,
+                "Group",
+                (("First", "first"), None, ("Second", "second"), ("Third", "third")),
+                triggered.append,
+                lambda key: states.get(key),
+            )
+            self.assertEqual(menu.actions()[0].menu(), result.submenu)
+            self.assertEqual(result.submenu.title(), "Group")
+            self.assertEqual(
+                [(a.text(), a.isSeparator()) for a in result.submenu.actions()],
+                [
+                    ("First (shortcut)", False),
+                    ("", True),
+                    ("Second", False),
+                    ("Third", False),
+                ],
+            )
+            self.assertEqual(set(result.actions_by_key), {"first", "second", "third"})
+            self.assertTrue(result.actions_by_key["first"].isEnabled())
+            self.assertTrue(result.actions_by_key["second"].isCheckable())
+            self.assertTrue(result.actions_by_key["second"].isChecked())
+            self.assertFalse(result.actions_by_key["third"].isEnabled())
+            self.assertFalse(result.actions_by_key["third"].isCheckable())
+            result.actions_by_key["first"].trigger()
+            result.actions_by_key["second"].trigger()
+            self.assertEqual(triggered, ["first", "second"])
+        finally:
+            menu.deleteLater()
+
+    def test_context_command_state_defaults_to_disabled_with_fallback_text(self):
+        self.assertEqual(
+            context_command_state(None, "key", "Fallback"),
+            {
+                "text": "Fallback",
+                "enabled": False,
+                "checkable": False,
+                "checked": False,
+            },
+        )
+        self.assertEqual(
+            context_command_state(lambda _key: None, "key", "Fallback")["enabled"],
+            False,
+        )
+        self.assertEqual(
+            context_command_state(
+                lambda key: {"text": "", "enabled": 1, "checked": 1}, "key", "Fallback"
+            ),
+            {
+                "text": "Fallback",
+                "enabled": True,
+                "checkable": False,
+                "checked": True,
+            },
+        )
+
+    def test_clipboard_and_page_actions_trigger_their_action_keys(self):
+        triggered = []
+        menu = QtWidgets.QMenu()
+        try:
+            add_context_clipboard_actions(
+                menu, triggered.append, lambda _key: {"enabled": True}
+            )
+            self.assertEqual(
+                [action.text() for action in menu.actions()],
+                [label for label, _key in CONTEXT_CLIPBOARD_ACTIONS],
+            )
+            for action in menu.actions():
+                action.trigger()
+            self.assertEqual(
+                triggered, [key for _label, key in CONTEXT_CLIPBOARD_ACTIONS]
+            )
+            page_menu = QtWidgets.QMenu()
+            try:
+                add_context_page_actions(
+                    page_menu,
+                    lambda _key: None,
+                    lambda _key: {"enabled": True},
+                    separate_delete=True,
+                )
+                self.assertEqual(
+                    [
+                        (action.text(), action.isSeparator())
+                        for action in page_menu.actions()
+                    ],
+                    [("Rename Page...", False), ("", True), ("Delete Page", False)],
+                )
+                plain_menu = QtWidgets.QMenu()
+                try:
+                    add_context_page_actions(
+                        plain_menu, lambda _key: None, lambda _key: {"enabled": True}
+                    )
+                    self.assertEqual(
+                        [action.text() for action in plain_menu.actions()],
+                        ["Rename Page...", "Delete Page"],
+                    )
+                finally:
+                    plain_menu.deleteLater()
+            finally:
+                page_menu.deleteLater()
         finally:
             menu.deleteLater()
 
@@ -416,6 +747,39 @@ class ViewContextMenuTests(unittest.TestCase):
                 [action.text() for action in width_actions if action.isChecked()],
                 ["8px"],
             )
+            self.assertTrue(actions.color_action.isEnabled())
+            self.assertTrue(all(action.isEnabled() for action in width_actions))
+            self.assertEqual(
+                sorted(actions.width_actions.values()),
+                [float(width) for width in range(1, 17)],
+            )
+        finally:
+            menu.deleteLater()
+
+    def test_selected_annotation_style_actions_invoke_callbacks(self):
+        annotations = {
+            "line-1": BidAnnotation(uid="line-1", annotation_type="line", width=8.0),
+        }
+        state = build_selected_annotation_style_context_state(
+            ["line-1"], annotations.get
+        )
+        menu = QtWidgets.QMenu()
+        widths = []
+        colors = []
+        try:
+            actions = add_selected_annotation_style_actions(
+                menu,
+                state,
+                select_color_callback=lambda: colors.append("color"),
+                line_width_callback=widths.append,
+                enabled=True,
+            )
+            width_menu_actions = menu.actions()[0].menu().actions()
+            width_menu_actions[11].trigger()
+            width_menu_actions[0].trigger()
+            actions.color_action.trigger()
+            self.assertEqual(widths, [12.0, 1.0])
+            self.assertEqual(colors, ["color"])
         finally:
             menu.deleteLater()
 
@@ -442,6 +806,40 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
+    def test_context_width_checks_only_exact_integer_widths_in_range(self):
+        for width, expected in (
+            (1.0, ["1px"]),
+            (16.0, ["16px"]),
+            (4.0000001, ["4px"]),
+            (4.5, []),
+            (0.0, []),
+            (0.5, []),
+            (17.0, []),
+            (100.0, []),
+        ):
+            with self.subTest(width=width):
+                annotation = BidAnnotation(
+                    uid="rect-1", annotation_type="rect", width=width
+                )
+                state = build_selected_annotation_style_context_state(
+                    ["rect-1"], lambda _uid: annotation
+                )
+                menu = QtWidgets.QMenu()
+                try:
+                    add_selected_annotation_style_actions(
+                        menu,
+                        state,
+                        select_color_callback=lambda: None,
+                        line_width_callback=lambda _width: None,
+                        enabled=True,
+                    )
+                    width_actions = menu.actions()[0].menu().actions()
+                    self.assertEqual(
+                        [a.text() for a in width_actions if a.isChecked()], expected
+                    )
+                finally:
+                    menu.deleteLater()
 
     def test_invalid_annotation_width_leaves_context_width_unchecked(self):
         for invalid_width in (None, float("nan"), float("inf"), "invalid"):
@@ -486,6 +884,30 @@ class ViewContextMenuTests(unittest.TestCase):
                 self.assertTrue(state.show_color)
                 self.assertTrue(state.show_line_width)
 
+    def test_hotlink_namedview_and_unknown_annotations_show_no_generic_style(self):
+        for annotation_type in ("hotlink", "namedview", "callout"):
+            with self.subTest(annotation_type=annotation_type):
+                annotation = BidAnnotation(uid="a", annotation_type=annotation_type)
+                state = build_selected_annotation_style_context_state(
+                    ["a"], lambda _uid: annotation
+                )
+                self.assertEqual(state.annotation_uids, ["a"])
+                self.assertFalse(state.show_color)
+                self.assertFalse(state.show_line_width)
+                menu = QtWidgets.QMenu()
+                try:
+                    actions = add_selected_annotation_style_actions(
+                        menu,
+                        state,
+                        select_color_callback=lambda: None,
+                        line_width_callback=lambda _width: None,
+                        enabled=True,
+                    )
+                    self.assertEqual(menu.actions(), [])
+                    self.assertIsNone(actions.color_action)
+                finally:
+                    menu.deleteLater()
+
     def test_selected_highlight_context_shows_color_only(self):
         annotations = {
             "highlight-1": BidAnnotation(
@@ -525,6 +947,21 @@ class ViewContextMenuTests(unittest.TestCase):
         )
         self.assertTrue(state.show_color)
         self.assertFalse(state.show_line_width)
+        menu = QtWidgets.QMenu()
+        try:
+            actions = add_selected_annotation_style_actions(
+                menu,
+                state,
+                select_color_callback=lambda: None,
+                line_width_callback=lambda _width: None,
+                enabled=True,
+            )
+            self.assertEqual(
+                [action.text() for action in menu.actions()], ["Select Color..."]
+            )
+            self.assertEqual(actions.width_actions, {})
+        finally:
+            menu.deleteLater()
 
     def test_selected_annotation_style_actions_respect_disabled_state(self):
         annotations = {
@@ -595,6 +1032,18 @@ class ViewContextMenuTests(unittest.TestCase):
         self.assertEqual(empty.annotation_uids, [])
         self.assertFalse(empty.show_color)
         self.assertFalse(empty.show_line_width)
+        self.assertEqual(line_and_highlight.annotation_uids, ["line-1", "highlight-1"])
+        only_unresolved = build_selected_annotation_style_context_state(
+            ["gone"], annotations.get
+        )
+        self.assertEqual(only_unresolved.annotation_uids, [])
+        self.assertFalse(only_unresolved.show_color)
+        partly_unresolved = build_selected_annotation_style_context_state(
+            ["gone", "line-1"], annotations.get
+        )
+        self.assertEqual(partly_unresolved.annotation_uids, ["line-1"])
+        self.assertTrue(partly_unresolved.show_color)
+        self.assertTrue(partly_unresolved.show_line_width)
 
     def test_mixed_same_width_annotation_context_checks_shared_width(self):
         annotations = {
@@ -648,6 +1097,23 @@ class ViewContextMenuTests(unittest.TestCase):
         finally:
             menu.deleteLater()
 
+    def test_widths_within_tolerance_are_treated_as_shared(self):
+        annotations = {
+            "line-1": BidAnnotation(uid="line-1", annotation_type="line", width=6.0),
+            "rect-1": BidAnnotation(
+                uid="rect-1", annotation_type="rect", width=6.0000001
+            ),
+            "oval-1": BidAnnotation(uid="oval-1", annotation_type="oval", width=6.01),
+        }
+        close = build_selected_annotation_style_context_state(
+            ["line-1", "rect-1"], annotations.get
+        )
+        apart = build_selected_annotation_style_context_state(
+            ["line-1", "rect-1", "oval-1"], annotations.get
+        )
+        self.assertEqual(close.current_line_width, 6.0)
+        self.assertIsNone(apart.current_line_width)
+
 
 class ViewContextMenuConditionBehaviorTests(unittest.TestCase):
     @classmethod
@@ -675,3 +1141,14 @@ class ViewContextMenuConditionBehaviorTests(unittest.TestCase):
             ["t1"], lambda _uid: takeoff, {"c1": condition}
         )
         self.assertFalse(state.show_curved)
+        untrimmed = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            trim=False,
+        )
+        control = build_selected_takeoff_context_state(
+            ["t1"], lambda _uid: takeoff, {"c1": untrimmed}
+        )
+        self.assertTrue(control.show_curved)
+        self.assertTrue(control.show_assign)

@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path, PureWindowsPath
@@ -14,10 +15,33 @@ from tests.helpers.import_workflow import (
 )
 
 
+class _StagedOstRecorder(_import_workflow_FakeImporter):
+    def __init__(self):
+        super().__init__()
+        self.staged = []
+
+    def import_ost(self, source_path, target_path, project_uid=None):
+        path = Path(source_path)
+        self.staged.append((path, path.is_file(), path.read_text(encoding="utf-8")))
+        return super().import_ost(source_path, target_path, project_uid)
+
+
+class _FailingExtractCab(_import_workflow_FakeOspCab):
+    def extract_cab(self, source_path, output_dir):
+        self.extract_calls.append(output_dir)
+        return False
+
+
+def _image_members(*member_names):
+    return osp_importer_module._inspect_package(
+        ["Project.ost", *member_names]
+    ).image_members_by_path
+
+
 class OspImporterImageAndPackageTests(unittest.TestCase):
     def test_osp_import_extracts_cab_with_windows_extended_output_path(self):
         fake_cab = _import_workflow_FakeOspCab()
-        importer = _import_workflow_FakeImporter()
+        importer = _StagedOstRecorder()
         original_cab = osp_importer_module.ost_cab
         try:
             osp_importer_module.ost_cab = fake_cab
@@ -34,6 +58,51 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         self.assertEqual(len(importer.calls), 1)
         self.assertEqual(importer.calls[0][0], "ost")
         self.assertEqual(importer.calls[0][2:], ("target.mdb", "project-1"))
+        staged_path, staged_existed, staged_text = importer.staged[0]
+        self.assertEqual(staged_path.name, "Project.ost")
+        self.assertEqual(staged_path.parent, fake_cab.root)
+        self.assertTrue(staged_existed)
+        self.assertEqual(staged_text, "<XML_ROOT />")
+        self.assertFalse(fake_cab.root.exists())
+
+    def test_osp_import_extraction_failure_fails_import_and_cleans_temp_files(self):
+        fake_cab = _FailingExtractCab()
+        importer = _import_workflow_FakeImporter()
+        original_cab = osp_importer_module.ost_cab
+        try:
+            osp_importer_module.ost_cab = fake_cab
+            with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
+                result = OspImporter(importer).import_osp(
+                    "source.osp", "target.mdb", "project-1"
+                )
+        finally:
+            osp_importer_module.ost_cab = original_cab
+        self.assertFalse(result)
+        self.assertIn("could not be extracted", "\n".join(logs.output))
+        self.assertEqual(importer.calls, [])
+        self.assertEqual(len(fake_cab.extract_calls), 1)
+        extracted_root = Path(fake_cab._normal_windows_path(fake_cab.extract_calls[0]))
+        self.assertFalse(extracted_root.exists())
+
+    def test_osp_import_unexpected_importer_failure_returns_false_and_cleans_temp_files(
+        self,
+    ):
+        class RaisingImporter(_import_workflow_FakeImporter):
+            def import_ost(self, source_path, target_path, project_uid=None):
+                raise RuntimeError("importer exploded")
+
+        fake_cab = _import_workflow_FakeOspCab()
+        original_cab = osp_importer_module.ost_cab
+        try:
+            osp_importer_module.ost_cab = fake_cab
+            with self.assertLogs(osp_importer_module.logger, level="ERROR") as logs:
+                result = OspImporter(RaisingImporter()).import_osp(
+                    "source.osp", "target.mdb", "project-1"
+                )
+        finally:
+            osp_importer_module.ost_cab = original_cab
+        self.assertFalse(result)
+        self.assertIn("Unexpected OSP import failure", "\n".join(logs.output))
         self.assertFalse(fake_cab.root.exists())
 
     def test_osp_mutation_uses_shared_extraction_and_cleans_temp_files(self):
@@ -54,6 +123,28 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         self.assertEqual(importer.calls[0][2:], ("target.sql", "project-1", recorder))
         self.assertFalse(fake_cab.root.exists())
 
+    def test_osp_mutation_propagates_package_errors_and_cleans_temp_files(self):
+        original_cab = osp_importer_module.ost_cab
+        try:
+            invalid = _import_workflow_FakeOspCab(names=["First.ost", "Second.ost"])
+            importer = _import_workflow_FakeImporter()
+            osp_importer_module.ost_cab = invalid
+            with self.assertRaisesRegex(ValueError, "exactly one top-level .ost"):
+                OspImporter(importer).import_osp_mutation(
+                    "source.osp", "target.sql", "project-1", object()
+                )
+            self.assertEqual(invalid.extract_calls, [])
+            corrupt = _import_workflow_FakeOspCab(ost_xml="<XML_ROOT>")
+            osp_importer_module.ost_cab = corrupt
+            with self.assertRaises(osp_importer_module.ET.ParseError):
+                OspImporter(importer).import_osp_mutation(
+                    "source.osp", "target.sql", "project-1", object()
+                )
+            self.assertFalse(corrupt.root.exists())
+        finally:
+            osp_importer_module.ost_cab = original_cab
+        self.assertEqual(importer.calls, [])
+
     def test_osp_import_rejects_unsafe_cab_member_paths_before_extraction(self):
         unsafe_names = (
             "..\\outside\\payload.ost",
@@ -61,6 +152,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
             "\\outside\\payload.ost",
             "\\\\server\\share\\payload.ost",
             "payload.ost:stream",
+            "../outside/payload.ost",
             ".",
         )
         original_cab = osp_importer_module.ost_cab
@@ -72,11 +164,14 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                     )
                     importer = _import_workflow_FakeImporter()
                     osp_importer_module.ost_cab = fake_cab
-                    with self.assertLogs(osp_importer_module.logger, level="ERROR"):
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="ERROR"
+                    ) as logs:
                         result = OspImporter(importer).import_osp(
                             "source.osp", "target.mdb", "project-1"
                         )
                     self.assertFalse(result)
+                    self.assertIn("unsafe CAB member path", "\n".join(logs.output))
                     self.assertEqual(fake_cab.extract_calls, [])
                     self.assertEqual(importer.calls, [])
         finally:
@@ -84,22 +179,28 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
 
     def test_osp_import_requires_exactly_one_top_level_ost_member(self):
         archive_members = (
-            [],
-            ["First.ost", "Second.ost"],
-            ["nested\\Project.ost"],
+            ([], "found 0"),
+            (["First.ost", "Second.ost"], "found 2"),
+            (["nested\\Project.ost"], "found 0"),
         )
         original_cab = osp_importer_module.ost_cab
         try:
-            for names in archive_members:
+            for names, expected_count in archive_members:
                 with self.subTest(names=names):
                     fake_cab = _import_workflow_FakeOspCab(names=names)
                     importer = _import_workflow_FakeImporter()
                     osp_importer_module.ost_cab = fake_cab
-                    with self.assertLogs(osp_importer_module.logger, level="ERROR"):
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="ERROR"
+                    ) as logs:
                         result = OspImporter(importer).import_osp(
                             "source.osp", "target.mdb", "project-1"
                         )
                     self.assertFalse(result)
+                    self.assertIn(
+                        f"exactly one top-level .ost file; {expected_count}",
+                        "\n".join(logs.output),
+                    )
                     self.assertEqual(fake_cab.extract_calls, [])
                     self.assertEqual(importer.calls, [])
         finally:
@@ -117,7 +218,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         try:
             osp_importer_module.ost_cab = fake_cab
             osp_importer_module.shutil.rmtree = failing_rmtree
-            with self.assertLogs(osp_importer_module.logger, level="WARNING"):
+            with self.assertLogs(osp_importer_module.logger, level="WARNING") as logs:
                 self.assertTrue(
                     OspImporter(importer).import_osp(
                         "source.osp", "target.mdb", "project-1"
@@ -128,6 +229,10 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
             osp_importer_module.shutil.rmtree = original_rmtree
             if fake_cab.root and fake_cab.root.exists():
                 original_rmtree(fake_cab.root)
+        self.assertIn(
+            "Failed to remove temporary OSP extraction directory",
+            "\n".join(logs.output),
+        )
         self.assertEqual(len(importer.calls), 1)
         self.assertEqual(importer.calls[0][0], "ost")
 
@@ -177,6 +282,32 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         self.assertEqual(len(fake_cab.extract_calls), 1)
         self.assertEqual(len(importer.calls), 1)
 
+    def test_osp_import_rejects_unsupported_members_under_temp_images_root(self):
+        original_cab = osp_importer_module.ost_cab
+        try:
+            for member in ("TempImages!.tmp\\notes.txt", "tempimages!.TMP"):
+                with self.subTest(member=member):
+                    fake_cab = _import_workflow_FakeOspCab(
+                        names=["Project.ost", member]
+                    )
+                    importer = _import_workflow_FakeImporter()
+                    osp_importer_module.ost_cab = fake_cab
+                    with self.assertLogs(
+                        osp_importer_module.logger, level="ERROR"
+                    ) as logs:
+                        result = OspImporter(importer).import_osp(
+                            "legacy.osp", "target.mdb", "project-1"
+                        )
+                    self.assertFalse(result)
+                    self.assertIn(
+                        "unsupported member under TempImages!.tmp",
+                        "\n".join(logs.output),
+                    )
+                    self.assertEqual(fake_cab.extract_calls, [])
+                    self.assertEqual(importer.calls, [])
+        finally:
+            osp_importer_module.ost_cab = original_cab
+
     def test_osp_import_uses_same_flat_lookup_for_original_and_visualizer_paths(self):
         member_name = "TempImages!.tmp\\A00.00.pdf"
         image_paths = (
@@ -198,7 +329,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                     tmp_path,
                     ost_path,
                     dest_dir,
-                    {member_name.casefold(): member_name},
+                    _image_members(member_name),
                 )
                 dest_path = dest_dir / "A00.00.pdf"
                 self.assertEqual(dest_path.read_bytes(), b"packaged")
@@ -228,10 +359,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                 tmp_path,
                 ost_path,
                 dest_dir,
-                {
-                    page_member.casefold(): page_member,
-                    overlay_member.casefold(): overlay_member,
-                },
+                _image_members(page_member, overlay_member),
             )
             self.assertEqual((dest_dir / "page.pdf").read_bytes(), b"page")
             self.assertEqual((dest_dir / "overlay.tif").read_bytes(), b"overlay")
@@ -256,13 +384,17 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                 tmp_path,
                 ost_path,
                 dest_dir,
-                {member_name.casefold(): member_name},
+                _image_members(member_name),
             )
             self.assertEqual(original_path.read_bytes(), b"existing drawing")
             imported_paths = [
                 path for path in dest_dir.glob("sheet-*.pdf") if path.is_file()
             ]
             self.assertEqual(len(imported_paths), 1)
+            self.assertEqual(
+                imported_paths[0].name,
+                f"sheet-{hashlib.sha256(b'new drawing').hexdigest()[:16]}.pdf",
+            )
             self.assertEqual(imported_paths[0].read_bytes(), b"new drawing")
             self.assertIn(str(imported_paths[0]), ost_path.read_text(encoding="utf-8"))
 
@@ -283,7 +415,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                 tmp_path,
                 ost_path,
                 dest_dir,
-                {member_name.casefold(): member_name},
+                _image_members(member_name),
             )
             self.assertEqual(list(dest_dir.iterdir()), [existing_path])
             self.assertIn(str(existing_path), ost_path.read_text(encoding="utf-8"))
@@ -312,10 +444,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                 tmp_path,
                 ost_path,
                 dest_dir,
-                {
-                    flat_member.casefold(): flat_member,
-                    nested_member.casefold(): nested_member,
-                },
+                _image_members(flat_member, nested_member),
             )
             generated_dest = dest_dir / "A701-D.pdf"
             nested_destinations = list((dest_dir / "Images").glob("*/A701-D.pdf"))
@@ -325,6 +454,38 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
             rewritten = ost_path.read_text(encoding="utf-8")
             self.assertIn(str(generated_dest), rewritten)
             self.assertIn(str(nested_destinations[0]), rewritten)
+
+    def test_osp_image_member_resolution_prefers_deepest_match_in_any_member_order(
+        self,
+    ):
+        flat_member = "TempImages!.tmp\\A701-D.pdf"
+        mid_member = "TempImages!.tmp\\drawings\\A701-D.pdf"
+        deep_member = "TempImages!.tmp\\estimates\\project\\drawings\\A701-D.pdf"
+        reference = "Q:\\estimates\\project\\drawings\\A701-D.pdf"
+        for members in (
+            (flat_member, mid_member, deep_member),
+            (deep_member, mid_member, flat_member),
+            (mid_member, deep_member, flat_member),
+        ):
+            with self.subTest(members=members):
+                self.assertEqual(
+                    osp_importer_module._resolve_image_member(
+                        reference, _image_members(*members)
+                    ),
+                    deep_member,
+                )
+        self.assertEqual(
+            osp_importer_module._resolve_image_member(
+                "C:\\other\\drawings\\A701-D.pdf",
+                _image_members(deep_member, flat_member, mid_member),
+            ),
+            mid_member,
+        )
+        self.assertIsNone(
+            osp_importer_module._resolve_image_member(
+                "C:\\other\\A701-D.pdf", _image_members(deep_member, mid_member)
+            )
+        )
 
     def test_osp_import_does_not_fall_back_to_nested_basename(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -340,7 +501,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
                     tmp_path,
                     ost_path,
                     dest_dir,
-                    {nested_member.casefold(): nested_member},
+                    _image_members(nested_member),
                 )
             self.assertIn(
                 "could not resolve 1 referenced image", "\n".join(logs.output)
@@ -353,7 +514,7 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         fake_cab = _import_workflow_FakeOspCab(
             ost_xml=_import_workflow__write_osp_page_xml_text(source_path)
         )
-        importer = _import_workflow_FakeImporter()
+        importer = _StagedOstRecorder()
         original_cab = osp_importer_module.ost_cab
         try:
             osp_importer_module.ost_cab = fake_cab
@@ -366,6 +527,10 @@ class OspImporterImageAndPackageTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("could not resolve 1 referenced image", "\n".join(logs.output))
         self.assertEqual(len(importer.calls), 1)
+        self.assertEqual(
+            importer.staged[0][2],
+            _import_workflow__write_osp_page_xml_text(source_path),
+        )
         self.assertFalse(fake_cab.root.exists())
 
     def test_osp_import_rejects_case_insensitive_duplicate_members(self):

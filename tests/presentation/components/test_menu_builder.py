@@ -63,6 +63,16 @@ class MenuBuilderPreferenceTests(unittest.TestCase):
         self.assertIn(("cmd", "Options...", "options"), tools_items)
         self.assertNotIn(("cmd", old_label, old_key), tools_items)
 
+        def flatten(items):
+            for item in items:
+                yield item
+                if item[0] == "cascade":
+                    yield from flatten(item[2])
+
+        for menu_name, items in builder._get_menu_definition().items():
+            for item in flatten(items):
+                self.assertNotIn("mcp", " ".join(map(str, item)).lower(), menu_name)
+
     def test_master_menu_lists_default_layers_below_payroll_classes(self):
         builder = MenuBuilder(None, {})
         master_items = builder._get_menu_definition()["Master"]
@@ -74,6 +84,37 @@ class MenuBuilderPreferenceTests(unittest.TestCase):
             master_items[payroll_index + 2],
             ("cmd", "Default Layers", ACTION_DEFAULT_LAYERS),
         )
+
+    def test_master_menu_default_layers_command_invokes_its_callback(self):
+        calls = []
+        builder = MenuBuilder(None, {ACTION_DEFAULT_LAYERS: lambda: calls.append(True)})
+        menu = QtWidgets.QMenu()
+        builder._build_menu(menu, builder._get_menu_definition()["Master"])
+        try:
+            self.assertEqual(
+                [
+                    action.text()
+                    for action in menu.actions()
+                    if not action.isSeparator()
+                ],
+                [
+                    "Employees",
+                    "Job Statuses",
+                    "Condition Types",
+                    "Payroll Classes",
+                    "Default Layers",
+                ],
+            )
+            default_layers = [
+                action for action in menu.actions() if action.text() == "Default Layers"
+            ]
+            self.assertEqual(len(default_layers), 1)
+            self.assertIs(builder.actions[ACTION_DEFAULT_LAYERS], default_layers[0])
+            default_layers[0].trigger()
+            self.assertEqual(calls, [True])
+        finally:
+            builder.cleanup()
+            menu.deleteLater()
 
     def test_tools_menu_lists_text_after_dimension_with_serif_icon(self):
         labels = {
@@ -175,6 +216,25 @@ class MenuBuilderPreferenceTests(unittest.TestCase):
             )
             self.assertIs(tools_menu.actions()[14], shared_actions["hotlink_tool"])
             self.assertIs(tools_menu.actions()[15], shared_actions["named_view_tool"])
+            for action_key, icon_id in (
+                ("dimension_tool", IconId.DIMENSION_TOOL),
+                ("text_annotation_tool", IconId.TEXT_ANNOTATION_TOOL),
+                ("highlight_annotation_tool", IconId.HIGHLIGHT_ANNOTATION_TOOL),
+                ("ink_annotation_tool", IconId.INK_ANNOTATION_TOOL),
+                ("hotlink_tool", IconId.HOTLINK_TOOL),
+                ("named_view_tool", IconId.NAMED_VIEW_TOOL),
+            ):
+                action_icon = shared_actions[action_key].icon()
+                self.assertFalse(action_icon.isNull(), action_key)
+                self.assertEqual(
+                    action_icon.cacheKey(),
+                    IconManager.icon(icon_id).cacheKey(),
+                    action_key,
+                )
+            self.assertNotEqual(
+                shared_actions["text_annotation_tool"].icon().cacheKey(),
+                shared_actions["dimension_tool"].icon().cacheKey(),
+            )
         finally:
             result.menu_bar.deleteLater()
         self.assertEqual(
@@ -219,6 +279,22 @@ class MenuBuilderPreferenceTests(unittest.TestCase):
             ICON_SPECS[IconId.INK_ANNOTATION_TOOL].svg_name,
             "gesture_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
         )
+        for icon_id in (
+            IconId.DIMENSION_TOOL,
+            IconId.TEXT_ANNOTATION_TOOL,
+            IconId.HIGHLIGHT_ANNOTATION_TOOL,
+            IconId.INK_ANNOTATION_TOOL,
+        ):
+            self.assertTrue(
+                (
+                    REPO_ROOT
+                    / "ost_visualizer"
+                    / "resources"
+                    / "icons"
+                    / ICON_SPECS[icon_id].svg_name
+                ).exists(),
+                icon_id,
+            )
 
 
 class MenuBuilderTests(unittest.TestCase):
@@ -244,15 +320,71 @@ class MenuBuilderTests(unittest.TestCase):
                 ("radio", "Second", "mode", "second", "missing_radio"),
             ],
         )
+        flag, first, second = menu.actions()
+        self.assertFalse(flag.isChecked())
+        self.assertTrue(first.isChecked())
+        self.assertFalse(second.isChecked())
         for action in menu.actions():
             action.trigger()
+        # The no-op callbacks must not break the actions' own check state: the
+        # flag toggled and the exclusive radio group moved to the triggered entry.
+        self.assertTrue(flag.isChecked())
+        self.assertFalse(first.isChecked())
+        self.assertTrue(second.isChecked())
+        self.assertEqual(builder.variable_actions["mode"], [first, second])
+        self.assertEqual(builder.variable_actions["flag"], [flag])
+        builder.cleanup()
+        menu.deleteLater()
+
+    def test_check_and_radio_actions_pass_state_and_value_to_callbacks(self):
+        received = []
+        builder = MenuBuilder(
+            None,
+            {
+                "flag_cb": lambda checked: received.append(("flag", checked)),
+                "mode_cb": lambda value: received.append(("mode", value)),
+            },
+            state_getters={"flag": lambda: True, "mode": lambda: "second"},
+        )
+        menu = QtWidgets.QMenu()
+        builder._build_menu(
+            menu,
+            [
+                ("check", "Flag", "flag", "flag_cb"),
+                ("radio", "First", "mode", "first", "mode_cb"),
+                ("radio", "Second", "mode", "second", "mode_cb"),
+            ],
+        )
+        flag, first, second = menu.actions()
+        self.assertTrue(flag.isChecked())
+        self.assertFalse(first.isChecked())
+        self.assertTrue(second.isChecked())
+        self.assertEqual(first.data(), "first")
+        self.assertEqual(second.data(), "second")
+        flag.trigger()
+        first.trigger()
+        self.assertEqual(received, [("flag", False), ("mode", "first")])
+        self.assertTrue(first.isChecked())
+        self.assertFalse(second.isChecked())
         builder.cleanup()
         menu.deleteLater()
 
     def test_cleanup_is_idempotent(self):
-        builder = MenuBuilder(None, {})
+        calls = []
+        builder = MenuBuilder(None, {"command": lambda: calls.append(True)})
         menu = QtWidgets.QMenu()
-        builder._build_menu(menu, [("cmd", "Missing", "missing_command")])
+        builder._build_menu(menu, [("cmd", "Command", "command")])
+        action = menu.actions()[0]
+        action.trigger()
+        self.assertEqual(calls, [True])
         builder.cleanup()
         builder.cleanup()
+        action.trigger()
+        self.assertEqual(calls, [True])
+        self.assertIsNone(builder.actions)
+        self.assertIsNone(builder.menus)
+        self.assertIsNone(builder.variable_actions)
+        self.assertIsNone(builder.callbacks)
+        self.assertIsNone(builder.state_getters)
+        self.assertIsNone(builder.parent)
         menu.deleteLater()

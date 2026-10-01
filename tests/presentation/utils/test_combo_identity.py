@@ -24,8 +24,15 @@ class ResolveEditableComboUidTests(unittest.TestCase):
         self.addCleanup(delete, self.combo)
 
     def test_selected_duplicate_retains_its_exact_uid(self):
+        for index, uid in ((0, "first"), (1, "second")):
+            with self.subTest(index=index):
+                self.combo.setCurrentIndex(index)
+                self.assertEqual(resolve_editable_combo_uid(self.combo), uid)
+
+    def test_selected_item_retyped_to_another_label_resolves_the_typed_label(self):
         self.combo.setCurrentIndex(1)
-        self.assertEqual(resolve_editable_combo_uid(self.combo), "second")
+        self.combo.setEditText("unique")
+        self.assertEqual(resolve_editable_combo_uid(self.combo), "unique")
 
     def test_unselected_duplicate_text_is_rejected(self):
         self.combo.setCurrentIndex(-1)

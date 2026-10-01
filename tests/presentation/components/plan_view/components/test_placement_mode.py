@@ -42,6 +42,8 @@ from tests.presentation.components.plan_view.components.snap_support import (
     PreviewHarness,
 )
 from ost_visualizer.presentation.utils.annotation_defaults import (
+    annotation_default_style,
+    get_annotation_style_for_tool,
     set_annotation_style_for_tool,
 )
 from PySide6 import QtCore
@@ -235,6 +237,93 @@ class PlacementModePreferenceTests(unittest.TestCase):
         self.assertEqual(view.paste_backouts_placed.emitted, [])
         self.assertEqual(view.cancel_calls, 0)
 
+    def _paste_backout_view(self, *, valid):
+        class FakeSignal:
+            def __init__(self):
+                self.emitted = []
+
+            def emit(self, placements, source_bid_uid):
+                self.emitted.append((placements, source_bid_uid))
+
+        class FakePasteBackoutView:
+            _paste_backout_active = True
+            _current_bid_page_uid = "page-1"
+            _paste_backout_source_bid_uid = "bid-9"
+
+            def __init__(self):
+                self.paste_backouts_placed = FakeSignal()
+                self.cancel_calls = 0
+                self._paste_backout_sources = [
+                    {
+                        "uid": "src-1",
+                        "condition_uid": "area",
+                        "parent_uid": "src-0",
+                        "curve": -1,
+                        "rotation": 0.5,
+                        "is_negative": True,
+                        "extras": {"k": "v"},
+                    }
+                ]
+
+            def mapToScene(self, _pos):
+                return QtCore.QPointF(0.0, 0.0)
+
+            def _paste_backout_compute_translations(self, _scene_pos):
+                return [[1.0, 1.0, 2.0, 1.0, 2.0, 2.0]]
+
+            def _paste_backout_validate_all(self, _translated_list):
+                return [("host", valid)], valid
+
+            def cancel_paste_backout(self):
+                self.cancel_calls += 1
+
+        class FakeEvent:
+            accepted = False
+
+            def position(self):
+                return QtCore.QPointF(0, 0)
+
+            def accept(self):
+                self.accepted = True
+
+        return FakePasteBackoutView(), FakeEvent()
+
+    def test_valid_paste_backout_click_emits_placements_and_cancels_tool(self):
+        view, event = self._paste_backout_view(valid=True)
+        self.assertTrue(PlacementModeMixin.handle_paste_backout_press(view, event))
+        self.assertTrue(event.accepted)
+        self.assertEqual(
+            view.paste_backouts_placed.emitted,
+            [
+                (
+                    [
+                        {
+                            "condition_uid": "area",
+                            "source_uid": "src-1",
+                            "parent_is_internal": False,
+                            "curve": -1,
+                            "position": [1.0, 1.0, 2.0, 1.0, 2.0, 2.0],
+                            "page_uid": "page-1",
+                            "parent_uid": "host",
+                            "rotation": 0.5,
+                            "is_negative": True,
+                            "extras": {"k": "v"},
+                        }
+                    ],
+                    "bid-9",
+                )
+            ],
+        )
+        self.assertEqual(view.cancel_calls, 1)
+
+    def test_inactive_paste_backout_ignores_click(self):
+        view, event = self._paste_backout_view(valid=True)
+        view._paste_backout_active = False
+        self.assertFalse(PlacementModeMixin.handle_paste_backout_press(view, event))
+        self.assertFalse(event.accepted)
+        self.assertEqual(view.paste_backouts_placed.emitted, [])
+        self.assertEqual(view.cancel_calls, 0)
+
 
 class PlacementPreviewContinuationTests(unittest.TestCase):
     @classmethod
@@ -271,9 +360,31 @@ class PlacementPreviewContinuationTests(unittest.TestCase):
                 QtCore.QTimer, "singleShot", lambda delay, fn: callbacks.append(fn)
             ):
                 view._flash_invalid_preview(QtGui.QColor("green"))
+            self.assertEqual(item.brush().color(), QtGui.QColor("green"))
+            self.assertEqual(item.pen().color(), QtGui.QColor("green"))
+            self.assertTrue(view._place_flashing)
             callbacks[0]()
             self.assertEqual(item.brush().color(), QtGui.QColor(200, 0, 0))
+            self.assertEqual(item.pen().color(), QtGui.QColor(200, 0, 0))
             self.assertFalse(view._place_flashing)
+        finally:
+            delete(view)
+
+    def test_flash_is_ignored_while_flashing_or_without_fill_preview(self):
+        view = PreviewSurface()
+        callbacks = []
+        try:
+            with patch.object(
+                QtCore.QTimer, "singleShot", lambda delay, fn: callbacks.append(fn)
+            ):
+                view._flash_invalid_preview(QtGui.QColor("green"))
+                self.assertEqual(callbacks, [])
+                self.assertFalse(view._place_flashing)
+                view.add_preview()
+                view._flash_invalid_preview(QtGui.QColor("green"))
+                view._flash_invalid_preview(QtGui.QColor("blue"))
+            self.assertEqual(len(callbacks), 1)
+            self.assertTrue(view._place_flashing)
         finally:
             delete(view)
 
@@ -303,6 +414,38 @@ class PlacementPreviewLifecycleTests(unittest.TestCase):
         placement_mode.PlacementModeMixin.refresh_paste_backout_preview_after_view_change(
             View()
         )
+
+    def test_paste_backout_refresh_redraws_at_last_mouse_position_and_repaints(self):
+        class Viewport:
+            updates = 0
+
+            def update(self):
+                Viewport.updates += 1
+
+        class View:
+            _last_mouse_vp_pos = QtCore.QPoint(3, 4)
+            _request_place_preview_repaint = (
+                placement_mode.PlacementModeMixin._request_place_preview_repaint
+            )
+
+            def __init__(self):
+                self.previews = []
+
+            def mapToScene(self, point):
+                return QtCore.QPointF(point.x() * 2.0, point.y() * 2.0)
+
+            def update_paste_backout_preview(self, scene_pos):
+                self.previews.append(scene_pos)
+
+            def viewport(self):
+                return Viewport()
+
+        view = View()
+        placement_mode.PlacementModeMixin.refresh_paste_backout_preview_after_view_change(
+            view
+        )
+        self.assertEqual(view.previews, [QtCore.QPointF(6.0, 8.0)])
+        self.assertEqual(Viewport.updates, 1)
 
 
 class SnapSegmentCacheTests(unittest.TestCase):
@@ -345,6 +488,13 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._ensure_pdf_snap_index()
         takeoff_snap_index = harness._ensure_takeoff_snap_index()
         self.assertEqual(_snap_support_FakePDFRenderer.extract_calls, 1)
+        self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 1)
+        pdf_snap_index = _snap_support_FakeSnapIndex.instances[0]
+        self.assertIsNot(pdf_snap_index, takeoff_snap_index)
+        self.assertEqual(
+            pdf_snap_index.build_calls,
+            [[(2.0, 196.0, 6.0, 192.0)], [(2.0, 196.0, 6.0, 192.0)]],
+        )
         self.assertEqual(
             takeoff_snap_index.build_calls[-1],
             [
@@ -453,6 +603,9 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual(len(segments), 32)
         self.assertEqual(segments[0][0], 2.0)
         self.assertEqual(segments[0][1], 0.0)
+        for x1, y1, x2, y2 in segments:
+            self.assertAlmostEqual(math.hypot(x1, y1), 2.0)
+            self.assertAlmostEqual(math.hypot(x2, y2), 2.0)
 
     def test_rotated_ellipse_snap_uses_rotated_physical_footprint(self):
         harness = _snap_support_PlacementHarness()
@@ -490,6 +643,39 @@ class SnapSegmentCacheTests(unittest.TestCase):
             uid="t1",
             condition_uid="linear",
             position=[5.0, 5.0, 5.0, 5.0],
+        )
+        self.assertEqual(harness._build_takeoff_snap_segments(), [])
+
+    def test_linear_takeoff_snap_ignores_trailing_unpaired_coordinate(self):
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["linear"].thickness = 2.0
+        harness._current_takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="linear",
+            position=[0.0, 0.0, 10.0, 0.0, 99.0],
+        )
+        self.assertEqual(
+            harness._build_takeoff_snap_segments(),
+            [
+                (0.0, 1.0, 10.0, 1.0),
+                (0.0, -1.0, 10.0, -1.0),
+            ],
+        )
+
+    def test_hidden_condition_takeoffs_do_not_contribute_snap_segments(self):
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["linear"].layer_visible = False
+        harness._current_takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="linear",
+            position=[0.0, 0.0, 10.0, 0.0],
+        )
+        harness._current_takeoffs["orphan"] = Takeoff(
+            uid="orphan",
+            condition_uid="deleted-condition",
+            position=[0.0, 0.0, 10.0, 0.0],
         )
         self.assertEqual(harness._build_takeoff_snap_segments(), [])
 
@@ -590,10 +776,11 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._query_pdf_line_snap = lambda *_args: self.fail(
             "PDF snap should not run after takeoff hit"
         )
-        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+        ost_x, ost_y, cx, cy, snap_kind = harness._placement_snap_from_scene(
             QtCore.QPointF(10.4, 20.6)
         )
         self.assertEqual((ost_x, ost_y), (1.0, 2.0))
+        self.assertEqual((cx, cy), (0.5, 1.0))
         self.assertEqual(snap_kind, placement_mode.ENDPOINT)
 
     def test_snap_priority_uses_pdf_before_grid_when_takeoff_misses(self):
@@ -607,10 +794,11 @@ class SnapSegmentCacheTests(unittest.TestCase):
             placement_mode.PERPENDICULAR,
             0,
         )
-        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+        ost_x, ost_y, cx, cy, snap_kind = harness._placement_snap_from_scene(
             QtCore.QPointF(10.4, 20.6)
         )
         self.assertEqual((ost_x, ost_y), (3.0, 4.0))
+        self.assertEqual((cx, cy), (1.5, 2.0))
         self.assertEqual(snap_kind, placement_mode.PERPENDICULAR)
 
     def test_disabling_snap_sources_returns_unsnapped_cursor_position(self):
@@ -639,6 +827,53 @@ class SnapSegmentCacheTests(unittest.TestCase):
         )
         self.assertEqual((ost_x, ost_y), (10.4, 20.6))
         self.assertEqual(snap_kind, placement_mode.NONE)
+
+    def test_non_positive_snap_increment_disables_grid_snap(self):
+        from PySide6 import QtCore
+
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.image_path = None
+        harness._snap_to_takeoffs_enabled = False
+        harness._snap_to_pdf_lines_enabled = False
+        harness._snap_increments = 0.0
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(10.4, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (10.4, 20.6))
+        self.assertEqual(snap_kind, placement_mode.NONE)
+
+    def test_grid_snap_is_skipped_when_snapped_point_is_beyond_pixel_threshold(self):
+        from PySide6 import QtCore
+
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.image_path = None
+        harness._snap_to_takeoffs_enabled = False
+        harness._snap_to_pdf_lines_enabled = False
+        harness._snap_increments = 10.0
+        # The nearest grid point (10, 20) is ~2.2 px away; the threshold is 1 px.
+        harness._snap_to_grid_threshold_px = 1
+        harness.snap_ost = lambda value: round(float(value) / 10.0) * 10.0
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(12.0, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (12.0, 20.6))
+        self.assertEqual(snap_kind, placement_mode.NONE)
+        harness._snap_to_grid_threshold_px = 3
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(12.0, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (10.0, 20.0))
+        self.assertEqual(snap_kind, placement_mode.GRID)
+
+    def test_disabled_or_zero_threshold_snap_sources_are_never_queried(self):
+        from PySide6 import QtCore
+
+        harness = _snap_support_PlacementHarness()
+        harness._snap_to_takeoffs_enabled = False
+        harness._snap_to_pdf_lines_threshold_px = 0
+        harness._placement_snap_from_scene(QtCore.QPointF(10.4, 20.6))
+        self.assertEqual(_snap_support_FakeSnapIndex.instances, [])
+        self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 0)
 
     def test_takeoff_snap_threshold_is_screen_pixel_based(self):
         from PySide6 import QtCore
@@ -678,6 +913,26 @@ class SnapSegmentCacheTests(unittest.TestCase):
         )
         self.assertEqual((grid_x, grid_y), (10.0, 0.0))
         self.assertEqual((line_x, line_y), (10.4, 0.0))
+
+    def test_grid_distance_snap_rounds_to_increment_and_collapses_short_drags(self):
+        harness = _snap_support_PlacementHarness()
+        harness._snap_increments = 5.0
+        for target_x, expected_x in ((12.0, 10.0), (13.0, 15.0)):
+            snapped = harness._snap_placement_distance(0.0, 0.0, target_x, 0.0)
+            self.assertAlmostEqual(snapped[0], expected_x)
+            self.assertEqual(snapped[1], 0.0)
+        # Distances that round to zero collapse back onto the origin.
+        self.assertEqual(
+            harness._snap_placement_distance(2.0, 3.0, 4.0, 3.0), (2.0, 3.0)
+        )
+        # A zero-length drag and a disabled increment leave the target untouched.
+        self.assertEqual(
+            harness._snap_placement_distance(2.0, 3.0, 2.0, 3.0), (2.0, 3.0)
+        )
+        harness._snap_increments = 0.0
+        self.assertEqual(
+            harness._snap_placement_distance(0.0, 0.0, 12.0, 0.0), (12.0, 0.0)
+        )
 
     def test_default_mouse_snap_angles_are_15_unpressed_and_off_when_pressed(self):
         from PySide6.QtCore import Qt
@@ -739,6 +994,16 @@ class SnapSegmentCacheTests(unittest.TestCase):
         x, y, active = harness._right_angle_target_from_first_point(10.5, 20.0)
         self.assertTrue(active)
         self.assertEqual((x, y), (10.0, 20.0))
+        x, y, active = harness._right_angle_target_from_first_point(20.0, 9.5)
+        self.assertTrue(active)
+        self.assertEqual((x, y), (20.0, 10.0))
+        x, y, active = harness._right_angle_target_from_first_point(30.0, 40.0)
+        self.assertFalse(active)
+        self.assertEqual((x, y), (30.0, 40.0))
+        harness._place_points = []
+        x, y, active = harness._right_angle_target_from_first_point(10.5, 20.0)
+        self.assertFalse(active)
+        self.assertEqual((x, y), (10.5, 20.0))
 
     def test_right_angle_snap_threshold_controls_target_distance(self):
         harness = _snap_support_PlacementHarness()
@@ -953,6 +1218,14 @@ class SnapSegmentCacheTests(unittest.TestCase):
             harness._pdf_raw_point_to_page_point(10.0, 20.0, 100.0, 200.0, 270),
             (180.0, 90.0),
         )
+        self.assertEqual(
+            harness._pdf_raw_point_to_page_point(10.0, 20.0, 100.0, 200.0, -90),
+            (180.0, 90.0),
+        )
+        self.assertEqual(
+            harness._pdf_raw_point_to_page_point(10.0, 20.0, 100.0, 200.0, 450),
+            (20.0, 10.0),
+        )
 
     def test_pdf_snap_cache_key_includes_rendered_pdf_width(self):
         harness = _snap_support_PlacementHarness()
@@ -969,6 +1242,24 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._current_page.scale_factor1 = 0.125
         second_key = harness._pdf_snap_cache_key()
         self.assertNotEqual(first_key, second_key)
+
+    def test_pdf_snap_cache_key_changes_with_overlay_geometry_and_is_stable_otherwise(
+        self,
+    ):
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.overlay_image_path = "overlay.pdf"
+        harness._current_page.image_show_mode = 1
+        baseline = harness._pdf_snap_cache_key()
+        self.assertEqual(baseline, harness._pdf_snap_cache_key())
+        self.assertEqual(baseline[1], "overlay")
+        harness._current_page.overlay_rect = (1.0, 2.0, 3.0, 4.0)
+        rect_key = harness._pdf_snap_cache_key()
+        self.assertNotEqual(baseline, rect_key)
+        harness._current_page.overlay_rotation = 0.25
+        rotation_key = harness._pdf_snap_cache_key()
+        self.assertNotEqual(rect_key, rotation_key)
+        harness._current_page.deskew_rotation_overlay = 0.125
+        self.assertNotEqual(rotation_key, harness._pdf_snap_cache_key())
 
     def test_overlay_pdf_snap_points_map_through_overlay_rect_scale_and_rotation(self):
         harness = _snap_support_PlacementHarness()
@@ -1008,6 +1299,21 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._ensure_pdf_snap_index()
         self.assertEqual(_snap_support_FakePDFRenderer.open_paths, ["drawing.pdf"])
 
+    def test_snap_source_ignores_hidden_overlay_and_hidden_page_layer(self):
+        harness = _snap_support_PlacementHarness()
+        harness._current_page.overlay_image_path = "overlay.pdf"
+        harness._current_page.image_show_mode = 0
+        self.assertEqual(harness._pdf_intelligence_source(), ("main", "drawing.pdf", 0))
+        harness._current_page.image_show_mode = 1
+        self.assertEqual(
+            harness._pdf_intelligence_source(), ("overlay", "overlay.pdf", 0)
+        )
+        harness._current_page.layer_visible = False
+        self.assertIsNone(harness._pdf_intelligence_source())
+        self.assertIsNone(harness._pdf_snap_cache_key())
+        self.assertEqual(harness._build_pdf_snap_segments(), [])
+        self.assertEqual(_snap_support_FakePDFRenderer.open_calls, 0)
+
     def test_linear_preview_adds_start_and_current_endpoint_handles(self):
         from PySide6 import QtCore
 
@@ -1016,8 +1322,7 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._place_linear_dragging = True
         harness.snap_result = (10.0, 0.0, 10.0, 0.0, placement_mode.GRID)
         harness.update_place_preview(QtCore.QPointF(10.0, 0.0))
-        self.assertIn((0.0, 0.0, 4.0), harness.handle_points)
-        self.assertIn((10.0, 0.0, 4.0), harness.handle_points)
+        self.assertEqual(harness.handle_points, [(0.0, 0.0, 4.0), (10.0, 0.0, 4.0)])
         self.assertEqual(harness.pattern_angles, [0.0])
 
     def test_diagonal_linear_preview_passes_line_direction_to_pattern(self):
@@ -1043,9 +1348,16 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._place_points = [(0.0, 0.0), (5.0, 0.0)]
         harness.snap_result = (5.0, 5.0, 5.0, 5.0, placement_mode.GRID)
         harness.update_place_preview(QtCore.QPointF(5.0, 5.0))
-        self.assertIn((0.0, 0.0, 4.0), harness.handle_points)
-        self.assertIn((5.0, 0.0, 4.0), harness.handle_points)
-        self.assertIn((5.0, 5.0, 4.0), harness.handle_points)
+        self.assertEqual(
+            harness.handle_points,
+            [
+                (0.0, 0.0, 4.0),
+                (5.0, 0.0, 4.0),
+                (5.0, 5.0, 4.0),
+                (2.5, 0.0, 2.5),
+                (5.0, 2.5, 2.5),
+            ],
+        )
 
     def test_display_pattern_while_drawing_off_uses_outline_only_preview(self):
         harness = _snap_support_PlacementHarness()
@@ -1071,6 +1383,10 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual(harness._scene_builder.pattern_fill_calls, 0)
         self.assertEqual(harness._place_preview_items, [item])
         self.assertEqual(item.brush().style(), Qt.BrushStyle.NoBrush)
+        self.assertEqual(item.pen().color(), QColor("#123456"))
+        self.assertEqual(item.pen().widthF(), 2.0)
+        self.assertTrue(item.pen().isCosmetic())
+        self.assertEqual(item.zValue(), 10)
 
     def test_linear_preview_uses_pattern_even_without_display_pattern_flag(self):
         harness = _snap_support_PlacementHarness()
@@ -1096,6 +1412,34 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual(harness._scene_builder.pattern_fill_calls, 1)
         self.assertEqual(len(harness._place_preview_items), 2)
         self.assertIs(harness._place_preview_items[0], item)
+        self.assertEqual(
+            [preview.zValue() for preview in harness._place_preview_items], [10, 10]
+        )
+
+    def test_area_pattern_preview_never_receives_line_orientation(self):
+        harness = _snap_support_PlacementHarness()
+        harness._scene = _snap_support_RecordingScene()
+        harness._scene_builder = _snap_support_PatternPreviewSceneBuilder()
+        harness._place_preview_items = []
+        path = QPainterPath()
+        path.addRect(0.0, 0.0, 12.0, 12.0)
+        item = QGraphicsPathItem(path)
+        condition = Condition(
+            uid="area",
+            condition_type=Condition.TYPE_AREA,
+            display_grid_while_drawing=True,
+        )
+        harness._apply_pattern_preview(
+            item, path, condition, QColor("#123456"), 0.5, None, 0.5
+        )
+        self.assertEqual(harness._scene_builder.pattern_fill_calls, 1)
+        self.assertEqual(harness._scene_builder.pattern_angles, [None])
+        self.assertEqual(len(harness._place_preview_items), 2)
+        linear = Condition(uid="linear", condition_type=Condition.TYPE_LINEAR)
+        harness._apply_pattern_preview(
+            QGraphicsPathItem(path), path, linear, QColor("#123456"), 0.5, None, 0.5
+        )
+        self.assertEqual(harness._scene_builder.pattern_angles, [None, 0.5])
 
     def test_snap_cursor_marker_remains_line_snap_only(self):
         harness = _snap_support_PreviewHarness()
@@ -1228,7 +1572,17 @@ class TakeoffLifecyclePlacementTests(unittest.TestCase):
     def test_backout_release_without_mouse_move_accepts_minimum_fractional_size(self):
         view = self.harness(Condition.TYPE_AREA, (0.2, 0.2), (0.3, 0.3), backout=True)
         self.release(view, Condition.TYPE_AREA)
-        self.assertEqual(len(view.created), 1)
+        self.assertEqual(
+            view.created,
+            [
+                (
+                    "tool",
+                    [0.2, 0.2, 0.3, 0.2, 0.3, 0.3, 0.2, 0.3],
+                    "page-1",
+                    "parent",
+                )
+            ],
+        )
 
     def test_subminimum_geometry_does_not_commit(self):
         for family in (Condition.TYPE_LINEAR, Condition.TYPE_AREA):
@@ -1240,8 +1594,13 @@ class TakeoffLifecyclePlacementTests(unittest.TestCase):
     def test_subminimum_backout_preview_cannot_be_committed_as_last_valid(self):
         view = self.harness(Condition.TYPE_AREA, (0.2, 0.2), (0.24, 0.24), backout=True)
         view.update_place_preview(QPointF())
+        self.assertIsNone(view._backout_last_valid_ost)
         self.release(view, Condition.TYPE_AREA)
         self.assertEqual(view.created, [])
+        self.assertIsNone(view._backout_last_valid_ost)
+        self.assertEqual(view._place_points, [(0.2, 0.2)])
+        self.assertFalse(view._place_area_rect_dragging)
+        self.assertTrue(view._area_in_progress)
 
     def test_paste_backout_checks_all_overlapping_candidate_parents(self):
         view = self.harness(Condition.TYPE_AREA, (0, 0), (1, 1), backout=True)
@@ -1280,8 +1639,9 @@ class TakeoffLifecyclePlacementTests(unittest.TestCase):
     def test_pasted_backouts_must_not_collide_with_each_other(self):
         view = self.harness(Condition.TYPE_AREA, (0, 0), (1, 1), backout=True)
         candidates = [[1, 1, 5, 1, 5, 5, 1, 5], [3, 3, 7, 3, 7, 7, 3, 7]]
-        _results, valid = view._paste_backout_validate_all(candidates)
+        results, valid = view._paste_backout_validate_all(candidates)
         self.assertFalse(valid)
+        self.assertEqual(results, [("parent", True), ("", False)])
 
     def test_child_only_paste_retains_nested_source_parent(self):
         view = self.harness(Condition.TYPE_AREA, (0, 0), (1, 1), backout=True)
@@ -1294,6 +1654,27 @@ class TakeoffLifecyclePlacementTests(unittest.TestCase):
             view._paste_backout_validate_all(candidates),
             ([("source-root", True), ("parent", True)], True),
         )
+
+    def test_cyclic_source_parents_are_rejected_without_assignment(self):
+        view = self.harness(Condition.TYPE_AREA, (0, 0), (1, 1), backout=True)
+        view._paste_backout_sources = [
+            {"uid": "a", "parent_uid": "b"},
+            {"uid": "b", "parent_uid": "a"},
+        ]
+        candidates = [[2, 2, 3, 2, 3, 3, 2, 3], [5, 5, 6, 5, 6, 6, 5, 6]]
+        self.assertEqual(
+            view._paste_backout_validate_all(candidates),
+            ([("", False), ("", False)], False),
+        )
+
+    def test_paste_backout_rejects_geometry_outside_every_parent(self):
+        view = self.harness(Condition.TYPE_AREA, (0, 0), (1, 1), backout=True)
+        results, valid = view._paste_backout_validate_all(
+            [[8, 8, 12, 8, 12, 12, 8, 12]]
+        )
+        self.assertFalse(valid)
+        self.assertEqual(results, [("", False)])
+        self.assertEqual(view._paste_backout_validate_all([]), ([], False))
 
 
 class AnnotationPlacementTests(unittest.TestCase):
@@ -1344,6 +1725,32 @@ class AnnotationPlacementTests(unittest.TestCase):
         self.assertEqual(view._annotation_place_type, None)
         self.assertEqual(view._place_preview_items, [])
 
+    def test_annotation_commit_rejects_degenerate_geometry_and_missing_page(self):
+        view = _interaction_support_AnnotationPlacementHarness()
+        self.assertFalse(view._enter_annotation_place_mode("not-a-tool"))
+        for annotation_type, position in (
+            ("line", [1.0, 2.0, 1.0, 2.0]),
+            ("rect", [1.0, 2.0, 13.0, 2.0]),
+            ("oval", [1.0, 2.0, 1.0, 14.0]),
+            ("text", [1.0, 2.0, 13.0, 2.0]),
+            ("highlight", [1.0, 2.0, 1.0, 14.0]),
+            ("namedview", [1.0, 2.0, 13.0, 2.0]),
+            ("ink", [1.0, 2.0, 1.2, 2.0]),
+            ("polygon", [0.0, 0.0, 5.0, 0.0]),
+        ):
+            with self.subTest(annotation_type=annotation_type):
+                self.assertFalse(
+                    view._commit_annotation_placement(annotation_type, position)
+                )
+        self.assertEqual(view.annotation_created.emitted, [])
+        self.assertEqual(view.text_drafts, [])
+        self.assertEqual(view.named_view_drafts, [])
+        view._current_bid_page_uid = None
+        self.assertFalse(
+            view._commit_annotation_placement("line", [0.0, 0.0, 12.0, 0.0])
+        )
+        self.assertEqual(view.annotation_created.emitted, [])
+
     def test_polygon_and_cloud_creation_rejects_self_intersection(self):
         invalid_position = [0.0, 0.0, 12.0, 8.0, 12.0, 0.0, 0.0, 8.0]
         for annotation_type in ("polygon", "cloud"):
@@ -1373,6 +1780,10 @@ class AnnotationPlacementTests(unittest.TestCase):
                 self.assertEqual(view.area_progress_states, [True, False])
 
     def test_polygon_and_cloud_click_drag_creates_area_like_rectangle(self):
+        original_styles = {
+            annotation_type: get_annotation_style_for_tool(annotation_type)
+            for annotation_type in ("polygon", "cloud")
+        }
         for annotation_type in ("polygon", "cloud"):
             set_annotation_style_for_tool(
                 annotation_type, color="#336699", line_width=7.0
@@ -1418,9 +1829,9 @@ class AnnotationPlacementTests(unittest.TestCase):
                     self.assertEqual(view._annotation_place_type, annotation_type)
                     self.assertEqual(view.area_progress_states, [])
         finally:
-            for annotation_type in ("polygon", "cloud"):
+            for annotation_type, style in original_styles.items():
                 set_annotation_style_for_tool(
-                    annotation_type, color="#ff0000", line_width=4.0
+                    annotation_type, color=style.color, line_width=style.line_width
                 )
 
     def test_area_takeoff_click_drag_rectangle_placement_is_unchanged(self):
@@ -1646,6 +2057,7 @@ class AnnotationPlacementTests(unittest.TestCase):
         self.assertFalse(release.accepted)
 
     def test_ink_annotation_uses_freehand_drag_preview_and_commit(self):
+        original_style = get_annotation_style_for_tool("ink")
         set_annotation_style_for_tool("ink", color="#224466", line_width=6.0)
         try:
             view = _interaction_support_AnnotationPlacementHarness()
@@ -1671,7 +2083,11 @@ class AnnotationPlacementTests(unittest.TestCase):
             )
             self.assertEqual(view._annotation_place_points, [])
         finally:
-            set_annotation_style_for_tool("ink", color="#ff0000", line_width=4.0)
+            set_annotation_style_for_tool(
+                "ink",
+                color=original_style.color,
+                line_width=original_style.line_width,
+            )
 
     def test_tiny_ink_annotation_drag_does_not_persist(self):
         view = _interaction_support_AnnotationPlacementHarness()
@@ -1698,9 +2114,23 @@ class AnnotationPlacementTests(unittest.TestCase):
         paths = _interaction_support__preview_paths(view)
         self.assertEqual(len(paths), 1)
         path = paths[0].path()
-        self.assertGreater(path.elementCount(), 2)
+        self.assertEqual(path.elementCount(), 5)
         self.assertEqual((path.elementAt(0).x, path.elementAt(0).y), (1.0, 2.0))
         self.assertEqual((path.elementAt(1).x, path.elementAt(1).y), (13.0, 14.0))
+        # The head is drawn as left wing -> tip -> right wing, with both wings
+        # trailing behind the tip along the shaft direction.
+        _color, width = annotation_default_style("arrow")
+        wing_length = max(width * 20.0, 24.0)
+        tip = (13.0, 14.0)
+        self.assertEqual((path.elementAt(3).x, path.elementAt(3).y), tip)
+        shaft = (12.0, 12.0)
+        for index in (2, 4):
+            wing = (path.elementAt(index).x - tip[0], path.elementAt(index).y - tip[1])
+            self.assertAlmostEqual(math.hypot(*wing), wing_length)
+            self.assertLess(wing[0] * shaft[0] + wing[1] * shaft[1], 0.0)
+        left = (path.elementAt(2).x, path.elementAt(2).y)
+        right = (path.elementAt(4).x, path.elementAt(4).y)
+        self.assertNotEqual(left, right)
 
     def test_box_annotation_previews_use_drag_bounds(self):
         for annotation_type in ("rect", "oval", "text", "highlight"):
@@ -1718,6 +2148,10 @@ class AnnotationPlacementTests(unittest.TestCase):
                     )
                 else:
                     self.assertEqual(paths[0].path().boundingRect(), drag_bounds)
+                self.assertEqual(
+                    _interaction_support__path_has_curve(paths[0].path()),
+                    annotation_type == "oval",
+                )
                 if annotation_type == "text":
                     self.assertEqual(
                         paths[0].pen().style(), QtCore.Qt.PenStyle.DashLine
@@ -1868,6 +2302,22 @@ class AttachmentMovementTests(unittest.TestCase):
         self.set_attachment_dimensions(state, 2.0, 2.0)
         self.assertTrue(
             placement._check_hole_overlap([4.0, 4.0, 6.0, 4.0, 6.0, 6.0, 4.0, 6.0])
+        )
+
+    def test_backout_placement_accepts_hole_clear_of_attachment_footprint(self):
+        state = self.make_view()
+        placement = fixtures.AnnotationPlacementHarness()
+        placement._current_conditions = state._current_conditions
+        placement._current_takeoffs = state._current_takeoffs
+        placement._backout_parent_uid = "parent"
+        placement._scene_builder._cs.parse_position = lambda position: list(position)
+        self.set_attachment_dimensions(state, 2.0, 2.0)
+        self.assertFalse(
+            placement._check_hole_overlap([7.0, 7.0, 9.0, 7.0, 9.0, 9.0, 7.0, 9.0])
+        )
+        # The hole is not wholly inside the parent.
+        self.assertTrue(
+            placement._check_hole_overlap([8.0, 8.0, 12.0, 8.0, 12.0, 12.0, 8.0, 12.0])
         )
 
     def test_backout_placement_rejects_stale_parent(self):

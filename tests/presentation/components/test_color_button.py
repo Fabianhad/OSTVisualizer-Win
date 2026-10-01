@@ -30,13 +30,17 @@ class ColorButtonTests(unittest.TestCase):
         self.addCleanup(delete, button)
         changes = []
         button.colorChanged.connect(lambda: changes.append(button.color()))
-        color.setNamedColor("#ffffff")
+        color.setRgb(255, 255, 255)
         self.assertEqual(button.color().name(), "#123456")
-        button.set_color(QtGui.QColor("#abcdef"))
+        replacement = QtGui.QColor("#abcdef")
+        button.set_color(replacement)
+        replacement.setRgb(1, 2, 3)
         returned = button.color()
-        returned.setNamedColor("#000000")
+        returned.setRgb(0, 0, 0)
         self.assertEqual(button.color().name(), "#abcdef")
         self.assertEqual(button.toolTip(), "#abcdef")
+        center = button.icon().pixmap(24, 24).toImage().pixelColor(12, 12)
+        self.assertEqual(center.name(), "#abcdef")
         self.assertEqual(changes, [])
 
     def test_acceptance_preserves_each_callers_notification_policy(self):
@@ -81,6 +85,38 @@ class ColorButtonTests(unittest.TestCase):
                 self.assertEqual(changes, ["#abcdef"])
                 self.assertEqual(button.color().name(), "#abcdef")
                 self.assertEqual(button.toolTip(), "")
+
+    def test_rejected_or_invalid_selection_keeps_color_and_does_not_emit(self):
+        cases = (
+            (
+                "rejected",
+                QtWidgets.QDialog.DialogCode.Rejected,
+                QtGui.QColor("#abcdef"),
+            ),
+            ("invalid", QtWidgets.QDialog.DialogCode.Accepted, QtGui.QColor()),
+        )
+        for label, result, selected in cases:
+            with self.subTest(case=label):
+                button = ColorButton(
+                    QtGui.QColor("#123456"),
+                    show_color_tooltip=True,
+                    notify_on_unchanged=True,
+                )
+                self.addCleanup(delete, button)
+                changes = []
+                button.colorChanged.connect(lambda: changes.append(1))
+                with (
+                    patch.object(QtWidgets.QColorDialog, "exec", return_value=result),
+                    patch.object(
+                        QtWidgets.QColorDialog,
+                        "currentColor",
+                        return_value=selected,
+                    ),
+                ):
+                    button.click()
+                self.assertEqual(changes, [])
+                self.assertEqual(button.color().name(), "#123456")
+                self.assertEqual(button.toolTip(), "#123456")
 
 
 class ColorButtonConditionBehaviorTests(unittest.TestCase):
@@ -128,9 +164,10 @@ class ColorButtonConditionBehaviorTests(unittest.TestCase):
                 real_color_dialog,
                 "exec",
                 return_value=QtWidgets.QDialog.DialogCode.Rejected,
-            ):
+            ) as exec_mock:
                 for _ in range(100):
                     button._choose_color()
+            self.assertEqual(exec_mock.call_count, 100)
             self.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
             self.app.processEvents()
             self.assertEqual(button.findChildren(real_color_dialog), [])
