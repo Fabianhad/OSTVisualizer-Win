@@ -32,7 +32,7 @@ class RemoteProjectionBarrier:
         self._is_runtime_current = is_runtime_current
         self._on_complete = on_complete
         self._lock = threading.Lock()
-        self._pending: set[str] = set()
+        self._pending: dict[str, RemoteProjectionToken] = {}
         self._sealed = False
         self._failed = False
         self._completed = False
@@ -50,8 +50,9 @@ class RemoteProjectionBarrier:
                 raise ValueError(
                     f"Remote projection surface is already registered: {surface_id}"
                 )
-            self._pending.add(surface_id)
-        return RemoteProjectionToken(surface_id, self)
+            token = RemoteProjectionToken(surface_id, self)
+            self._pending[surface_id] = token
+        return token
 
     def seal(self) -> None:
         callback: Optional[Callable[[bool], None]] = None
@@ -75,9 +76,9 @@ class RemoteProjectionBarrier:
         callback: Optional[Callable[[bool], None]] = None
         completed_successfully = False
         with self._lock:
-            if self._completed or token.surface_id not in self._pending:
+            if self._completed or self._pending.get(token.surface_id) is not token:
                 return
-            self._pending.remove(token.surface_id)
+            del self._pending[token.surface_id]
             self._failed = self._failed or not success
             callback, completed_successfully = self._completion_locked()
         if callback is not None:

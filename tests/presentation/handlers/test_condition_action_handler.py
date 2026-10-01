@@ -2024,6 +2024,7 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
         bid_ref = BidRef("database", "1")
         bid_owner = SimpleNamespace(measure_base=0)
         folders = [{"f1": BidConditionFolder(uid="f1", name="Folder")}]
+        conditions = {}
         highlighted = []
         save_results = []
 
@@ -2047,16 +2048,19 @@ class ConditionActionHandlerConditionBehaviorTests(unittest.TestCase):
 
         def create_condition(*_args):
             folders[0] = {uid: replace(folder) for uid, folder in folders[0].items()}
+            conditions["new-condition"] = Condition(uid="new-condition", name="New")
             return SimpleNamespace(
                 write_success=True,
                 value="new-condition",
                 refresh_failed=False,
+                projection=None,
             )
 
         project_data = SimpleNamespace(
             get_bid=lambda _bid_ref: bid_owner,
             get_current_bid=lambda: bid_owner,
             get_bid_condition_folders=lambda: folders[0],
+            get_bid_conditions=lambda: conditions,
         )
         coordinator = SimpleNamespace(
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),

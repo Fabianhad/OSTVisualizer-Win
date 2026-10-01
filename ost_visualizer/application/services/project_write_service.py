@@ -45,6 +45,10 @@ from ..dtos.collaboration_resource_catalog import (
     parse_annotation_resource_id,
 )
 from ..dtos.condition_takeoff_reassignment import ConditionTakeoffReassignment
+from ..dtos.create_condition_result import (
+    CreateConditionResult,
+    CreatedConditionProjection,
+)
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
@@ -676,9 +680,13 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
     def create_condition_result(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec
-    ) -> WriteReloadResult:
+    ) -> CreateConditionResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
-            return WriteReloadResult(None, write_success=False, reload_success=False)
+            return CreateConditionResult(
+                None, write_success=False, reload_success=False
+            )
+        bid_ref = BidRef(db_path, str(bid_uid))
+        previous_bid = self._project_data.get_bid(bid_ref)
         parsed_bid_uid = int(bid_uid) if bid_uid else None
         collection = ResourceRef(
             "conditions_collection", bid_uid or "unknown", parsed_bid_uid
@@ -701,17 +709,49 @@ class ProjectWriteService(DatabaseMutationWriteService):
             else None
         )
         if new_uid is None:
-            return WriteReloadResult(None, write_success=False, reload_success=False)
-        return WriteReloadResult(
+            return CreateConditionResult(
+                None, write_success=False, reload_success=False
+            )
+        owns_reload = (
+            previous_bid is not None
+            and self._project_data.get_bid(bid_ref) is previous_bid
+        )
+        projection = None
+
+        def capture_projection() -> None:
+            nonlocal projection
+            if (
+                previous_bid is None
+                or not owns_reload
+                or self._project_data.get_current_bid_ref() != bid_ref
+            ):
+                return
+            bid = self._project_data.get_bid(bid_ref)
+            condition = self._project_data.get_bid_conditions().get(str(new_uid))
+            folder = (
+                self._project_data.get_bid_condition_folders().get(spec.folder_uid)
+                if spec.folder_uid
+                else None
+            )
+            if bid is None or condition is None or (spec.folder_uid and folder is None):
+                return
+            projection = CreatedConditionProjection(
+                previous_bid, bid, condition, folder
+            )
+
+        reload_success = self.reload_conditions_and_notify(
+            db_path,
+            bid_uid,
+            [str(new_uid)],
+            [],
+            [ChangeOperation.CREATE],
+            on_projected=capture_projection,
+        )
+        return CreateConditionResult(
             new_uid,
             write_success=True,
-            reload_success=self.reload_conditions_and_notify(
-                db_path,
-                bid_uid,
-                [str(new_uid)],
-                [],
-                [ChangeOperation.CREATE],
-            ),
+            reload_success=reload_success,
+            projection=projection,
         )
 
     def create_condition_folder_result(
@@ -1105,6 +1145,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         change_operations: list[ChangeOperation],
         *,
         invalidates_undo: bool = False,
+        on_projected: Optional[Callable[[], None]] = None,
     ) -> bool:
         operations = set(change_operations)
         family_only = bool(operations) and operations <= {
@@ -1144,6 +1185,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
             if not projected:
                 if not self.reload_database(file_path):
                     return False
+                if on_projected is not None:
+                    on_projected()
                 self._event_bus.publish(
                     AppEvents.DATABASE_REFRESHED,
                     file_path=file_path,
@@ -1152,6 +1195,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 return True
         if not projected and not self.reload_database(file_path):
             return False
+        if on_projected is not None:
+            on_projected()
         self._publish_conditions_changed(
             file_path,
             bid_uid,
@@ -3920,6 +3965,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        updates = deepcopy(updates)
         collection = ResourceRef("project_bids", project_uid or "orphan")
         default_layers = ResourceRef("default_layers_collection", "database")
         master_dependencies = tuple(
@@ -4371,6 +4417,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        updates = deepcopy(updates)
         bid_value = int(bid_uid)
         bid_resource = ResourceRef("bid", bid_uid, bid_value)
         page_collection = ResourceRef("pages_collection", bid_uid, bid_value)
@@ -4470,7 +4517,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
-        values = dict(changes or {})
+        values = deepcopy(changes or {})
         new_items = list(values.get("new") or ())
         updated_items = list(values.get("updated") or ())
         deleted_uids = self._unique_nonempty_uids(values.get("deleted_uids") or [])
@@ -4649,6 +4696,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> int:
         if operation not in {"rename", "show", "show_all", "reorder"}:
             raise ValueError("Unsupported default-layer update")
+        values = deepcopy(values)
         collection = ResourceRef("default_layers_collection", "database")
         payload = ProjectWritePayload.from_values(
             "save_default_layers", {"operation": operation, **values}
@@ -4758,7 +4806,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
-        values = dict(changes or {})
+        values = deepcopy(changes or {})
         new_items = list(values.get("new") or ())
         updated_items = list(values.get("updated") or ())
         deleted_uids = self._unique_nonempty_uids(values.get("deleted_uids") or [])
@@ -4955,6 +5003,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         spec: CreateConditionSpec,
         callback: Callable[[QueuedMutationResult], None],
     ) -> int:
+        spec = deepcopy(spec)
         bid_value = int(bid_uid)
         collection = ResourceRef("conditions_collection", bid_uid, bid_value)
         payload = ProjectWritePayload.from_values(
@@ -5166,6 +5215,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         edit_lease_handle: Optional[EditLeaseHandle] = None,
     ) -> int:
+        changes = deepcopy(changes)
         valid_uids = self._unique_nonempty_uids(condition_uids)
         if not valid_uids or not changes:
             raise ValueError("A queued condition update requires items and changes")

@@ -14,11 +14,17 @@ from ost_visualizer.domain.entities.shape import (
 
 class ShapeSpecTests(unittest.TestCase):
     def test_shape_families_and_half_dimensions_are_distinct(self):
-        self.assertTrue(ShapeSpec(CIRCLE, 8, 4).is_ellipse)
+        circle = ShapeSpec(CIRCLE, 8, 4)
+        self.assertTrue(circle.is_ellipse)
+        self.assertFalse(circle.is_polygon)
+        self.assertIsNone(circle.polygon_params)
         polygon = ShapeSpec(HEXAGON, 8, 4)
         self.assertTrue(polygon.is_polygon)
+        self.assertFalse(polygon.is_ellipse)
         self.assertEqual(polygon.polygon_params, (6, 0))
         rectangle = ShapeSpec(RECTANGLE, 8, 4)
+        self.assertFalse(rectangle.is_ellipse)
+        self.assertFalse(rectangle.is_polygon)
         self.assertEqual((rectangle.half_width, rectangle.half_depth), (4, 2))
         self.assertIsNone(rectangle.polygon_params)
 

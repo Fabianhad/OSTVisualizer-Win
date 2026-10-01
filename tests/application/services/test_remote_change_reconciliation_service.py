@@ -1,46 +1,14 @@
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
 from ost_visualizer.application.dtos.collaboration_dtos import (
-    AuthoritativeMutationResult,
     ChangeOperation,
-    CollaborationMutationType,
-    CollaborationPollingPolicy,
-    CollaborationShutdownState,
-    CollaborationStatus,
     ConcurrencyToken,
-    DatabaseChange,
-    DatabaseChangeBatch,
-    DatabaseChangePollResult,
-    DatabaseMutationRequest,
-    DatabaseMutationResult,
-    DatabaseSession,
-    DurableOperationResult,
-    EditLeaseHandle,
-    EditLeaseLoss,
-    EditLeaseResult,
     HydratedDatabaseChangeBatch,
-    MutationExecutionResult,
-    MutationOutcomeStatus,
-    PendingMutationState,
-    PendingSqlOperationRecord,
-    PresenceMode,
-    QueuedMutationRequest,
-    QueuedMutationResult,
     ReconciliationFailureKind,
     ReconciliationResult,
-    ResourceLock,
     ResourceRef,
-    SynchronizationConflict,
-    SynchronizationConflictKind,
-    SynchronizationState,
     queued_takeoff_preview_uid,
-    session_identities_equal,
-)
-from ost_visualizer.application.dtos.collaboration_resource_catalog import (
-    COLLABORATION_RESOURCE_CATALOG,
-    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
-    SUPPORTED_REMOTE_RESOURCE_TYPES,
-    CollaborationResourceFamily,
-    coalesced_resource_type,
 )
 from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
@@ -49,10 +17,6 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.conflict_resolution_service import (
     ConflictResolutionService,
 )
-from ost_visualizer.application.services.database_concurrency_token_service import (
-    DatabaseConcurrencyTokenService,
-)
-from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
 from ost_visualizer.application.services.remote_change_reconciliation_service import (
     RemoteChangeReconciliationService,
 )
@@ -66,26 +30,495 @@ from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from tests.helpers.sql.collaboration import (
+from tests.application.services.reconciliation_support import (
     _EventBus,
     _ProjectData,
     _TokenReader,
     _batch,
     _change,
+    _cover_sheet,
     _token_service,
 )
 
 
 class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
-    def test_layer_rename_impact_matches_local_and_remote_projection(self):
-        from dataclasses import replace
-        from ost_visualizer.domain.entities.layer import BidLayer
+    @staticmethod
+    def _make_service(database_id="database"):
+        data = _ProjectData(database_id)
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            data, events, tokens, drafts, ConflictResolutionService()
+        )
+        return service, data, events, tokens
 
+    def test_navigation_owner_requires_exact_bid_and_database_lifetime(self):
+        service, data, _events, _tokens = self._make_service()
+        owner = service.capture_navigation_owner("database")
+        self.assertIs(owner, data.bid)
+        self.assertTrue(service.navigation_owner_is_current("database", owner))
+        self.assertIsNone(service.capture_navigation_owner("other-database"))
+        self.assertFalse(service.navigation_owner_is_current("other-database", owner))
+        data.bid = replace(data.bid)
+        self.assertFalse(service.navigation_owner_is_current("database", owner))
+        replacement_owner = service.capture_navigation_owner("database")
+        self.assertIs(replacement_owner, data.bid)
+        data.bid_ref = BidRef("database", "9")
+        data.bid = replace(data.bid, uid="9")
+        self.assertFalse(
+            service.navigation_owner_is_current("database", replacement_owner)
+        )
+        other_bid = service.capture_navigation_owner("database")
+        self.assertIs(other_bid, data.bid)
+        data.bid_ref = None
+        self.assertFalse(
+            service.navigation_owner_is_current("database", replacement_owner)
+        )
+        self.assertIsNone(service.capture_navigation_owner("database"))
+        self.assertTrue(service.navigation_owner_is_current("database", None))
+
+    def test_foreign_bid_or_database_updates_tokens_without_active_family_projection(
+        self,
+    ):
+        for database_id, bid_uid in (("database", 9), ("other-database", 8)):
+            with self.subTest(database=database_id, bid=bid_uid):
+                service, data, events, tokens = self._make_service()
+                owner = data.bid
+                original = Condition(uid="42", name="Active")
+                data.conditions = {"42": original}
+                resource = ResourceRef("condition", "42", bid_uid)
+                change = _change(database_id, resource, 7)
+                hydrated = HydratedDatabaseChangeBatch(
+                    _batch(database_id, "epoch", 1, 7, (change,)),
+                    conditions_by_bid={
+                        bid_uid: {"42": Condition(uid="42", name="Foreign")}
+                    },
+                    condition_folders_by_bid={bid_uid: {}},
+                )
+                self.assertTrue(service.apply(hydrated).applied)
+                self.assertIs(data.conditions["42"], original)
+                self.assertIs(data.bid, owner)
+                self.assertEqual(data.merges, [])
+                self.assertEqual(events.published, [])
+                self.assertEqual(
+                    tokens.expected_versions(database_id, (resource,))[0].expected,
+                    change.resulting_version,
+                )
+                other_scope = ResourceRef("condition", "42", 8 if bid_uid == 9 else 9)
+                self.assertEqual(
+                    tokens.expected_versions(database_id, (other_scope,)), ()
+                )
+                if database_id != "database":
+                    self.assertEqual(
+                        tokens.expected_versions("database", (resource,)), ()
+                    )
+
+    def test_master_data_requires_complete_snapshots_but_accepts_empty_collections(
+        self,
+    ):
+        cases = (
+            ("default_layers_collection", "default_layers", None),
+            ("job_statuses_collection", "job_statuses", "used_job_status_uids"),
+            ("employees_collection", "employees", "used_employee_uids"),
+            ("pay_classes_collection", "pay_classes", None),
+        )
+        for resource_type, snapshot_field, usage_field in cases:
+            for missing in (
+                (snapshot_field, usage_field) if usage_field else (snapshot_field,)
+            ):
+                with self.subTest(resource=resource_type, missing=missing):
+                    service, data, events, tokens = self._make_service()
+                    data.database_settings["database"] = {
+                        "defaults": {"next_bid_no": 4}
+                    }
+                    resource = ResourceRef(resource_type, "database")
+                    batch = _batch(
+                        "database", "epoch", 1, 2, (_change("database", resource, 2),)
+                    )
+                    values = {snapshot_field: ()}
+                    if usage_field:
+                        values[usage_field] = frozenset()
+                    incomplete = dict(values)
+                    incomplete.pop(missing)
+                    result = service.apply(
+                        HydratedDatabaseChangeBatch(batch, **incomplete)
+                    )
+                    self.assertEqual(
+                        result,
+                        ReconciliationResult(
+                            applied=False,
+                            failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD,
+                        ),
+                    )
+                    self.assertEqual(
+                        data.database_settings,
+                        {"database": {"defaults": {"next_bid_no": 4}}},
+                    )
+                    self.assertEqual(events.published, [])
+                    self.assertEqual(
+                        tokens.expected_versions("database", (resource,)), ()
+                    )
+                    self.assertTrue(
+                        service.apply(
+                            HydratedDatabaseChangeBatch(batch, **values)
+                        ).applied
+                    )
+                    self.assertEqual(
+                        data.database_settings["database"],
+                        {"defaults": {"next_bid_no": 4}, **values},
+                    )
+                    self.assertEqual(
+                        events.published,
+                        [
+                            (
+                                AppEvents.REMOTE_MASTER_DATA_CHANGED,
+                                {
+                                    "database_id": "database",
+                                    "families": [snapshot_field],
+                                },
+                            )
+                        ],
+                    )
+                    self.assertEqual(
+                        tokens.expected_versions("database", (resource,))[0].expected,
+                        batch.changes[0].resulting_version,
+                    )
+
+    def test_empty_authoritative_condition_and_area_families_clear_old_state(self):
+        service, data, events, _tokens = self._make_service()
+        data.conditions = {"42": Condition(uid="42")}
+        data.folders = {"5": BidConditionFolder(uid="5", name="Old")}
+        data.areas = (BidArea("6", "8", "0", "Old", 1),)
+        batch = _batch(
+            "database",
+            "epoch",
+            1,
+            2,
+            (
+                _change("database", ResourceRef("conditions_collection", "8", 8), 1),
+                _change("database", ResourceRef("areas_collection", "8", 8), 2),
+            ),
+        )
+        self.assertTrue(
+            service.apply(
+                HydratedDatabaseChangeBatch(
+                    batch,
+                    conditions_by_bid={8: {}},
+                    condition_folders_by_bid={8: {}},
+                    areas_by_bid={8: ()},
+                )
+            ).applied
+        )
+        self.assertEqual((data.conditions, data.folders, data.areas), ({}, {}, ()))
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [AppEvents.CONDITIONS_CHANGED, AppEvents.REMOTE_AREAS_CHANGED],
+        )
+        self.assertEqual(events.published[1][1]["area_uids"], [])
+
+    def test_inactive_database_snapshots_do_not_replace_active_workspace(self):
+        service, data, events, tokens = self._make_service("active-database")
+        owner = data.bid
+        condition = Condition(uid="42", name="Active")
+        data.conditions = {"42": condition}
+        resource = ResourceRef("cover_sheet", "8", 8)
+        change = _change("other-database", resource, 2)
+        cover = _cover_sheet()
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch("other-database", "epoch", 1, 2, (change,)),
+            cover_sheet_by_bid={8: cover},
+            page_delete_content_uids_by_bid={8: frozenset({"20"})},
+            settings_defaults={"next_bid_no": 12},
+        )
+        self.assertTrue(service.apply(hydrated).applied)
+        self.assertEqual(data.cover_sheets, {("other-database", "8"): cover})
+        self.assertEqual(
+            data.page_delete_content, {("other-database", "8"): frozenset({"20"})}
+        )
+        self.assertEqual(
+            data.database_settings,
+            {"other-database": {"defaults": {"next_bid_no": 12}}},
+        )
+        self.assertIs(data.bid, owner)
+        self.assertIs(data.conditions["42"], condition)
+        self.assertEqual(data.merges, [])
+        self.assertEqual(events.published, [])
+        self.assertEqual(
+            tokens.expected_versions("other-database", (resource,))[0].expected,
+            change.resulting_version,
+        )
+
+    def test_malformed_takeoff_contracts_leave_live_state_and_tokens_untouched(self):
+        valid = Takeoff(uid="30", page_uid="20", condition_uid="10")
+        cases = {
+            "not_takeoff": [object()],
+            "duplicate_uid": [valid, replace(valid)],
+            "empty_uid": [replace(valid, uid="")],
+            "missing_page": [replace(valid, page_uid="999")],
+            "cross_page_parent": [
+                valid,
+                Takeoff(uid="31", page_uid="21", condition_uid="10", parent_uid="30"),
+            ],
+        }
+        for label, takeoffs in cases.items():
+            with self.subTest(case=label):
+                service, data, events, tokens = self._make_service()
+                data.conditions = {"10": Condition(uid="10")}
+                data.takeoffs = [valid]
+                retained = data.takeoffs
+                resource = ResourceRef("takeoffs_collection", "8", 8)
+                result = service.apply(
+                    HydratedDatabaseChangeBatch(
+                        _batch(
+                            "database",
+                            "epoch",
+                            1,
+                            2,
+                            (_change("database", resource, 2),),
+                        ),
+                        bid_data_by_bid={
+                            8: BidLoadResult(
+                                bid_takeoffs=takeoffs,
+                                pages={
+                                    "20": Page(uid="20", name="First"),
+                                    "21": Page(uid="21", name="Second"),
+                                },
+                            )
+                        },
+                    )
+                )
+                self.assertEqual(
+                    result,
+                    ReconciliationResult(
+                        applied=False,
+                        failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD,
+                    ),
+                )
+                self.assertIs(data.takeoffs, retained)
+                self.assertEqual(data.merges, [])
+                self.assertEqual(events.published, [])
+                self.assertEqual(tokens.expected_versions("database", (resource,)), ())
+
+    def test_rejected_single_family_merge_does_not_publish_or_advance_tokens(self):
+        for family, method, payload in (
+            (
+                "condition",
+                "replace_condition_family",
+                {"conditions_by_bid": {8: {}}, "condition_folders_by_bid": {8: {}}},
+            ),
+            ("area", "replace_bid_areas", {"areas_by_bid": {8: ()}}),
+            (
+                "layer",
+                "replace_remote_bid_families",
+                {"bid_data_by_bid": {8: BidLoadResult()}},
+            ),
+        ):
+            with self.subTest(family=family):
+                service, data, events, tokens = self._make_service()
+                resource = ResourceRef(family, "42", 8)
+                with patch.object(data, method, return_value=False) as merge:
+                    result = service.apply(
+                        HydratedDatabaseChangeBatch(
+                            _batch(
+                                "database",
+                                "epoch",
+                                1,
+                                2,
+                                (_change("database", resource, 2),),
+                            ),
+                            **payload
+                        )
+                    )
+                self.assertEqual(result, ReconciliationResult(applied=False))
+                merge.assert_called_once()
+                self.assertEqual(data.merges, [])
+                self.assertEqual(events.published, [])
+                self.assertEqual(tokens.expected_versions("database", (resource,)), ())
+
+    def test_local_condition_delete_invalidates_history_unlike_local_update(self):
+        for operation in (ChangeOperation.UPDATE, ChangeOperation.DELETE):
+            with self.subTest(operation=operation):
+                service, data, events, _tokens = self._make_service()
+                data.conditions = {"42": Condition(uid="42", name="Old")}
+                replacement = (
+                    {"42": Condition(uid="42", name="New")}
+                    if operation == ChangeOperation.UPDATE
+                    else {}
+                )
+                self.assertTrue(
+                    service.apply(
+                        HydratedDatabaseChangeBatch(
+                            _batch(
+                                "database",
+                                "epoch",
+                                1,
+                                2,
+                                (
+                                    _change(
+                                        "database",
+                                        ResourceRef("condition", "42", 8),
+                                        2,
+                                        changed_fields=("name",),
+                                        operation=operation,
+                                    ),
+                                ),
+                            ),
+                            conditions_by_bid={8: replacement},
+                            condition_folders_by_bid={8: {}},
+                        ),
+                        local_completion=True,
+                    ).applied
+                )
+                self.assertEqual(data.conditions, replacement)
+                self.assertEqual(len(events.published), 1)
+                event, payload = events.published[0]
+                self.assertIs(event, AppEvents.CONDITIONS_CHANGED)
+                self.assertEqual(
+                    payload["invalidates_undo"], operation == ChangeOperation.DELETE
+                )
+                self.assertEqual(payload["condition_uids"], ["42"])
+                self.assertEqual(payload["change_operations"], [operation.value])
+
+    def test_unclassified_condition_collection_projects_every_authoritative_condition(
+        self,
+    ):
+        service, data, events, _tokens = self._make_service()
+        completed = []
+        barrier = RemoteProjectionBarrier(
+            database_id="database",
+            runtime_generation=3,
+            is_runtime_current=lambda *_args: True,
+            on_complete=completed.append,
+        )
+        conditions = {uid: Condition(uid=uid) for uid in ("42", "10")}
+        self.assertTrue(
+            service.apply(
+                HydratedDatabaseChangeBatch(
+                    _batch(
+                        "database",
+                        "epoch",
+                        1,
+                        2,
+                        (
+                            _change(
+                                "database",
+                                ResourceRef("conditions_collection", "8", 8),
+                                2,
+                            ),
+                        ),
+                    ),
+                    conditions_by_bid={8: conditions},
+                    condition_folders_by_bid={8: {}},
+                ),
+                barrier,
+            ).applied
+        )
+        self.assertEqual(data.conditions, conditions)
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [AppEvents.CONDITIONS_CHANGED, AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED],
+        )
+        projection = events.published[1][1]
+        self.assertEqual(projection["condition_uids"], ("10", "42"))
+        self.assertEqual(projection["condition_changed_fields"], ())
+        self.assertIs(projection["barrier"], barrier)
+        self.assertEqual(
+            completed, []
+        )  # Rendering consumers, not reconciliation, own completion.
+
+    def test_annotation_identity_is_typed_and_unknown_scope_stays_conservative(self):
+        for resource_type, uid, expected in (
+            ("annotation", "text/42", {"annotations": ("20", "21")}),
+            ("annotation", "line/42", {"annotations": ("22",)}),
+            ("annotation", "text/999", {}),
+            ("annotation", "malformed", {}),
+            ("annotations_collection", "8", {}),
+        ):
+            with self.subTest(resource_type=resource_type, uid=uid):
+                service, data, events, _tokens = self._make_service()
+                data.annotations = [
+                    BidAnnotation(uid="42", annotation_type="text", page_uid="20"),
+                    BidAnnotation(uid="42", annotation_type="line", page_uid="22"),
+                ]
+                updated = [
+                    replace(data.annotations[0], page_uid="21"),
+                    data.annotations[1],
+                ]
+                self.assertTrue(
+                    service.apply(
+                        HydratedDatabaseChangeBatch(
+                            _batch(
+                                "database",
+                                "epoch",
+                                1,
+                                2,
+                                (
+                                    _change(
+                                        "database",
+                                        ResourceRef(resource_type, uid, 8),
+                                        2,
+                                    ),
+                                ),
+                            ),
+                            bid_data_by_bid={8: BidLoadResult(bid_annotations=updated)},
+                        )
+                    ).applied
+                )
+                self.assertEqual(data.annotations, updated)
+                self.assertEqual(len(events.published), 1)
+                self.assertIs(
+                    events.published[0][0], AppEvents.REMOTE_BID_CONTENT_CHANGED
+                )
+                self.assertEqual(
+                    events.published[0][1]["affected_page_uids_by_family"], expected
+                )
+
+    def test_takeoff_collection_or_unknown_identity_refreshes_old_and_new_pages(self):
+        for resource_type, uid in (("takeoffs_collection", "8"), ("takeoff", "999")):
+            with self.subTest(resource_type=resource_type):
+                service, data, events, _tokens = self._make_service()
+                data.conditions = {"10": Condition(uid="10")}
+                data.takeoffs = [Takeoff(uid="30", page_uid="20", condition_uid="10")]
+                updated = Takeoff(uid="31", page_uid="21", condition_uid="10")
+                self.assertTrue(
+                    service.apply(
+                        HydratedDatabaseChangeBatch(
+                            _batch(
+                                "database",
+                                "epoch",
+                                1,
+                                2,
+                                (
+                                    _change(
+                                        "database",
+                                        ResourceRef(resource_type, uid, 8),
+                                        2,
+                                    ),
+                                ),
+                            ),
+                            bid_data_by_bid={
+                                8: BidLoadResult(
+                                    bid_takeoffs=[updated],
+                                    pages={"21": Page(uid="21", name="New")},
+                                )
+                            },
+                        )
+                    ).applied
+                )
+                self.assertEqual(data.takeoffs, [updated])
+                self.assertEqual(len(events.published), 1)
+                self.assertEqual(
+                    events.published[0][1]["affected_page_uids_by_family"],
+                    {"takeoffs": ("20", "21")},
+                )
+
+    def test_layer_rename_impact_matches_local_and_remote_projection(self):
         for name, fields, changes, expected in (
             ("Walls", ("name",), {"name": "Partitions"}, True),
             ("Image", ("name",), {"name": "Partitions"}, False),
@@ -134,8 +567,26 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                         )
                         self.assertTrue(result.applied)
                         self.assertEqual(data.layers, [updated])
+                        self.assertIs(data.layers[0], updated)
+                        self.assertEqual(
+                            [event for event, _payload in events.published],
+                            [AppEvents.REMOTE_BID_CONTENT_CHANGED]
+                            + (
+                                [AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED]
+                                if deferred
+                                else []
+                            ),
+                        )
                         for event, payload in events.published:
+                            self.assertEqual(payload["database_id"], "database")
+                            self.assertEqual(payload["bid_uid"], "8")
                             if event is AppEvents.REMOTE_BID_CONTENT_CHANGED:
+                                self.assertEqual(payload["local_completion"], local)
+                                self.assertEqual(payload["families"], ["layers"])
+                                self.assertEqual(
+                                    payload["resource_uids_by_family"],
+                                    {"layers": ["20"]},
+                                )
                                 self.assertEqual(
                                     payload["mesh_scene_unchanged"], expected
                                 )
@@ -176,8 +627,10 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                 ):
                     events = _EventBus()
                     tokens, drafts = _token_service()
+                    data = _ProjectData("database")
+                    data.pages = {"20": Page(uid="20", name="Old")}
                     service = RemoteChangeReconciliationService(
-                        _ProjectData("database"),
+                        data,
                         events,
                         tokens,
                         drafts,
@@ -189,12 +642,15 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                         changed_fields=fields,
                         operation=operation,
                     )
+                    updated_pages = (
+                        {}
+                        if operation == ChangeOperation.DELETE
+                        else {"20": Page(uid="20", name="Sheet")}
+                    )
                     hydrated = HydratedDatabaseChangeBatch(
                         _batch("database", "epoch", 1, 2, (change,)),
-                        bid_data_by_bid={
-                            8: BidLoadResult(pages={"20": Page(uid="20", name="Sheet")})
-                        },
-                        cover_sheet_by_bid={8: object()},
+                        bid_data_by_bid={8: BidLoadResult(pages=updated_pages)},
+                        cover_sheet_by_bid={8: _cover_sheet()},
                         page_delete_content_uids_by_bid={8: frozenset()},
                     )
                     self.assertTrue(
@@ -208,6 +664,11 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                         if event is AppEvents.REMOTE_BID_CONTENT_CHANGED
                     ]
                     self.assertEqual(len(content), 1)
+                    self.assertEqual(data.pages, updated_pages)
+                    self.assertEqual(
+                        [event for event, _payload in events.published],
+                        [AppEvents.REMOTE_BID_CONTENT_CHANGED],
+                    )
                     self.assertEqual(content[0]["image_sources_unchanged"], expected)
                     self.assertEqual(
                         content[0]["mesh_scene_unchanged"],
@@ -226,10 +687,19 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                         is_runtime_current=lambda *_args: True,
                         on_complete=lambda _success: None,
                     )
-                    service.apply(
+                    deferred_result = service.apply(
                         hydrated,
                         local_completion=local_completion,
                         projection_barrier=barrier,
+                    )
+                    self.assertTrue(deferred_result.applied)
+                    self.assertEqual(data.pages, updated_pages)
+                    self.assertEqual(
+                        [event for event, _payload in events.published],
+                        [
+                            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                            AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+                        ],
                     )
                     projections = [
                         payload
@@ -285,11 +755,22 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             },
         )
         self.assertTrue(service.apply(hydrated).applied)
-        self.assertEqual(set(project_data.conditions), {"42"})
-        self.assertEqual([area.uid for area in project_data.areas], ["6"])
+        self.assertEqual(project_data.conditions, hydrated.conditions_by_bid[8])
+        self.assertIs(
+            project_data.conditions["42"], hydrated.conditions_by_bid[8]["42"]
+        )
+        self.assertEqual(project_data.areas, hydrated.areas_by_bid[8])
+        self.assertEqual(
+            project_data.merges,
+            [
+                ("conditions", BidRef(database_id, "8")),
+                ("areas", BidRef(database_id, "8")),
+            ],
+        )
         names = [event for event, _payload in events.published]
-        self.assertEqual(names.count(AppEvents.CONDITIONS_CHANGED), 1)
-        self.assertEqual(names.count(AppEvents.REMOTE_AREAS_CHANGED), 1)
+        self.assertEqual(
+            names, [AppEvents.CONDITIONS_CHANGED, AppEvents.REMOTE_AREAS_CHANGED]
+        )
         condition_event = next(
             payload
             for event, payload in events.published
@@ -352,6 +833,9 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         ]
         self.assertEqual(len(projected), 1)
         self.assertEqual(projected[0]["runtime_generation"], 5)
+        self.assertIs(projected[0]["barrier"], barrier)
+        self.assertEqual(projected[0]["database_id"], database_id)
+        self.assertEqual(projected[0]["bid_uid"], "8")
         self.assertEqual(projected[0]["condition_uids"], ("42",))
         self.assertEqual(projected[0]["condition_changed_fields"], ("name",))
         self.assertTrue(projected[0]["areas_changed"])
@@ -439,6 +923,21 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                                 hydrated, barrier, local_completion=local
                             ).applied
                         )
+                        self.assertEqual(data.takeoffs, [takeoff])
+                        self.assertEqual(data.areas, hydrated.areas_by_bid[8])
+                        self.assertEqual(
+                            [event for event, _payload in events.published],
+                            ([AppEvents.CONDITIONS_CHANGED] if has_condition else [])
+                            + [
+                                AppEvents.REMOTE_AREAS_CHANGED,
+                                AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                            ]
+                            + (
+                                [AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED]
+                                if deferred
+                                else []
+                            ),
+                        )
                         area = next(
                             payload
                             for event, payload in events.published
@@ -488,12 +987,23 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             },
         )
         self.assertTrue(service.apply(hydrated, local_completion=True).applied)
+        self.assertEqual(project_data.areas, hydrated.areas_by_bid[8])
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [AppEvents.REMOTE_AREAS_CHANGED],
+        )
         area_event = next(
             payload
             for event, payload in events.published
             if event is AppEvents.REMOTE_AREAS_CHANGED
         )
         self.assertTrue(area_event["local_completion"])
+        self.assertTrue(area_event["summary_refresh_required"])
+        self.assertFalse(area_event["takeoff_family_pending"])
+        self.assertEqual(
+            (area_event["database_id"], area_event["bid_uid"], area_event["area_uids"]),
+            (database_id, "8", ["6"]),
+        )
 
     def test_local_condition_completion_is_identified_on_granular_event(self):
         database_id = "database"
@@ -522,6 +1032,11 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             condition_folders_by_bid={8: {}},
         )
         self.assertTrue(service.apply(hydrated, local_completion=True).applied)
+        self.assertEqual(project_data.conditions, hydrated.conditions_by_bid[8])
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [AppEvents.CONDITIONS_CHANGED],
+        )
         condition_event = next(
             payload
             for event, payload in events.published
@@ -559,7 +1074,9 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                 ),
             ),
             conditions_by_bid={8: {"42": Condition(uid="42", name="Walls")}},
-            condition_folders_by_bid={8: {"5": object()}},
+            condition_folders_by_bid={
+                8: {"5": BidConditionFolder(uid="5", name="Renamed")}
+            },
         )
         barrier = RemoteProjectionBarrier(
             database_id=database_id,
@@ -576,6 +1093,11 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         self.assertEqual(condition_event["condition_uids"], [])
         self.assertEqual(condition_event["changed_fields"], ["condition_folder"])
         self.assertEqual(condition_event["change_operations"], [])
+        self.assertEqual(project_data.folders, hydrated.condition_folders_by_bid[8])
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [AppEvents.CONDITIONS_CHANGED],
+        )
         self.assertFalse(
             any(
                 event is AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED
@@ -630,6 +1152,12 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         self.assertEqual(len(content_events), 1)
         self.assertEqual(content_events[0]["families"], ["takeoffs"])
         self.assertEqual(len(projection_events), 1)
+        self.assertEqual(project_data.takeoffs, [takeoff])
+        self.assertIs(project_data.takeoffs[0], takeoff)
+        self.assertEqual(
+            projection_events[0]["resource_uids_by_family"], {"takeoffs": ("30",)}
+        )
+        self.assertIs(projection_events[0]["barrier"], barrier)
 
     def test_remote_takeoff_projection_carries_old_and_new_page_ownership(self):
         database_id = "database"
@@ -731,6 +1259,11 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             content["affected_page_uids_by_family"], {"takeoffs": ("page-2",)}
         )
         self.assertFalse(content["condition_family_projected"])
+        self.assertEqual(project_data.takeoffs, [])
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [AppEvents.REMOTE_BID_CONTENT_CHANGED],
+        )
 
     def test_remote_annotation_projection_carries_old_and_new_page_ownership(self):
         database_id = "database"
@@ -793,6 +1326,15 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             projection["affected_page_uids_by_family"],
             {"annotations": ("page-1", "page-2")},
         )
+        self.assertEqual(project_data.annotations, [moved_annotation])
+        self.assertIs(project_data.annotations[0], moved_annotation)
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [
+                AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+            ],
+        )
 
     def test_local_takeoff_projection_replaces_transient_identity_as_one_change(self):
         database_id = "database"
@@ -805,6 +1347,10 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         operation_id = "54a05683-1032-431d-b57b-3552317fc74b"
         preview_uid = queued_takeoff_preview_uid(operation_id, 0)
+        project_data.takeoffs = [
+            Takeoff(uid=preview_uid, condition_uid="10", page_uid="20")
+        ]
+        project_data.transient_takeoffs = {preview_uid: project_data.takeoffs[0]}
         takeoff = Takeoff(uid="30", condition_uid="10", page_uid="20")
         hydrated = HydratedDatabaseChangeBatch(
             _batch(
@@ -832,6 +1378,9 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         self.assertTrue(service.apply(hydrated, barrier, local_completion=True).applied)
         self.assertEqual(project_data.removed_transient_takeoff_uids, [preview_uid])
+        self.assertEqual(project_data.transient_takeoffs, {})
+        self.assertEqual(project_data.takeoffs, [takeoff])
+        self.assertIs(project_data.takeoffs[0], takeoff)
         content = next(
             payload
             for event, payload in events.published
@@ -852,7 +1401,7 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             tuple(sorted((preview_uid, "30"))),
         )
 
-    def test_self_only_checkpoint_does_not_schedule_plan_projection(self):
+    def test_empty_checkpoint_does_not_publish_or_schedule_plan_projection(self):
         database_id = "database"
         events = _EventBus()
         tokens, drafts = _token_service()
@@ -875,22 +1424,15 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                 barrier,
             ).applied
         )
-        self.assertNotIn(
-            AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
-            [event for event, _payload in events.published],
-        )
+        self.assertEqual(events.published, [])
 
     def test_hierarchy_only_change_does_not_schedule_plan_projection(self):
         database_id = "database"
         events = _EventBus()
         tokens, drafts = _token_service()
-
-        class _HierarchyProjectData(_ProjectData):
-            def replace_database_hierarchy(self, _file_entry, _cdn_types):
-                pass
-
+        project_data = _ProjectData(database_id)
         service = RemoteChangeReconciliationService(
-            _HierarchyProjectData(database_id),
+            project_data,
             events,
             tokens,
             drafts,
@@ -919,20 +1461,20 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         self.assertTrue(service.apply(hydrated, barrier).applied)
         published = [event for event, _payload in events.published]
-        self.assertIn(AppEvents.REMOTE_HIERARCHY_CHANGED, published)
-        self.assertNotIn(AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED, published)
+        self.assertEqual(published, [AppEvents.REMOTE_HIERARCHY_CHANGED])
+        self.assertEqual(project_data.hierarchy, {database_id: (hierarchy_file, {})})
+        self.assertIs(project_data.hierarchy[database_id][0], hierarchy_file)
+        self.assertEqual(
+            project_data.database_settings[database_id]["defaults"], {"next_bid_no": 1}
+        )
 
     def test_mixed_hierarchy_condition_event_assigns_sidebar_refresh_to_condition(self):
         database_id = "database"
         events = _EventBus()
         tokens, drafts = _token_service()
-
-        class _HierarchyProjectData(_ProjectData):
-            def replace_database_hierarchy(self, _file_entry, _cdn_types):
-                pass
-
+        project_data = _ProjectData(database_id)
         service = RemoteChangeReconciliationService(
-            _HierarchyProjectData(database_id),
+            project_data,
             events,
             tokens,
             drafts,
@@ -964,6 +1506,12 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             if event is AppEvents.REMOTE_HIERARCHY_CHANGED
         )
         self.assertTrue(hierarchy_event["condition_family_projected"])
+        self.assertIs(project_data.hierarchy[database_id][0], hydrated.hierarchy_file)
+        self.assertEqual(project_data.conditions, hydrated.conditions_by_bid[8])
+        self.assertEqual(
+            [event for event, _payload in events.published],
+            [AppEvents.REMOTE_HIERARCHY_CHANGED, AppEvents.CONDITIONS_CHANGED],
+        )
         self.assertEqual(
             sum(
                 event is AppEvents.CONDITIONS_CHANGED
@@ -976,13 +1524,9 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         database_id = "database"
         events = _EventBus()
         tokens, drafts = _token_service()
-
-        class _ConditionTypeProjectData(_ProjectData):
-            def replace_database_hierarchy(self, _file_entry, _cdn_types):
-                pass
-
+        project_data = _ProjectData(database_id)
         service = RemoteChangeReconciliationService(
-            _ConditionTypeProjectData(database_id),
+            project_data,
             events,
             tokens,
             drafts,
@@ -1030,24 +1574,20 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         self.assertEqual(condition_event["changed_fields"], ["condition_type_catalog"])
         published = [event for event, _payload in events.published]
-        self.assertNotIn(AppEvents.REMOTE_HIERARCHY_CHANGED, published)
-        self.assertNotIn(AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED, published)
+        self.assertEqual(published, [AppEvents.CONDITIONS_CHANGED])
+        self.assertIs(project_data.hierarchy[database_id][0], hierarchy_file)
+        self.assertEqual(project_data.hierarchy[database_id][1], hydrated.cdn_types)
+        self.assertFalse(condition_event["invalidates_undo"])
 
-    def test_initial_sql_hierarchy_registration_includes_cdn_types(self):
+    def test_inactive_database_hierarchy_registration_includes_condition_types(self):
         database_id = "sql-database"
-        registered = []
-
-        class _InactiveProjectData(_ProjectData):
-            def __init__(self):
-                super().__init__("access-database")
-
-            def replace_database_hierarchy(self, file_entry, cdn_types):
-                registered.append((file_entry, cdn_types))
-
+        project_data = _ProjectData("access-database")
+        original_bid = project_data.bid
+        events = _EventBus()
         tokens, drafts = _token_service()
         service = RemoteChangeReconciliationService(
-            _InactiveProjectData(),
-            _EventBus(),
+            project_data,
+            events,
             tokens,
             drafts,
             ConflictResolutionService(),
@@ -1075,14 +1615,41 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             settings_defaults={"next_bid_no": 1},
         )
         self.assertTrue(service.apply(hydrated).applied)
-        self.assertEqual(registered, [(hierarchy_file, cdn_types)])
+        self.assertEqual(
+            project_data.hierarchy, {database_id: (hierarchy_file, cdn_types)}
+        )
+        self.assertIs(project_data.bid, original_bid)
+        self.assertEqual(project_data.bid_ref, BidRef("access-database", "8"))
+        self.assertEqual(
+            events.published,
+            [
+                (
+                    AppEvents.REMOTE_HIERARCHY_CHANGED,
+                    {"database_id": database_id, "defer_plan_projection": False},
+                )
+            ],
+        )
 
     def test_remote_events_publish_only_after_all_model_merges(self):
         database_id = "database"
         events = _EventBus()
         project_data = _ProjectData(database_id)
+        observations = []
 
         def switch_active_bid(**_payload):
+            observations.append(
+                (
+                    dict(project_data.conditions),
+                    project_data.areas,
+                    tokens.expected_versions(
+                        database_id,
+                        (
+                            ResourceRef("condition", "42", 8),
+                            ResourceRef("area", "6", 8),
+                        ),
+                    ),
+                )
+            )
             project_data.bid_ref = BidRef(database_id, "9")
 
         events.subscribe(AppEvents.CONDITIONS_CHANGED, switch_active_bid)
@@ -1117,7 +1684,18 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             },
         )
         self.assertTrue(service.apply(hydrated).applied)
-        self.assertEqual([area.uid for area in project_data.areas], ["6"])
+        self.assertEqual(len(observations), 1)
+        conditions, areas, versions = observations[0]
+        self.assertEqual(conditions, hydrated.conditions_by_bid[8])
+        self.assertEqual(areas, hydrated.areas_by_bid[8])
+        self.assertEqual(
+            [version.expected for version in versions],
+            [change.resulting_version for change in batch.changes],
+        )
+        self.assertEqual(
+            [payload["bid_uid"] for _event, payload in events.published], ["8", "8"]
+        )
+        self.assertEqual(project_data.bid_ref, BidRef(database_id, "9"))
 
     def test_incomplete_remote_batch_does_not_advance_tokens_or_partial_merge(self):
         database_id = "database"
@@ -1127,9 +1705,11 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         tokens.load_bid(database_id, "8")
         project_data = _ProjectData(database_id)
         project_data.conditions = {"old": Condition(uid="old", name="Old")}
+        original_conditions = project_data.conditions
+        events = _EventBus()
         service = RemoteChangeReconciliationService(
             project_data,
-            _EventBus(),
+            events,
             tokens,
             drafts,
             ConflictResolutionService(),
@@ -1141,7 +1721,16 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             2,
             (_change(database_id, resource, 2),),
         )
-        self.assertFalse(service.apply(HydratedDatabaseChangeBatch(batch)).applied)
+        result = service.apply(HydratedDatabaseChangeBatch(batch))
+        self.assertEqual(
+            result,
+            ReconciliationResult(
+                applied=False, failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD
+            ),
+        )
+        self.assertIs(project_data.conditions, original_conditions)
+        self.assertEqual(project_data.merges, [])
+        self.assertEqual(events.published, [])
         self.assertEqual(set(project_data.conditions), {"old"})
         self.assertEqual(
             tokens.expected_versions(database_id, (resource,))[0].expected,
@@ -1151,10 +1740,11 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
     def test_incomplete_cover_sheet_batch_does_not_cache_partial_snapshots(self):
         database_id = "database"
         project_data = _ProjectData(database_id)
+        events = _EventBus()
         tokens, drafts = _token_service()
         service = RemoteChangeReconciliationService(
             project_data,
-            _EventBus(),
+            events,
             tokens,
             drafts,
             ConflictResolutionService(),
@@ -1175,7 +1765,7 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         result = service.apply(
             HydratedDatabaseChangeBatch(
                 batch,
-                cover_sheet_by_bid={8: object()},
+                cover_sheet_by_bid={8: _cover_sheet()},
             )
         )
         self.assertFalse(result.applied)
@@ -1185,6 +1775,10 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         self.assertEqual(project_data.cover_sheets, {})
         self.assertEqual(project_data.page_delete_content, {})
+        self.assertEqual(events.published, [])
+        self.assertEqual(
+            tokens.expected_versions(database_id, (batch.changes[0].resource,)), ()
+        )
 
     def test_malformed_remote_takeoff_graph_is_rejected_before_projection(self):
         database_id = "database"
@@ -1244,15 +1838,22 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             result.failure_kind,
             ReconciliationFailureKind.MALFORMED_PAYLOAD,
         )
-        self.assertFalse(hasattr(service, "last_failure_kind"))
+        accepted = service.apply(
+            HydratedDatabaseChangeBatch(_batch(database_id, "epoch", 2, 3))
+        )
+        rejected_again = service.apply(malformed)
+        self.assertEqual(accepted, ReconciliationResult(applied=True))
+        self.assertEqual(result, rejected_again)
+        self.assertIsNot(result, rejected_again)
 
     def test_remote_takeoff_cycle_is_rejected_before_projection(self):
         database_id = "database"
         project_data = _ProjectData(database_id)
         project_data.conditions = {"10": Condition(uid="10")}
         tokens, drafts = _token_service()
+        events = _EventBus()
         service = RemoteChangeReconciliationService(
-            project_data, _EventBus(), tokens, drafts, ConflictResolutionService()
+            project_data, events, tokens, drafts, ConflictResolutionService()
         )
         first = Takeoff(uid="30", condition_uid="10", page_uid="20", parent_uid="31")
         second = Takeoff(uid="31", condition_uid="10", page_uid="20", parent_uid="30")
@@ -1284,14 +1885,23 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         self.assertEqual(
             result.failure_kind, ReconciliationFailureKind.MALFORMED_PAYLOAD
         )
+        self.assertEqual(project_data.merges, [])
+        self.assertEqual(events.published, [])
+        self.assertEqual(
+            tokens.expected_versions(
+                database_id, tuple(change.resource for change in hydrated.batch.changes)
+            ),
+            (),
+        )
 
     def test_remote_takeoff_with_missing_condition_is_rejected(self):
         database_id = "database"
         project_data = _ProjectData(database_id)
         project_data.conditions = {"10": Condition(uid="10")}
         tokens, drafts = _token_service()
+        events = _EventBus()
         service = RemoteChangeReconciliationService(
-            project_data, _EventBus(), tokens, drafts, ConflictResolutionService()
+            project_data, events, tokens, drafts, ConflictResolutionService()
         )
         takeoff = Takeoff(uid="30", condition_uid="999", page_uid="20")
         hydrated = HydratedDatabaseChangeBatch(
@@ -1320,6 +1930,14 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         self.assertEqual(
             result.failure_kind, ReconciliationFailureKind.MALFORMED_PAYLOAD
         )
+        self.assertEqual(project_data.merges, [])
+        self.assertEqual(events.published, [])
+        self.assertEqual(
+            tokens.expected_versions(
+                database_id, tuple(change.resource for change in hydrated.batch.changes)
+            ),
+            (),
+        )
 
     def test_remote_bid_change_is_acknowledged_when_no_bid_is_active(self):
         database_id = "database"
@@ -1339,15 +1957,22 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         self.assertTrue(service.apply(HydratedDatabaseChangeBatch(batch)).applied)
         self.assertEqual(events.published, [])
+        self.assertEqual(project_data.merges, [])
+        self.assertEqual(
+            tokens.expected_versions(database_id, (batch.changes[0].resource,))[
+                0
+            ].expected,
+            batch.changes[0].resulting_version,
+        )
 
     def test_default_layer_change_uses_authoritative_reconciliation(self):
-        self.assertIn("default_layers_collection", SUPPORTED_REMOTE_RESOURCE_TYPES)
         database_id = "database"
         project_data = _ProjectData(database_id)
+        events = _EventBus()
         tokens, drafts = _token_service()
         service = RemoteChangeReconciliationService(
             project_data,
-            _EventBus(),
+            events,
             tokens,
             drafts,
             ConflictResolutionService(),
@@ -1375,10 +2000,22 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         self.assertTrue(service.apply(hydrated).applied)
         self.assertEqual(
-            project_data.database_settings[database_id]["default_layers"][0].uid,
-            "5",
+            project_data.database_settings[database_id]["default_layers"],
+            hydrated.default_layers,
         )
-        self.assertEqual(len(tokens.expected_versions(database_id, (resource,))), 1)
+        self.assertEqual(
+            tokens.expected_versions(database_id, (resource,))[0].expected,
+            batch.changes[0].resulting_version,
+        )
+        self.assertEqual(
+            events.published,
+            [
+                (
+                    AppEvents.REMOTE_MASTER_DATA_CHANGED,
+                    {"database_id": database_id, "families": ["default_layers"]},
+                )
+            ],
+        )
 
     def test_master_data_change_replaces_all_authoritative_lists_and_publishes(self):
         database_id = "database"
@@ -1417,9 +2054,20 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         )
         self.assertTrue(service.apply(hydrated).applied)
         settings = project_data.database_settings[database_id]
-        self.assertEqual(settings["job_statuses"][0].uid, "job-1")
-        self.assertEqual(settings["employees"][0].uid, "employee-1")
-        self.assertEqual(settings["pay_classes"][0].uid, "pay-1")
+        self.assertEqual(settings["job_statuses"], hydrated.job_statuses)
+        self.assertEqual(settings["employees"], hydrated.employees)
+        self.assertEqual(settings["pay_classes"], hydrated.pay_classes)
+        self.assertEqual(
+            settings["used_job_status_uids"], hydrated.used_job_status_uids
+        )
+        self.assertEqual(settings["used_employee_uids"], hydrated.used_employee_uids)
+        self.assertEqual(
+            [
+                version.expected
+                for version in tokens.expected_versions(database_id, resources)
+            ],
+            [change.resulting_version for change in batch.changes],
+        )
         master_events = [
             payload
             for event, payload in events.published
@@ -1437,10 +2085,12 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
 
     def test_inactive_database_rejects_incomplete_cover_sheet_hydration(self):
         project_data = _ProjectData("other-database")
+        original_bid = project_data.bid
+        events = _EventBus()
         tokens, drafts = _token_service()
         service = RemoteChangeReconciliationService(
             project_data,
-            _EventBus(),
+            events,
             tokens,
             drafts,
             ConflictResolutionService(),
@@ -1458,7 +2108,19 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
                 ),
             ),
         )
-        self.assertFalse(service.apply(HydratedDatabaseChangeBatch(batch)).applied)
+        self.assertEqual(
+            service.apply(HydratedDatabaseChangeBatch(batch)),
+            ReconciliationResult(
+                applied=False, failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD
+            ),
+        )
+        self.assertIs(project_data.bid, original_bid)
+        self.assertEqual(project_data.cover_sheets, {})
+        self.assertEqual(project_data.database_settings, {})
+        self.assertEqual(events.published, [])
+        self.assertEqual(
+            tokens.expected_versions("database", (batch.changes[0].resource,)), ()
+        )
 
     def test_remote_local_edit_conflict_is_resource_scoped(self):
         database_id = "database"
@@ -1466,7 +2128,7 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
         initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
         tokens, drafts = _token_service(_TokenReader({resource: initial}))
         tokens.load_bid(database_id, "8")
-        drafts.begin(
+        draft = drafts.begin(
             draft_type="condition",
             database_id=database_id,
             bid_uid=8,
@@ -1491,7 +2153,18 @@ class RemoteChangeReconciliationServiceCollaborationTests(unittest.TestCase):
             (_change(database_id, resource, 2),),
         )
         self.assertFalse(service.apply(HydratedDatabaseChangeBatch(batch)).applied)
+        self.assertEqual(len(events.published), 1)
         event, payload = events.published[-1]
         self.assertIs(event, AppEvents.SYNCHRONIZATION_CONFLICT)
         self.assertFalse(payload["blocks_database"])
         self.assertEqual(payload["bid_uid"], "8")
+        self.assertEqual(payload["database_id"], database_id)
+        self.assertEqual(payload["resource_type"], "condition")
+        self.assertEqual(payload["resource_id"], "42")
+        self.assertEqual(payload["draft_id"], draft.draft_id)
+        self.assertEqual(
+            payload["allowed_actions"], ["reload", "discard_draft", "cancel_read_only"]
+        )
+        self.assertEqual(
+            tokens.expected_versions(database_id, (resource,))[0].expected, initial
+        )

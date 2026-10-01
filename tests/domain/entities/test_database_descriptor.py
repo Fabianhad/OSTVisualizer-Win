@@ -1,21 +1,5 @@
 import json
-import os
-import secrets
 import unittest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from ost_visualizer.domain.entities.database_descriptor import (
-    DatabaseBackend,
-    DatabaseDescriptor,
-    SqlAuthenticationMode,
-    SqlServerDatabaseLocation,
-    credential_target_for,
-)
-from ost_visualizer.domain.entities.file_state import FileEntry, FileState
-from ost_visualizer.infrastructure.sql.schema_definition import (
-    SQL_SCHEMA_V1,
-    schema_record_is_canonical,
-)
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlAuthenticationMode,
@@ -23,11 +7,13 @@ from ost_visualizer.domain.entities.database_descriptor import (
     validate_sql_database_creation_name,
     validate_sql_database_name,
 )
+from ost_visualizer.domain.entities.file_state import FileEntry
+
+SCHEMA_VERSION = 1
 
 
 class DatabaseDescriptorDatabaseDescriptorTests(unittest.TestCase):
     def test_sql_descriptor_serialization_and_repr_never_contain_password(self):
-        password = secrets.token_urlsafe(24)
         location = SqlServerDatabaseLocation(
             server=r"server\instance",
             database="OSTV_TEST_123",
@@ -36,13 +22,30 @@ class DatabaseDescriptorDatabaseDescriptorTests(unittest.TestCase):
             database_guid="00000000-0000-0000-0000-000000000123",
         )
         descriptor = DatabaseDescriptor.for_sql_server(
-            location, schema_version=SQL_SCHEMA_V1.version
+            location, schema_version=SCHEMA_VERSION
         )
         payload = json.dumps(FileEntry.for_descriptor(descriptor).to_dict())
-        self.assertNotIn(password, payload)
         self.assertNotIn("password", payload.casefold())
-        self.assertNotIn(password, repr(descriptor))
+        self.assertNotIn("password", repr(descriptor).casefold())
+        self.assertEqual(
+            set(location.to_dict()),
+            {
+                "server",
+                "database",
+                "authentication_mode",
+                "username",
+                "database_guid",
+                "encrypt",
+                "trust_server_certificate",
+                "connection_timeout_seconds",
+                "command_timeout_seconds",
+            },
+        )
         self.assertEqual(DatabaseDescriptor.from_dict(descriptor.to_dict()), descriptor)
+        polluted = descriptor.to_dict()
+        polluted["location"]["password"] = "must-not-be-persisted"
+        with self.assertRaisesRegex(ValueError, "unsupported format"):
+            DatabaseDescriptor.from_dict(polluted)
 
     def test_sql_descriptor_requires_an_explicit_schema_version(self):
         location = SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
@@ -52,7 +55,7 @@ class DatabaseDescriptorDatabaseDescriptorTests(unittest.TestCase):
     def test_temporary_sql_descriptor_fields_are_rejected(self):
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
+            schema_version=SCHEMA_VERSION,
         )
         payload = descriptor.to_dict()
         payload["location"]["credential_target"] = "obsolete"
@@ -62,7 +65,7 @@ class DatabaseDescriptorDatabaseDescriptorTests(unittest.TestCase):
     def test_saved_descriptors_reject_noncanonical_scalar_types(self):
         sql_payload = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
+            schema_version=SCHEMA_VERSION,
         ).to_dict()
         sql_payload["location"]["server"] = None
         with self.assertRaisesRegex(ValueError, "server"):
@@ -73,7 +76,7 @@ class DatabaseDescriptorDatabaseDescriptorTests(unittest.TestCase):
             DatabaseDescriptor.from_dict(access_payload)
         timeout_payload = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
+            schema_version=SCHEMA_VERSION,
         ).to_dict()
         timeout_payload["location"]["connection_timeout_seconds"] = True
         with self.assertRaisesRegex(ValueError, "connection_timeout_seconds"):

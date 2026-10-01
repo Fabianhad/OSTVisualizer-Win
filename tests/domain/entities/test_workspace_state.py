@@ -5,23 +5,32 @@ from ost_visualizer.domain.entities.workspace_state import (
     WorkspaceState,
 )
 import unittest
-import os
-from pathlib import Path
-from ost_visualizer.domain.entities.config import Config
-from ost_visualizer.domain.entities.workspace_state import TakeoffWorkspaceState
-from ost_visualizer.presentation.utils.annotation_defaults import (
-    apply_config_owned_annotation_defaults,
-    build_placed_annotation_spec,
-    set_annotation_styles_by_tool,
-)
-from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class WorkspaceStateSerializationTests(unittest.TestCase):
+    def test_unsaved_and_explicitly_collapsed_project_expansion_remain_distinct_on_reload(
+        self,
+    ):
+        for keys in (None, [], ["database:example"]):
+            with self.subTest(keys=keys):
+                state = WorkspaceState()
+                state.project_workspace.expanded_node_keys = keys
+                for _ in range(3):
+                    state = WorkspaceState.from_dict(state.to_dict())
+                    self.assertEqual(state.project_workspace.expanded_node_keys, keys)
+
     def test_workspace_active_view_constants_are_immutable_shared_state(self):
         self.assertIsInstance(TakeoffWorkspaceState.VALID_ACTIVE_VIEWS, frozenset)
         self.assertEqual(
             TakeoffWorkspaceState.VALID_ACTIVE_VIEWS, WORKSPACE_VALID_ACTIVE_VIEWS
+        )
+        self.assertEqual(WORKSPACE_VALID_ACTIVE_VIEWS, {"2d", "3d"})
+        self.assertEqual(
+            TakeoffWorkspaceState.from_dict({"active_view": "2D"}).active_view, "2d"
+        )
+        self.assertEqual(
+            TakeoffWorkspaceState.from_dict({"active_view": "invalid"}).active_view,
+            "3d",
         )
 
     def test_workspace_annotation_styles_round_trip_and_clamp_values(self):
@@ -62,6 +71,7 @@ class WorkspaceStateSerializationTests(unittest.TestCase):
             payload["takeoff_workspace"]["annotation_styles"]["arrow"]["line_width"],
             16.0,
         )
+        self.assertEqual(WorkspaceState.from_dict(payload), state)
 
     def test_workspace_annotation_styles_default_to_empty_map(self):
         state = WorkspaceState.from_dict({})
@@ -259,17 +269,6 @@ class WorkspaceStateSerializationTests(unittest.TestCase):
 
 
 class WorkspaceFontColorCompatibilityTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
-        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
-            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
-
-    def tearDown(self):
-        set_annotation_styles_by_tool({}, Config())
-        self.app.processEvents()
-
     def test_legacy_workspace_overlap_is_ignored_and_stripped(self):
         state = TakeoffWorkspaceState.from_dict(
             {
@@ -295,3 +294,50 @@ class WorkspaceFontColorCompatibilityTests(unittest.TestCase):
         serialized = state.to_dict()["annotation_styles"]
         self.assertEqual(serialized["text"], {"text_align": 2})
         self.assertEqual(serialized["rect"]["color"], "#abcdef")
+
+
+class WorkspaceCorruptDimensionTests(unittest.TestCase):
+    def test_nonfinite_schema_version_uses_current_schema_without_losing_other_state(
+        self,
+    ):
+        for invalid in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(invalid=invalid):
+                state = WorkspaceState.from_dict(
+                    {"schema_version": invalid, "dialog_sizes": {"valid": [900, 650]}}
+                )
+                self.assertEqual(
+                    state.schema_version, WorkspaceState.CURRENT_SCHEMA_VERSION
+                )
+                self.assertEqual(state.dialog_sizes, {"valid": [900, 650]})
+
+    def test_nonfinite_saved_sizes_do_not_abort_unrelated_workspace_restoration(self):
+        for invalid in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(invalid=invalid):
+                state = WorkspaceState.from_dict(
+                    {
+                        "dialog_sizes": {"bad": [invalid, 500], "valid": [900, 650]},
+                        "takeoff_workspace": {
+                            "takeoff_splitter_sizes": [300, invalid, 400]
+                        },
+                    }
+                )
+                self.assertEqual(state.dialog_sizes, {"valid": [900, 650]})
+                self.assertEqual(
+                    state.takeoff_workspace.takeoff_splitter_sizes, [300, 400]
+                )
+
+    def test_nonfinite_header_widths_do_not_discard_valid_sibling_columns(self):
+        for invalid in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(invalid=invalid):
+                state = WorkspaceState.from_dict(
+                    {
+                        "header_layouts": {
+                            "summary": {
+                                "widths": {"name": 220, "invalid": invalid},
+                                "order": ["name"],
+                            }
+                        }
+                    }
+                )
+                self.assertEqual(state.header_layouts["summary"].widths, {"name": 220})
+                self.assertEqual(state.header_layouts["summary"].order, ["name"])

@@ -28,6 +28,9 @@ class LicenseEventPublisherTests(unittest.TestCase):
         bus = Mock()
         publisher = LicenseEventPublisher(bus, Mock())
         self.assertTrue(publisher.publish_invalidated("expired", LicenseStatus.EXPIRED))
+        self.assertFalse(
+            publisher.publish_invalidated("expired again", LicenseStatus.EXPIRED)
+        )
         self.assertEqual(
             bus.publish.call_args_list,
             [
@@ -41,4 +44,10 @@ class LicenseEventPublisherTests(unittest.TestCase):
         publisher = LicenseEventPublisher(bus, Mock())
         publisher.publish_license_lost()
         self.assertTrue(publisher.publish_invalidated("invalid"))
-        self.assertEqual(bus.publish.call_count, 2)
+        self.assertEqual(
+            bus.publish.call_args_list,
+            [
+                call(AppEvents.LICENSE_STATUS_CHANGED, has_license=False),
+                call(AppEvents.LICENSE_STATUS_CHANGED, has_license=False),
+            ],
+        )

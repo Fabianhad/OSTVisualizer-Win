@@ -1,85 +1,30 @@
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    CollaborationMutationType,
-    PendingMutationState,
-    QueuedMutationRequest,
-    ResourceRef,
-    canonical_mutation_request_hash,
-)
-import uuid
-import unittest
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    AuthoritativeMutationResult,
-    ChangeOperation,
-    CollaborationMutationType,
-    CollaborationPollingPolicy,
-    CollaborationShutdownState,
-    CollaborationStatus,
-    ConcurrencyToken,
-    DatabaseChange,
-    DatabaseChangeBatch,
-    DatabaseChangePollResult,
-    DatabaseMutationRequest,
-    DatabaseMutationResult,
-    DatabaseSession,
-    DurableOperationResult,
-    EditLeaseHandle,
-    EditLeaseLoss,
-    EditLeaseResult,
-    HydratedDatabaseChangeBatch,
-    MutationExecutionResult,
-    MutationOutcomeStatus,
-    PendingMutationState,
-    PendingSqlOperationRecord,
-    PresenceMode,
-    QueuedMutationRequest,
-    QueuedMutationResult,
-    ReconciliationFailureKind,
-    ReconciliationResult,
-    ResourceLock,
-    ResourceRef,
-    SynchronizationConflict,
-    SynchronizationConflictKind,
-    SynchronizationState,
-    queued_takeoff_preview_uid,
-    session_identities_equal,
-)
-from ost_visualizer.application.events.app_events import AppEvents
 import json
+import hashlib
+import unittest
 from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     CollaborationMutationType,
     DatabaseMutationRequest,
-    DatabaseMutationResult,
-    DurableOperationResult,
+    EditLeaseHandle,
+    EditLeaseLoss,
+    EditLeaseResult,
     MutationOutcomeStatus,
     PageSettingsPayload,
-    PendingMutationState,
-    PendingSqlOperationRecord,
+    PlanItemsPastePayload,
     PlanPropertyPayload,
     ProjectImportPayload,
     ProjectWritePayload,
     QueuedMutationRequest,
     QueuedMutationResult,
     ResourceRef,
+    canonical_mutation_request_hash,
+    session_identities_equal,
 )
-import sqlite3
-from contextlib import contextmanager
-from types import SimpleNamespace
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    ConcurrencyToken,
-    DatabaseMutationResult,
-    ExpectedResourceVersion,
-    MutationOutcomeStatus,
-    ResourceRef,
-)
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
-import tests.application.services.test_project_write_service as parity
-from tests.helpers.mdb.operations import (
-    _SqliteCursorWrapper,
-    _SqliteDuplicateOps,
-)
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.events.app_events import AppEvents
+
+OPERATION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+OTHER_OPERATION_ID = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
 def _request(
@@ -89,7 +34,7 @@ def _request(
 ) -> QueuedMutationRequest:
     return QueuedMutationRequest(
         database_id="database",
-        operation_id=operation_id or str(uuid.uuid4()),
+        operation_id=operation_id or OPERATION_ID,
         mutation_type=CollaborationMutationType.PLAN_GEOMETRY,
         owning_surface="main-plan",
         resources=(ResourceRef("takeoff", resource_id, 1),),
@@ -102,33 +47,79 @@ def _request(
 
 class QueuedMutationRequestTests(unittest.TestCase):
     def test_request_normalizes_identity_resources_and_hash(self):
-        operation_id = str(uuid.uuid4()).upper()
+        operation_id = OPERATION_ID.upper()
         resource = ResourceRef("takeoff", "10", 1)
+        dependency = ResourceRef("page", "20", 1)
         request = QueuedMutationRequest(
             database_id="database",
             operation_id=operation_id,
             mutation_type=CollaborationMutationType.PLAN_GEOMETRY,
             owning_surface="main-plan",
             resources=(resource, resource),
+            dependency_resources=(dependency, dependency),
             payload={"b": [2, 1], "a": True},
         )
-        self.assertEqual(request.operation_id, str(uuid.UUID(operation_id)))
+        self.assertEqual(request.operation_id, OPERATION_ID)
         self.assertEqual(request.resources, (resource,))
-        self.assertEqual(len(request.request_hash), 64)
+        self.assertEqual(request.dependency_resources, (dependency,))
         self.assertEqual(
             request.request_hash,
-            canonical_mutation_request_hash(
-                {
-                    "mutation_type": "plan_geometry",
-                    "payload_format_version": 1,
-                    "payload": {"a": True, "b": [2, 1]},
-                }
-            ),
+            "8f782eaaaafe8667389e029940b4bd2b8da59755d0c1c3a061ffef26a9cfcc3d",
+        )
+        self.assertNotEqual(
+            replace(request, payload={"a": True, "b": [1, 2]}).request_hash,
+            request.request_hash,
         )
 
     def test_request_rejects_non_uuid(self):
         with self.assertRaises(ValueError):
             _request(operation_id="not-a-uuid")
+
+    def test_canonical_hash_encodes_typed_values_and_rejects_nonfinite_or_unsupported_data(
+        self,
+    ):
+        payload = {
+            "values": {2, 1},
+            "bytes": b"\x00\xff",
+            "resources": (ResourceRef("condition", "42", 8),),
+        }
+        expected_wire = (
+            b'{"bytes":{"bytes":"00ff"},"resources":'
+            b'[{"bid_uid":8,"resource_id":"42","resource_type":"condition"}],'
+            b'"values":[1,2]}'
+        )
+        self.assertEqual(
+            canonical_mutation_request_hash(payload),
+            hashlib.sha256(expected_wire).hexdigest(),
+        )
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                canonical_mutation_request_hash({"nested": [value]})
+        with self.assertRaisesRegex(TypeError, "Unsupported collaboration"):
+            canonical_mutation_request_hash({"value": object()})
+
+    def test_request_lease_must_own_database_surface_and_exact_bid_resource(self):
+        request = _request()
+        handle = EditLeaseHandle(
+            database_id=request.database_id,
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="edit",
+            owning_surface=request.owning_surface,
+            resources=request.resources,
+        )
+        owned = replace(request, edit_lease_handle=handle)
+        self.assertIs(owned.edit_lease_handle, handle)
+        for foreign in (
+            replace(handle, database_id="other-db"),
+            replace(handle, owning_surface="detached"),
+            replace(handle, resources=(ResourceRef("takeoff", "10", 2),)),
+            replace(handle, resources=(ResourceRef("takeoff", "other", 1),)),
+        ):
+            with self.subTest(foreign=foreign), self.assertRaisesRegex(
+                ValueError, "own its affected resources"
+            ):
+                replace(request, edit_lease_handle=foreign)
 
 
 class CollaborationDtosCollaborationTests(unittest.TestCase):
@@ -146,6 +137,10 @@ class CollaborationDtosCollaborationTests(unittest.TestCase):
             EditLeaseResult(True)
         with self.assertRaisesRegex(ValueError, "handle"):
             EditLeaseResult(False, handle=handle)
+        self.assertIs(EditLeaseResult(True, handle=handle).handle, handle)
+        denied = EditLeaseResult(False, message="Locked")
+        self.assertFalse(denied.granted)
+        self.assertEqual(denied.message, "Locked")
 
     def test_resource_reference_order_handles_optional_bid_context(self):
         context_free = ResourceRef("condition", "42")
@@ -165,10 +160,22 @@ class CollaborationDtosCollaborationTests(unittest.TestCase):
         )
         self.assertFalse(session_identities_equal("session-a", "session-b"))
         self.assertFalse(session_identities_equal("session-a", "SESSION-A"))
+        self.assertFalse(session_identities_equal(None, None))
+        self.assertFalse(session_identities_equal("session-a", "session-a"))
+        self.assertFalse(session_identities_equal(OPERATION_ID, OTHER_OPERATION_ID))
 
     def test_queued_mutation_result_requires_current_keyword_shape(self):
         with self.assertRaises(TypeError):
             QueuedMutationResult("database", 1, "operation", True)
+        result = QueuedMutationResult(
+            database_id="database",
+            runtime_generation=1,
+            operation_id=OPERATION_ID,
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+        )
+        self.assertEqual(result.operation_id, OPERATION_ID)
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertTrue(result.commit_attempted)
 
     def test_lease_loss_event_requires_the_typed_loss_payload(self):
         with self.assertRaises(TypeError):
@@ -196,30 +203,36 @@ class CollaborationPayloadContractTests(unittest.TestCase):
         )
         first = QueuedMutationRequest(
             database_id="database",
-            operation_id=str(uuid.uuid4()),
+            operation_id=OPERATION_ID,
             mutation_type=CollaborationMutationType.PROJECT_IMPORT,
             owning_surface="project-import",
             resources=(ResourceRef("project_bids", "9"),),
             payload=payload,
         )
-        second = replace(first, operation_id=str(uuid.uuid4()))
+        second = replace(first, operation_id=OTHER_OPERATION_ID)
         self.assertEqual(first.request_hash, second.request_hash)
+        self.assertNotEqual(first.operation_id, second.operation_id)
+        changed = replace(first, payload=replace(payload, source_size=124))
+        self.assertNotEqual(first.request_hash, changed.request_hash)
         with self.assertRaisesRegex(ValueError, "OST or OSP"):
             replace(payload, source_kind="zip")
 
     def test_property_and_page_payloads_canonicalize_updates(self):
-        first = PlanPropertyPayload.from_updates(
-            "takeoff_text",
-            [["10", {"FontSize": 12, "FontName": "Arial"}]],
-        )
+        updates = [["10", {"FontSize": 12, "FontName": "Arial"}]]
+        first = PlanPropertyPayload.from_updates("takeoff_text", updates)
         second = PlanPropertyPayload.from_updates(
             "takeoff_text",
             [["10", {"FontName": "Arial", "FontSize": 12}]],
         )
         page = PageSettingsPayload.from_updates("scale", [["20", 1.0, 96.0]])
         self.assertEqual(first, second)
-        self.assertEqual(first.decoded_updates()[0][0], "10")
+        expected = [["10", {"FontName": "Arial", "FontSize": 12}]]
+        self.assertEqual(first.decoded_updates(), expected)
         self.assertEqual(page.decoded_updates(), [["20", 1.0, 96.0]])
+        updates[0][1]["FontSize"] = 999
+        returned = first.decoded_updates()
+        returned[0][1]["FontName"] = "Changed"
+        self.assertEqual(first.decoded_updates(), expected)
 
     def test_project_write_payload_is_typed_and_canonical(self):
         first = ProjectWritePayload.from_values(
@@ -244,7 +257,7 @@ class CollaborationPayloadContractTests(unittest.TestCase):
             )
 
     def test_database_request_requires_canonical_identity_and_hash(self):
-        operation_id = str(uuid.uuid4())
+        operation_id = OPERATION_ID
         request = DatabaseMutationRequest(
             database_id="database",
             session_id="session",
@@ -261,7 +274,7 @@ class CollaborationPayloadContractTests(unittest.TestCase):
             DatabaseMutationRequest(
                 database_id="database",
                 session_id="session",
-                operation_id=str(uuid.uuid4()),
+                operation_id=OPERATION_ID,
                 mutation_type=CollaborationMutationType.PROJECT_WRITE.value,
                 request_hash="a" * 64,
                 result_format_version=2,
@@ -270,7 +283,7 @@ class CollaborationPayloadContractTests(unittest.TestCase):
             DatabaseMutationRequest(
                 database_id="database",
                 session_id="session",
-                operation_id=str(uuid.uuid4()),
+                operation_id=OPERATION_ID,
                 mutation_type="old_project_write",
                 request_hash="a" * 64,
             )
@@ -279,7 +292,7 @@ class CollaborationPayloadContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "payload format version 1"):
             QueuedMutationRequest(
                 database_id="database",
-                operation_id=str(uuid.uuid4()),
+                operation_id=OPERATION_ID,
                 mutation_type=CollaborationMutationType.PLAN_GEOMETRY,
                 owning_surface="main-plan",
                 resources=(ResourceRef("takeoff", "10", 1),),
@@ -288,80 +301,17 @@ class CollaborationPayloadContractTests(unittest.TestCase):
 
 
 class PlanPropertyOwnershipTests(unittest.TestCase):
-    def setUp(self):
-        self.conn = sqlite3.connect(":memory:")
-        self.addCleanup(self.conn.close)
-        self.conn.executescript(
-            """
-            CREATE TABLE Bids (UID INTEGER PRIMARY KEY);
-            INSERT INTO Bids VALUES (7);
-            CREATE TABLE BidAreas (UID INTEGER PRIMARY KEY, BidUID INTEGER);
-            INSERT INTO BidAreas VALUES (1,7),(2,7),(3,7),(4,8);
-            CREATE TABLE BidTakeoffs (UID INTEGER PRIMARY KEY, BidUID INTEGER,
-                BidPageUID INTEGER, BidConditionUID INTEGER, BidAreaUID INTEGER,
-                ParentUID INTEGER, Position BLOB);
-            INSERT INTO BidTakeoffs VALUES
-                (10,7,20,30,1,NULL,'0;0;10;0;10;10'),
-                (11,7,20,30,2,NULL,'20;0;30;0;30;10'),
-                (12,7,20,30,NULL,NULL,'40;0;50;0;50;10'),
-                (13,7,20,30,1,10,'1;1;2;1;2;2');
-        """
-        )
-        self.conn.commit()
-        self.ops = _SqliteDuplicateOps(self.conn)
-        manager = SimpleNamespace(
-            connection=self.connection,
-            use_committed_writer_for_reads=lambda _path: None,
-        )
-        self.transaction_writer = MdbWriter(conn_manager=manager)
-        self.ops._connection = self.transaction_writer._connection
-        self.service = parity.MdbSqlBehaviorParityTests._local_composite_service()
-        self.service._project_data = SimpleNamespace(
-            get_current_bid_ref=lambda: BidRef("database.mdb", "7"),
-            get_all_takeoffs=self.takeoffs,
-        )
-        self.service._mutation_executor = SimpleNamespace(
-            verify_plan_items_exist=lambda *args, **kwargs: MdbWriter.verify_plan_items_exist(
-                self.ops, *args, **kwargs
-            )
-        )
-        self.service._save_takeoffs_area = SimpleNamespace(
-            execute=self.ops.save_takeoffs_area
-        )
-        self.service._execute_database_mutation = self.execute_mutation
-        self.service._concurrency_tokens = SimpleNamespace(
-            expected_versions=lambda _database, resources: tuple(
-                ExpectedResourceVersion(resource, ConcurrencyToken(b"a" * 8))
-                for resource in resources
-            )
-        )
-
-    @contextmanager
-    def connection(self, _path, *, autocommit):
-        self.assertFalse(autocommit)
-        yield SimpleNamespace(
-            cursor=lambda: _SqliteCursorWrapper(self.conn),
-            commit=self.conn.commit,
-            rollback=self.conn.rollback,
-        )
-
-    def execute_mutation(self, database_id, _resources, operation, **_options):
-        with self.transaction_writer._connection(database_id):
-            value = operation(SimpleNamespace(record=lambda *_args, **_kwargs: None))
-        return DatabaseMutationResult(
-            operation_id="00000000-0000-0000-0000-000000000001",
-            outcome_status=MutationOutcomeStatus.COMMITTED,
-            value=value,
-        )
-
     def test_external_parent_bindings_reject_incomplete_or_ambiguous_sources(self):
-        from ost_visualizer.application.dtos.collaboration_dtos import (
-            PlanItemsPastePayload,
+        valid = PlanItemsPastePayload(
+            source_bid_uid="7",
+            destination_bid_uid="7",
+            takeoff_source_uids=("10",),
+            takeoff_specs=(
+                InsertTakeoffSpec("30", "20", "1", [0, 0, 1, 1], parent_uid="10"),
+            ),
+            takeoff_external_parent_sources=("10",),
         )
-        from ost_visualizer.application.dtos.insert_takeoff_spec_dto import (
-            InsertTakeoffSpec,
-        )
-
+        self.assertEqual(valid.takeoff_external_parent_sources, ("10",))
         for sources, parent_uid in (
             (("missing",), "10"),
             (("10", "10"), "10"),
@@ -380,17 +330,3 @@ class PlanPropertyOwnershipTests(unittest.TestCase):
                         ),
                         takeoff_external_parent_sources=sources,
                     )
-
-    def takeoffs(self):
-        return [
-            Takeoff(
-                uid=str(uid),
-                page_uid=str(page),
-                condition_uid=str(condition),
-                area_uid=str(area or "0"),
-                parent_uid=str(parent or "0"),
-            )
-            for uid, page, condition, area, parent in self.conn.execute(
-                "SELECT UID,BidPageUID,BidConditionUID,BidAreaUID,ParentUID FROM BidTakeoffs"
-            )
-        ]

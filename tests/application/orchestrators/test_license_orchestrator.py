@@ -1,5 +1,6 @@
 import logging
 import unittest
+from unittest.mock import patch
 from ost_visualizer.application.dtos.license_dto import (
     LicenseOperationResultDto,
     LicenseOperationStatus,
@@ -7,16 +8,15 @@ from ost_visualizer.application.dtos.license_dto import (
 from ost_visualizer.application.orchestrators.license_orchestrator import (
     LicenseOrchestrator,
 )
+from ost_visualizer.application.orchestrators.license_thread_manager import (
+    LicenseThreadManager,
+)
 from ost_visualizer.application.use_cases.license.utils.license_use_case import (
     ERROR_CONTRACT,
     ERROR_DEVICE_ACTIVATION_INACTIVE,
-    ERROR_INVALID_ACTIVATION_IDENTITY,
-    ERROR_LICENSE_NOT_FOUND,
     ERROR_MAX_ACTIVATIONS_REACHED,
-    parse_failure_response,
-    parse_signed_success_response,
 )
-from ost_visualizer.domain.entities.license import License, LicenseStatus
+from ost_visualizer.domain.entities.license import LicenseStatus
 from ost_visualizer.domain.services.hardware_identity import (
     HWID_VERSION,
     HardwareIdentityError,
@@ -34,13 +34,14 @@ class FakeModel:
         self.offline_grace_hours = 72
         self.clear_calls = 0
         self.valid = False
+        self.offline = False
         self.hwid_error = None
 
     def has_license(self):
         return bool(self.license_key)
 
     def can_use_offline_grace(self):
-        return False
+        return self.offline
 
     def clear_if_invalid(self):
         return False
@@ -71,6 +72,8 @@ class FakeUseCase:
 
     def execute(self, license_key=None):
         self.calls.append(license_key)
+        if isinstance(self.result, Exception):
+            raise self.result
         return self.result
 
 
@@ -78,6 +81,7 @@ class FakeScheduler:
     def __init__(self):
         self.task = None
         self.running = False
+        self.starts = 0
 
     def is_running(self):
         return self.running
@@ -86,6 +90,7 @@ class FakeScheduler:
         self.task = task
 
     def start(self):
+        self.starts += 1
         self.running = True
 
     def stop(self):
@@ -122,24 +127,134 @@ class ImmediateThreadManager:
         pass
 
 
-class ImmediateCallbackBridge:
-    def __init__(self):
-        self.dispatched = []
-
-    def dispatch(self, callback, payload):
-        self.dispatched.append(payload)
-        callback(payload)
-
-
 class QueuedCallbackBridge:
     def __init__(self):
         self.callbacks = []
+        self.worker_callbacks = []
 
     def dispatch(self, callback, payload):
         self.callbacks.append((callback, payload))
 
+    def request_callback(self, callback, success, message):
+        self.worker_callbacks.append((callback, success, message))
+
+
+class RecordingThreadManager(LicenseThreadManager):
+    def __init__(self):
+        super().__init__(logging.getLogger("test"))
+        self.threads = []
+
+    def spawn_with_bridge(self, *args, **kwargs):
+        thread = super().spawn_with_bridge(*args, **kwargs)
+        self.threads.append(thread)
+        return thread
+
+    def drain(self, testcase):
+        for thread in self.threads:
+            thread.join(timeout=2.0)
+            testcase.assertFalse(thread.is_alive(), "license worker did not terminate")
+
 
 class LicenseActivationContractTests(unittest.TestCase):
+    def test_worker_exceptions_report_boolean_failure_and_allow_retry(self):
+        for operation in ("activate", "deactivate"):
+            with self.subTest(operation=operation):
+                failing = FakeUseCase(RuntimeError("server failure"))
+                bridge = QueuedCallbackBridge()
+                manager = RecordingThreadManager()
+                publisher = FakeEventPublisher()
+                orchestrator = self._build_orchestrator(
+                    failing,
+                    failing,
+                    publisher,
+                    callback_bridge=bridge,
+                    thread_manager=manager,
+                    deactivate=failing,
+                )
+                outcomes = []
+
+                def submit():
+                    callback = lambda success, message: outcomes.append(
+                        (success, message)
+                    )
+                    if operation == "activate":
+                        orchestrator.activate_license_async("LIC-new", callback)
+                    else:
+                        orchestrator.deactivate_license_async(callback)
+
+                with self.assertLogs("test", level="ERROR"):
+                    submit()
+                    manager.drain(self)
+                self.assertEqual(outcomes, [])
+                self.assertEqual(len(bridge.worker_callbacks), 1)
+                callback, success, message = bridge.worker_callbacks.pop()
+                callback(success, message)
+                self.assertEqual(len(outcomes), 1)
+                self.assertIs(outcomes[0][0], False)
+                self.assertEqual(outcomes[0][1], "Operation failed: server failure")
+                self.assertEqual(publisher.activated_calls, 0)
+                self.assertEqual(publisher.lost_calls, 0)
+                failing.result = self._result(
+                    True,
+                    LicenseOperationStatus.SUCCESS,
+                    (
+                        LicenseStatus.VALID
+                        if operation == "activate"
+                        else LicenseStatus.NO_LICENSE
+                    ),
+                    "recovered",
+                )
+                submit()
+                manager.drain(self)
+                callback, success, message = bridge.worker_callbacks.pop()
+                callback(success, message)
+                self.assertEqual(outcomes[-1], (True, "recovered"))
+                self.assertEqual(len(failing.calls), 2)
+                self.assertEqual(
+                    publisher.activated_calls, int(operation == "activate")
+                )
+                self.assertEqual(publisher.lost_calls, int(operation == "deactivate"))
+
+    def test_thread_start_failure_does_not_leave_license_operations_busy(self):
+        for operation in ("activate", "deactivate"):
+            with self.subTest(operation=operation):
+                valid = self._result(
+                    True, LicenseOperationStatus.SUCCESS, LicenseStatus.VALID, "done"
+                )
+                use_case = FakeUseCase(valid)
+                bridge = QueuedCallbackBridge()
+                manager = RecordingThreadManager()
+                orchestrator = self._build_orchestrator(
+                    use_case,
+                    use_case,
+                    FakeEventPublisher(),
+                    callback_bridge=bridge,
+                    thread_manager=manager,
+                    deactivate=use_case,
+                )
+                outcomes = []
+
+                def submit():
+                    callback = lambda *args: outcomes.append(args)
+                    if operation == "activate":
+                        orchestrator.activate_license_async("LIC-new", callback)
+                    else:
+                        orchestrator.deactivate_license_async(callback)
+
+                with patch(
+                    "threading.Thread.start", side_effect=RuntimeError("cannot start")
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "cannot start"):
+                        submit()
+                self.assertEqual(use_case.calls, [])
+                self.assertEqual(outcomes, [])
+                submit()
+                manager.drain(self)
+                self.assertEqual(len(bridge.worker_callbacks), 1)
+                callback, success, message = bridge.worker_callbacks.pop()
+                callback(success, message)
+                self.assertEqual(outcomes, [(True, "done")])
+
     def test_startup_validation_reactivates_once_for_inactive_device(self):
         validate = FakeUseCase(
             self._result(
@@ -161,10 +276,14 @@ class LicenseActivationContractTests(unittest.TestCase):
         publisher = FakeEventPublisher()
         orchestrator = self._build_orchestrator(validate, activate, publisher)
         orchestrator.initialize()
+        orchestrator.initialize()
         self.assertEqual(validate.calls, [None])
         self.assertEqual(activate.calls, ["LIC-test-key"])
         self.assertEqual(publisher.activated_calls, 1)
         self.assertEqual(publisher.invalidated, [])
+        self.assertTrue(orchestrator._scheduler.is_running())
+        self.assertEqual(orchestrator._scheduler.starts, 1)
+        self.assertEqual(orchestrator.get_license_info().status, "valid")
 
     def test_startup_validation_does_not_activate_for_max_device_error(self):
         validate = FakeUseCase(
@@ -187,6 +306,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         publisher = FakeEventPublisher()
         orchestrator = self._build_orchestrator(validate, activate, publisher)
         orchestrator.initialize()
+        self.assertEqual(validate.calls, [None])
         self.assertEqual(activate.calls, [])
         self.assertEqual(publisher.activated_calls, 0)
         self.assertEqual(
@@ -215,6 +335,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         publisher = FakeEventPublisher()
         orchestrator = self._build_orchestrator(validate, activate, publisher)
         orchestrator.initialize()
+        self.assertEqual(validate.calls, [None])
         self.assertEqual(activate.calls, ["LIC-test-key"])
         self.assertEqual(publisher.activated_calls, 0)
         self.assertEqual(
@@ -230,7 +351,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         validate = FakeUseCase(invalid)
         publisher = FakeEventPublisher()
-        bridge = ImmediateCallbackBridge()
+        bridge = QueuedCallbackBridge()
         orchestrator = self._build_orchestrator(
             validate,
             FakeUseCase(invalid),
@@ -239,10 +360,11 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         result = orchestrator._perform_periodic_validation()
         self.assertIs(result, invalid)
-        self.assertEqual(
-            bridge.dispatched,
-            [(False, "invalid", LicenseStatus.INVALID)],
-        )
+        self.assertEqual(publisher.invalidated, [])
+        self.assertEqual(len(bridge.callbacks), 1)
+        callback, payload = bridge.callbacks.pop()
+        self.assertEqual(payload, (False, "invalid", LicenseStatus.INVALID))
+        callback(payload)
         self.assertEqual(
             publisher.invalidated,
             [("invalid", LicenseStatus.INVALID)],
@@ -257,7 +379,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         validate = FakeUseCase(valid)
         publisher = FakeEventPublisher()
-        bridge = ImmediateCallbackBridge()
+        bridge = QueuedCallbackBridge()
         orchestrator = self._build_orchestrator(
             validate,
             FakeUseCase(valid),
@@ -266,10 +388,11 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         result = orchestrator._perform_periodic_validation()
         self.assertIs(result, valid)
-        self.assertEqual(
-            bridge.dispatched,
-            [(True, "valid", LicenseStatus.VALID)],
-        )
+        self.assertEqual(publisher.activated_calls, 0)
+        self.assertEqual(len(bridge.callbacks), 1)
+        callback, payload = bridge.callbacks.pop()
+        self.assertEqual(payload, (True, "valid", LicenseStatus.VALID))
+        callback(payload)
         self.assertEqual(publisher.activated_calls, 1)
 
     def test_periodic_callback_queued_before_cleanup_is_invalidated(self):
@@ -472,10 +595,11 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         model = FakeModel()
         model.hwid_error = HardwareIdentityError("firmware unavailable")
-        bridge = ImmediateCallbackBridge()
+        bridge = QueuedCallbackBridge()
         publisher = FakeEventPublisher()
+        validate = FakeUseCase(invalid)
         orchestrator = self._build_orchestrator(
-            FakeUseCase(invalid),
+            validate,
             FakeUseCase(invalid),
             publisher,
             callback_bridge=bridge,
@@ -486,14 +610,150 @@ class LicenseActivationContractTests(unittest.TestCase):
             result.operation_status,
             LicenseOperationStatus.HWID_UNAVAILABLE,
         )
+        self.assertEqual(validate.calls, [])
+        self.assertEqual(publisher.invalidated, [])
+        self.assertEqual(len(bridge.callbacks), 1)
+        callback, payload = bridge.callbacks.pop()
         self.assertEqual(
-            bridge.dispatched,
-            [(False, result.message, LicenseStatus.HWID_UNAVAILABLE)],
+            payload, (False, result.message, LicenseStatus.HWID_UNAVAILABLE)
         )
+        callback(payload)
         self.assertEqual(
             publisher.invalidated,
             [(result.message, LicenseStatus.HWID_UNAVAILABLE)],
         )
+
+    def test_pending_operation_rejects_overlap_until_main_thread_delivery(self):
+        result = self._result(
+            True, LicenseOperationStatus.SUCCESS, LicenseStatus.VALID, "done"
+        )
+        activate = FakeUseCase(result)
+        deactivate = FakeUseCase(result)
+        bridge = QueuedCallbackBridge()
+        manager = RecordingThreadManager()
+        publisher = FakeEventPublisher()
+        orchestrator = self._build_orchestrator(
+            FakeUseCase(result),
+            activate,
+            publisher,
+            callback_bridge=bridge,
+            thread_manager=manager,
+            deactivate=deactivate,
+        )
+        outcomes = []
+        callback = lambda *args: outcomes.append(args)
+        orchestrator.activate_license_async("LIC-first", callback)
+        manager.drain(self)
+        orchestrator.activate_license_async("LIC-second", callback)
+        orchestrator.deactivate_license_async(callback)
+        self.assertEqual(activate.calls, ["LIC-first"])
+        self.assertEqual(deactivate.calls, [])
+        self.assertEqual(
+            outcomes, [(False, "Another license operation is in progress")] * 2
+        )
+        self.assertEqual(publisher.activated_calls, 0)
+        self.assertEqual(len(bridge.worker_callbacks), 1)
+        completion, success, message = bridge.worker_callbacks.pop()
+        completion(success, message)
+        self.assertEqual(outcomes[-1], (True, "done"))
+        orchestrator.deactivate_license_async(callback)
+        manager.drain(self)
+        completion, success, message = bridge.worker_callbacks.pop()
+        completion(success, message)
+        self.assertEqual(deactivate.calls, [None])
+        self.assertEqual(publisher.activated_calls, 1)
+        self.assertEqual(publisher.lost_calls, 1)
+
+    def test_cleanup_invalidates_queued_activation_and_deactivation_completions(self):
+        for operation in ("activate", "deactivate"):
+            with self.subTest(operation=operation):
+                result = self._result(
+                    True, LicenseOperationStatus.SUCCESS, LicenseStatus.VALID, "done"
+                )
+                use_case = FakeUseCase(result)
+                bridge = QueuedCallbackBridge()
+                manager = RecordingThreadManager()
+                publisher = FakeEventPublisher()
+                orchestrator = self._build_orchestrator(
+                    use_case,
+                    use_case,
+                    publisher,
+                    callback_bridge=bridge,
+                    thread_manager=manager,
+                    deactivate=use_case,
+                )
+                outcomes = []
+                if operation == "activate":
+                    orchestrator.activate_license_async(
+                        "LIC-new", lambda *args: outcomes.append(args)
+                    )
+                else:
+                    orchestrator.deactivate_license_async(
+                        lambda *args: outcomes.append(args)
+                    )
+                manager.drain(self)
+                self.assertEqual(len(bridge.worker_callbacks), 1)
+                orchestrator.cleanup()
+                callback, success, message = bridge.worker_callbacks.pop()
+                callback(success, message)
+                self.assertEqual(outcomes, [])
+                self.assertEqual(publisher.activated_calls, 0)
+                self.assertEqual(publisher.lost_calls, 0)
+
+    def test_periodic_no_license_and_closed_states_do_not_contact_server(self):
+        model = FakeModel()
+        model.license_key = None
+        validate = FakeUseCase(RuntimeError("must not run"))
+        bridge = QueuedCallbackBridge()
+        orchestrator = self._build_orchestrator(
+            validate,
+            validate,
+            FakeEventPublisher(),
+            model=model,
+            callback_bridge=bridge,
+        )
+        self.assertIsNone(orchestrator._perform_periodic_validation())
+        model.license_key = "LIC-restored"
+        orchestrator.cleanup()
+        self.assertIsNone(orchestrator._perform_periodic_validation())
+        self.assertEqual(validate.calls, [])
+        self.assertEqual(bridge.callbacks, [])
+
+    def test_network_failure_preserves_access_only_with_current_offline_grace(self):
+        for offline in (True, False):
+            with self.subTest(offline=offline):
+                model = FakeModel()
+                model.offline = offline
+                result = self._result(
+                    False,
+                    LicenseOperationStatus.NETWORK_ERROR,
+                    LicenseStatus.NETWORK_ERROR,
+                    "unavailable",
+                )
+                publisher = FakeEventPublisher()
+                bridge = QueuedCallbackBridge()
+                orchestrator = self._build_orchestrator(
+                    FakeUseCase(result),
+                    FakeUseCase(result),
+                    publisher,
+                    model=model,
+                    callback_bridge=bridge,
+                )
+                orchestrator._perform_periodic_validation()
+                self.assertEqual(orchestrator.has_valid_license(), offline)
+                self.assertEqual(
+                    orchestrator.get_license_info().status,
+                    "grace" if offline else "network_error",
+                )
+                callback, payload = bridge.callbacks.pop()
+                callback(payload)
+                self.assertEqual(publisher.activated_calls, int(offline))
+                self.assertEqual(
+                    publisher.invalidated,
+                    [] if offline else [("unavailable", LicenseStatus.NETWORK_ERROR)],
+                )
+                model.offline = False
+                self.assertFalse(orchestrator.has_valid_license())
 
     def _build_orchestrator(
         self,
@@ -502,13 +762,16 @@ class LicenseActivationContractTests(unittest.TestCase):
         publisher,
         callback_bridge=None,
         model=None,
+        thread_manager=None,
+        deactivate=None,
     ):
         model = model or FakeModel()
-        return LicenseOrchestrator(
+        orchestrator = LicenseOrchestrator(
             license_model=model,
             validate_use_case=validate,
             activate_use_case=activate,
-            deactivate_use_case=FakeUseCase(
+            deactivate_use_case=deactivate
+            or FakeUseCase(
                 LicenseOperationResultDto(
                     success=True,
                     operation_status=LicenseOperationStatus.SUCCESS,
@@ -518,10 +781,12 @@ class LicenseActivationContractTests(unittest.TestCase):
             ),
             scheduler=FakeScheduler(),
             event_publisher=publisher,
-            thread_manager=ImmediateThreadManager(),
-            callback_bridge=callback_bridge or object(),
+            thread_manager=thread_manager or ImmediateThreadManager(),
+            callback_bridge=callback_bridge or QueuedCallbackBridge(),
             logger=logging.getLogger("test"),
         )
+        self.addCleanup(orchestrator.cleanup)
+        return orchestrator
 
     @staticmethod
     def _result(success, operation_status, license_status, message, error_code=None):

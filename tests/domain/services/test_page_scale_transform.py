@@ -38,10 +38,22 @@ class AnnotationSnapshotTransformTests(unittest.TestCase):
             rescale_annotation_position_between_page_scales,
         )
 
-        for kind, values in (
-            ("ink", [0.123456789, 96.0, 48.0, 192.0, 96.0]),
-            ("rect", [96.0, 48.0, 192.0, 96.0, 0.123456789]),
-            ("text", [96.0, 48.0, 192.0, 96.0, 0.123456789]),
+        for kind, values, expected_scaled in (
+            (
+                "ink",
+                [0.123456789, 96.0, 48.0, 192.0, 96.0],
+                [0.123456789, 48.0, 24.0, 96.0, 48.0],
+            ),
+            (
+                "rect",
+                [96.0, 48.0, 192.0, 96.0, 0.123456789],
+                [48.0, 24.0, 96.0, 48.0, 0.123456789],
+            ),
+            (
+                "text",
+                [96.0, 48.0, 192.0, 96.0, 0.123456789, 7.25],
+                [48.0, 24.0, 96.0, 48.0, 0.123456789, 7.25],
+            ),
         ):
             with self.subTest(kind=kind):
                 original = list(values)
@@ -49,11 +61,15 @@ class AnnotationSnapshotTransformTests(unittest.TestCase):
                     scaled = rescale_annotation_position_between_page_scales(
                         kind, values, (1, 96), (1, 48)
                     )
+                    self.assertEqual(values, original)
+                    self.assertIsNot(scaled, values)
+                    self.assertEqual(scaled, expected_scaled)
                     values = rescale_annotation_position_between_page_scales(
                         kind, scaled, (1, 48), (1, 96)
                     )
-                self.assertEqual(values, original)
-                self.assertIsNot(values, original)
+                    self.assertEqual(scaled, expected_scaled)
+                    self.assertIsNot(values, scaled)
+                    self.assertEqual(values, original)
 
 
 if __name__ == "__main__":

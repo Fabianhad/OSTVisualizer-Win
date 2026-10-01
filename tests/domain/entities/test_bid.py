@@ -1,69 +1,10 @@
-import sqlite3
 import unittest
-from unittest.mock import Mock
-from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
 from ost_visualizer.domain.entities.bid import Bid
-from ost_visualizer.domain.entities.hierarchy_data import (
-    HierarchyBidInfo,
-    HierarchyData,
-    HierarchyFileEntry,
-    HierarchyFolderInfo,
-    HierarchyPageInfo,
-)
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
-from ost_visualizer.domain.entities.project_factory import build_bid
+from ost_visualizer.domain.entities.folder import Folder
+from ost_visualizer.domain.entities.page import Page
 
 
 class PageFolderOwnershipTests(unittest.TestCase):
-    def setUp(self):
-        self.connection = sqlite3.connect(":memory:")
-        self.addCleanup(self.connection.close)
-        self.connection.execute(
-            "CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER, Name TEXT, Sequence INTEGER, BidPageFolderUID INTEGER)"
-        )
-        self.connection.executemany(
-            "INSERT INTO BidPages VALUES (?, ?, ?, ?, ?)",
-            [
-                (1, 8, "Nested second", 20, 11),
-                (2, 8, "Nested first", 10, 11),
-                (3, 8, "Root", 30, None),
-                (4, 8, "Parent", 5, 10),
-                (5, 9, "Other bid", 1, 11),
-            ],
-        )
-        self.bid_ref = BidRef("database", "8")
-        self.info = HierarchyBidInfo(
-            uid="8",
-            name="Bid",
-            folders={
-                "10": HierarchyFolderInfo(
-                    name="Parent",
-                    pages=[HierarchyPageInfo(uid="4", name="Parent")],
-                    subfolders={
-                        "11": HierarchyFolderInfo(
-                            name="Nested",
-                            pages=[
-                                HierarchyPageInfo(uid="1", name="Nested second"),
-                                HierarchyPageInfo(uid="2", name="Nested first"),
-                            ],
-                        )
-                    },
-                )
-            },
-            pages_without_folder=[HierarchyPageInfo(uid="3", name="Root")],
-        )
-        self.model = OstAggregate(Mock())
-        self.model.set_hierarchy(
-            HierarchyData(
-                loaded_files=[
-                    HierarchyFileEntry(file_path="database", orphan_bids=[self.info])
-                ]
-            )
-        )
-        self.model.current_bid_ref = self.bid_ref
-        self.model.current_bid = build_bid(self.info)
-
     def test_replace_pages_accepts_its_own_root_list_and_lazy_hierarchy(self):
         for lazy in (False, True):
             with self.subTest(lazy=lazy):
@@ -77,3 +18,30 @@ class PageFolderOwnershipTests(unittest.TestCase):
                 bid.replace_pages(pages)
                 self.assertEqual(bid.pages_without_folder, [page])
                 self.assertEqual(bid.page_count, 1)
+                self.assertIs(bid.pages_without_folder[0], page)
+
+    def test_replacement_clears_old_folders_and_retains_exact_pages_in_sequence(self):
+        stale = Page(uid="old", name="Old")
+        nested = Folder(uid="nested", name="Nested", pages=[stale])
+        parent = Folder(uid="parent", name="Parent", subfolders={"nested": nested})
+        bid = Bid(
+            uid="bid",
+            name="Bid",
+            folders={"parent": parent},
+            pages_without_folder=[stale],
+        )
+        late = Page(uid="late", name="Late", sequence=20, folder_uid="nested")
+        early = Page(uid="early", name="Early", sequence=1, folder_uid="nested")
+        root = Page(uid="root", name="Root", sequence=2, folder_uid="missing")
+        bid.replace_pages(iter([late, root, early]))
+        self.assertEqual(nested.pages, [early, late])
+        self.assertIs(nested.pages[0], early)
+        self.assertIs(nested.pages[1], late)
+        self.assertEqual(parent.pages, [])
+        self.assertEqual(bid.pages_without_folder, [root])
+        self.assertIs(bid.pages_without_folder[0], root)
+        self.assertEqual(bid.page_count, 3)
+        bid.replace_pages([])
+        self.assertEqual(nested.pages, [])
+        self.assertEqual(bid.pages_without_folder, [])
+        self.assertEqual(bid.page_count, 0)

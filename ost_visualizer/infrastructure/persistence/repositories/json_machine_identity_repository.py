@@ -21,9 +21,12 @@ class JsonMachineIdentityRepository(JsonRepositoryBase):
         try:
             identity = MachineIdentity.from_dict(self._load_json())
         except FileNotFoundError:
-            if self._has_initialized_marker():
-                raise OSError("The pinned machine identity record is missing")
-            return None
+            if not self._has_initialized_marker():
+                return None
+            try:
+                identity = MachineIdentity.from_dict(self._load_json())
+            except FileNotFoundError as exc:
+                raise OSError("The pinned machine identity record is missing") from exc
         self._ensure_initialized_marker()
         return identity
 

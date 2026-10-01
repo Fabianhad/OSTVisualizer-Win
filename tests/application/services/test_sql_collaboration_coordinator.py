@@ -1,20 +1,3 @@
-from tests.helpers.sql.collaboration import (
-    SQL_SCHEMA_V1,
-    DatabaseCapabilityService,
-    DatabaseDescriptor,
-    DatabaseDescriptorRegistry,
-    DatabaseSessionRegistry,
-    SqlServerDatabaseLocation,
-    _CollaborationStore,
-    _coordinator,
-    _Dispatcher,
-    _EventBus,
-    _PermissionProbe,
-    _Reconciliation,
-    _RemoteReader,
-    _shutdown_coordinator,
-    _token_service,
-)
 from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -27,7 +10,7 @@ import json
 import time
 import uuid
 from types import SimpleNamespace
-from unittest.mock import patch
+from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
     ChangeOperation,
@@ -49,9 +32,13 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     HydratedDatabaseChangeBatch,
     MutationExecutionResult,
     MutationOutcomeStatus,
+    PageSettingsPayload,
     PendingMutationState,
     PendingSqlOperationRecord,
+    PlanPropertyPayload,
     PresenceMode,
+    ProjectImportPayload,
+    ProjectWritePayload,
     QueuedMutationRequest,
     QueuedMutationResult,
     ReconciliationFailureKind,
@@ -135,30 +122,41 @@ from tests.helpers.sql.collaboration import (
     _stop_database,
     _token_service,
 )
-from ost_visualizer.application.dtos.collaboration_dtos import SynchronizationState
-from ost_visualizer.application.services.sql_collaboration_coordinator import (
-    SqlCollaborationCoordinator,
-    _DatabaseRuntime,
-)
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    CollaborationMutationType,
-    DatabaseMutationRequest,
-    DatabaseMutationResult,
-    DurableOperationResult,
-    MutationOutcomeStatus,
-    PageSettingsPayload,
-    PendingMutationState,
-    PendingSqlOperationRecord,
-    PlanPropertyPayload,
-    ProjectImportPayload,
-    ProjectWritePayload,
-    QueuedMutationRequest,
-    QueuedMutationResult,
-    ResourceRef,
-)
-from ost_visualizer.application.services.sql_collaboration_coordinator import (
-    SqlCollaborationCoordinator,
-)
+
+
+class _CheckpointAwareStore(_CollaborationStore):
+    """Model the feed's after-version contract for repeated worker polls."""
+
+    def __init__(self):
+        super().__init__()
+        self.checkpoint_seen = threading.Event()
+
+    def poll_changes(self, database_id, after_version, limit, excluding_session_id):
+        result = super().poll_changes(
+            database_id, after_version, limit, excluding_session_id
+        )
+        observed = replace(
+            result.observed_batch,
+            changes=tuple(
+                change
+                for change in result.observed_batch.changes
+                if change.commit_version > after_version
+            ),
+        )
+        remote = replace(
+            result.remote_batch,
+            batch=replace(
+                result.remote_batch.batch,
+                changes=tuple(
+                    change
+                    for change in result.remote_batch.batch.changes
+                    if change.commit_version > after_version
+                ),
+            ),
+        )
+        if self.change is not None and after_version >= self.change.commit_version:
+            self.checkpoint_seen.set()
+        return DatabaseChangePollResult(observed_batch=observed, remote_batch=remote)
 
 
 class SqlCollaborationStartupCancellationTests(unittest.TestCase):
@@ -168,6 +166,7 @@ class SqlCollaborationStartupCancellationTests(unittest.TestCase):
                 entered = threading.Event()
                 release = threading.Event()
                 finished = threading.Event()
+                shutdown_results = []
 
                 class Store(_CollaborationStore):
                     def start_session(self, *args, **kwargs):
@@ -216,32 +215,119 @@ class SqlCollaborationStartupCancellationTests(unittest.TestCase):
                             "initial_reconciliation",
                             wraps=reader.initial_reconciliation,
                         ) as hydrate,
-                        patch.object(coordinator, "_on_session_started") as started,
+                        patch.object(
+                            coordinator,
+                            "_on_session_started",
+                            wraps=coordinator._on_session_started,
+                        ) as started,
                         patch.object(
                             store, "start_session", wraps=store.start_session
                         ) as connect,
+                        patch.object(
+                            store, "close_session", wraps=store.close_session
+                        ) as close,
                     ):
                         self.assertTrue(
                             coordinator.start_database(descriptor.database_id)
                         )
                         self.assertTrue(entered.wait(2))
-                        coordinator.request_shutdown(lambda *_: finished.set())
+                        coordinator.request_shutdown(
+                            lambda *result: (
+                                shutdown_results.append(result),
+                                finished.set(),
+                            )
+                        )
                         self.assertFalse(finished.is_set())
                         release.set()
                         self.assertTrue(finished.wait(2))
+                        self.assertEqual(shutdown_results, [(True, "")])
+                        self.assertEqual(
+                            coordinator.shutdown_state,
+                            CollaborationShutdownState.CLOSED,
+                        )
                         self.assertEqual(connect.call_count, 1)
                         load.assert_not_called()
                         hydrate.assert_not_called()
                         started.assert_not_called()
                         self.assertFalse(store.polled.is_set())
                         self.assertEqual(store.closed.is_set(), outcome == "committed")
+                        self.assertEqual(close.call_count, int(outcome == "committed"))
+                        if outcome == "committed":
+                            self.assertEqual(
+                                close.call_args.args[:2],
+                                (descriptor.database_id, store.session_id),
+                            )
                 finally:
                     release.set()
                     _shutdown_coordinator(coordinator)
 
 
 class _SqlCollaborationCoordinatorCollaborationFixture(unittest.TestCase):
-    pass
+    def ready_coordinator(
+        self, *, store=None, reconciliation=None, journal=None, cleanup_success=True
+    ):
+        """Install an editable runtime without starting a background polling loop."""
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        tokens, drafts = _token_service()
+        coordinator = _coordinator(
+            descriptors,
+            store if store is not None else _LockingStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            reconciliation if reconciliation is not None else _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+            operation_journal=(
+                journal if journal is not None else _PendingOperationJournal()
+            ),
+        )
+        if cleanup_success:
+            self.addCleanup(_shutdown_coordinator, coordinator)
+        else:
+            self.addCleanup(self.assert_failed_shutdown, coordinator)
+        runtime = _DatabaseRuntime(descriptor.database_id, 4)
+        runtime.session = DatabaseSession(descriptor.database_id, str(uuid.uuid4()))
+        runtime.established = True
+        runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator._sessions.register(
+            descriptor.database_id, runtime.session.session_id
+        )
+        return coordinator, runtime
+
+    def assert_failed_shutdown(self, coordinator):
+        expected_message = "; ".join(
+            error
+            for runtime in coordinator._runtimes.values()
+            for error in runtime.cleanup_errors
+        )
+        self.assertTrue(
+            expected_message, "The test must establish its expected cleanup failure"
+        )
+        finished = threading.Event()
+        results = []
+        coordinator.request_shutdown(
+            lambda *result: (results.append(result), finished.set())
+        )
+        self.assertTrue(finished.wait(2), "Failed shutdown was not reported")
+        self.assertEqual(results, [(False, expected_message)])
+        self.assertEqual(
+            coordinator.shutdown_state, CollaborationShutdownState.CLEANUP_FAILED
+        )
 
 
 class SqlCollaborationCoordinatorCollaborationTests(
@@ -250,88 +336,97 @@ class SqlCollaborationCoordinatorCollaborationTests(
     """SqlCollaborationCoordinator: lifecycle and combined contracts."""
 
     def test_local_projection_failure_keeps_exception_diagnostic(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _CollaborationStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _RaisingReconciliation(),
-            DatabaseCapabilityService(descriptors, _PermissionProbe()),
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
+        reconciliation = _RaisingReconciliation()
+        coordinator, runtime = self.ready_coordinator(reconciliation=reconciliation)
         results = []
+        authoritative = AuthoritativeMutationResult(created_resource_ids=("501",))
         result = QueuedMutationResult(
-            database_id=descriptor.database_id,
+            database_id=runtime.database_id,
             runtime_generation=runtime.generation,
             operation_id=str(uuid.uuid4()),
+            created_resource_ids=("501",),
+            authoritative_result=authoritative,
             outcome_status=MutationOutcomeStatus.COMMITTED,
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(runtime.database_id, "epoch", 0, 1)
         )
         with self.assertLogs(
             "ost_visualizer.application.services.sql_collaboration_coordinator",
             level="ERROR",
         ) as captured:
             coordinator._apply_local_mutation_result(
-                (results.append, result, object(), runtime.session_generation, None)
+                (results.append, result, hydrated, runtime.session_generation, None)
             )
-        self.assertIn(
+        self.assertEqual(len(captured.records), 1)
+        self.assertEqual(
+            captured.records[0].getMessage(),
             "SQL local-completion reconciliation failed",
-            captured.output[0],
+        )
+        self.assertIsInstance(captured.records[0].exc_info[1], RuntimeError)
+        self.assertEqual(
+            str(captured.records[0].exc_info[1]), "reconciliation callback failed"
         )
         self.assertEqual(
-            results[0].outcome_status,
-            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            results,
+            [
+                replace(
+                    result,
+                    outcome_status=MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+                    message="The SQL mutation committed, but its local projection failed.",
+                    commit_attempted=True,
+                )
+            ],
         )
-        _shutdown_coordinator(coordinator)
+        self.assertIs(results[0].authoritative_result, authoritative)
 
     def test_granted_lease_is_released_when_ui_callback_fails(self):
+        store = _LockingStore()
+        coordinator, runtime = self.ready_coordinator(store=store)
         resource = ResourceRef("condition", "11", 7)
-        lock = ResourceLock("sql-db", resource, "lock-token")
-        handle = EditLeaseHandle(
-            database_id="sql-db",
-            draft_id="draft-1",
-            runtime_generation=3,
-            operation_id="edit-condition",
-            owning_surface="condition-sidebar",
-            resources=(resource,),
-            locks=(lock,),
-        )
-        runtime = _DatabaseRuntime("sql-db", 3)
-        runtime.draft_ids[frozenset((resource.lease_identity,))] = handle.draft_id
-        coordinator = SqlCollaborationCoordinator.__new__(SqlCollaborationCoordinator)
-        coordinator._shutting_down = False
-        coordinator._runtime = lambda database_id, generation=None: (
-            runtime if database_id == "sql-db" and generation in (None, 3) else None
-        )
-        released = []
-        coordinator.end_edit_lease = released.append
+        delivered = []
 
-        def broken_callback(_result):
+        def broken_callback(result):
+            delivered.append(result)
             raise RuntimeError("closed editor")
 
-        coordinator._complete_runtime_lease_request(
-            (
-                "sql-db",
-                3,
-                handle.draft_id,
-                broken_callback,
-                EditLeaseResult(True, handle=handle),
-            )
+        coordinator.request_local_edit(
+            runtime.database_id,
+            (resource,),
+            broken_callback,
+            operation_id="edit-condition",
+            owning_surface="condition-sidebar",
         )
-        self.assertEqual(released, [handle])
+        with self.assertLogs(
+            "ost_visualizer.application.services.sql_collaboration_coordinator",
+            level="ERROR",
+        ) as captured:
+            coordinator._process_edit_requests(runtime)
+        self.assertEqual(len(delivered), 1)
+        self.assertTrue(delivered[0].granted)
+        handle = delivered[0].handle
+        self.assertIsNotNone(handle)
+        self.assertEqual(handle.resources, (resource,))
+        self.assertEqual(handle.database_id, runtime.database_id)
+        self.assertEqual(str(captured.records[0].exc_info[1]), "closed editor")
+        self.assertEqual(runtime.release_requests.qsize(), 1)
+        self.assertEqual(store.released, [])
+        coordinator._process_release_requests(runtime)
+        self.assertEqual(
+            store.released,
+            [(runtime.database_id, runtime.session.session_id, "lock-token")],
+        )
+        self.assertIsNone(coordinator._local_drafts.get(handle.draft_id))
+        self.assertEqual(runtime.draft_ids, {})
+        self.assertEqual(runtime.owned_locks, {})
+        self.assertEqual(runtime.edit_depth, 0)
+        self.assertEqual(runtime.mode, PresenceMode.VIEWING)
+        self.assertEqual(
+            coordinator._sessions.lock_tokens(runtime.database_id, (resource,)), ()
+        )
+        coordinator._process_release_requests(runtime)
+        self.assertEqual(len(store.released), 1)
+        self.assertEqual(len(delivered), 1)
 
     def test_immediate_lease_callback_failure_is_contained(self):
         result = EditLeaseResult(False, "not available")
@@ -352,13 +447,19 @@ class SqlCollaborationCoordinatorCollaborationTests(
         )
 
     def test_queued_geometry_consumes_existing_edit_lease_without_reacquiring(self):
+        store = _CollaborationStore()  # Acquiring or releasing a lock is an error.
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(
+            store=store, reconciliation=reconciliation
+        )
+        database_id = runtime.database_id
         resource = ResourceRef("takeoff", "42", 8)
         dependency = ResourceRef("page", "20", 8)
-        lock = ResourceLock("database", resource, "lock-token")
-        drafts = LocalDraftRegistry()
+        lock = ResourceLock(database_id, resource, "lock-token")
+        drafts = coordinator._local_drafts
         draft = drafts.begin(
             draft_type="takeoffs_gesture",
-            database_id="database",
+            database_id=database_id,
             bid_uid=8,
             page_uid=20,
             owning_surface="main-plan",
@@ -366,82 +467,70 @@ class SqlCollaborationCoordinatorCollaborationTests(
             dependency_resources=(dependency,),
             operation_id="gesture-operation",
         )
-        drafts.activate(draft.draft_id, (lock,), runtime_generation=4)
+        drafts.activate(draft.draft_id, (lock,), runtime_generation=runtime.generation)
         handle = EditLeaseHandle(
-            database_id="database",
+            database_id=database_id,
             draft_id=draft.draft_id,
-            runtime_generation=4,
+            runtime_generation=runtime.generation,
             operation_id="gesture-operation",
             owning_surface="main-plan",
             resources=(resource,),
             dependency_resources=(dependency,),
             locks=(lock,),
         )
-        runtime = _DatabaseRuntime("database", 4)
-        runtime.session = DatabaseSession("database", "session")
-        resource_key = frozenset((resource.lease_identity,))
-        runtime.draft_ids[resource_key] = draft.draft_id
+        runtime.draft_ids[frozenset((resource.lease_identity,))] = draft.draft_id
         runtime.owned_locks[resource.lease_identity] = lock
         runtime.edit_depth = 1
+        runtime.mode = PresenceMode.EDITING
+        coordinator._sessions.register_lock(database_id, resource, lock.lock_token)
         request = QueuedMutationRequest(
-            database_id="database",
+            database_id=database_id,
             operation_id=str(uuid.uuid4()),
             mutation_type=CollaborationMutationType.PLAN_GEOMETRY,
             owning_surface="main-plan",
             resources=(resource,),
             dependency_resources=(dependency,),
             payload={"takeoff_uid": "42"},
-        )
-        queued = _QueuedMutation(
-            database_id="database",
-            runtime_generation=4,
-            operation_id=request.operation_id,
-            owning_surface="main-plan",
-            resources=(resource,),
-            dependency_resources=(dependency,),
-            operation=lambda: _committed_execution(),
-            callback=lambda _result: None,
-            typed_request=request,
             edit_lease_handle=handle,
         )
-        released = []
-        coordinator = SqlCollaborationCoordinator.__new__(SqlCollaborationCoordinator)
-        coordinator._local_drafts = drafts
-        coordinator._sessions = SimpleNamespace(
-            remove_lock=lambda database_id, removed: released.append(
-                ("session", database_id, removed)
+        calls = []
+        results = []
+
+        def operation():
+            calls.append("write")
+            return replace(
+                _committed_execution(), consumed_lock_tokens=(lock.lock_token,)
             )
+
+        self.assertGreaterEqual(
+            coordinator.queue_request(request, operation, results.append), 0
         )
-        coordinator._store = SimpleNamespace(
-            release_lock=lambda database_id, session_id, token: released.append(
-                ("store", database_id, session_id, token)
-            )
-        )
-        self.assertIs(
-            coordinator._validated_mutation_edit_lease(runtime, queued, handle),
-            drafts.get(draft.draft_id),
-        )
-        self.assertIsNone(
-            coordinator._consume_mutation_edit_lease(
-                runtime,
-                runtime.session,
-                handle,
-                (lock.lock_token,),
-            )
-        )
+        self.assertEqual(calls, [])
+        self.assertEqual(results, [])
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, ["write"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(results[0].operation_id, request.operation_id)
+        self.assertEqual(len(reconciliation.batches), 1)
+        self.assertEqual(reconciliation.batches[0].batch.database_id, database_id)
         self.assertIsNone(drafts.get(draft.draft_id))
         self.assertEqual(runtime.draft_ids, {})
         self.assertEqual(runtime.owned_locks, {})
         self.assertEqual(runtime.edit_depth, 0)
         self.assertEqual(runtime.mode, PresenceMode.VIEWING)
         self.assertEqual(
-            released,
-            [
-                ("session", "database", resource),
-            ],
+            coordinator._sessions.lock_tokens(database_id, (resource,)), ()
         )
+        self.assertEqual(coordinator._pending_mutations.for_database(database_id), ())
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, ["write"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(reconciliation.batches), 1)
 
-    def test_condition_editor_lease_can_transfer_one_owned_navigable_condition(self):
+    def test_condition_editor_lease_validates_navigation_subset_and_rejects_stale_ownership(
+        self,
+    ):
         edited = ResourceRef("condition", "42", 8)
         navigable = ResourceRef("condition", "43", 8)
         edited_lock = ResourceLock("database", edited, "edited-token")
@@ -505,6 +594,55 @@ class SqlCollaborationCoordinatorCollaborationTests(
             coordinator._validated_mutation_edit_lease(runtime, queued, handle),
             drafts.get(draft.draft_id),
         )
+        for changes in (
+            {"database_id": "another-database"},
+            {"owning_surface": "detached-plan"},
+            {"resources": (ResourceRef("condition", "44", 8),)},
+            {"resources": (ResourceRef("condition", "42", 9),)},
+        ):
+            with self.subTest(request_changes=changes):
+                self.assertIsNone(
+                    coordinator._validated_mutation_edit_lease(
+                        runtime, replace(queued, **changes), handle
+                    )
+                )
+        for changes in (
+            {"draft_id": "missing-draft"},
+            {"resources": (edited,)},
+            {"dependency_resources": (ResourceRef("page", "20", 8),)},
+            {
+                "locks": (
+                    replace(edited_lock, lock_token="replaced-token"),
+                    navigable_lock,
+                )
+            },
+        ):
+            with self.subTest(handle_changes=changes):
+                self.assertIsNone(
+                    coordinator._validated_mutation_edit_lease(
+                        runtime, queued, replace(handle, **changes)
+                    )
+                )
+        runtime.generation += 1
+        self.assertIsNone(
+            coordinator._validated_mutation_edit_lease(runtime, queued, handle)
+        )
+        runtime.generation -= 1
+        runtime.owned_locks[edited.lease_identity] = replace(
+            edited_lock, lock_token="new-lock"
+        )
+        self.assertIsNone(
+            coordinator._validated_mutation_edit_lease(runtime, queued, handle)
+        )
+        runtime.owned_locks[edited.lease_identity] = edited_lock
+        self.assertIs(
+            coordinator._validated_mutation_edit_lease(runtime, queued, handle),
+            drafts.get(draft.draft_id),
+        )
+        drafts.finish(draft.draft_id)
+        self.assertIsNone(
+            coordinator._validated_mutation_edit_lease(runtime, queued, handle)
+        )
 
     def test_feed_blocking_resource_conflict_enters_database_conflict_state(self):
         descriptors = DatabaseDescriptorRegistry()
@@ -533,6 +671,7 @@ class SqlCollaborationCoordinatorCollaborationTests(
             events,
             SQL_SCHEMA_V1.version,
         )
+        self.addCleanup(_shutdown_coordinator, coordinator)
         runtime = _DatabaseRuntime(descriptor.database_id, 1)
         coordinator._runtimes[descriptor.database_id] = runtime
         conflicted = ResourceRef("condition", "42", 8)
@@ -547,333 +686,352 @@ class SqlCollaborationCoordinatorCollaborationTests(
             status.message,
             "A pending remote transaction overlaps this draft.",
         )
-        self.assertIn(conflicted, status.conflicted_resources)
+        self.assertEqual(status.conflicted_resources, frozenset((conflicted,)))
         self.assertTrue(runtime.recovery_requested)
+        self.assertFalse(runtime.healthy)
+        self.assertTrue(runtime.pending_delivery)
+        self.assertFalse(capabilities.is_editable(descriptor.database_id))
         self.assertEqual(
-            [event for event, _payload in events.published],
+            events.published,
             [
-                AppEvents.COLLABORATION_STATE_CHANGED,
-                AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                (
+                    AppEvents.COLLABORATION_STATE_CHANGED,
+                    {
+                        "database_id": descriptor.database_id,
+                        "state": SynchronizationState.CONFLICTED.value,
+                        "message": "A pending remote transaction overlaps this draft.",
+                    },
+                ),
+                (
+                    AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                    {"file_path": descriptor.database_id},
+                ),
             ],
         )
-        _shutdown_coordinator(coordinator)
+        coordinator.enter_resource_conflict("not-open", conflicted, "stale conflict")
+        self.assertEqual(len(events.published), 2)
 
     def test_self_change_checkpoint_waits_for_main_thread_reconciliation_gate(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
         store = _CollaborationStore()
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(
+            store=store, reconciliation=reconciliation
+        )
         store.change = _change(
-            descriptor.database_id,
+            runtime.database_id,
             ResourceRef("condition", "42", 8),
-            source="session",
+            source=runtime.session.session_id,
         )
         dispatcher = _DelayedReconciliationDispatcher()
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            store,
-            _RemoteReader(),
-            dispatcher,
-            _Reconciliation(),
-            DatabaseCapabilityService(descriptors, _PermissionProbe()),
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session")
-        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator._dispatcher = dispatcher
         coordinator._poll_once(runtime)
         self.assertEqual(runtime.acknowledged_version, 0)
+        self.assertEqual(runtime.observed_high_water_version, 1)
         self.assertTrue(runtime.pending_delivery)
+        self.assertEqual(len(dispatcher.pending), 1)
+        self.assertEqual(reconciliation.batches, [])
+        coordinator._poll_once(runtime)
+        self.assertEqual(len(dispatcher.pending), 1)
         dispatcher.deliver_pending()
         self.assertEqual(runtime.acknowledged_version, 1)
         self.assertFalse(runtime.pending_delivery)
-        coordinator._runtimes.clear()
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(len(reconciliation.batches), 1)
+        self.assertEqual(
+            reconciliation.batches[0].batch.database_id, runtime.database_id
+        )
+        self.assertEqual(reconciliation.batches[0].batch.changes, ())
+        self.assertEqual(reconciliation.batches[0].batch.delivered_through_version, 1)
+        dispatcher.deliver_pending()
+        self.assertEqual(len(reconciliation.batches), 1)
 
     def test_malformed_session_start_has_distinct_failure_classification(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        reconciliation = _Reconciliation()
-        reconciliation.result = False
-        reconciliation.failure_kind = ReconciliationFailureKind.MALFORMED_PAYLOAD
-        events = _EventBus()
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _CollaborationStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            reconciliation,
-            DatabaseCapabilityService(descriptors, _PermissionProbe()),
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            events,
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        coordinator._runtimes[descriptor.database_id] = runtime
-        coordinator._on_session_started(
+        for failure_kind, reason in (
             (
-                descriptor.database_id,
-                runtime.generation,
-                runtime.session_generation,
-                HydratedDatabaseChangeBatch(
-                    _batch(descriptor.database_id, "epoch", 0, 0)
-                ),
-                None,
-            )
-        )
-        failure_payload = next(
-            payload
-            for event, payload in events.published
-            if event is AppEvents.FULL_RECONCILIATION_REQUIRED
-        )
-        self.assertIn("session-start", failure_payload["reason"])
-        _shutdown_coordinator(coordinator)
+                ReconciliationFailureKind.MALFORMED_PAYLOAD,
+                "The SQL session-start reconciliation payload was malformed.",
+            ),
+            (None, "The SQL database could not be reconciled at session start."),
+        ):
+            with self.subTest(failure_kind=failure_kind):
+                reconciliation = _Reconciliation()
+                reconciliation.result = False
+                reconciliation.failure_kind = failure_kind
+                coordinator, runtime = self.ready_coordinator(
+                    reconciliation=reconciliation
+                )
+                opened = []
+                runtime.initial_open_callback = lambda *args: opened.append(args)
+                hydrated = HydratedDatabaseChangeBatch(
+                    _batch(runtime.database_id, "epoch", 0, 7)
+                )
+                coordinator._on_session_started(
+                    (
+                        runtime.database_id,
+                        runtime.generation,
+                        runtime.session_generation,
+                        hydrated,
+                        None,
+                    )
+                )
+                self.assertEqual(reconciliation.batches, [hydrated])
+                self.assertEqual(opened, [(False, reason)])
+                self.assertTrue(runtime.ready_event.is_set())
+                self.assertFalse(runtime.healthy)
+                self.assertTrue(runtime.pending_delivery)
+                self.assertTrue(runtime.recovery_requested)
+                self.assertEqual(runtime.acknowledged_version, 0)
+                self.assertEqual(
+                    coordinator._event_bus.published,
+                    [
+                        (
+                            AppEvents.COLLABORATION_STATE_CHANGED,
+                            {
+                                "database_id": runtime.database_id,
+                                "state": SynchronizationState.RECONCILIATION_REQUIRED.value,
+                                "message": reason,
+                            },
+                        ),
+                        (
+                            AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                            {"file_path": runtime.database_id},
+                        ),
+                        (
+                            AppEvents.FULL_RECONCILIATION_REQUIRED,
+                            {
+                                "database_id": runtime.database_id,
+                                "reason": reason,
+                            },
+                        ),
+                    ],
+                )
 
     def test_queued_mutation_can_be_cancelled_before_worker_execution(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
+        journal = _PendingOperationJournal()
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(
+            journal=journal, reconciliation=reconciliation
         )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
         calls = []
         results = []
-        _queue_test_mutation(
+        sequence = _queue_test_mutation(
             coordinator,
-            descriptor.database_id,
+            runtime.database_id,
             (ResourceRef("takeoffs_collection", "8", 8),),
             lambda: calls.append(True) or _committed_execution("501"),
             results.append,
             operation_id="cancel-placement",
         )
-        operation_id = coordinator._pending_mutations.for_database(
-            descriptor.database_id
-        )[0].request.operation_id
+        self.assertEqual(sequence, runtime.generation)
+        pending = coordinator._pending_mutations.for_database(runtime.database_id)
+        self.assertEqual(len(pending), 1)
+        operation_id = pending[0].request.operation_id
+        self.assertEqual(set(journal.records), {operation_id})
         self.assertTrue(
-            coordinator.cancel_queued_mutation(descriptor.database_id, operation_id)
+            coordinator.cancel_queued_mutation(runtime.database_id, operation_id)
         )
         coordinator._process_mutation_requests(runtime)
         self.assertEqual(calls, [])
+        self.assertEqual(len(results), 1)
         self.assertEqual(
-            [result.outcome_status for result in results],
-            [MutationOutcomeStatus.CANCELLED_BEFORE_START],
+            results[0].outcome_status, MutationOutcomeStatus.CANCELLED_BEFORE_START
         )
+        self.assertEqual(results[0].operation_id, operation_id)
+        self.assertEqual(results[0].database_id, runtime.database_id)
+        self.assertFalse(results[0].commit_attempted)
         self.assertEqual(
-            coordinator._pending_mutations.for_database(descriptor.database_id), ()
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
         )
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(journal.records, {})
+        self.assertEqual(runtime.cancelled_mutation_ids, set())
+        self.assertEqual(reconciliation.batches, [])
+        self.assertFalse(
+            coordinator.cancel_queued_mutation(runtime.database_id, operation_id)
+        )
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, [])
+        self.assertEqual(len(results), 1)
 
     def test_queued_mutation_capacity_rejects_only_the_sixty_fifth_request(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
+        journal = _PendingOperationJournal()
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(
+            journal=journal, reconciliation=reconciliation
         )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(
-            database_id=descriptor.database_id,
-            session_id="session-1",
-            last_acknowledged_version=7,
-        )
-        runtime.established = True
         runtime.healthy = False
         runtime.pending_delivery = True
-        coordinator._runtimes[descriptor.database_id] = runtime
         results = []
-        for index in range(65):
-            _queue_test_mutation(
-                coordinator,
-                descriptor.database_id,
-                (ResourceRef("takeoffs_collection", "8", 8),),
-                lambda index=index: _committed_execution(str(501 + index)),
-                results.append,
-                expected_id_count=1,
-                operation_id=f"placement-{index}",
+        calls = []
+        requests = [
+            QueuedMutationRequest(
+                database_id=runtime.database_id,
+                operation_id=str(uuid.uuid4()),
+                mutation_type=CollaborationMutationType.TAKEOFF_PLACEMENT,
                 owning_surface="main-plan",
+                resources=(ResourceRef("takeoffs_collection", "8", 8),),
+                payload={"index": index},
             )
+            for index in range(65)
+        ]
+
+        def submit(index):
+            def operation():
+                calls.append(index)
+                return _committed_execution(str(501 + index))
+
+            return coordinator.queue_request(requests[index], operation, results.append)
+
+        for index in range(64):
+            self.assertEqual(submit(index), runtime.generation)
+        self.assertEqual(submit(64), -1)
         self.assertEqual(runtime.mutation_requests.qsize(), 64)
         self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].operation_id, requests[64].operation_id)
         self.assertEqual(results[0].outcome_status, MutationOutcomeStatus.REJECTED)
-        uuid.UUID(results[0].operation_id)
         self.assertIn("queue is full", results[0].message.lower())
-        self.assertNotIn("stopped", results[0].message.lower())
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(
+            set(journal.records), {request.operation_id for request in requests[:64]}
+        )
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, [])
+        self.assertEqual(reconciliation.batches, [])
+        runtime.healthy = True
+        runtime.pending_delivery = False
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, [0])
+        self.assertEqual(submit(64), runtime.generation)
+        for _ in range(64):
+            coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, list(range(65)))
+        self.assertEqual(
+            [result.operation_id for result in results[1:]],
+            [request.operation_id for request in requests],
+        )
+        self.assertEqual(
+            [result.outcome_status for result in results[1:]],
+            [MutationOutcomeStatus.COMMITTED] * 65,
+        )
+        self.assertEqual(
+            [result.created_resource_ids for result in results[1:]],
+            [(str(501 + index),) for index in range(65)],
+        )
+        self.assertEqual(len(reconciliation.batches), 65)
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
+        self.assertEqual(journal.records, {})
+        self.assertTrue(runtime.mutation_requests.empty())
 
     def test_queue_rejects_mutation_when_initial_journal_write_fails(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        pending = PendingMutationRegistry()
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            DatabaseCapabilityService(descriptors, _PermissionProbe()),
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-            pending_mutations=pending,
-            operation_journal=_FailingPendingOperationJournal(1),
+        journal = _FailingPendingOperationJournal(1)
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(
+            journal=journal, reconciliation=reconciliation
         )
         results = []
-        sequence = _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (ResourceRef("takeoffs_collection", "8", 8),),
-            lambda: _committed_execution("501"),
-            results.append,
-            expected_id_count=1,
-            operation_id="journal-initial-failure",
+        calls = []
+        request = QueuedMutationRequest(
+            database_id=runtime.database_id,
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.TAKEOFF_PLACEMENT,
             owning_surface="main-plan",
+            resources=(ResourceRef("takeoffs_collection", "8", 8),),
+            payload={"test_operation": "journal-initial-failure"},
         )
+
+        def operation():
+            calls.append("write")
+            return _committed_execution("501")
+
+        sequence = coordinator.queue_request(request, operation, results.append)
         self.assertEqual(sequence, -1)
         self.assertEqual(len(results), 1)
-        self.assertEqual(
-            results[0].outcome_status,
-            MutationOutcomeStatus.REJECTED,
-        )
+        self.assertEqual(results[0].operation_id, request.operation_id)
+        self.assertEqual(results[0].outcome_status, MutationOutcomeStatus.REJECTED)
         self.assertIn("recorded safely", results[0].message)
-        self.assertEqual(pending.for_database(descriptor.database_id), ())
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
+        self.assertEqual(journal.records, {})
+        self.assertTrue(runtime.mutation_requests.empty())
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, [])
+        self.assertEqual(reconciliation.batches, [])
+        # The same otherwise-valid request is accepted once durable recording recovers.
+        self.assertGreaterEqual(
+            coordinator.queue_request(request, operation, results.append), 0
+        )
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, ["write"])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[1].outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(results[1].created_resource_ids, ("501",))
+        self.assertEqual(results[1].operation_id, request.operation_id)
+        self.assertEqual(len(reconciliation.batches), 1)
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
+        self.assertEqual(journal.records, {})
 
-    def test_recovered_commit_projects_while_editing_is_temporarily_disabled(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id,
-            SynchronizationState.RECONCILIATION_REQUIRED,
-        )
-        pending = PendingMutationRegistry()
+    def test_recovered_completion_preserves_committed_result_while_editing_disabled(
+        self,
+    ):
         journal = _PendingOperationJournal()
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _CollaborationStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-            pending_mutations=pending,
-            operation_journal=journal,
+        coordinator, runtime = self.ready_coordinator(journal=journal)
+        coordinator._capabilities.set_collaboration_state(
+            runtime.database_id, SynchronizationState.RECONCILIATION_REQUIRED
         )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        coordinator._runtimes[descriptor.database_id] = runtime
+        self.assertFalse(coordinator._capabilities.is_editable(runtime.database_id))
         request = QueuedMutationRequest(
-            database_id=descriptor.database_id,
+            database_id=runtime.database_id,
             operation_id=str(uuid.uuid4()),
             mutation_type=CollaborationMutationType.TAKEOFF_PLACEMENT,
             owning_surface="main-plan",
             resources=(ResourceRef("takeoffs_collection", "8", 8),),
             payload={"test_operation": "recovered-projection"},
         )
+        pending = coordinator._pending_mutations
         pending.begin(request, runtime_generation=runtime.generation)
         pending.transition(request.operation_id, PendingMutationState.RECOVERING)
         pending.transition(request.operation_id, PendingMutationState.PROJECTING)
         journal.save(
             PendingSqlOperationRecord.from_request(
-                request,
-                PendingMutationState.PROJECTING,
+                request, PendingMutationState.PROJECTING
             )
         )
         results = []
-        coordinator._complete_mutation_request(
-            (
-                results.append,
-                QueuedMutationResult(
-                    database_id=descriptor.database_id,
-                    runtime_generation=runtime.generation,
-                    operation_id=request.operation_id,
-                    outcome_status=MutationOutcomeStatus.COMMITTED,
-                    created_resource_ids=("501",),
-                    commit_attempted=True,
-                ),
-            )
+        result = QueuedMutationResult(
+            database_id=runtime.database_id,
+            runtime_generation=runtime.generation,
+            operation_id=request.operation_id,
+            outcome_status=MutationOutcomeStatus.COMMITTED,
+            created_resource_ids=("501",),
+            authoritative_result=AuthoritativeMutationResult(
+                created_resource_ids=("501",), affected_families=("takeoffs",)
+            ),
+            commit_attempted=True,
         )
-        self.assertEqual(
-            [result.outcome_status for result in results],
-            [MutationOutcomeStatus.COMMITTED],
-        )
-        self.assertEqual(pending.for_database(descriptor.database_id), ())
+        coordinator._complete_mutation_request((results.append, result))
+        self.assertEqual(results, [result])
+        self.assertIs(results[0], result)
+        self.assertEqual(pending.for_database(runtime.database_id), ())
         self.assertEqual(journal.records, {})
-        _shutdown_coordinator(coordinator)
+        self.assertFalse(coordinator._capabilities.is_editable(runtime.database_id))
+        self.assertEqual(
+            coordinator._event_bus.published,
+            [
+                (
+                    AppEvents.COLLABORATION_MUTATION_STATE_CHANGED,
+                    {
+                        "database_id": runtime.database_id,
+                        "operation_id": request.operation_id,
+                        "mutation_type": request.mutation_type.value,
+                        "state": PendingMutationState.QUEUED.value,
+                        "message": "",
+                        "pending_count": 0,
+                    },
+                )
+            ],
+        )
 
     def test_committed_projection_failure_without_runtime_still_notifies_ui(self):
         descriptors = DatabaseDescriptorRegistry()
@@ -897,26 +1055,27 @@ class SqlCollaborationCoordinatorCollaborationTests(
             events,
             SQL_SCHEMA_V1.version,
         )
+        self.addCleanup(_shutdown_coordinator, coordinator)
+        self.assertIsNone(coordinator._runtime(descriptor.database_id))
         coordinator._request_committed_projection_recovery(
             descriptor.database_id,
             "The committed projection could not be attached to a runtime.",
         )
         self.assertEqual(
+            events.published,
             [
-                payload
-                for event, payload in events.published
-                if event is AppEvents.FULL_RECONCILIATION_REQUIRED
-            ],
-            [
-                {
-                    "database_id": descriptor.database_id,
-                    "reason": (
-                        "The committed projection could not be attached to a runtime."
-                    ),
-                }
+                (
+                    AppEvents.FULL_RECONCILIATION_REQUIRED,
+                    {
+                        "database_id": descriptor.database_id,
+                        "reason": (
+                            "The committed projection could not be attached to a runtime."
+                        ),
+                    },
+                )
             ],
         )
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(coordinator._runtimes, {})
 
     def test_recovered_completion_waits_for_its_exact_session(self):
         descriptors = DatabaseDescriptorRegistry()
@@ -929,13 +1088,14 @@ class SqlCollaborationCoordinatorCollaborationTests(
         journal = _PendingOperationJournal()
         store = _RecoverableProjectionStore()
         dispatcher = _DelayedMutationDispatcher()
+        reconciliation = _Reconciliation()
         tokens, drafts = _token_service()
         coordinator = _coordinator(
             descriptors,
             store,
             _RemoteReader(),
             dispatcher,
-            _Reconciliation(),
+            reconciliation,
             DatabaseCapabilityService(descriptors, _PermissionProbe()),
             DatabaseSessionRegistry(),
             tokens,
@@ -945,10 +1105,11 @@ class SqlCollaborationCoordinatorCollaborationTests(
             pending_mutations=pending,
             operation_journal=journal,
         )
+        self.addCleanup(_shutdown_coordinator, coordinator)
         runtime = _DatabaseRuntime(descriptor.database_id, 1)
         first_session_generation = coordinator._install_session(
             runtime,
-            DatabaseSession(descriptor.database_id, "session-1"),
+            DatabaseSession(descriptor.database_id, str(uuid.uuid4())),
         )
         coordinator._runtimes[descriptor.database_id] = runtime
         request = QueuedMutationRequest(
@@ -998,9 +1159,12 @@ class SqlCollaborationCoordinatorCollaborationTests(
                 None,
             )
         )
+        self.assertEqual(len(dispatcher.pending), 1)
+        self.assertEqual(results, [])
+        self.assertEqual(reconciliation.batches, [hydrated])
         second_session_generation = coordinator._install_session(
             runtime,
-            DatabaseSession(descriptor.database_id, "session-2"),
+            DatabaseSession(descriptor.database_id, str(uuid.uuid4())),
         )
         dispatcher.deliver_pending()
         self.assertEqual(results, [])
@@ -1018,14 +1182,31 @@ class SqlCollaborationCoordinatorCollaborationTests(
             )
         )
         dispatcher.deliver_pending()
+        self.assertEqual(len(results), 1)
         self.assertEqual(
-            [result.outcome_status for result in results],
-            [MutationOutcomeStatus.COMMITTED],
+            results[0],
+            QueuedMutationResult(
+                database_id=descriptor.database_id,
+                runtime_generation=runtime.generation,
+                operation_id=request.operation_id,
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                created_resource_ids=("501",),
+                authoritative_result=AuthoritativeMutationResult(
+                    created_resource_ids=("501",), affected_families=("takeoffs",)
+                ),
+                commit_attempted=True,
+            ),
         )
+        self.assertEqual(reconciliation.batches, [hydrated, hydrated])
+        self.assertTrue(runtime.mutation_requests.empty())
         self.assertIsNone(pending.get(request.operation_id))
         self.assertNotIn(request.operation_id, coordinator._uncertain_callbacks)
         self.assertNotIn(request.operation_id, journal.records)
-        _shutdown_coordinator(coordinator)
+        coordinator._complete_recovered_mutation_request(
+            (request, results[0], second_session_generation)
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(reconciliation.batches, [hydrated, hydrated])
 
     def test_recovered_operation_rejects_non_authoritative_identity_sets(self):
         request = QueuedMutationRequest(
@@ -1039,6 +1220,7 @@ class SqlCollaborationCoordinatorCollaborationTests(
             None,
             "501",
             [None],
+            [""],
             ["501", "501"],
             {
                 "takeoff_uids": {"preview-1": None},
@@ -1071,116 +1253,134 @@ class SqlCollaborationCoordinatorCollaborationTests(
                         request, durable
                     )
                 )
+        valid = replace(
+            durable,
+            result_payload=json.dumps(
+                {"value": ["501", "502"], "value_available": True}
+            ),
+        )
+        self.assertEqual(
+            SqlCollaborationCoordinator._recovered_authoritative_result(request, valid),
+            AuthoritativeMutationResult(
+                created_resource_ids=("501", "502"), affected_families=("takeoffs",)
+            ),
+        )
+        for malformed in (
+            "{",
+            "[]",
+            "null",
+            json.dumps({"value": ["501"]}),
+            json.dumps({"value": ["501"], "value_available": 1}),
+            json.dumps({"value": ["501"], "value_available": True, "extra": 1}),
+        ):
+            with self.subTest(envelope=malformed):
+                self.assertIsNone(
+                    SqlCollaborationCoordinator._recovered_authoritative_result(
+                        request, replace(valid, result_payload=malformed)
+                    )
+                )
 
     def test_lifecycle_drain_waits_for_critical_mutation_completion(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
+        reconciliation = _DeferredProjectionReconciliation()
+        coordinator, runtime = self.ready_coordinator(reconciliation=reconciliation)
+        order = []
         mutation_results = []
         drain_results = []
-        _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (ResourceRef("takeoffs_collection", "8", 8),),
-            lambda: _committed_execution("501"),
-            mutation_results.append,
-            operation_id="critical-drain",
+
+        def operation():
+            order.append("write")
+            return _committed_execution("501")
+
+        def completed(result):
+            mutation_results.append(result)
+            order.append("completion")
+
+        def drained(success, message):
+            drain_results.append((success, message))
+            order.append("drain")
+
+        self.assertEqual(
+            _queue_test_mutation(
+                coordinator,
+                runtime.database_id,
+                (ResourceRef("takeoffs_collection", "8", 8),),
+                operation,
+                completed,
+                operation_id="critical-drain",
+            ),
+            runtime.generation,
         )
-        coordinator.drain_database_mutations_async(
-            descriptor.database_id,
-            lambda success, message: drain_results.append((success, message)),
-        )
+        coordinator.drain_database_mutations_async(runtime.database_id, drained)
         self.assertEqual(drain_results, [])
         coordinator._process_mutation_requests(runtime)
+        self.assertEqual(order, ["write"])
+        self.assertEqual(mutation_results, [])
+        self.assertEqual(drain_results, [])
+        self.assertIsNotNone(reconciliation.token)
+        reconciliation.token.complete(True)
+        self.assertEqual(order, ["write", "completion", "drain"])
+        self.assertEqual(len(mutation_results), 1)
         self.assertEqual(
-            [result.outcome_status for result in mutation_results],
-            [MutationOutcomeStatus.COMMITTED],
+            mutation_results[0].outcome_status, MutationOutcomeStatus.COMMITTED
         )
+        self.assertEqual(mutation_results[0].created_resource_ids, ("501",))
         self.assertEqual(drain_results, [(True, "")])
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
+        reconciliation.token.complete(True)
+        self.assertEqual(order, ["write", "completion", "drain"])
 
     def test_lifecycle_drain_ignores_noncritical_view_state(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator, runtime = self.ready_coordinator()
+        calls = []
         results = []
-        _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (ResourceRef("page", "107", 8),),
-            lambda: _committed_execution("501"),
-            lambda _result: None,
-            operation_id="noncritical-view-state",
+        drain_results = []
+        request = QueuedMutationRequest(
+            database_id=runtime.database_id,
+            operation_id=str(uuid.uuid4()),
+            mutation_type=CollaborationMutationType.PAGE_SETTINGS,
+            owning_surface="main-plan",
+            resources=(ResourceRef("page", "107", 8),),
+            page_uid="107",
+            payload=PageSettingsPayload.from_updates("show_mode", [("107", 0)]),
             lifecycle_critical=False,
         )
-        coordinator.drain_database_mutations_async(
-            descriptor.database_id,
-            lambda success, message: results.append((success, message)),
+
+        def operation():
+            calls.append("write")
+            return _committed_execution()
+
+        self.assertEqual(
+            coordinator.queue_request(request, operation, results.append),
+            runtime.generation,
         )
-        self.assertEqual(results, [(True, "")])
+        coordinator.drain_database_mutations_async(
+            runtime.database_id, lambda *result: drain_results.append(result)
+        )
+        self.assertEqual(drain_results, [(True, "")])
+        self.assertEqual(calls, [])
+        self.assertEqual(results, [])
+        self.assertIsNotNone(coordinator._pending_mutations.get(request.operation_id))
         coordinator._process_mutation_requests(runtime)
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(calls, ["write"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].operation_id, request.operation_id)
+        self.assertEqual(results[0].outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(results[0].created_resource_ids, ())
+        self.assertEqual(drain_results, [(True, "")])
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
 
     def test_queued_mutation_release_value_error_finishes_draft_and_all_locks(self):
+        release_failure = ValueError("lock ownership changed")
+
         class _ValueErrorReleaseStore(_LockingStore):
             def release_lock(self, database_id, session_id, lock_token):
                 super().release_lock(database_id, session_id, lock_token)
                 if lock_token == "first":
-                    raise ValueError("lock ownership changed")
+                    raise release_failure
 
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1205,6 +1405,7 @@ class SqlCollaborationCoordinatorCollaborationTests(
             SQL_SCHEMA_V1.version,
         )
         resource_a = ResourceRef("takeoff", "1", 8)
+        self.addCleanup(_shutdown_coordinator, coordinator)
         resource_b = ResourceRef("takeoff", "2", 8)
         draft = drafts.begin(
             draft_type="takeoffs_mutation",
@@ -1221,6 +1422,7 @@ class SqlCollaborationCoordinatorCollaborationTests(
             ResourceLock(descriptor.database_id, resource_a, "first"),
             ResourceLock(descriptor.database_id, resource_b, "second"),
         )
+        drafts.activate(draft.draft_id, locks, runtime_generation=1)
         for lock in locks:
             sessions.register_lock(
                 descriptor.database_id, lock.resource, lock.lock_token
@@ -1231,229 +1433,300 @@ class SqlCollaborationCoordinatorCollaborationTests(
             draft.draft_id,
             locks,
         )
-        self.assertIsInstance(failure, ValueError)
-        self.assertEqual([entry[2] for entry in store.released], ["first", "second"])
-        self.assertEqual(drafts._drafts, {})
+        self.assertIs(failure, release_failure)
+        self.assertEqual(
+            store.released,
+            [
+                (descriptor.database_id, session.session_id, "first"),
+                (descriptor.database_id, session.session_id, "second"),
+            ],
+        )
+        self.assertIsNone(drafts.get(draft.draft_id))
         self.assertEqual(
             sessions.lock_tokens(descriptor.database_id, (resource_a, resource_b)), ()
         )
-        _shutdown_coordinator(coordinator)
 
     def test_new_session_clears_previous_session_pending_delivery(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _CollaborationStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            DatabaseCapabilityService(descriptors, _PermissionProbe()),
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-before")
+        runtime = _DatabaseRuntime("database", 1)
+        runtime.session = DatabaseSession("database", str(uuid.uuid4()))
         runtime.session_generation = 1
         runtime.acknowledged_version = 7
         runtime.observed_high_water_version = 12
         runtime.feed_epoch = "old-epoch"
         runtime.pending_delivery = True
         runtime.healthy = True
-        session_generation = coordinator._install_session(
-            runtime,
-            DatabaseSession(
-                descriptor.database_id,
-                "session-after",
-                last_acknowledged_version=20,
-            ),
+        replacement = DatabaseSession(
+            "database", str(uuid.uuid4()), last_acknowledged_version=20
         )
-        self.assertEqual(session_generation, 2)
+        session_generation = SqlCollaborationCoordinator._install_session(
+            runtime, replacement
+        )
+        self.assertIs(runtime.session, replacement)
+        self.assertEqual((session_generation, runtime.session_generation), (2, 2))
         self.assertEqual(runtime.acknowledged_version, 20)
         self.assertEqual(runtime.observed_high_water_version, 20)
         self.assertEqual(runtime.feed_epoch, "")
         self.assertFalse(runtime.pending_delivery)
         self.assertFalse(runtime.healthy)
-        _shutdown_coordinator(coordinator)
 
     def test_sql_lease_request_denies_when_collaboration_is_not_editable(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        self.assertTrue(capabilities.mark_connected(descriptor.database_id))
         store = _LockingStore()
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            store,
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session")
-        coordinator._runtimes[descriptor.database_id] = runtime
-        results = []
-        coordinator.request_local_edit(
-            descriptor.database_id,
-            (ResourceRef("condition", "42", 8),),
-            results.append,
-        )
-        coordinator._process_edit_requests(runtime)
-        self.assertEqual(len(results), 1)
-        self.assertFalse(results[0].granted)
-        self.assertEqual(runtime.owned_locks, {})
-        _shutdown_coordinator(coordinator)
+        coordinator, runtime = self.ready_coordinator(store=store)
+        resource = ResourceRef("condition", "42", 8)
+        with patch.object(store, "acquire_locks", wraps=store.acquire_locks) as acquire:
+            for state in (
+                SynchronizationState.CONNECTING,
+                SynchronizationState.CATCHING_UP,
+                SynchronizationState.READ_ONLY,
+                SynchronizationState.RECONCILIATION_REQUIRED,
+            ):
+                with self.subTest(state=state):
+                    coordinator._capabilities.set_collaboration_state(
+                        runtime.database_id, state
+                    )
+                    results = []
+                    coordinator.request_local_edit(
+                        runtime.database_id, (resource,), results.append
+                    )
+                    self.assertEqual(
+                        results,
+                        [
+                            EditLeaseResult(
+                                False, "SQL collaboration is not ready for editing."
+                            )
+                        ],
+                    )
+                    self.assertTrue(runtime.edit_requests.empty())
+                    coordinator._process_edit_requests(runtime)
+                    self.assertEqual(len(results), 1)
+                    self.assertEqual(runtime.owned_locks, {})
+                    self.assertEqual(coordinator._local_drafts._drafts, {})
+                    acquire.assert_not_called()
+            coordinator._capabilities.set_collaboration_state(
+                runtime.database_id, SynchronizationState.HEALTHY
+            )
+            granted = []
+            coordinator.request_local_edit(
+                runtime.database_id, (resource,), granted.append
+            )
+            self.assertEqual(granted, [])
+            coordinator._process_edit_requests(runtime)
+            self.assertEqual(len(granted), 1)
+            self.assertTrue(granted[0].granted)
+            self.assertEqual(granted[0].handle.resources, (resource,))
+            self.assertEqual(acquire.call_count, 1)
+            coordinator.end_edit_lease(granted[0].handle)
+            coordinator._process_release_requests(runtime)
+            self.assertEqual(coordinator._local_drafts._drafts, {})
+            self.assertEqual(runtime.owned_locks, {})
 
-    def test_capability_reprobe_does_not_restart_after_failed_session_cleanup(self):
-        coordinator = _coordinator(
-            DatabaseDescriptorRegistry(),
-            _CollaborationStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            DatabaseCapabilityService(DatabaseDescriptorRegistry(), _PermissionProbe()),
-            DatabaseSessionRegistry(),
-            *_token_service(),
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime("database", 1)
-        runtime.thread = type(
-            "StoppedThread",
-            (),
-            {"ident": 1, "is_alive": lambda self: False},
-        )()
-        coordinator._runtimes["database"] = runtime
-        starts = []
-        coordinator.stop_database_async = (
-            lambda _database_id, _reason, callback: callback(False, "cleanup failed")
-        )
-        coordinator.start_database = lambda database_id: starts.append(database_id)
-        coordinator._on_database_capabilities_changed("database")
-        self.assertEqual(starts, [])
+    def test_capability_reprobe_restarts_only_after_successful_session_cleanup(self):
+        class StoppedThread:
+            ident = 1
+
+            def is_alive(self):
+                return False
+
+        coordinator, runtime = self.ready_coordinator()
+        for success in (False, True):
+            with self.subTest(success=success):
+                completions = []
+                with (
+                    patch.object(runtime, "thread", StoppedThread()),
+                    patch.object(
+                        coordinator,
+                        "stop_database_async",
+                        side_effect=lambda database_id, reason, callback: completions.append(
+                            callback
+                        ),
+                    ) as stop,
+                    patch.object(
+                        coordinator, "start_database", return_value=True
+                    ) as start,
+                ):
+                    coordinator._on_database_capabilities_changed(runtime.database_id)
+                    self.assertEqual(stop.call_count, 1)
+                    self.assertEqual(
+                        stop.call_args.args[:2], (runtime.database_id, "reconfigured")
+                    )
+                    self.assertEqual(len(completions), 1)
+                    start.assert_not_called()
+                    completions[0](success, "" if success else "cleanup failed")
+                    if success:
+                        start.assert_called_once_with(runtime.database_id)
+                    else:
+                        start.assert_not_called()
 
     def test_heartbeat_does_not_open_a_second_permission_probe_connection(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        store = _CollaborationStore()
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            store,
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            DatabaseCapabilityService(descriptors, _DeniedPermissionProbe()),
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session")
-        runtime.healthy = True
-        coordinator._heartbeat(runtime)
-        self.assertEqual(runtime.session.session_id, "session")
-        _shutdown_coordinator(coordinator)
+        class Probe:
+            def can_edit(self, _database_id):
+                raise AssertionError(
+                    "Heartbeat must not open another permission connection"
+                )
 
-    def test_pending_edit_callback_failure_cannot_skip_worker_session_cleanup(self):
-        coordinator = SqlCollaborationCoordinator.__new__(SqlCollaborationCoordinator)
-        runtime = _DatabaseRuntime("database", 1)
-        runtime.session = DatabaseSession("database", "session")
-        removed_sessions = []
-        closed_sessions = []
-        coordinator._run_worker = lambda _runtime: None
-        coordinator._reject_pending_edits = lambda *_args: (_ for _ in ()).throw(
-            RuntimeError("Qt dispatcher unavailable")
+        store = _CollaborationStore()
+        coordinator, runtime = self.ready_coordinator(store=store)
+        coordinator._capabilities = DatabaseCapabilityService(
+            coordinator._registry, Probe()
         )
-        coordinator._local_drafts = SimpleNamespace(finish=lambda _draft_id: None)
-        coordinator._dispatcher = SimpleNamespace(dispatch=lambda *_args: None)
-        coordinator._sessions = SimpleNamespace(
-            remove=lambda database_id, session_id: removed_sessions.append(
-                (database_id, session_id)
-            ),
-            remove_lock=lambda *_args: None,
+        previous = runtime.session
+        runtime.acknowledged_version = 13
+        runtime.bid_uid = 8
+        runtime.page_uid = 20
+        runtime.mode = PresenceMode.EDITING
+        with patch.object(store, "heartbeat", wraps=store.heartbeat) as heartbeat:
+            coordinator._heartbeat(runtime)
+        heartbeat.assert_called_once_with(
+            runtime.database_id, previous.session_id, 13, 8, 20, PresenceMode.EDITING
         )
-        coordinator._store = SimpleNamespace(
-            close_session=lambda database_id, session_id, reason: closed_sessions.append(
-                (database_id, session_id, reason)
-            )
+        self.assertIsNot(runtime.session, previous)
+        self.assertEqual(runtime.session.database_id, runtime.database_id)
+        self.assertEqual(runtime.session.session_id, previous.session_id)
+        self.assertEqual(runtime.session.last_acknowledged_version, 13)
+        self.assertEqual(
+            coordinator._event_bus.published,
+            [
+                (
+                    AppEvents.PRESENCE_CHANGED,
+                    {"database_id": runtime.database_id, "bid_uid": "8", "users": []},
+                )
+            ],
         )
-        coordinator._worker(runtime)
-        self.assertIsNone(runtime.session)
-        self.assertEqual(removed_sessions, [("database", "session")])
-        self.assertEqual(closed_sessions, [("database", "session", "closed")])
-        self.assertEqual(len(runtime.cleanup_errors), 1)
+
+    def test_pending_edit_dispatch_failure_cannot_skip_other_drafts_or_session_cleanup(
+        self,
+    ):
+        for failures in ((1,), (2,), (1, 2)):
+            with self.subTest(failed_dispatches=failures):
+                store = _CollaborationStore()
+                coordinator, runtime = self.ready_coordinator(
+                    store=store, cleanup_success=False
+                )
+                delivered = []
+                resources = (
+                    ResourceRef("condition", "42", 8),
+                    ResourceRef("condition", "43", 8),
+                )
+                for resource in resources:
+                    coordinator.request_local_edit(
+                        runtime.database_id,
+                        (resource,),
+                        lambda result, resource=resource: delivered.append(
+                            (resource, result)
+                        ),
+                        owning_surface="condition-sidebar",
+                    )
+                requests = tuple(runtime.edit_requests.queue)
+                self.assertEqual(len(requests), 2)
+                session = runtime.session
+                attempted = []
+
+                def dispatch(callback, payload=()):
+                    attempted.append((callback, payload))
+                    if len(attempted) in failures:
+                        raise RuntimeError("Qt dispatcher unavailable")
+                    callback(payload)
+
+                runtime.stop_event.set()
+                with (
+                    patch.object(
+                        coordinator._dispatcher, "dispatch", side_effect=dispatch
+                    ),
+                    patch.object(
+                        store, "close_session", wraps=store.close_session
+                    ) as closed,
+                ):
+                    coordinator._worker(runtime)
+                self.assertIsNone(runtime.session)
+                closed.assert_called_once_with(
+                    runtime.database_id, session.session_id, "closed"
+                )
+                self.assertEqual(coordinator._sessions.get(runtime.database_id), "")
+                self.assertTrue(runtime.edit_requests.empty())
+                self.assertEqual(
+                    [
+                        coordinator._local_drafts.get(request.draft_id)
+                        for request, _callback in requests
+                    ],
+                    [None, None],
+                )
+                self.assertEqual(len(attempted), 2)
+                self.assertEqual(
+                    [resource for resource, _result in delivered],
+                    [
+                        resource
+                        for position, resource in enumerate(resources, 1)
+                        if position not in failures
+                    ],
+                )
+                for _resource, result in delivered:
+                    self.assertFalse(result.granted)
+                    self.assertIsNone(result.handle)
+                self.assertEqual(
+                    runtime.cleanup_errors,
+                    ["The SQL collaboration worker could not reject pending edits."],
+                )
 
     def test_lease_loss_dispatch_failure_cannot_skip_session_cleanup(self):
-        coordinator = SqlCollaborationCoordinator.__new__(SqlCollaborationCoordinator)
-        runtime = _DatabaseRuntime("database", 1)
-        runtime.session = DatabaseSession("database", "session")
+        store = _LockingStore()
+        coordinator, runtime = self.ready_coordinator(
+            store=store, cleanup_success=False
+        )
         resource = ResourceRef("takeoff", "10", bid_uid=1)
-        lock = ResourceLock("database", resource, "lock-token")
-        runtime.owned_locks[resource.lease_identity] = lock
-        runtime.draft_ids[frozenset((resource.lease_identity,))] = "draft"
-        draft = SimpleNamespace(
-            draft_id="draft",
+        grants = []
+        coordinator.request_local_edit(
+            runtime.database_id,
+            (resource,),
+            grants.append,
             operation_id="move",
             owning_surface="main",
-            affected_resources=(resource,),
         )
-        finished_drafts = []
-        removed_locks = []
-        closed_sessions = []
-        coordinator._reject_pending_edits = lambda *_args: None
-        coordinator._local_drafts = SimpleNamespace(
-            get=lambda draft_id: draft if draft_id == "draft" else None,
-            finish=lambda draft_id: finished_drafts.append(draft_id),
-        )
-        coordinator._dispatcher = SimpleNamespace(
-            dispatch=lambda *_args: (_ for _ in ()).throw(
-                RuntimeError("Qt dispatcher unavailable")
-            )
-        )
-        coordinator._sessions = SimpleNamespace(
-            remove=lambda *_args: None,
-            remove_lock=lambda database_id, removed_resource: removed_locks.append(
-                (database_id, removed_resource)
+        coordinator._process_edit_requests(runtime)
+        self.assertEqual(len(grants), 1)
+        self.assertTrue(grants[0].granted)
+        handle = grants[0].handle
+        session = runtime.session
+        with (
+            patch.object(
+                coordinator._dispatcher,
+                "dispatch",
+                side_effect=RuntimeError("Qt dispatcher unavailable"),
+            ) as dispatch,
+            patch.object(store, "close_session", wraps=store.close_session) as close,
+        ):
+            coordinator._reset_session(runtime, close_reason="closed")
+        dispatch.assert_called_once_with(
+            coordinator._publish_lease_loss,
+            (
+                EditLeaseLoss(
+                    database_id=runtime.database_id,
+                    draft_id=handle.draft_id,
+                    runtime_generation=runtime.generation,
+                    operation_id="move",
+                    owning_surface="main",
+                    resources=(resource,),
+                    reason="closed",
+                ),
             ),
         )
-        coordinator._store = SimpleNamespace(
-            release_lock=lambda *_args: True,
-            close_session=lambda database_id, session_id, reason: closed_sessions.append(
-                (database_id, session_id, reason)
-            ),
-        )
-        coordinator._reset_session(runtime, close_reason="closed")
         self.assertIsNone(runtime.session)
-        self.assertEqual(finished_drafts, ["draft"])
-        self.assertEqual(removed_locks, [("database", resource)])
-        self.assertEqual(closed_sessions, [("database", "session", "closed")])
-        self.assertEqual(len(runtime.cleanup_errors), 1)
+        self.assertIsNone(coordinator._local_drafts.get(handle.draft_id))
+        self.assertEqual(runtime.draft_ids, {})
+        self.assertEqual(runtime.owned_locks, {})
+        self.assertEqual(runtime.edit_depth, 0)
+        self.assertEqual(runtime.mode, PresenceMode.VIEWING)
+        self.assertEqual(coordinator._sessions.get(runtime.database_id), "")
+        self.assertEqual(
+            coordinator._sessions.lock_tokens(runtime.database_id, (resource,)), ()
+        )
+        self.assertEqual(
+            store.released, [(runtime.database_id, session.session_id, "lock-token")]
+        )
+        close.assert_called_once_with(runtime.database_id, session.session_id, "closed")
+        self.assertEqual(
+            runtime.cleanup_errors,
+            ["The SQL collaboration worker could not publish edit-lease loss."],
+        )
 
     def test_shutdown_reports_unsubscribe_failure_after_attempting_all_events(self):
         event_bus = _FailingUnsubscribeEventBus()
@@ -1493,8 +1766,20 @@ class SqlCollaborationCoordinatorCollaborationTests(
             coordinator.shutdown_state,
             CollaborationShutdownState.CLEANUP_FAILED,
         )
+        self.assertEqual(
+            {
+                event: callbacks
+                for event, callbacks in event_bus.subscribers.items()
+                if callbacks
+            },
+            {AppEvents.FILE_OPENED: [coordinator._on_file_opened]},
+        )
+        previous_result = results[0]
+        coordinator.request_shutdown(lambda *result: results.append(result))
+        self.assertEqual(results, [previous_result, previous_result])
+        self.assertEqual(len(event_bus.unsubscribe_attempts), 4)
 
-    def test_database_drain_reports_a_worker_that_exceeds_sql_timeouts(self):
+    def test_database_drain_uses_configured_timeout_and_reports_worker_state(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(
@@ -1518,28 +1803,41 @@ class SqlCollaborationCoordinatorCollaborationTests(
             _EventBus(),
             SQL_SCHEMA_V1.version,
         )
+        self.addCleanup(_shutdown_coordinator, coordinator)
 
-        class _StuckThread:
-            def __init__(self):
-                self.join_timeout = None
+        class Thread:
+            def __init__(self, alive, failure):
+                self.alive = alive
+                self.failure = failure
+                self.timeouts = []
 
             def join(self, timeout):
-                self.join_timeout = timeout
+                self.timeouts.append(timeout)
+                if self.failure is not None:
+                    raise self.failure
 
-            @staticmethod
-            def is_alive():
-                return True
+            def is_alive(self):
+                return self.alive
 
-        payloads = []
-        coordinator._dispatcher = SimpleNamespace(
-            dispatch=lambda _callback, payload: payloads.append(payload)
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.thread = _StuckThread()
-        coordinator._drain_database(runtime)
-        self.assertEqual(runtime.thread.join_timeout, 10.0)
-        self.assertEqual(payloads[0][:3], (descriptor.database_id, 1, False))
-        self.assertIn("did not stop", payloads[0][3])
+        for alive, failure, message in (
+            (
+                True,
+                None,
+                "The SQL collaboration worker did not stop before the configured database-operation timeout.",
+            ),
+            (False, None, ""),
+            (False, RuntimeError("join failed"), "join failed"),
+        ):
+            with self.subTest(alive=alive, join_error=failure):
+                runtime = _DatabaseRuntime(descriptor.database_id, 1)
+                runtime.thread = Thread(alive, failure)
+                with patch.object(coordinator._dispatcher, "dispatch") as dispatch:
+                    coordinator._drain_database(runtime)
+                self.assertEqual(runtime.thread.timeouts, [10.0])
+                dispatch.assert_called_once_with(
+                    coordinator._complete_database_drain,
+                    (descriptor.database_id, 1, not message, message),
+                )
 
     def test_closed_shutdown_callback_runs_outside_the_coordinator_lock(self):
         coordinator = _coordinator(
@@ -1557,54 +1855,37 @@ class SqlCollaborationCoordinatorCollaborationTests(
         _shutdown_coordinator(coordinator)
         callback_lock_access = []
 
-        def completed(_success, _message):
+        def completed(success, message):
             acquired = coordinator._lock.acquire(blocking=False)
-            callback_lock_access.append(acquired)
+            callback_lock_access.append((success, message, acquired))
             if acquired:
                 coordinator._lock.release()
 
         coordinator.request_shutdown(completed)
-        self.assertEqual(callback_lock_access, [True])
+        self.assertEqual(callback_lock_access, [(True, "", True)])
 
     def test_stale_database_drain_cannot_clear_a_reopened_runtime(self):
-        cleared = []
-
-        class _Tokens:
-            def clear_database(self, database_id):
-                cleared.append(database_id)
-
-        descriptors = DatabaseDescriptorRegistry()
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        coordinator = _coordinator(
-            descriptors,
-            _CollaborationStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            _Tokens(),
-            LocalDraftRegistry(),
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        coordinator._runtimes["database"] = _DatabaseRuntime("database", 2)
+        coordinator, runtime = self.ready_coordinator()
         completed = []
-        coordinator._database_drains[("database", 1)] = [
-            lambda success, _message: completed.append(success)
+        old_generation = runtime.generation - 1
+        coordinator._database_drains[(runtime.database_id, old_generation)] = [
+            lambda *result: completed.append(result)
         ]
-        coordinator._complete_database_drain(
-            (
-                "database",
-                1,
-                True,
-                "",
+        before = coordinator.status(runtime.database_id)
+        with patch.object(
+            coordinator._concurrency_tokens,
+            "clear_database",
+            wraps=coordinator._concurrency_tokens.clear_database,
+        ) as clear:
+            coordinator._complete_database_drain(
+                (runtime.database_id, old_generation, True, "")
             )
-        )
-        self.assertEqual(cleared, [])
-        self.assertEqual(completed, [True])
-        self.assertEqual(coordinator._runtime("database").generation, 2)
-        _shutdown_coordinator(coordinator)
+        clear.assert_not_called()
+        self.assertEqual(completed, [(True, "")])
+        self.assertIs(coordinator._runtime(runtime.database_id), runtime)
+        self.assertEqual(coordinator.status(runtime.database_id), before)
+        self.assertEqual(coordinator._event_bus.published, [])
+        self.assertEqual(coordinator._database_drains, {})
 
     def test_database_drain_callback_failure_cannot_interrupt_shutdown_completion(self):
         coordinator = _coordinator(
@@ -1628,8 +1909,10 @@ class SqlCollaborationCoordinatorCollaborationTests(
         coordinator._database_drains[("database", 1)] = [
             lambda _success, _message: (_ for _ in ()).throw(
                 RuntimeError("callback failed")
-            )
+            ),
+            lambda success, message: database_results.append((success, message)),
         ]
+        database_results = []
         with self.assertLogs(
             "ost_visualizer.application.services.sql_collaboration_coordinator",
             level="ERROR",
@@ -1637,6 +1920,9 @@ class SqlCollaborationCoordinatorCollaborationTests(
             coordinator._complete_database_drain(("database", 1, True, ""))
         self.assertEqual(coordinator.shutdown_state, CollaborationShutdownState.CLOSED)
         self.assertEqual(shutdown_results, [(True, "")])
+        self.assertEqual(database_results, [(True, "")])
+        self.assertEqual(coordinator._database_drains, {})
+        self.assertEqual(coordinator._shutdown_callbacks, [])
 
 
 class SqlCollaborationCoordinatorProcessMutationRequestsTests(
@@ -1644,331 +1930,425 @@ class SqlCollaborationCoordinatorProcessMutationRequestsTests(
 ):
     """SqlCollaborationCoordinator._process_mutation_requests."""
 
+    def test_failed_cancellation_dispatch_does_not_strand_other_queued_mutations(self):
+        for failures in ((1,), (2,), (1, 2)):
+            with self.subTest(failed_dispatches=failures):
+                journal = _PendingOperationJournal()
+                store = _RecoverableProjectionStore()
+                coordinator, runtime = self.ready_coordinator(
+                    journal=journal, store=store, cleanup_success=False
+                )
+                results = []
+                writes = []
+                for index in range(2):
+                    self.assertEqual(
+                        _queue_test_mutation(
+                            coordinator,
+                            runtime.database_id,
+                            (ResourceRef("takeoffs_collection", "8", 8),),
+                            lambda: writes.append("unexpected write")
+                            or _committed_execution("501"),
+                            results.append,
+                            operation_id=f"cancel-on-stop-{index}",
+                        ),
+                        runtime.generation,
+                    )
+                requests = tuple(runtime.mutation_requests.queue)
+                session = runtime.session
+                attempted = []
+
+                def dispatch(callback, payload=()):
+                    attempted.append((callback, payload))
+                    if len(attempted) in failures:
+                        raise RuntimeError("UI bridge unavailable")
+                    callback(payload)
+
+                runtime.stop_event.set()
+                with (
+                    patch.object(
+                        coordinator._dispatcher, "dispatch", side_effect=dispatch
+                    ),
+                    patch.object(
+                        store, "close_session", wraps=store.close_session
+                    ) as close,
+                ):
+                    coordinator._worker(runtime)
+                self.assertEqual(writes, [])
+                close.assert_called_once_with(
+                    runtime.database_id, session.session_id, "closed"
+                )
+                self.assertIsNone(runtime.session)
+                self.assertTrue(runtime.mutation_requests.empty())
+                self.assertEqual(len(attempted), 2)
+                delivered_ids = [
+                    request.operation_id
+                    for index, request in enumerate(requests, 1)
+                    if index not in failures
+                ]
+                retained_ids = [
+                    request.operation_id
+                    for index, request in enumerate(requests, 1)
+                    if index in failures
+                ]
+                self.assertEqual(
+                    [result.operation_id for result in results], delivered_ids
+                )
+                for result in results:
+                    self.assertEqual(
+                        result.outcome_status,
+                        MutationOutcomeStatus.CANCELLED_BEFORE_START,
+                    )
+                    self.assertFalse(result.commit_attempted)
+                # Only undeliverable completions retain existing recovery metadata.
+                self.assertEqual(
+                    {
+                        pending.request.operation_id
+                        for pending in coordinator._pending_mutations.for_database(
+                            runtime.database_id
+                        )
+                    },
+                    set(retained_ids),
+                )
+                self.assertEqual(set(journal.records), set(retained_ids))
+                self.assertEqual(
+                    runtime.cleanup_errors,
+                    ["The SQL collaboration worker could not reject queued mutations."],
+                )
+                with patch.object(
+                    store, "query_operation", wraps=store.query_operation
+                ) as query:
+                    coordinator._recover_journaled_operations(runtime)
+                self.assertEqual(
+                    [call.args for call in query.call_args_list],
+                    [
+                        (runtime.database_id, operation_id)
+                        for operation_id in retained_ids
+                    ],
+                )
+                self.assertEqual(journal.records, {})
+                self.assertEqual(
+                    coordinator._pending_mutations.for_database(runtime.database_id), ()
+                )
+                self.assertEqual(writes, [])
+                self.assertEqual(
+                    [result.operation_id for result in results], delivered_ids
+                )
+
     def test_successful_placement_and_deletion_emit_no_timing_info_log(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        tokens, drafts = _token_service()
-        sessions = DatabaseSessionRegistry()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            sessions,
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(reconciliation=reconciliation)
         results = []
+        writes = []
+
+        def placed():
+            writes.append("placement")
+            return _committed_execution("501")
+
+        def deleted():
+            writes.append("deletion")
+            return _committed_execution()
+
         with self.assertNoLogs(
             "ost_visualizer.application.services.sql_collaboration_coordinator",
             level="INFO",
         ):
-            _queue_test_mutation(
-                coordinator,
-                descriptor.database_id,
-                (ResourceRef("takeoffs_collection", "8", 8),),
-                lambda: _committed_execution("501"),
-                results.append,
-                operation_id="placement-without-timing-log",
+            self.assertEqual(
+                _queue_test_mutation(
+                    coordinator,
+                    runtime.database_id,
+                    (ResourceRef("takeoffs_collection", "8", 8),),
+                    placed,
+                    results.append,
+                    operation_id="placement-without-timing-log",
+                ),
+                runtime.generation,
             )
             coordinator._process_mutation_requests(runtime)
-            _queue_test_mutation(
-                coordinator,
-                descriptor.database_id,
-                (ResourceRef("takeoff", "501", 8),),
-                _committed_execution,
-                results.append,
-                expected_id_count=0,
-                operation_id="deletion-without-timing-log",
-                mutation_type=CollaborationMutationType.PLAN_ITEMS_DELETE,
+            self.assertEqual(
+                _queue_test_mutation(
+                    coordinator,
+                    runtime.database_id,
+                    (ResourceRef("takeoff", "501", 8),),
+                    deleted,
+                    results.append,
+                    expected_id_count=0,
+                    operation_id="deletion-without-timing-log",
+                    mutation_type=CollaborationMutationType.PLAN_ITEMS_DELETE,
+                ),
+                runtime.generation,
             )
             coordinator._process_mutation_requests(runtime)
+        self.assertEqual(writes, ["placement", "deletion"])
         self.assertEqual(
             [result.outcome_status for result in results],
-            [MutationOutcomeStatus.COMMITTED, MutationOutcomeStatus.COMMITTED],
+            [MutationOutcomeStatus.COMMITTED] * 2,
         )
-        _shutdown_coordinator(coordinator)
+        self.assertEqual(
+            [result.created_resource_ids for result in results], [("501",), ()]
+        )
+        self.assertEqual(len(reconciliation.batches), 2)
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
+        self.assertEqual(coordinator._operation_journal.records, {})
 
     def test_committed_mutation_becomes_projection_failed_when_journal_update_fails(
         self,
     ):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        pending = PendingMutationRegistry()
         journal = _FailingPendingOperationJournal(3)
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-            pending_mutations=pending,
-            operation_journal=journal,
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(
+            journal=journal, reconciliation=reconciliation
         )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
+        calls = []
         results = []
-        _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (ResourceRef("takeoffs_collection", "8", 8),),
-            lambda: _committed_execution("501"),
-            results.append,
-            expected_id_count=1,
-            operation_id="journal-projecting-failure",
-            owning_surface="main-plan",
+
+        def operation():
+            calls.append("committed")
+            return _committed_execution("501")
+
+        self.assertEqual(
+            _queue_test_mutation(
+                coordinator,
+                runtime.database_id,
+                (ResourceRef("takeoffs_collection", "8", 8),),
+                operation,
+                results.append,
+                operation_id="journal-projecting-failure",
+            ),
+            runtime.generation,
         )
-        with self.assertRaisesRegex(DatabaseCatalogError, "recovery record"):
+        request = coordinator._pending_mutations.for_database(runtime.database_id)[
+            0
+        ].request
+        with (
+            self.assertRaisesRegex(DatabaseCatalogError, "recovery record"),
+            self.assertLogs(
+                "ost_visualizer.application.services.sql_collaboration_coordinator",
+                level="ERROR",
+            ),
+        ):
             coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, ["committed"])
         self.assertEqual(len(results), 1)
         self.assertEqual(
-            results[0].outcome_status,
-            MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
+            results[0].outcome_status, MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED
         )
-        pending_entry = pending.for_database(descriptor.database_id)[0]
-        self.assertEqual(pending_entry.state, PendingMutationState.RECOVERING)
+        self.assertEqual(results[0].operation_id, request.operation_id)
+        self.assertEqual(results[0].created_resource_ids, ("501",))
         self.assertEqual(
-            journal.records[pending_entry.request.operation_id].state,
-            PendingMutationState.RECOVERING,
+            results[0].authoritative_result,
+            AuthoritativeMutationResult(created_resource_ids=("501",)),
         )
-        _shutdown_coordinator(coordinator)
+        self.assertTrue(results[0].commit_attempted)
+        self.assertEqual(reconciliation.batches, [])
+        pending = coordinator._pending_mutations.for_database(runtime.database_id)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0].state, PendingMutationState.RECOVERING)
+        self.assertEqual(
+            journal.records[request.operation_id].state, PendingMutationState.RECOVERING
+        )
+        self.assertEqual(set(coordinator._uncertain_callbacks), {request.operation_id})
+        self.assertTrue(runtime.recovery_requested)
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, ["committed"])
+        self.assertEqual(len(results), 1)
 
     def test_stop_race_after_dequeue_cannot_execute_queued_mutation(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _LockingStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(
-            descriptor.database_id,
-            "session-1",
-        )
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator, runtime = self.ready_coordinator(store=_CollaborationStore())
         calls = []
         results = []
-        _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (ResourceRef("takeoffs_collection", "8", 8),),
-            lambda: (calls.append(True) or _committed_execution("501")),
-            results.append,
-            expected_id_count=1,
-            operation_id="placement",
-            owning_surface="main-plan",
+        self.assertEqual(
+            _queue_test_mutation(
+                coordinator,
+                runtime.database_id,
+                (ResourceRef("takeoffs_collection", "8", 8),),
+                lambda: calls.append("write") or _committed_execution("501"),
+                results.append,
+                operation_id="placement",
+            ),
+            runtime.generation,
         )
-        queued_requests = runtime.mutation_requests
+        request = coordinator._pending_mutations.for_database(runtime.database_id)[
+            0
+        ].request
+        original_get = runtime.mutation_requests.get_nowait
 
-        class _StopOnGetQueue:
-            def get_nowait(self):
-                request = queued_requests.get_nowait()
-                runtime.stop_event.set()
-                return request
+        def stop_on_get():
+            request = original_get()
+            runtime.stop_event.set()
+            return request
 
-            def empty(self):
-                return queued_requests.empty()
-
-        runtime.mutation_requests = _StopOnGetQueue()
-        coordinator._process_mutation_requests(runtime)
+        with patch.object(
+            runtime.mutation_requests, "get_nowait", side_effect=stop_on_get
+        ):
+            coordinator._process_mutation_requests(runtime)
         self.assertEqual(calls, [])
         self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].operation_id, request.operation_id)
+        self.assertEqual(results[0].database_id, runtime.database_id)
         self.assertEqual(
-            results[0].outcome_status,
-            MutationOutcomeStatus.CANCELLED_BEFORE_START,
+            results[0].outcome_status, MutationOutcomeStatus.CANCELLED_BEFORE_START
         )
-        self.assertEqual(drafts._drafts, {})
-        _shutdown_coordinator(coordinator)
+        self.assertFalse(results[0].commit_attempted)
+        self.assertEqual(coordinator._local_drafts._drafts, {})
+        self.assertTrue(runtime.mutation_requests.empty())
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
+        self.assertEqual(coordinator._operation_journal.records, {})
 
     def test_failed_queued_mutation_does_not_corrupt_the_next_request(self):
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
+        for raises in (False, True):
+            with self.subTest(exception=raises):
+                store = _LockingStore()
+                reconciliation = _Reconciliation()
+                coordinator, runtime = self.ready_coordinator(
+                    store=store, reconciliation=reconciliation
+                )
+                calls = []
+                results = []
+                resource = ResourceRef("takeoffs_collection", "8", 8)
+
+                def first():
+                    calls.append("failed")
+                    if raises:
+                        raise ValueError("invalid geometry")
+                    return MutationExecutionResult(
+                        outcome_status=MutationOutcomeStatus.REJECTED,
+                        message="rejected geometry",
+                    )
+
+                def second():
+                    calls.append("succeeded")
+                    return _committed_execution("501")
+
+                for name, operation in (("failed", first), ("succeeded", second)):
+                    self.assertEqual(
+                        _queue_test_mutation(
+                            coordinator,
+                            runtime.database_id,
+                            (resource,),
+                            operation,
+                            results.append,
+                            operation_id=name,
+                        ),
+                        runtime.generation,
+                    )
+                requests = tuple(runtime.mutation_requests.queue)
+                coordinator._process_mutation_requests(runtime)
+                self.assertEqual(calls, ["failed"])
+                self.assertEqual(len(results), 1)
+                self.assertEqual(reconciliation.batches, [])
+                self.assertEqual(coordinator._local_drafts._drafts, {})
+                self.assertEqual(
+                    coordinator._sessions.lock_tokens(runtime.database_id, (resource,)),
+                    (),
+                )
+                self.assertEqual(runtime.mutation_requests.qsize(), 1)
+                coordinator._process_mutation_requests(runtime)
+                self.assertEqual(calls, ["failed", "succeeded"])
+                self.assertEqual(
+                    [result.operation_id for result in results],
+                    [request.operation_id for request in requests],
+                )
+                self.assertEqual(
+                    [result.outcome_status for result in results],
+                    [
+                        (
+                            MutationOutcomeStatus.FAILED_BEFORE_COMMIT
+                            if raises
+                            else MutationOutcomeStatus.REJECTED
+                        ),
+                        MutationOutcomeStatus.COMMITTED,
+                    ],
+                )
+                self.assertEqual(
+                    results[0].message,
+                    "invalid geometry" if raises else "rejected geometry",
+                )
+                self.assertFalse(results[0].commit_attempted)
+                self.assertEqual(results[1].created_resource_ids, ("501",))
+                self.assertEqual(len(reconciliation.batches), 1)
+                self.assertTrue(runtime.mutation_requests.empty())
+                self.assertEqual(
+                    store.released,
+                    [(runtime.database_id, runtime.session.session_id, "lock-token")]
+                    * 2,
+                )
+                self.assertEqual(coordinator._local_drafts._drafts, {})
+                self.assertEqual(
+                    coordinator._pending_mutations.for_database(runtime.database_id), ()
+                )
+                self.assertEqual(coordinator._operation_journal.records, {})
+
+    def test_queued_mutation_cleanup_failure_preserves_original_result(self):
+        cleanup_failure = ValueError("lock cleanup failed")
+
+        class FailedReleaseStore(_LockingStore):
+            def release_lock(self, database_id, session_id, lock_token):
+                super().release_lock(database_id, session_id, lock_token)
+                raise cleanup_failure
+
+        store = FailedReleaseStore()
+        reconciliation = _Reconciliation()
+        coordinator, runtime = self.ready_coordinator(
+            store=store, reconciliation=reconciliation
         )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        store = _LockingStore()
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            store,
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
         calls = []
         results = []
         resource = ResourceRef("takeoffs_collection", "8", 8)
-        _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (resource,),
-            lambda: (
-                calls.append("failed")
-                or MutationExecutionResult(
-                    outcome_status=MutationOutcomeStatus.REJECTED,
-                    message="conflict",
-                )
-            ),
-            results.append,
-            expected_id_count=1,
-            operation_id="failed",
-            owning_surface="main-plan",
-        )
-        _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (resource,),
-            lambda: (calls.append("succeeded") or _committed_execution("501")),
-            results.append,
-            expected_id_count=1,
-            operation_id="succeeded",
-            owning_surface="main-plan",
-        )
-        coordinator._process_mutation_requests(runtime)
-        coordinator._process_mutation_requests(runtime)
-        self.assertEqual(calls, ["failed", "succeeded"])
-        self.assertEqual(
-            [result.outcome_status for result in results],
-            [MutationOutcomeStatus.REJECTED, MutationOutcomeStatus.COMMITTED],
-        )
-        self.assertEqual(results[1].created_resource_ids, ("501",))
-        self.assertEqual(runtime.mutation_requests.qsize(), 0)
-        self.assertEqual(len(store.released), 2)
-        self.assertEqual(drafts._drafts, {})
-        _shutdown_coordinator(coordinator)
 
-    def test_queued_mutation_cleanup_failure_preserves_original_result(self):
-        class _FailedReleaseStore(_LockingStore):
-            def release_lock(self, database_id, session_id, lock_token):
-                super().release_lock(database_id, session_id, lock_token)
-                raise ValueError("lock cleanup failed")
-
-        descriptors = DatabaseDescriptorRegistry()
-        descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=SQL_SCHEMA_V1.version,
-        )
-        descriptors.register(descriptor)
-        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
-        capabilities.mark_connected(descriptor.database_id)
-        capabilities.set_collaboration_state(
-            descriptor.database_id, SynchronizationState.HEALTHY
-        )
-        tokens, drafts = _token_service()
-        coordinator = _coordinator(
-            descriptors,
-            _FailedReleaseStore(),
-            _RemoteReader(),
-            _Dispatcher(),
-            _Reconciliation(),
-            capabilities,
-            DatabaseSessionRegistry(),
-            tokens,
-            drafts,
-            _EventBus(),
-            SQL_SCHEMA_V1.version,
-        )
-        runtime = _DatabaseRuntime(descriptor.database_id, 1)
-        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
-        runtime.established = True
-        runtime.healthy = True
-        coordinator._runtimes[descriptor.database_id] = runtime
-        results = []
-        resource = ResourceRef("takeoffs_collection", "8", 8)
-        _queue_test_mutation(
-            coordinator,
-            descriptor.database_id,
-            (resource,),
-            lambda: MutationExecutionResult(
+        def rejected():
+            calls.append("rejected")
+            return MutationExecutionResult(
                 outcome_status=MutationOutcomeStatus.REJECTED,
                 message="the authoritative mutation conflict",
+            )
+
+        self.assertEqual(
+            _queue_test_mutation(
+                coordinator,
+                runtime.database_id,
+                (resource,),
+                rejected,
+                results.append,
+                operation_id="placement",
             ),
-            results.append,
-            expected_id_count=1,
-            operation_id="placement",
-            owning_surface="main-plan",
+            runtime.generation,
         )
-        with self.assertRaisesRegex(ValueError, "lock cleanup failed"):
+        request = coordinator._pending_mutations.for_database(runtime.database_id)[
+            0
+        ].request
+        with self.assertRaises(ValueError) as failure:
             coordinator._process_mutation_requests(runtime)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].message, "the authoritative mutation conflict")
-        self.assertEqual(drafts._drafts, {})
-        _shutdown_coordinator(coordinator)
+        self.assertIs(failure.exception, cleanup_failure)
+        self.assertEqual(calls, ["rejected"])
+        self.assertEqual(
+            results,
+            [
+                QueuedMutationResult(
+                    database_id=runtime.database_id,
+                    runtime_generation=runtime.generation,
+                    operation_id=request.operation_id,
+                    outcome_status=MutationOutcomeStatus.REJECTED,
+                    message="the authoritative mutation conflict",
+                )
+            ],
+        )
+        self.assertEqual(
+            store.released,
+            [(runtime.database_id, runtime.session.session_id, "lock-token")],
+        )
+        self.assertEqual(reconciliation.batches, [])
+        self.assertEqual(coordinator._local_drafts._drafts, {})
+        self.assertEqual(
+            coordinator._sessions.lock_tokens(runtime.database_id, (resource,)), ()
+        )
+        self.assertEqual(
+            coordinator._pending_mutations.for_database(runtime.database_id), ()
+        )
+        self.assertEqual(coordinator._operation_journal.records, {})
 
 
 class SqlCollaborationCoordinatorStartDatabaseTests(
@@ -1976,7 +2356,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
 ):
     """SqlCollaborationCoordinator.start_database."""
 
-    def test_same_sql_principal_still_creates_distinct_client_sessions(self):
+    def test_same_display_user_gets_distinct_client_and_session_ids(self):
         class _RecordingStore(_CollaborationStore):
             def __init__(self):
                 super().__init__()
@@ -2011,11 +2391,16 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
                 _EventBus(),
                 SQL_SCHEMA_V1.version,
             )
+            self.addCleanup(_shutdown_coordinator, coordinator)
             coordinators.append(coordinator)
             self.assertTrue(coordinator.start_database(descriptor.database_id))
             self.assertTrue(store.started.wait(2))
         try:
             first, second = stores[0].starts[0], stores[1].starts[0]
+            self.assertEqual([len(store.starts) for store in stores], [1, 1])
+            for session_id, client_id, _user in (first, second):
+                self.assertEqual(str(uuid.UUID(session_id)), session_id)
+                self.assertEqual(str(uuid.UUID(client_id)), client_id)
             self.assertEqual(first[2], second[2])
             self.assertNotEqual(first[0], second[0])
             self.assertNotEqual(first[1], second[1])
@@ -2048,7 +2433,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
-        store = _CollaborationStore()
+        store = _CheckpointAwareStore()
         tokens, drafts = _token_service()
         coordinator = _RoutingCoordinator(
             descriptors,
@@ -2068,17 +2453,22 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
                 jitter_ratio=0.0,
             ),
         )
+        self.addCleanup(_shutdown_coordinator, coordinator)
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.polled.wait(2))
         store.change = _change(
             descriptor.database_id,
             ResourceRef("takeoff", "30", 8),
             sequence=2,
-            source="other-session",
+            source=str(uuid.uuid4()),
         )
         self.assertTrue(coordinator.remote_batch_seen.wait(2))
+        self.assertTrue(store.checkpoint_seen.wait(2))
         self.assertEqual(coordinator.session_started_calls, 1)
-        self.assertGreaterEqual(coordinator.remote_batch_calls, 1)
+        self.assertEqual(coordinator.remote_batch_calls, 1)
+        self.assertEqual(
+            coordinator._runtime(descriptor.database_id).acknowledged_version, 2
+        )
         _shutdown_coordinator(coordinator)
 
     def test_coordinator_starts_only_for_sql_and_closes_session(self):
@@ -2134,9 +2524,13 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
                 jitter_ratio=0.0,
             ),
         )
+        self.addCleanup(_shutdown_coordinator, coordinator)
+        self.assertFalse(coordinator.start_database("not-registered"))
         self.assertFalse(coordinator.start_database(access_descriptor.database_id))
         self.assertFalse(coordinator.start_database(unversioned_descriptor.database_id))
         self.assertFalse(coordinator.start_database(future_descriptor.database_id))
+        self.assertEqual(coordinator._runtimes, {})
+        self.assertEqual(store.start_count, 0)
         initial_results = []
         initial_complete = threading.Event()
 
@@ -2158,6 +2552,9 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             self.assertTrue(healthy.wait(5))
             self.assertTrue(initial_complete.wait(5))
             self.assertEqual(initial_results, [(True, "", True)])
+            self.assertFalse(coordinator.start_database(sql_descriptor.database_id))
+            self.assertEqual(store.start_count, 1)
+            self.assertIs(coordinator._runtime(sql_descriptor.database_id), runtime)
             _stop_database(coordinator, sql_descriptor.database_id)
             self.assertTrue(store.closed.wait(5))
             self.assertEqual(sessions.get(sql_descriptor.database_id), "")
@@ -2176,7 +2573,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
         capabilities.mark_connected(descriptor.database_id)
-        store = _CollaborationStore()
+        store = _CheckpointAwareStore()
         reconciliation = _Reconciliation()
         sessions = DatabaseSessionRegistry()
         events = _EventBus()
@@ -2198,6 +2595,7 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
                 jitter_ratio=0.0,
             ),
         )
+        self.addCleanup(_shutdown_coordinator, coordinator)
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.started.wait(2))
         store.change = _change(
@@ -2206,9 +2604,14 @@ class SqlCollaborationCoordinatorStartDatabaseTests(
             source=store.session_id.upper(),
         )
         self.assertTrue(store.change_seen.wait(3))
+        self.assertTrue(store.checkpoint_seen.wait(2))
         _stop_database(coordinator, descriptor.database_id)
         self.assertEqual(len(reconciliation.batches), 2)
         self.assertEqual(reconciliation.batches[-1].batch.changes, ())
+        self.assertEqual(reconciliation.batches[-1].batch.delivered_through_version, 1)
+        self.assertEqual(
+            reconciliation.batches[-1].batch.database_id, descriptor.database_id
+        )
         _shutdown_coordinator(coordinator)
 
     def test_authoritative_recovery_can_trust_a_lower_feed_version(self):

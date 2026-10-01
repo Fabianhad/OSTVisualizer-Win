@@ -2,7 +2,6 @@ import unittest
 import uuid
 from ost_visualizer.domain.services.hardware_identity import (
     HWID_VERSION,
-    HardwareIdentityError,
     HardwareIdentitySource,
     MachineIdentity,
     build_hwid,
@@ -40,6 +39,13 @@ class HwidV1Tests(unittest.TestCase):
                 HardwareIdentitySource.SMBIOS_SYSTEM_UUID,
                 str(SYSTEM_UUID).lower(),
             ),
+            (
+                HWID_VERSION,
+                HardwareIdentitySource.SMBIOS_SYSTEM_UUID,
+                "00000000-0000-0000-0000-000000000000",
+            ),
+            (HWID_VERSION, HardwareIdentitySource.SMBIOS_SYSTEM_UUID, "not-a-uuid"),
+            (HWID_VERSION, HardwareIdentitySource.SMBIOS_SYSTEM_UUID, None),
         ):
             with self.subTest(identity_args=identity_args):
                 with self.assertRaises(ValueError):

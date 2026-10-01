@@ -106,18 +106,22 @@ class LicenseOrchestrator:
                 self._apply_result(result)
             return result.success, result.message, result.success
 
-        def on_main(_s: bool, message: str, activation_success: bool) -> None:
+        def on_main(success: bool, message: str, _extra_data: Any) -> None:
             self._operation_in_progress = False
-            if activation_success:
+            if success:
                 self._event_publisher.publish_activated()
-            callback(activation_success, message)
+            callback(success, message)
 
-        self._thread_manager.spawn_with_bridge(
-            operation=operation,
-            callback_bridge=self._callback_bridge,
-            on_main_thread=on_main,
-            error_prefix="activation",
-        )
+        try:
+            self._thread_manager.spawn_with_bridge(
+                operation=operation,
+                callback_bridge=self._callback_bridge,
+                on_main_thread=on_main,
+                error_prefix="activation",
+            )
+        except Exception:
+            self._operation_in_progress = False
+            raise
 
     def deactivate_license_async(self, callback: Callable[[bool, str], None]) -> None:
         if self._operation_in_progress:
@@ -134,18 +138,22 @@ class LicenseOrchestrator:
                 self._apply_result(result)
             return result.success, result.message, result.success
 
-        def on_main(_s: bool, message: str, deactivation_success: bool) -> None:
+        def on_main(success: bool, message: str, _extra_data: Any) -> None:
             self._operation_in_progress = False
-            if deactivation_success:
+            if success:
                 self._event_publisher.publish_license_lost()
-            callback(deactivation_success, message)
+            callback(success, message)
 
-        self._thread_manager.spawn_with_bridge(
-            operation=operation,
-            callback_bridge=self._callback_bridge,
-            on_main_thread=on_main,
-            error_prefix="deactivation",
-        )
+        try:
+            self._thread_manager.spawn_with_bridge(
+                operation=operation,
+                callback_bridge=self._callback_bridge,
+                on_main_thread=on_main,
+                error_prefix="deactivation",
+            )
+        except Exception:
+            self._operation_in_progress = False
+            raise
 
     def _startup_validate_license_async(
         self, callback: Callable[[bool, str], None]

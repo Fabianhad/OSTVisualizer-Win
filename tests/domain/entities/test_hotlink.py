@@ -35,3 +35,24 @@ class BuildHotlinkFromAnnotationTests(unittest.TestCase):
         )
         self.assertEqual((result.color, result.width), ("#112233", 3.0))
         self.assertEqual(annotation.position, [8.5])
+
+    def test_complete_position_and_nullable_target_do_not_borrow_another_link(self):
+        first = BidAnnotation(
+            uid="first",
+            annotation_type="hotlink",
+            position=[2, 7],
+            properties={"BidPageViewUID": "view"},
+        )
+        second = BidAnnotation(uid="second", annotation_type="hotlink", position=[])
+        placed = build_hotlink_from_annotation(first)
+        blank = build_hotlink_from_annotation(second)
+        self.assertEqual(
+            (placed.position_x, placed.position_y, placed.target_view_uid),
+            (2, 7, "view"),
+        )
+        self.assertEqual(
+            (blank.position_x, blank.position_y, blank.target_view_uid),
+            (0.0, 0.0, None),
+        )
+        self.assertEqual(first.properties, {"BidPageViewUID": "view"})
+        self.assertEqual(second.properties, {})

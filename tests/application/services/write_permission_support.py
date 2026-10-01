@@ -182,10 +182,8 @@ def _write_service(
     insert_takeoffs=None,
     mutation_executor=None,
 ):
-    logger = logging.getLogger(__name__ + ".write_service")
-    logger.propagate = False
-    if not logger.handlers:
-        logger.addHandler(logging.NullHandler())
+    logger = logging.Logger(__name__ + ".write_service")
+    logger.addHandler(logging.NullHandler())
     forbidden = _ForbiddenUseCase()
     delete_bids = _UseCase(True)
     duplicate_bid = _UseCase("new-bid")

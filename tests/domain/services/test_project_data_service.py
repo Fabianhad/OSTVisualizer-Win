@@ -18,61 +18,22 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.condition import Condition
 from types import SimpleNamespace
 import unittest
-import sqlite3
-from unittest.mock import Mock, patch
-from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
-    BidDataReaderMixin,
-)
-from ost_visualizer.presentation.services.annotation_write_coordinator import (
-    AnnotationWriteCoordinator,
-)
-from tests.helpers.mdb.operations import (
-    _SqliteAnnotationOps,
-    _SqliteConnectionWrapper,
-    _SqliteDuplicateOps,
-    _SqliteSchema,
-)
-from tests.integration.annotations.layer_ownership_support import (
-    _AnnotationOps as _layer_ownership_support__AnnotationOps,
-)
-from ost_visualizer.domain.entities.takeoff import (
-    Takeoff,
-    find_takeoff_parent_cycle_uids,
-)
-import os
-from PySide6 import QtWidgets
 from ost_visualizer.domain.services.uom_service import (
-    CALC_COUNT,
-    CALC_AREA,
     CALC_LINEAR_BOTH_SIDES,
     CALC_LINEAR_LENGTH,
     CALC_VOLUME,
     UOM_CUBIC_FEET,
-    UOM_EACH,
     UOM_LINEAR_FEET,
     UOM_M,
     UOM_M2,
     UOM_M3,
     UOM_SQUARE_FEET,
-    UOM_SQUARE_ROOFING,
-    get_uom_label,
     normalize_condition_uoms_for_system,
-)
-from tests.integration.quantities.uom_support import (
-    _app as _uom_support__app,
-    _condition as _uom_support__condition,
-)
-from ost_visualizer.domain.entities.area import BidArea
-from tests.presentation.visualization.renderers.threejs.export_support import (
-    _ProjectModel as _export_support__ProjectModel,
 )
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
-    BidAnnotation,
 )
 from ost_visualizer.domain.entities.area import BidArea, UNASSIGNED_AREA_UID
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class _AreaUsageModel:
@@ -80,7 +41,9 @@ class _AreaUsageModel:
         self._takeoffs = list(takeoffs)
         self.bid_conditions = dict(conditions)
         page_takeoff_list = self._takeoffs if page_takeoffs is None else page_takeoffs
-        self._pages = {"page-1": SimpleNamespace(takeoffs=list(page_takeoff_list))}
+        self._pages = {
+            "page-1": Page("page-1", "Page", takeoffs=list(page_takeoff_list))
+        }
 
     def get_all_takeoffs(self):
         return list(self._takeoffs)
@@ -117,12 +80,12 @@ def _takeoff(
 class FakeProjectModel:
     def __init__(self):
         self.bid_conditions = {
-            "c1": SimpleNamespace(uid="c1", layer_uid="l1", layer_visible=True),
-            "c2": SimpleNamespace(uid="c2", layer_uid="l2", layer_visible=True),
+            "c1": Condition(uid="c1", layer_uid="l1", layer_visible=True),
+            "c2": Condition(uid="c2", layer_uid="l2", layer_visible=True),
         }
         self.pages = [
-            SimpleNamespace(uid="p1", layer_visible=True),
-            SimpleNamespace(uid="p2", layer_visible=True),
+            Page(uid="p1", name="First", layer_visible=True),
+            Page(uid="p2", name="Second", layer_visible=True),
         ]
         self.bid_layer_visibility = {}
         self.bid_layer_names_by_uid = {}
@@ -334,10 +297,27 @@ class ProjectDataServiceAreaUsageTests(unittest.TestCase):
                 position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0],
             ),
         ]
-        service = ProjectDataService(_AreaUsageModel(bid_takeoffs, conditions))
+        other_page_takeoff = Takeoff(
+            uid="other-page-takeoff",
+            condition_uid="condition-count",
+            page_uid="page-2",
+            area_uid="other-page-area",
+            position=[1.0, 2.0],
+        )
+        service = ProjectDataService(
+            _AreaUsageModel(
+                [*bid_takeoffs, other_page_takeoff],
+                conditions,
+                page_takeoffs=bid_takeoffs,
+            )
+        )
         self.assertEqual(
             service.get_area_uids_with_takeoff_for_page("page-1"),
             {"0", "area-1"},
+        )
+        self.assertEqual(service.get_area_uids_with_takeoff_for_page("missing"), set())
+        self.assertEqual(
+            service.get_area_uids_with_takeoff(), {"0", "area-1", "other-page-area"}
         )
 
 
@@ -363,6 +343,7 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
             pages_without_folder=[old_root],
         )
         aggregate.set_pages({old_root.uid: old_root, old_nested.uid: old_nested})
+        retained_bid = aggregate.current_bid
         service = ProjectDataService(aggregate)
         self.assertTrue(
             service.replace_remote_bid_families(
@@ -377,6 +358,11 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
             [replacement],
         )
         self.assertEqual(aggregate.current_bid.page_count, 1)
+        self.assertIs(aggregate.current_bid, retained_bid)
+        self.assertIs(aggregate.current_bid.folders["folder-1"].pages[0], replacement)
+        self.assertIs(aggregate.get_page(replacement.uid), replacement)
+        self.assertIsNone(aggregate.get_page(old_root.uid))
+        self.assertIsNone(aggregate.get_page(old_nested.uid))
 
     def test_remote_family_updates_synchronize_annotation_visibility_once(self):
         cases = (
@@ -406,15 +392,29 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
                 model.annotations = [existing]
                 service = RecordingProjectDataService(model)
                 service.set_bid_layer_visibility(
-                    [SimpleNamespace(uid="annotation", name="Annotation", show=False)]
+                    [
+                        BidLayer(
+                            uid="annotation",
+                            bid_uid="bid-1",
+                            name="Annotation",
+                            show=False,
+                            sequence=1,
+                        )
+                    ]
                 )
                 service.annotation_visibility_syncs = 0
                 result = BidLoadResult(
                     bid_annotations=[incoming],
                     bid_layers=[
-                        SimpleNamespace(uid="annotation", name="Annotation", show=True)
+                        BidLayer(
+                            uid="annotation",
+                            bid_uid="bid-1",
+                            name="Annotation",
+                            show=True,
+                            sequence=1,
+                        )
                     ],
-                    pages={"p-new": SimpleNamespace(uid="p-new")},
+                    pages={"p-new": Page(uid="p-new", name="New")},
                 )
                 self.assertTrue(
                     service.replace_remote_bid_families(
@@ -450,7 +450,13 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         result = BidLoadResult(
             bid_annotations=[annotation],
             bid_layers=[
-                SimpleNamespace(uid="annotation", name="Annotation", show=True)
+                BidLayer(
+                    uid="annotation",
+                    bid_uid="bid-1",
+                    name="Annotation",
+                    show=True,
+                    sequence=1,
+                )
             ],
         )
         for _ in range(2):
@@ -477,9 +483,15 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         result = BidLoadResult(
             bid_annotations=[annotation],
             bid_layers=[
-                SimpleNamespace(uid="annotation", name="Annotation", show=False)
+                BidLayer(
+                    uid="annotation",
+                    bid_uid="bid-1",
+                    name="Annotation",
+                    show=False,
+                    sequence=1,
+                )
             ],
-            pages={"p-new": SimpleNamespace(uid="p-new")},
+            pages={"p-new": Page(uid="p-new", name="New")},
         )
         self.assertTrue(
             service.replace_remote_bid_families(
@@ -498,8 +510,12 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         service = ProjectDataService(model)
         service.set_bid_layer_visibility(
             [
-                SimpleNamespace(uid="l1", name="Annotation", show=False),
-                SimpleNamespace(uid="l2", name="Takeoff", show=True),
+                BidLayer(
+                    uid="l1", bid_uid="bid-1", name="Annotation", show=False, sequence=1
+                ),
+                BidLayer(
+                    uid="l2", bid_uid="bid-1", name="Takeoff", show=True, sequence=1
+                ),
             ]
         )
         self.assertEqual(service.get_hidden_layer_uids(), {"l1"})
@@ -516,8 +532,20 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         service = ProjectDataService(model)
         service.set_bid_layer_visibility(
             [
-                SimpleNamespace(uid="annotation", name="Annotation", show=True),
-                SimpleNamespace(uid="takeoff", name="Takeoff", show=True),
+                BidLayer(
+                    uid="annotation",
+                    bid_uid="bid-1",
+                    name="Annotation",
+                    show=True,
+                    sequence=1,
+                ),
+                BidLayer(
+                    uid="takeoff",
+                    bid_uid="bid-1",
+                    name="Takeoff",
+                    show=True,
+                    sequence=1,
+                ),
             ]
         )
         self.assertTrue(service.is_annotation_layer_visible())
@@ -541,8 +569,20 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         service = ProjectDataService(model)
         service.set_bid_layer_visibility(
             [
-                SimpleNamespace(uid="annotation", name="Annotation", show=False),
-                SimpleNamespace(uid="takeoff", name="Takeoff", show=True),
+                BidLayer(
+                    uid="annotation",
+                    bid_uid="bid-1",
+                    name="Annotation",
+                    show=False,
+                    sequence=1,
+                ),
+                BidLayer(
+                    uid="takeoff",
+                    bid_uid="bid-1",
+                    name="Takeoff",
+                    show=True,
+                    sequence=1,
+                ),
             ]
         )
         service.update_layer_visibility("takeoff", False)
@@ -552,7 +592,15 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         model = FakeProjectModel()
         service = ProjectDataService(model)
         service.set_bid_layer_visibility(
-            [SimpleNamespace(uid="annotation", name="Annotation", show=False)]
+            [
+                BidLayer(
+                    uid="annotation",
+                    bid_uid="bid-1",
+                    name="Annotation",
+                    show=False,
+                    sequence=1,
+                )
+            ]
         )
         annotations = [
             BidAnnotation(
@@ -564,6 +612,7 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
             for annotation_type in ("text", "dimension", "arrow", "hotlink")
         ]
         service.add_annotations(annotations)
+        self.assertEqual(model.annotations, annotations)
         self.assertTrue(all(not annotation.visible for annotation in annotations))
         service.update_layer_visibility("annotation", True)
         self.assertTrue(all(annotation.visible for annotation in annotations))
@@ -592,8 +641,12 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         service = ProjectDataService(model)
         service.set_bid_layer_visibility(
             [
-                SimpleNamespace(uid="image", name="Image", show=True),
-                SimpleNamespace(uid="l1", name="Takeoff", show=True),
+                BidLayer(
+                    uid="image", bid_uid="bid-1", name="Image", show=True, sequence=1
+                ),
+                BidLayer(
+                    uid="l1", bid_uid="bid-1", name="Takeoff", show=True, sequence=1
+                ),
             ]
         )
         changed_pages = service.update_layer_visibility("image", False)
@@ -607,10 +660,26 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         service = ProjectDataService(model)
         service.set_bid_layer_visibility(
             [
-                SimpleNamespace(uid="image", name="Image", show=True),
-                SimpleNamespace(uid="annotation", name="Annotation", show=True),
-                SimpleNamespace(uid="l1", name="Takeoff", show=True),
-                SimpleNamespace(uid="custom", name="Future Visual", show=True),
+                BidLayer(
+                    uid="image", bid_uid="bid-1", name="Image", show=True, sequence=1
+                ),
+                BidLayer(
+                    uid="annotation",
+                    bid_uid="bid-1",
+                    name="Annotation",
+                    show=True,
+                    sequence=1,
+                ),
+                BidLayer(
+                    uid="l1", bid_uid="bid-1", name="Takeoff", show=True, sequence=1
+                ),
+                BidLayer(
+                    uid="custom",
+                    bid_uid="bid-1",
+                    name="Future Visual",
+                    show=True,
+                    sequence=1,
+                ),
             ]
         )
         with self.subTest(layer="annotation"):
@@ -649,8 +718,16 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
         service = ProjectDataService(model)
         service.set_bid_layer_visibility(
             [
-                SimpleNamespace(uid="l1", name="Future Visual", show=True),
-                SimpleNamespace(uid="image", name="Image", show=True),
+                BidLayer(
+                    uid="l1",
+                    bid_uid="bid-1",
+                    name="Future Visual",
+                    show=True,
+                    sequence=1,
+                ),
+                BidLayer(
+                    uid="image", bid_uid="bid-1", name="Image", show=True, sequence=1
+                ),
             ]
         )
         changed_pages = service.update_layer_visibility("l1", False)
@@ -677,8 +754,8 @@ class ProjectDataServiceFamilyProjectionTests(unittest.TestCase):
 
     def test_remove_takeoffs_clears_page_bid_and_supplemental_state(self):
         model = FakeProjectModel()
-        removed = SimpleNamespace(uid="t1", page_uid="p1")
-        retained = SimpleNamespace(uid="t2", page_uid="p2")
+        removed = Takeoff(uid="t1", condition_uid="c1", page_uid="p1")
+        retained = Takeoff(uid="t2", condition_uid="c2", page_uid="p2")
         model.pages[0].takeoffs = [removed]
         model.pages[1].takeoffs = [retained]
         model.bid_takeoffs = [removed, retained]
@@ -851,48 +928,43 @@ class ProjectDataServiceCollaborationTests(unittest.TestCase):
             {takeoff.uid for takeoff in aggregate.get_page("20").takeoffs},
             {preview.uid, remote.uid},
         )
+        self.assertIs(project_data.get_takeoff(preview.uid), preview)
+        self.assertIs(aggregate.get_page("20").takeoffs[1], preview)
+
+    def test_clearing_bid_discards_previews_before_same_page_uid_is_loaded(self):
+        aggregate = OstAggregate(None)
+        aggregate.current_bid_ref = BidRef("first.mdb", "8")
+        aggregate.set_pages({"20": Page("20", "First")})
+        service = ProjectDataService(aggregate)
+        preview = Takeoff("pending:old", "10", page_uid="20", position=[1, 2])
+        service.add_transient_takeoffs([preview])
+        self.assertIs(service.get_takeoff(preview.uid), preview)
+        service.clear_bid()
+        other_ref = BidRef("second.mdb", "8")
+        aggregate.current_bid_ref = other_ref
+        current = Takeoff("30", "10", page_uid="20", position=[3, 4])
+        page = Page("20", "Second", takeoffs=[current])
+        self.assertTrue(
+            service.replace_remote_bid_families(
+                other_ref,
+                BidLoadResult(bid_takeoffs=[current], pages={page.uid: page}),
+                {"takeoffs", "pages"},
+            )
+        )
+        self.assertEqual(aggregate.bid_takeoffs, [current])
+        self.assertEqual(page.takeoffs, [current])
+        self.assertIsNone(service.get_takeoff(preview.uid))
 
 
 class AnnotationLayerVisibilityTests(unittest.TestCase):
     def setUp(self):
-        self.connection = sqlite3.connect(":memory:")
-        self.addCleanup(self.connection.close)
-        self.connection.executescript(
-            """
-            CREATE TABLE Bids (UID INTEGER);
-            INSERT INTO Bids VALUES (1), (179326);
-            CREATE TABLE BidPages (UID INTEGER, BidUID INTEGER);
-            INSERT INTO BidPages VALUES (10, 1), (20, 179326);
-            CREATE TABLE BidLayers (
-                UID INTEGER, BidUID INTEGER, Name TEXT, Show INTEGER,
-                Sequence INTEGER, IsTemplate INTEGER, IsLocked INTEGER);
-            INSERT INTO BidLayers VALUES (2, 1, 'Annotation', -1, 1, -1, -1);
-            INSERT INTO BidLayers VALUES (7, 179326, 'Annotation', -1, 1, 0, -1);
-            CREATE TABLE BidAnnotationRects (
-                UID INTEGER, BidUID INTEGER, BidPageUID INTEGER,
-                BidLayerUID INTEGER, Position BLOB, Color INTEGER, Width INTEGER);
-        """
-        )
-        self.ops = _layer_ownership_support__AnnotationOps(self.connection)
         self.model = OstAggregate(None)
         self.data = ProjectDataService(self.model)
-        self.write_service = Mock()
-        self.write_service.insert_annotations.side_effect = (
-            lambda path, bid, specs, **_kwargs: self.ops.insert_annotations(
-                path, bid, specs
-            )
-        )
-        self.coordinator = AnnotationWriteCoordinator(
-            self.write_service, self.data, Mock()
-        )
 
     def select_bid(self, bid_uid, page_uid):
         self.model.clear_bid()
         self.model.current_bid_ref = BidRef("layers.mdb", bid_uid)
         self.model.set_pages({page_uid: Page(uid=page_uid, name="Page")})
-        self.data.set_bid_layer_visibility(
-            self.ops.get_bid_layers_for_sidebar("layers.mdb", bid_uid)
-        )
 
     def test_unassigned_annotation_added_to_hidden_template_stays_hidden(self):
         self.select_bid("179326", "20")
@@ -903,6 +975,7 @@ class AnnotationLayerVisibilityTests(unittest.TestCase):
             uid="new", annotation_type="rect", page_uid="20", layer_uid=""
         )
         self.data.add_annotations([annotation])
+        self.assertEqual(self.model.get_all_annotations(), [annotation])
         self.assertFalse(annotation.visible)
         self.assertEqual(annotation.layer_uid, "")
 
@@ -946,7 +1019,10 @@ class TakeoffHydrationContractTests(unittest.TestCase):
             uid="99", annotation_type="rectangle", page_uid="20", layer_uid="30"
         )
         model = SimpleNamespace(
-            bid_conditions={"10": Condition(uid="10", layer_uid="25")},
+            bid_conditions={
+                "10": Condition(uid="10", layer_uid="25"),
+                "unused": Condition(uid="unused", layer_uid="unused-layer"),
+            },
             get_all_takeoffs=lambda: [takeoff],
             get_all_annotations=lambda: [annotation],
         )
@@ -956,23 +1032,19 @@ class TakeoffHydrationContractTests(unittest.TestCase):
 
 
 class ConditionUomConsistencyTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = _uom_support__app()
-        cls.quit_on_close = cls.app.quitOnLastWindowClosed()
-        cls.app.setQuitOnLastWindowClosed(False)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.app.setQuitOnLastWindowClosed(cls.quit_on_close)
-
-    def tearDown(self):
-        self.app.processEvents()
-
     def test_same_condition_uid_in_another_bid_cannot_replace_active_family(self):
         active_ref = BidRef("active.mdb", "2")
         other_ref = BidRef("other.mdb", "1")
-        active_condition = _uom_support__condition(uid="shared")
+        active_condition = Condition(
+            uid="shared",
+            condition_type=Condition.TYPE_LINEAR,
+            calc_type1=CALC_LINEAR_LENGTH,
+            calc_type2=CALC_LINEAR_BOTH_SIDES,
+            calc_type3=CALC_VOLUME,
+            uom1=UOM_LINEAR_FEET,
+            uom2=UOM_SQUARE_FEET,
+            uom3=UOM_CUBIC_FEET,
+        )
         model = SimpleNamespace(
             current_bid_ref=active_ref,
             current_bid=Bid(uid="2", name="Imperial", measure_base=0),
@@ -981,7 +1053,17 @@ class ConditionUomConsistencyTests(unittest.TestCase):
         )
         service = ProjectDataService(model)
         other_condition = normalize_condition_uoms_for_system(
-            _uom_support__condition(uid="shared"), metric=True
+            Condition(
+                uid="shared",
+                condition_type=Condition.TYPE_LINEAR,
+                calc_type1=CALC_LINEAR_LENGTH,
+                calc_type2=CALC_LINEAR_BOTH_SIDES,
+                calc_type3=CALC_VOLUME,
+                uom1=UOM_LINEAR_FEET,
+                uom2=UOM_SQUARE_FEET,
+                uom3=UOM_CUBIC_FEET,
+            ),
+            metric=True,
         )
         self.assertFalse(
             service.replace_condition_family(
@@ -989,6 +1071,10 @@ class ConditionUomConsistencyTests(unittest.TestCase):
             )
         )
         self.assertIs(model.bid_conditions["shared"], active_condition)
+        self.assertEqual(
+            (other_condition.uom1, other_condition.uom2, other_condition.uom3),
+            (UOM_M, UOM_M2, UOM_M3),
+        )
         self.assertTrue(
             service.replace_condition_family(
                 active_ref, {other_condition.uid: other_condition}, {}
@@ -1002,8 +1088,23 @@ class ConditionUomConsistencyTests(unittest.TestCase):
 
 class ThreejsExportLayerTests(unittest.TestCase):
     def test_collect_takeoffs_for_pages_can_include_hidden_layer_takeoffs(self):
-        service = ProjectDataService(_export_support__ProjectModel())
-        visible = service.collect_takeoffs_for_pages(["page-1"])
+        model = OstAggregate(None)
+        model.bid_conditions = {
+            "visible": Condition(uid="visible", layer_visible=True),
+            "hidden": Condition(uid="hidden", layer_visible=False),
+        }
+        takeoffs = [
+            Takeoff("takeoff-visible", "visible", page_uid="page-1"),
+            Takeoff("takeoff-hidden", "hidden", page_uid="page-1"),
+        ]
+        model.set_pages(
+            {
+                "page-1": Page("page-1", "First", takeoffs=takeoffs),
+                "empty": Page("empty", "Empty"),
+            }
+        )
+        service = ProjectDataService(model)
+        visible = service.collect_takeoffs_for_pages(["page-1", "empty", "missing"])
         all_takeoffs = service.collect_takeoffs_for_pages(
             ["page-1"], visible_only=False
         )
@@ -1014,6 +1115,13 @@ class ThreejsExportLayerTests(unittest.TestCase):
             [takeoff.uid for takeoff in all_takeoffs.takeoffs],
             ["takeoff-visible", "takeoff-hidden"],
         )
+        self.assertEqual(visible.valid_page_uids, ["page-1"])
+        self.assertEqual(all_takeoffs.valid_page_uids, ["page-1"])
+        self.assertIs(visible.takeoffs[0], takeoffs[0])
+        self.assertIs(all_takeoffs.takeoffs[1], takeoffs[1])
+        empty = service.collect_takeoffs_for_pages(["empty", "missing"])
+        self.assertEqual(empty.takeoffs, [])
+        self.assertEqual(empty.valid_page_uids, [])
 
     def test_bid_layer_snapshot_fallback_filters_comments_layer(self):
         model = SimpleNamespace(
@@ -1026,11 +1134,14 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "image-layer": True,
                 "comments-layer": True,
             },
-            current_bid_ref=SimpleNamespace(bid_uid="bid"),
+            current_bid_ref=BidRef("export.mdb", "bid"),
         )
         service = ProjectDataService(model)
         snapshot = service.get_bid_layer_snapshot()
         self.assertEqual([layer.uid for layer in snapshot], ["image-layer"])
+        self.assertEqual(snapshot[0].bid_uid, "bid")
+        self.assertEqual(snapshot[0].name, "image")
+        self.assertTrue(snapshot[0].show)
 
     def test_bid_area_snapshot_uses_real_areas_and_skips_unassigned_takeoffs(self):
         model = SimpleNamespace(
@@ -1059,6 +1170,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
             ]
         )
         self.assertEqual([area.uid for area in snapshot], ["area-1"])
+        self.assertEqual(
+            [area.uid for area in service.get_bid_area_snapshot()], ["area-2", "area-1"]
+        )
+        self.assertEqual(service.get_bid_area_snapshot([]), [])
 
 
 class PageScaleProjectionTests(unittest.TestCase):
@@ -1105,7 +1220,20 @@ class PageScaleProjectionTests(unittest.TestCase):
         self.assertEqual(changed, ())
         self.assertEqual(page.scale_factor2, 10.0)
         self.assertEqual(takeoff.position, [20.0, 40.0])
-        self.assertEqual(annotation.position[-1], 33.0)
+        self.assertEqual(annotation.position, [2.0, 4.0, 6.0, 8.0, 33.0])
+        self.assertEqual(page.overlay_rect, (2.0, 4.0, 6.0, 8.0))
+        self.assertEqual((page.overlay_offset_x, page.overlay_offset_y), (2.0, 4.0))
+
+    def test_scale_batch_rejects_replaced_page_before_mutating_valid_sibling(self):
+        data, bid_ref, page, takeoff, annotation = self._data()
+        foreign_same_uid = Page(page.uid, "Replacement", scale_factor2=10.0)
+        changed = data.apply_page_scales(bid_ref, [page, foreign_same_uid], 1.0, 20.0)
+        self.assertEqual(changed, ())
+        self.assertEqual((page.scale_factor1, page.scale_factor2), (1.0, 10.0))
+        self.assertEqual(takeoff.position, [20.0, 40.0])
+        self.assertEqual(annotation.position, [2.0, 4.0, 6.0, 8.0, 33.0])
+        self.assertEqual(page.overlay_rect, (2.0, 4.0, 6.0, 8.0))
+        self.assertEqual(foreign_same_uid.scale_factor2, 10.0)
 
 
 class PageAreaProjectionTests(unittest.TestCase):

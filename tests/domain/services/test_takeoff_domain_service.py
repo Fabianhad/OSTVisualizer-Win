@@ -59,6 +59,11 @@ class TakeoffReassignmentPolicyTests(unittest.TestCase):
         self.assertFalse(
             takeoffs_can_reassign_to_condition([linear], conditions, "missing")
         )
+        self.assertFalse(
+            takeoffs_can_reassign_to_condition(
+                [Takeoff("unknown", "missing")], conditions, "linear-b"
+            )
+        )
         self.assertEqual(
             condition_reassign_geometry_type(conditions["attachment"]),
             Condition.TYPE_COUNT,
@@ -117,4 +122,18 @@ class TakeoffLifecycleQuantityTests(unittest.TestCase):
         self.assertTrue(is_takeoff_relevant_for_area_usage(attachment, self.conditions))
         self.assertFalse(
             is_takeoff_relevant_for_area_usage(self.takeoffs[1], self.conditions)
+        )
+        self.conditions["attachment"].layer_visible = False
+        self.assertFalse(
+            is_takeoff_relevant_for_area_usage(attachment, self.conditions)
+        )
+        self.conditions["attachment"].layer_visible = True
+        attachment.position = []
+        self.assertFalse(
+            is_takeoff_relevant_for_area_usage(attachment, self.conditions)
+        )
+        self.assertFalse(
+            is_takeoff_relevant_for_area_usage(
+                Takeoff("orphan", "missing", position=[1, 2]), self.conditions
+            )
         )

@@ -3,6 +3,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import PlanItemsPastePay
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.dtos.plan_items_paste import (
     prepare_plan_items_paste_payload,
 )
@@ -62,4 +63,31 @@ class PreparePlanItemsPastePayloadTests(unittest.TestCase):
         self.assertEqual(
             prepared.annotation_specs[0].properties["BidPageViewUID"], "view"
         )
-        self.assertEqual(prepare_plan_items_paste_payload(prepared), prepared)
+        repeated = prepare_plan_items_paste_payload(prepared)
+        self.assertEqual(repeated, prepared)
+        prepared.annotation_specs[0].properties["nested"].append("later")
+        prepared.annotation_specs[1].position[0] = 123
+        self.assertEqual(
+            repeated.annotation_specs[0].properties["nested"], ["original"]
+        )
+        self.assertEqual(repeated.annotation_specs[1].position, [0.0, 0.0])
+
+    def test_takeoff_specs_and_parent_bindings_are_detached_from_caller(self):
+        spec = InsertTakeoffSpec(
+            "condition", "page", "area", [1.0, 2.0], parent_uid="parent"
+        )
+        original = PlanItemsPastePayload(
+            source_bid_uid="source",
+            destination_bid_uid="source",
+            takeoff_source_uids=("child",),
+            takeoff_specs=(spec,),
+            takeoff_external_parent_sources=("child",),
+        )
+        prepared = prepare_plan_items_paste_payload(original)
+        spec.position[0] = 99.0
+        spec.condition_uid = "changed"
+        spec.parent_uid = "different-parent"
+        self.assertEqual(prepared.takeoff_specs[0].position, [1.0, 2.0])
+        self.assertEqual(prepared.takeoff_specs[0].condition_uid, "condition")
+        self.assertEqual(prepared.takeoff_specs[0].parent_uid, "parent")
+        self.assertEqual(prepared.takeoff_external_parent_sources, ("child",))

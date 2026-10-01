@@ -15,6 +15,11 @@ class CanonicalCoordinateValidationTests(unittest.TestCase):
             "flip_x": False,
             "flip_y": False,
         }
+        # Ratio 72 maps OST units to points 1:1; PDF Y starts at the lower edge.
+        self.assertEqual(
+            OSTCoordinateSystem.ost_to_pdf_coordinates([100.0, 200.0], valid),
+            [[100.0, 600.0]],
+        )
         for overrides in (
             {"width": 0.0},
             {"height": float("nan")},

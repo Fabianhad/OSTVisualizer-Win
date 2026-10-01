@@ -1,13 +1,7 @@
-import os
 import unittest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseBackend,
     DatabaseDescriptor,
-    SqlAuthenticationMode,
-    SqlServerDatabaseLocation,
-    credential_target_for,
 )
 from ost_visualizer.domain.entities.file_state import FileEntry, FileState
 
@@ -27,6 +21,18 @@ class FileStateDatabaseDescriptorTests(unittest.TestCase):
         serialized = first.to_dict()
         self.assertEqual(serialized["version"], 2)
         self.assertIn("database_entries", serialized)
+        self.assertEqual(len(first.file_entries), 1)
+        self.assertEqual(first.file_entries[0].file_path, r"C:\data\sample.mdb")
+        self.assertTrue(first.file_entries[0].is_checked)
+        self.assertEqual(FileState.from_dict(serialized), first)
+        self.assertEqual(
+            raw,
+            {
+                "file_entries": [
+                    {"file_path": r"C:\data\sample.mdb", "is_checked": True}
+                ]
+            },
+        )
 
     def test_canonical_file_entry_rejects_non_boolean_checked_state(self):
         descriptor = DatabaseDescriptor.for_access(r"C:\data\sample.mdb")

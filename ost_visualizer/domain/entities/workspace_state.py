@@ -65,7 +65,7 @@ def _coerce_int_list(value) -> List[int]:
     for item in value:
         try:
             result.append(max(0, int(item)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
     return result
 
@@ -98,7 +98,7 @@ def _coerce_positive_int_dict(value) -> Dict[str, int]:
     for key, raw_value in value.items():
         try:
             width = int(raw_value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if width > 0:
             result[str(key)] = width
@@ -353,7 +353,7 @@ class ProjectWorkspaceState:
         return cls(
             expanded_node_keys=(
                 _coerce_str_list(data.get("expanded_node_keys"))
-                if "expanded_node_keys" in data
+                if data.get("expanded_node_keys") is not None
                 else None
             ),
             group_by_job_status=_coerce_bool(data.get("group_by_job_status"), False),
@@ -498,7 +498,7 @@ class WorkspaceState:
         raw_schema = data.get(WORKSPACE_KEY_SCHEMA_VERSION, cls.CURRENT_SCHEMA_VERSION)
         try:
             schema_version = max(1, int(raw_schema))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             schema_version = cls.CURRENT_SCHEMA_VERSION
         return cls(
             schema_version=schema_version,

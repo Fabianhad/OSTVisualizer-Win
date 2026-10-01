@@ -143,12 +143,13 @@ class SqlWorkspaceStateService:
             if not self._accepting:
                 raise RuntimeError("SQL workspace persistence has stopped")
             if self._thread is None:
-                self._thread = threading.Thread(
+                worker = threading.Thread(
                     target=self._run,
                     daemon=True,
                     name="SqlWorkspaceState",
                 )
-                self._thread.start()
+                worker.start()
+                self._thread = worker
             generation = self._generations.get(key, 0) + 1
             self._generations[key] = generation
             self._pending[key] = _WorkspaceWriteRequest(

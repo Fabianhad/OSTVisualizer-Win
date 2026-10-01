@@ -17,6 +17,7 @@ class SummarizeTakeoffsByPageTests(unittest.TestCase):
         ]
         summary = summarize_takeoffs_by_page(takeoffs, pages, conditions)
         self.assertEqual(len(summary), 1)
+        self.assertEqual((summary[0].page_uid, summary[0].page_name), ("p", "Page"))
         self.assertEqual(
             (summary[0].takeoff_count, summary[0].visible_takeoff_count), (2, 1)
         )

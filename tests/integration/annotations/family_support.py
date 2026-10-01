@@ -1,4 +1,3 @@
-import math
 import unittest
 from PySide6 import QtCore, QtWidgets
 from ost_visualizer.domain.entities.annotation import BidAnnotation
@@ -29,50 +28,8 @@ class _PlanFixture:
         return fixture.make_view(detached=detached)
 
 
+from tests.helpers.annotation_geometry import ANNOTATION_POSITIONS
+
+
 class AnnotationFamilyGeometry:
-    POSITIONS = {
-        "line": [10.015625, -20.03937007874, 40.015625, 60.7654321],
-        "arrow": [10.015625, -20.03937007874, 40.015625, 60.7654321],
-        "dimension": [10.015625, -20.03937007874, 40.015625, 60.7654321],
-        "rect": [10.015625, -20.03937007874, 40.015625, 60.7654321],
-        "oval": [10.015625, -20.03937007874, 40.015625, 60.7654321, math.pi / 7],
-        "polygon": [
-            10.015625,
-            -20.03937007874,
-            40.015625,
-            60.7654321,
-            80.1234567,
-            30.7654321,
-        ],
-        "cloud": [
-            10.015625,
-            -20.03937007874,
-            40.015625,
-            60.7654321,
-            80.1234567,
-            30.7654321,
-        ],
-        "ink": [
-            math.pi / 7,
-            10.015625,
-            -20.03937007874,
-            40.015625,
-            60.7654321,
-            80.1234567,
-            30.7654321,
-        ],
-        "highlight": [10.015625, -20.03937007874, 40.015625, 60.7654321],
-        "namedview": [
-            10.015625,
-            20.7654321,
-            40.015625,
-            20.7654321,
-            40.015625,
-            60.7654321,
-            10.015625,
-            60.7654321,
-        ],
-        "hotlink": [10.015625, -20.03937007874],
-        "callout": [10.015625, -20.03937007874, 40.015625, 60.7654321, math.pi / 7],
-        "text": [10.015625, -20.03937007874, 40.015625, 60.7654321, math.pi / 7],
-    }
+    POSITIONS = ANNOTATION_POSITIONS

@@ -1,11 +1,9 @@
-import os
 import unittest
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
-from PySide6 import QtCore, QtGui, QtWidgets
 from dataclasses import replace
 from ost_visualizer.domain.services.uom_service import (
     CALC_AREA,
@@ -13,30 +11,8 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_SQUARE_INCHES,
 )
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-
-def _app():
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        app = QtWidgets.QApplication([])
-    return app
-
 
 class ConditionQuantityServiceConditionBehaviorTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = _app()
-        cls._quit_on_last_window_closed = cls.app.quitOnLastWindowClosed()
-        cls.app.setQuitOnLastWindowClosed(False)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.app.setQuitOnLastWindowClosed(cls._quit_on_last_window_closed)
-
-    def tearDown(self):
-        self.app.processEvents()
-
     def test_round_quantity_rounds_linear_and_area_results_without_mutating_geometry(
         self,
     ):
@@ -70,6 +46,10 @@ class ConditionQuantityServiceConditionBehaviorTests(unittest.TestCase):
         self.assertEqual(results["linear"][0], 24.0)
         self.assertEqual(results["area"][0], 180.0)
         self.assertEqual(linear_takeoff.position, [0.0, 0.0, 13.0, 0.0])
+        self.assertEqual(
+            area_takeoff.position,
+            [0.0, 0.0, 13.0, 0.0, 13.0, 13.0, 0.0, 13.0],
+        )
 
     def test_partial_quantity_request_returns_zero_for_condition_without_takeoffs(self):
         condition = Condition(uid="c1", condition_type=Condition.TYPE_AREA)
@@ -134,10 +114,26 @@ class TakeoffLifecycleQuantityTests(unittest.TestCase):
         full = compute_page_quantities(self.conditions, self.takeoffs)
         scoped = compute_page_quantities(self.conditions, self.takeoffs, {"area"})
         self.assertEqual(full["area"][0], 96)
-        self.assertEqual(scoped["area"], full["area"])
+        self.assertEqual(scoped, {"area": (96.0, 0.0, 0.0)})
 
     def test_attachment_aware_area_formula_uses_child_dimensions(self):
         self.conditions["area"] = replace(self.conditions["area"], calc_type1=12)
         self.assertEqual(
             compute_page_quantities(self.conditions, self.takeoffs)["area"][0], 92
+        )
+
+    def test_foreign_page_and_missing_condition_children_do_not_subtract_area(self):
+        parent, hole, attachment = self.takeoffs
+        foreign_hole = replace(hole, page_uid="other-page")
+        orphan_attachment = replace(attachment, condition_uid="deleted")
+        self.conditions["area"] = replace(self.conditions["area"], calc_type1=12)
+        self.assertEqual(
+            compute_page_quantities(
+                self.conditions, [parent, foreign_hole, orphan_attachment], {"area"}
+            ),
+            {"area": (100.0, 0.0, 0.0)},
+        )
+        self.assertEqual(
+            compute_page_quantities(self.conditions, self.takeoffs, {"area"}),
+            {"area": (92.0, 0.0, 0.0)},
         )

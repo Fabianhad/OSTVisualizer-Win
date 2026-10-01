@@ -1,8 +1,15 @@
 import unittest
+import math
+from copy import deepcopy
+from dataclasses import replace
 from ost_visualizer.application.dtos.mcp_context_dtos import (
     MCP_BID_COMPARISON_DEFAULT_LIMIT,
     MCP_STATUS_DUPLICATE_REF_NO,
     McpBidDto,
+    McpBidComparisonCountsDto,
+    McpBidComparisonMetaDto,
+    McpBidMetadataChangeDto,
+    McpDuplicateRefNoDto,
 )
 from ost_visualizer.application.services.bid_comparison_service import (
     BidComparisonService,
@@ -141,11 +148,11 @@ class BidComparisonServiceTests(unittest.TestCase):
     def test_classifies_unchanged_changed_added_and_removed_by_ref_no(self):
         result = self._comparison(include_details=True)
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.data.counts.unchanged, 1)
-        self.assertEqual(result.data.counts.changed, 3)
-        self.assertEqual(result.data.counts.added, 1)
-        self.assertEqual(result.data.counts.removed, 1)
+        self.assertEqual(result.data.counts, McpBidComparisonCountsDto(1, 3, 1, 1))
         details = {detail.ref_no: detail for detail in result.data.details}
+        self.assertEqual(
+            [detail.ref_no for detail in result.data.details], [2, 3, 4, 5, 6]
+        )
         self.assertNotIn(1, details)
         self.assertEqual(details[2].classification, "changed")
         self.assertTrue(details[2].quantity_changed)
@@ -190,6 +197,10 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertEqual(changes["name"].new, "New Bid")
         self.assertNotIn("uid", changes)
         self.assertNotIn("selected_page_uid", changes)
+        self.assertEqual(
+            result.data.bid_metadata_changes,
+            [McpBidMetadataChangeDto("name", "Old Bid", "New Bid")],
+        )
 
     def test_duplicate_ref_no_aborts_matching_with_structured_warning(self):
         old_conditions = [
@@ -209,6 +220,12 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertEqual(result.data.duplicate_ref_nos[0].ref_no, 7)
         self.assertEqual(result.data.duplicate_ref_nos[0].condition_count, 2)
         self.assertIn("comparison was not performed", result.data.warnings[0])
+        self.assertEqual(
+            result.data.duplicate_ref_nos,
+            [McpDuplicateRefNoDto("old", 7, 2, ["First", "Second"])],
+        )
+        self.assertEqual(result.data.details, [])
+        self.assertEqual(result.data.counts, McpBidComparisonCountsDto())
 
     def test_zero_ref_no_is_matched_directly_without_uid_or_name_fallback(self):
         result = self.service.compare(
@@ -267,6 +284,10 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertTrue(detail.metadata_changed)
         self.assertTrue(detail.quantity_changed)
         self.assertEqual(detail.affected_pages, ["A.pdf"])
+        self.assertEqual(result.data.counts, McpBidComparisonCountsDto(changed=1))
+        self.assertEqual(result.data.groups[0].takeoffs, {"old": 1, "new": 1})
+        self.assertEqual(result.data.groups[0].qty1.old, 1.0)
+        self.assertEqual(result.data.groups[0].qty1.new, 0.0)
 
     def test_mixed_uom_warning_uses_target_label(self):
         old_condition = _condition("old", 1)
@@ -292,8 +313,9 @@ class BidComparisonServiceTests(unittest.TestCase):
     def test_tiny_quantity_float_noise_is_unchanged(self):
         old_total = sum(length / 12.0 for length in _REF_818_OLD_LENGTHS)
         new_total = sum(length / 12.0 for length in _REF_818_NEW_LENGTHS)
-        self.assertEqual(old_total, 78.16666666666667)
-        self.assertEqual(new_total, 78.16666666666666)
+        expected = math.fsum(_REF_818_OLD_LENGTHS) / 12.0
+        self.assertAlmostEqual(old_total, expected, delta=1e-12)
+        self.assertAlmostEqual(new_total, expected, delta=1e-12)
         result = self._compare_takeoff_lengths(
             _REF_818_OLD_LENGTHS, _REF_818_NEW_LENGTHS
         )
@@ -376,12 +398,15 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertNotIn(818, {detail.ref_no for detail in result.data.details})
 
     def test_details_and_groups_are_bounded_independently(self):
-        result = self._comparison(include_details=True)
+        first = _condition("new-2", 2)
+        first.cdn_type_name = "Alpha"
+        second = _condition("new-3", 3)
+        second.cdn_type_name = "Beta"
         limited = self.service.compare(
-            result.data.old_bid,
-            result.data.new_bid,
+            McpBidDto("old", "Old"),
+            McpBidDto("new", "New"),
             _bid_data([_condition("old-1", 1)], [], "old"),
-            _bid_data([_condition("new-2", 2), _condition("new-3", 3)], [], "new"),
+            _bid_data([first, second], [], "new"),
             include_details=True,
             limit=1,
         )
@@ -389,6 +414,182 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertEqual(limited.meta.detail_returned_count, 1)
         self.assertEqual(limited.meta.detail_total_count, 3)
         self.assertTrue(limited.meta.details_truncated)
+        self.assertEqual(limited.meta.total_count, 3)
+        self.assertTrue(limited.meta.truncated)
+        self.assertTrue(limited.meta.has_more)
+        self.assertEqual(
+            [group.cdn_type_name for group in limited.data.groups], ["Alpha"]
+        )
+        self.assertEqual([detail.ref_no for detail in limited.data.details], [1])
+        self.assertEqual(
+            limited.data.counts, McpBidComparisonCountsDto(added=2, removed=1)
+        )
+
+    def test_empty_and_unchanged_bids_do_not_invent_affected_records(self):
+        bid = McpBidDto(uid="same", name="Same")
+        for conditions in ([], [_condition("condition", 1)]):
+            with self.subTest(conditions=conditions):
+                data = _bid_data(conditions, [], "page")
+                before = deepcopy((bid, data))
+                result = self.service.compare(
+                    bid,
+                    replace(bid, uid="different"),
+                    data,
+                    deepcopy(data),
+                    limit=3,
+                    include_details=True,
+                )
+                self.assertEqual(result.status, "ok")
+                self.assertEqual(
+                    result.data.counts,
+                    McpBidComparisonCountsDto(unchanged=len(conditions)),
+                )
+                self.assertEqual(result.data.groups, [])
+                self.assertEqual(result.data.details, [])
+                self.assertEqual(result.data.warnings, [])
+                self.assertEqual(result.data.bid_metadata_changes, [])
+                self.assertFalse(result.data.bid_metadata_changed)
+                self.assertEqual(
+                    result.meta, McpBidComparisonMetaDto(limit=3, details_included=True)
+                )
+                self.assertEqual((bid, data), before)
+
+    def test_quantity_tolerance_is_absolute_and_does_not_hide_large_total_change(self):
+        for old, new, changed in (
+            (12.0, 12.0 + 6e-9, False),
+            (12.0, 12.0 + 24e-9, True),
+            (1e12, 1e12 + 1.0, True),
+        ):
+            with self.subTest(old=old, new=new):
+                result = self._compare_takeoff_lengths([old], [new])
+                self.assertEqual(
+                    result.data.counts,
+                    McpBidComparisonCountsDto(
+                        unchanged=int(not changed), changed=int(changed)
+                    ),
+                )
+                self.assertEqual(len(result.data.details), int(changed))
+                if changed:
+                    self.assertTrue(result.data.details[0].quantity_changed)
+
+    def test_equal_total_with_different_takeoff_count_is_still_changed(self):
+        result = self._compare_takeoff_lengths([12.0], [6.0, 6.0])
+        self.assertEqual(result.data.counts, McpBidComparisonCountsDto(changed=1))
+        self.assertEqual(len(result.data.details), 1)
+        detail = result.data.details[0]
+        self.assertTrue(detail.takeoff_count_changed)
+        self.assertTrue(detail.visible_takeoff_count_changed)
+        self.assertFalse(detail.quantity_changed)
+        self.assertFalse(detail.metadata_changed)
+        self.assertEqual(result.data.groups[0].takeoffs, {"old": 1, "new": 2})
+
+    def test_duplicate_results_and_condition_names_are_bounded_with_complete_counts(
+        self,
+    ):
+        old = [
+            _condition("a", 7, "Zulu"),
+            _condition("b", 7, "alpha"),
+            _condition("c", 8),
+            _condition("d", 8),
+        ]
+        new = [_condition("e", 9, "Zulu"), _condition("f", 9, "alpha")]
+        result = self.service.compare(
+            McpBidDto("old", "Old"),
+            McpBidDto("new", "New"),
+            _bid_data(old, [], "old"),
+            _bid_data(new, [], "new"),
+            limit=1,
+            include_details=True,
+        )
+        self.assertEqual(result.status, MCP_STATUS_DUPLICATE_REF_NO)
+        self.assertEqual(
+            result.data.duplicate_ref_nos,
+            [McpDuplicateRefNoDto("new", 9, 2, ["alpha"])],
+        )
+        self.assertEqual(
+            result.meta,
+            McpBidComparisonMetaDto(
+                limit=1,
+                returned_count=1,
+                total_count=3,
+                truncated=True,
+                has_more=True,
+                details_included=True,
+            ),
+        )
+        self.assertEqual(result.data.groups, [])
+        self.assertEqual(result.data.details, [])
+        self.assertEqual(
+            result.data.warnings,
+            [
+                "new bid contains duplicate ref_no values; comparison was not performed.",
+                "old bid contains duplicate ref_no values; comparison was not performed.",
+            ],
+        )
+
+    def test_affected_page_lists_are_bounded_with_explicit_group_warning(self):
+        old = _bid_data([], [], "old")
+        new = _bid_data(
+            [_condition("c", 1)],
+            [
+                _takeoff("a", "c", "new-a"),
+                _takeoff("b", "c", "new-b"),
+                _takeoff("c", "c", "new-c"),
+            ],
+            "new",
+        )
+        result = self.service.compare(
+            McpBidDto("old", "Old"),
+            McpBidDto("new", "New"),
+            old,
+            new,
+            limit=1,
+            include_details=True,
+        )
+        self.assertEqual(result.data.groups[0].affected_pages, ["A.pdf"])
+        self.assertEqual(result.data.details[0].affected_pages, ["A.pdf"])
+        self.assertEqual(
+            result.data.warnings, ["Type A affected pages truncated to 1 of 3 pages."]
+        )
+        self.assertEqual(result.data.groups[0].takeoffs, {"old": 0, "new": 3})
+        self.assertEqual(
+            result.meta,
+            McpBidComparisonMetaDto(
+                limit=1,
+                returned_count=1,
+                total_count=1,
+                details_included=True,
+                detail_returned_count=1,
+                detail_total_count=1,
+            ),
+        )
+
+    def test_warning_limit_reports_exact_number_of_omitted_warnings(self):
+        old_conditions = []
+        new_conditions = []
+        for ref_no in range(51):
+            old = _condition(f"old-{ref_no}", ref_no)
+            old.cdn_type_name = f"Type {ref_no:02d}"
+            new = replace(old, uid=f"new-{ref_no}", uom1=UOM_LINEAR_YARDS)
+            old_conditions.append(old)
+            new_conditions.append(new)
+        result = self.service.compare(
+            McpBidDto("old", "Old"),
+            McpBidDto("new", "New"),
+            _bid_data(old_conditions, [], "old"),
+            _bid_data(new_conditions, [], "new"),
+            limit=60,
+        )
+        self.assertEqual(len(result.data.groups), 51)
+        self.assertEqual(result.data.counts, McpBidComparisonCountsDto(changed=51))
+        self.assertEqual(
+            result.data.warnings,
+            [
+                f"Type {index:02d} qty1 contains mixed UOM labels: LF, LY; reporting LY."
+                for index in range(49)
+            ]
+            + ["2 additional warnings omitted."],
+        )
 
 
 if __name__ == "__main__":

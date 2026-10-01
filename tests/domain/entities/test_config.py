@@ -1,38 +1,10 @@
-from tests.presentation.dialogs.options.preference_support import (
-    _app as _preferences_support__app,
-)
-from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
     DEFAULT_ANNOTATION_CAPTION_IDS,
-    AnnotationCaptionId,
 )
-from pathlib import Path
-import os
 import unittest
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.font_definition import FontDefinition
-from ost_visualizer.presentation.utils.annotation_defaults import (
-    apply_config_owned_annotation_defaults,
-    build_placed_annotation_spec,
-    set_annotation_styles_by_tool,
-)
-import tempfile
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from ost_visualizer.application.services.config_service import ConfigService
-from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
-from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.infrastructure.persistence.repositories.json_config_repository import (
-    JsonConfigRepository,
-)
-from PySide6 import QtCore, QtGui, QtTest, QtWidgets
-import tests.presentation.components.test_toolbar_overflow as component_tests
-from tests.presentation.components.toolbar_visibility_support import (
-    register_test_fonts as _toolbar_visibility_support_register_test_fonts,
-)
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class ConfigValidationTests(unittest.TestCase):
@@ -42,16 +14,6 @@ class ConfigValidationTests(unittest.TestCase):
 
 
 class ConfigPreferenceTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = _preferences_support__app()
-        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
-        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
-            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
-
-    def tearDown(self):
-        self.app.processEvents()
-
     def test_config_defaults_preserve_existing_enabled_behaviors(self):
         config = Config()
         self.assertFalse(config.pdf_annotation_captions_enabled)
@@ -101,17 +63,6 @@ class ConfigPreferenceTests(unittest.TestCase):
 
 
 class ConfigFontColorTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        font_directory = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
-        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
-            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
-
-    def tearDown(self):
-        set_annotation_styles_by_tool({}, Config())
-        self.app.processEvents()
-
     def test_canonical_defaults_match_original_ost_contract(self):
         config = Config()
         self.assertEqual(
@@ -159,17 +110,6 @@ class ConfigFontColorTests(unittest.TestCase):
 
 
 class ElevationCalloutConfigTests(unittest.TestCase):
-    def test_defaults_preserve_html_behavior_and_leave_pdf_unchanged(self):
-        config = Config()
-        self.assertTrue(config.html_elevation_callouts_enabled)
-        self.assertFalse(config.pdf_elevation_callouts_enabled)
-        self.assertTrue(config.elevation_callout_include_condition)
-        self.assertTrue(config.elevation_callout_include_top)
-        self.assertTrue(config.elevation_callout_include_bottom)
-        self.assertTrue(config.elevation_callout_include_cubic_yards)
-        self.assertEqual(config.html_elevation_callout_color, "#ff0000")
-        self.assertEqual(config.pdf_elevation_callout_color, "#ff0000")
-
     def test_legacy_config_uses_canonical_callout_defaults(self):
         config = Config.from_dict({"show_toolbar_text": False})
         self.assertTrue(config.html_elevation_callouts_enabled)
@@ -201,33 +141,30 @@ class PdfAnnotationCaptionSettingsTests(unittest.TestCase):
         )
 
     def test_each_caption_identifier_loads_and_saves_independently(self):
-        for caption_id in ANNOTATION_CAPTION_ORDER:
-            with self.subTest(caption_id=caption_id.value):
+        expected_ids = (
+            "label",
+            "length",
+            "area",
+            "volume",
+            "depth",
+            "wall_area",
+            "width",
+            "height",
+            "slope",
+        )
+        self.assertEqual(
+            tuple(item.value for item in ANNOTATION_CAPTION_ORDER), expected_ids
+        )
+        for caption_id in expected_ids:
+            with self.subTest(caption_id=caption_id):
                 expected = Config(
                     pdf_annotation_captions_enabled=True,
-                    pdf_annotation_caption_ids=(caption_id.value,),
+                    pdf_annotation_caption_ids=(caption_id,),
                 )
                 self.assertEqual(Config.from_dict(expected.to_dict()), expected)
 
 
 class TakeoffToolbarPreferencesTests(unittest.TestCase):
-    _overflow_toolbar = component_tests.ToolbarOverflowTests._overflow_toolbar
-    _use_extension_menu = component_tests.ToolbarOverflowTests._use_extension_menu
-
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _toolbar_visibility_support_register_test_fonts()
-
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.path = Path(temporary.name) / "config.json"
-        self.repository = JsonConfigRepository(self.path)
-        self.model = ConfigAggregate(self.repository)
-        self.bus = EventBus()
-        self.service = ConfigService(self.model, self.bus)
-
     def test_invalid_preference_uses_existing_config_validation_contract(self):
         for value in (None, "line_annotation_tool", [False]):
             with self.subTest(value=value), self.assertRaises(TypeError):

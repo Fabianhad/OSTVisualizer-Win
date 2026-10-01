@@ -1,159 +1,29 @@
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.application.services.project_write_service import (
-    ProjectWriteService,
-)
-from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+"""Application write orchestration; deterministic ports, no live database or Qt UI."""
+
+import json
+import logging
+import unittest
+import uuid
+from contextlib import nullcontext
+from copy import deepcopy
+from dataclasses import asdict, replace
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from ost_visualizer.application.dtos.collaboration_dtos import (
     AuthoritativeMutationResult,
-    ChangeOperation,
     CollaborationMutationType,
-    CollaborationPollingPolicy,
-    CollaborationShutdownState,
-    CollaborationStatus,
     ConcurrencyToken,
-    DatabaseChange,
-    DatabaseChangeBatch,
-    DatabaseChangePollResult,
-    DatabaseMutationRequest,
     DatabaseMutationResult,
-    DatabaseSession,
-    DurableOperationResult,
     EditLeaseHandle,
-    EditLeaseLoss,
-    EditLeaseResult,
-    HydratedDatabaseChangeBatch,
-    MutationExecutionResult,
     MutationOutcomeStatus,
-    PendingMutationState,
-    PendingSqlOperationRecord,
-    PresenceMode,
-    QueuedMutationRequest,
-    QueuedMutationResult,
-    ReconciliationFailureKind,
-    ReconciliationResult,
-    ResourceLock,
-    ResourceRef,
-    SynchronizationConflict,
-    SynchronizationConflictKind,
-    SynchronizationState,
-    queued_takeoff_preview_uid,
-    session_identities_equal,
-)
-from types import SimpleNamespace
-import uuid
-import unittest
-import os
-from contextlib import nullcontext
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    CollaborationShutdownState,
-    DatabaseMutationResult,
-    MutationOutcomeStatus,
-    QueuedMutationResult,
-)
-from ost_visualizer.application.services.project_write_service import (
-    ProjectWriteService,
-    WriteReloadResult,
-)
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    CollaborationMutationType,
-    DatabaseMutationRequest,
-    DatabaseMutationResult,
-    DurableOperationResult,
-    MutationOutcomeStatus,
-    PageSettingsPayload,
-    PendingMutationState,
-    PendingSqlOperationRecord,
-    PlanPropertyPayload,
+    PlanItemsPastePayload,
     ProjectImportPayload,
     ProjectWritePayload,
     QueuedMutationRequest,
     QueuedMutationResult,
     ResourceRef,
-)
-import logging
-from dataclasses import replace
-from unittest.mock import Mock, patch
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    EditLeaseHandle,
-    EditLeaseResult,
-    MutationOutcomeStatus,
-    QueuedMutationResult,
-)
-from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.application.use_cases.project.save_page_scale_use_case import (
-    SavePageScaleUseCase,
-)
-from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
-from ost_visualizer.domain.entities.bid import Bid
-from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.domain.services.project_data_service import ProjectDataService
-from ost_visualizer.infrastructure.events.event_bus import EventBus
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
-from PySide6 import QtWidgets
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    ChangeOperation,
-    DatabaseMutationResult,
-    MutationOutcomeStatus,
-    QueuedMutationResult,
-    ResourceRef,
     SynchronizationConflict,
     SynchronizationConflictKind,
-)
-from ost_visualizer.application.dtos.update_condition_dto import (
-    UpdateConditionDto,
-    UpdateConditionResultDto,
-)
-from ost_visualizer.application.interfaces.i_mdb_connection_manager import (
-    DatabaseConnectionUnavailableError,
-)
-from ost_visualizer.application.services.active_bid_write_guard import (
-    ActiveBidWriteGuard,
-)
-from ost_visualizer.application.services.project_write_service import (
-    DeleteValidationResult,
-    ProjectWriteService,
-    WriteReloadResult,
-)
-from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.hierarchy_data import (
-    HierarchyBidInfo,
-    HierarchyData,
-    HierarchyFileEntry,
-    HierarchyProjectInfo,
-)
-from tests.application.services.write_permission_support import (
-    _ConcurrencyTokens as _permissions__ConcurrencyTokens,
-    _DatabaseCapability as _permissions__DatabaseCapability,
-    _EventBus as _permissions__EventBus,
-    _ForbiddenUseCase as _permissions__ForbiddenUseCase,
-    _MutationExecutor as _permissions__MutationExecutor,
-    _MutationRecorder as _permissions__MutationRecorder,
-    _ProjectData as _permissions__ProjectData,
-    _SequenceUseCase as _permissions__SequenceUseCase,
-    _SessionRegistry as _permissions__SessionRegistry,
-    _UseCase as _permissions__UseCase,
-    _hierarchy_with_bids as _permissions__hierarchy_with_bids,
-    _write_service as _permissions__write_service,
-)
-from copy import deepcopy
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    DatabaseMutationResult,
-    MutationOutcomeStatus,
-)
-import tests.application.services.test_project_write_service as parity
-import tests.presentation.components.plan_view.components.test_placement_mode as placement_fixtures
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    DatabaseMutationResult,
-    EditLeaseHandle,
-    MutationOutcomeStatus,
-    PlanItemsPastePayload,
-    ProjectWritePayload,
-    QueuedMutationResult,
-    ResourceRef,
 )
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     annotation_resource_id,
@@ -164,32 +34,42 @@ from ost_visualizer.application.dtos.create_condition_spec_dto import (
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.dtos.update_condition_dto import (
+    UpdateConditionDto,
     UpdateConditionResultDto,
+)
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.interfaces.i_mdb_connection_manager import (
+    DatabaseConnectionUnavailableError,
 )
 from ost_visualizer.application.services.project_write_service import (
     DeleteValidationResult,
     ProjectWriteService,
 )
+from ost_visualizer.application.use_cases.project.save_page_scale_use_case import (
+    SavePageScaleUseCase,
+)
+from ost_visualizer.domain.aggregates.ost_aggregate import OstAggregate
+from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
+from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.employee import Employee
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    MutationOutcomeStatus,
-    QueuedMutationResult,
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.infrastructure.events.event_bus import EventBus
+from tests.application.services.write_permission_support import (
+    _DatabaseCapability as _permissions__DatabaseCapability,
+    _EventBus as _permissions__EventBus,
+    _ProjectData as _permissions__ProjectData,
+    _SequenceUseCase as _permissions__SequenceUseCase,
+    _UseCase as _permissions__UseCase,
+    _write_service as _permissions__write_service,
 )
-from tests.presentation.handlers.test_plan_view_action_handler import (
-    FakeAccess,
-    FakeDeferredPersistence,
-    FakeEventBus,
-    FakePageSettingsBar,
-    FakePlanView,
-    FakeProjectData,
-    FakeUiState,
-    FakeWriteService,
-)
-import math
-from tests.integration.annotations.family_support import (
-    AnnotationFamilyGeometry as _family_support_AnnotationFamilyGeometry,
-)
+from tests.helpers.annotation_geometry import ANNOTATION_POSITIONS
 
 
 class _SequenceUseCase:
@@ -209,23 +89,25 @@ class _SequenceUseCase:
 
 
 class _Recorder:
-    def record(self, *_args, **_kwargs):
-        pass
+    def __init__(self):
+        self.records = []
+
+    def record(self, resource, operation, *, changed_fields=(), payload=""):
+        self.records.append((resource, operation, tuple(changed_fields), payload))
 
 
 class _CapturedQueueProvider:
     def __init__(self) -> None:
         self.requests = []
+        self.options = []
 
     def uses_sql_collaboration(self, _database_id: str) -> bool:
         return True
 
-    def queue_request(self, request, execute, callback, **_options):
+    def queue_request(self, request, execute, callback, **options):
         self.requests.append((request, execute, callback))
+        self.options.append(options)
         return 41
-
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class ProjectWriteServiceCollaborationTests(unittest.TestCase):
@@ -247,7 +129,7 @@ class ProjectWriteServiceCollaborationTests(unittest.TestCase):
             or DatabaseMutationResult(
                 operation_id=kwargs["operation_id"],
                 outcome_status=MutationOutcomeStatus.COMMITTED,
-                value=["501"],
+                value=["501", "502"],
             )
         )
         callback = lambda _result: None
@@ -275,6 +157,8 @@ class ProjectWriteServiceCollaborationTests(unittest.TestCase):
         )
         args, kwargs = queued[0]
         request = args[0]
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(insert_calls, [])
         self.assertIsInstance(request, QueuedMutationRequest)
         self.assertEqual(request.database_id, "database")
         self.assertEqual(
@@ -288,7 +172,11 @@ class ProjectWriteServiceCollaborationTests(unittest.TestCase):
             work_result.outcome_status,
             MutationOutcomeStatus.COMMITTED,
         )
-        self.assertEqual(work_result.created_resource_ids, ("501",))
+        self.assertEqual(work_result.created_resource_ids, ("501", "502"))
+        self.assertEqual(work_result.authoritative_result.affected_page_uids, ("20",))
+        self.assertEqual(
+            work_result.authoritative_result.affected_condition_uids, ("10", "11")
+        )
         self.assertIs(args[2], callback)
         self.assertEqual(
             request.dependency_resources,
@@ -300,7 +188,13 @@ class ProjectWriteServiceCollaborationTests(unittest.TestCase):
                 ResourceRef("takeoff", "40", 8),
             ),
         )
-        self.assertTrue(kwargs["result_validator"](work_result))
+        self.assertEqual(kwargs["result_validator"](work_result), "")
+        self.assertEqual(
+            kwargs["result_validator"](
+                replace(work_result, created_resource_ids=("501",))
+            ),
+            "The SQL mutation returned an incomplete authoritative identity set.",
+        )
         self.assertNotIn("allow_resource_overlap", kwargs)
         self.assertEqual(generation, 7)
         self.assertEqual(
@@ -308,6 +202,8 @@ class ProjectWriteServiceCollaborationTests(unittest.TestCase):
             request.dependency_resources,
         )
         self.assertFalse(insert_calls[0]["publish_conflict_event"])
+        self.assertEqual(insert_calls[0]["operation_id"], request.operation_id)
+        self.assertEqual(insert_calls[0]["request_hash"], request.request_hash)
 
     def test_queued_takeoff_reassign_rejects_missing_member_before_bulk_update(self):
         from ost_visualizer.application.dtos.collaboration_dtos import (
@@ -570,6 +466,8 @@ class ProjectWriteDeferredBoundaryTests(unittest.TestCase):
             is_active_locked_bid_write_blocked=lambda _file_path, bid_uid=None: False
         )
         self.assertTrue(service.is_expected_deferred_write_blocked("a.mdb"))
+        service._connection_manager.is_write_blocked = lambda: False
+        self.assertFalse(service.is_expected_deferred_write_blocked("a.mdb"))
 
     def test_project_write_service_reports_locked_bid_as_expected_deferred_block(self):
         service = ProjectWriteService.__new__(ProjectWriteService)
@@ -585,68 +483,94 @@ class ProjectWriteDeferredBoundaryTests(unittest.TestCase):
             == ("a.mdb", None)
         )
         self.assertTrue(service.is_expected_deferred_write_blocked("a.mdb"))
+        self.assertFalse(service.is_expected_deferred_write_blocked("other.mdb"))
 
     def test_page_area_write_can_skip_database_refresh(self):
-        calls = []
-        service = ProjectWriteService.__new__(ProjectWriteService)
-        service._database_capability_service = SimpleNamespace(
-            is_editable=lambda _locator, resource=None: True
-        )
-        service._project_data = SimpleNamespace(
-            get_current_bid_ref=lambda: BidRef("a.mdb", "1")
-        )
-        service._bid_write_guard = SimpleNamespace(
-            blocks_active_locked_bid_write=lambda _file_path, bid_uid=None: False
-        )
-        service._save_page_area = SimpleNamespace(
-            execute=lambda db_path, page_uid, area_uid: calls.append(
-                ("write", db_path, page_uid, area_uid)
-            )
-            or True
-        )
-        service._reload_after_success = lambda db_path, success, publish=True: (
-            calls.append(("reload_after_success", db_path, success, publish)) or success
-        )
-        service._mutation_executor = SimpleNamespace(
-            execute=lambda request, operation: DatabaseMutationResult(
-                operation_id=request.operation_id,
-                outcome_status=MutationOutcomeStatus.COMMITTED,
-                value=operation(
-                    SimpleNamespace(
-                        record=lambda _resource, _operation, changed_fields=(), payload="": None
-                    )
-                ),
-            )
-        )
-        service._session_registry = SimpleNamespace(
-            get=lambda _database_id: "",
-            lock_tokens=lambda _database_id, _resources: (),
-        )
-        service._concurrency_tokens = SimpleNamespace(
-            mutation_scope=lambda _database_id: nullcontext(),
-            ensure_resources_loaded=lambda _database_id, _resources: None,
-            expected_versions=lambda _database_id, _resources: (),
-            apply_result=lambda _database_id, _versions: None,
-        )
-        service._event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
+        data = _permissions__ProjectData()
+        events = _permissions__EventBus()
+        service, *_ = _permissions__write_service(data, event_bus=events)
+        service._save_page_area = _permissions__UseCase(True)
+        service._reload_database = Mock(return_value=True)
+        database = data.bid_ref.file_path
         self.assertTrue(
             service.save_page_area(
-                "a.mdb",
-                "p1",
-                "2",
-                publish_database_refreshed_after_write=False,
+                database, "p1", "2", publish_database_refreshed_after_write=False
             )
         )
+        self.assertEqual(service._save_page_area.calls, [((database, "p1", "2"), {})])
+        service._reload_database.assert_not_called()
+        self.assertEqual(events.published, [])
+        # Positive control exercises the same real reload policy with its default.
+        self.assertTrue(service.save_page_area(database, "p1", "3"))
         self.assertEqual(
-            calls,
+            service._save_page_area.calls,
+            [((database, "p1", "2"), {}), ((database, "p1", "3"), {})],
+        )
+        service._reload_database.assert_called_once_with(database)
+        self.assertEqual(
+            events.published,
             [
-                ("write", "a.mdb", "p1", "2"),
-                ("reload_after_success", "a.mdb", True, False),
+                (
+                    AppEvents.DATABASE_REFRESHED,
+                    {
+                        "file_path": database,
+                        "image_sources_unchanged": False,
+                        "mesh_scene_unchanged": False,
+                        "page_scale_uids": (),
+                    },
+                )
             ],
         )
 
 
 class ProjectWriteQueueContractTests(unittest.TestCase):
+    def test_queued_project_failures_preserve_outcome_without_success_projection(self):
+        for status, attempted in (
+            (MutationOutcomeStatus.FAILED_BEFORE_COMMIT, False),
+            (MutationOutcomeStatus.CONFLICT, False),
+            (MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN, True),
+        ):
+            with self.subTest(status=status):
+                service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+                completed = []
+                service.queue_project_create("database", "Project", completed.append)
+                request, execute, _callback = provider.requests[0]
+                conflict = (
+                    SynchronizationConflict(
+                        "database", request.resources[0], "Version changed"
+                    )
+                    if status == MutationOutcomeStatus.CONFLICT
+                    else None
+                )
+                mutation = DatabaseMutationResult(
+                    operation_id=request.operation_id,
+                    outcome_status=status,
+                    conflict=conflict,
+                    commit_attempted=attempted,
+                    consumed_lock_tokens=("consumed-lease",) if attempted else (),
+                )
+                service._execute_database_mutation = Mock(return_value=mutation)
+                result = execute()
+                self.assertEqual(result.outcome_status, status)
+                self.assertIs(result.conflict, conflict)
+                self.assertEqual(result.commit_attempted, attempted)
+                self.assertEqual(
+                    result.consumed_lock_tokens, mutation.consumed_lock_tokens
+                )
+                self.assertEqual(result.created_resource_ids, ())
+                self.assertIsNone(result.authoritative_result)
+                self.assertEqual(
+                    result.message,
+                    (
+                        "Version changed"
+                        if conflict
+                        else "The database rejected the project update."
+                    ),
+                )
+                service._execute_database_mutation.assert_called_once()
+                self.assertEqual(service._create_project.calls, [])
+                self.assertEqual(completed, [])
+
     def test_project_import_enters_canonical_queue_with_authoritative_result(self):
         payload = ProjectImportPayload(
             source_path="C:/imports/project.ost",
@@ -678,17 +602,30 @@ class ProjectWriteQueueContractTests(unittest.TestCase):
         )
         service = ProjectWriteService.__new__(ProjectWriteService)
         service._sql_collaboration_provider = lambda: provider
-        service._execute_database_mutation = lambda *_args, **_kwargs: (
-            DatabaseMutationResult(
+        mutation_calls = []
+        import_calls = []
+
+        def execute_mutation(database, resources, operation, **options):
+            recorder = _Recorder()
+            mutation_calls.append((database, resources, options))
+            return DatabaseMutationResult(
                 operation_id=captured["request"].operation_id,
                 outcome_status=MutationOutcomeStatus.COMMITTED,
-                value=value,
+                value=operation(recorder),
                 commit_attempted=True,
             )
-        )
+
+        def import_work(recorder):
+            import_calls.append(recorder)
+            return value
+
+        service._execute_database_mutation = execute_mutation
+        completed = []
         sequence = service.queue_project_import(
-            "database", "9", payload, lambda _recorder: value, lambda _result: None
+            "database", "9", payload, import_work, completed.append
         )
+        self.assertEqual(import_calls, [])
+        self.assertEqual(mutation_calls, [])
         execution = captured["execute"]()
         self.assertEqual(sequence, 17)
         self.assertEqual(
@@ -700,6 +637,41 @@ class ProjectWriteQueueContractTests(unittest.TestCase):
         self.assertEqual(
             execution.authoritative_result.affected_condition_uids, ("30",)
         )
+        self.assertEqual(len(import_calls), 1)
+        self.assertEqual(len(mutation_calls), 1)
+        request = captured["request"]
+        self.assertEqual(request.dependency_resources, (ResourceRef("project", "9"),))
+        self.assertEqual(mutation_calls[0][0], "database")
+        self.assertEqual(
+            mutation_calls[0][1],
+            tuple(sorted({*request.resources, *request.dependency_resources})),
+        )
+        self.assertEqual(mutation_calls[0][2]["request_hash"], request.request_hash)
+        self.assertFalse(mutation_calls[0][2]["publish_conflict_event"])
+        self.assertEqual(
+            dict(execution.authoritative_result.created_uid_maps),
+            {
+                "projects": (("target", "9"),),
+                "bids": (("b", "10"),),
+                "pages": (("p", "20"),),
+                "conditions": (("c", "30"),),
+                "layers": (("l", "40"),),
+                "areas": (("r", "50"),),
+                "takeoffs": (("t", "60"),),
+                "annotations": (("a", "70"),),
+            },
+        )
+        self.assertEqual(completed, [])
+        terminal = QueuedMutationResult(
+            database_id="database",
+            runtime_generation=1,
+            operation_id=request.operation_id,
+            outcome_status=execution.outcome_status,
+            authoritative_result=execution.authoritative_result,
+            commit_attempted=True,
+        )
+        captured["callback"](terminal)
+        self.assertEqual(completed, [terminal])
 
     def test_client_page_state_kinds_are_rejected_by_sql_mutation_queue(self):
         service = SimpleNamespace(
@@ -718,19 +690,16 @@ class ProjectWriteQueueContractTests(unittest.TestCase):
 
 
 class PageScaleProjectionTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-
     def setUp(self):
         self.bid_ref = BidRef("test.mdb", "7")
         self.original = Page(uid="42", name="Page 42", scale_factor2=48.0)
+        self.unrelated = Page(uid="43", name="Unrelated", scale_factor2=24.0)
         self.model = OstAggregate(Mock())
         self.model.current_bid_ref = self.bid_ref
         self.model.current_bid = Bid("7", "Test bid")
-        self.model.set_pages({"42": self.original})
+        self.model.set_pages({"42": self.original, "43": self.unrelated})
         self.data = ProjectDataService(self.model)
-        self.persisted = {"42": self.original}
+        self.persisted = {"42": replace(self.original), "43": replace(self.unrelated)}
         self.write_calls = []
         self.reloads = []
         self.events = EventBus()
@@ -745,30 +714,15 @@ class PageScaleProjectionTests(unittest.TestCase):
         self.service._event_bus = self.events
         self.service._reload_database = self._reload
         self.service._execute_database_mutation = (
-            lambda _db, _resources, operation, **_kw: SimpleNamespace(
-                outcome_status=MutationOutcomeStatus.COMMITTED, value=operation(Mock())
+            lambda _db, _resources, operation, **_kw: DatabaseMutationResult(
+                operation_id=str(uuid.uuid4()),
+                outcome_status=MutationOutcomeStatus.COMMITTED,
+                value=operation(Mock()),
             )
         )
         self.writer = Mock()
         self.writer.save_page_scale.side_effect = self._write
         self.service._save_page_scale = SavePageScaleUseCase(self.writer)
-        self.coordinator = object.__new__(UIEventCoordinator)
-        self.coordinator.main_window = None
-        self.coordinator.event_bus = self.events
-        self.coordinator._icon_provider = None
-        self.coordinator.project_data = self.data
-        self.coordinator.ui_state_manager = SimpleNamespace(
-            active_page_uid="42",
-            get_selected_bid_ref=lambda: self.model.current_bid_ref,
-        )
-        self.coordinator.ui_access_manager = Mock()
-        self.coordinator.ui_access_manager.is_allowed.return_value = True
-        self.coordinator.takeoff_sidebar = SimpleNamespace(
-            get_page_order=lambda: list(self.persisted)
-        )
-        self.coordinator._deferred_persistence = Mock()
-        self.coordinator._deferred_persistence.flush_for_file.return_value = True
-        self.coordinator._project_write_service = self.service
 
     def _write(self, database, page_uid, sf1, sf2):
         self.write_calls.append((database, page_uid, sf1, sf2))
@@ -794,8 +748,25 @@ class PageScaleProjectionTests(unittest.TestCase):
         )
         self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1.0, 96.0))
         self.assertEqual(self.reloads, [])
-        self.assertEqual(len(changes), 1)
-        self.assertEqual(changes[0]["page_uids"], ("42",))
+        self.assertEqual(self.write_calls, [("test.mdb", "42", 1.0, 96.0)])
+        self.assertEqual(self.persisted["42"].scale_factor2, 96.0)
+        self.assertIs(self.data.get_page("42"), self.original)
+        self.assertEqual(
+            (self.original.scale_factor1, self.original.scale_factor2), (1.0, 96.0)
+        )
+        self.assertIs(self.data.get_page("43"), self.unrelated)
+        self.assertEqual(self.unrelated.scale_factor2, 24.0)
+        self.assertEqual(
+            changes,
+            [
+                {
+                    "database_id": "test.mdb",
+                    "bid_uid": "7",
+                    "page_uids": ("42",),
+                    "changed_fields": ("scale",),
+                }
+            ],
+        )
 
     def test_scale_save_does_not_project_into_bid_selected_during_write(self):
         replacement = Page(uid="42", name="Other bid page", scale_factor2=24.0)
@@ -807,7 +778,8 @@ class PageScaleProjectionTests(unittest.TestCase):
             self.model.current_bid_ref = BidRef("test.mdb", "8")
             self.model.current_bid = Bid("8", "Other bid")
             self.model.set_pages({"42": replacement})
-            return SimpleNamespace(
+            return DatabaseMutationResult(
+                operation_id=str(uuid.uuid4()),
                 outcome_status=MutationOutcomeStatus.COMMITTED,
                 value=value,
             )
@@ -819,6 +791,89 @@ class PageScaleProjectionTests(unittest.TestCase):
         self.assertEqual(str(resources[0].bid_uid), "7")
         self.assertEqual(replacement.scale_factor2, 24.0)
         self.assertEqual(reloads, ["test.mdb"])
+        self.assertEqual(self.write_calls, [("test.mdb", "42", 1.0, 96.0)])
+        self.assertEqual(self.persisted["42"].scale_factor2, 96.0)
+        self.assertIs(self.data.get_page("42"), replacement)
+
+    def test_failed_scale_write_preserves_model_and_does_not_reload_or_publish(self):
+        self.writer.save_page_scale.side_effect = None
+        self.writer.save_page_scale.return_value = False
+        events = []
+        self.events.subscribe(
+            AppEvents.PAGE_METADATA_CHANGED, lambda **payload: events.append(payload)
+        )
+        self.events.subscribe(
+            AppEvents.DATABASE_REFRESHED, lambda **payload: events.append(payload)
+        )
+        self.assertFalse(self.service.save_page_scale("test.mdb", "42", 1.0, 96.0))
+        self.writer.save_page_scale.assert_called_once_with("test.mdb", "42", 1.0, 96.0)
+        self.assertEqual(self.original.scale_factor2, 48.0)
+        self.assertEqual(self.persisted["42"].scale_factor2, 48.0)
+        self.assertEqual(self.reloads, [])
+        self.assertEqual(events, [])
+
+    def test_same_uid_page_replacement_during_scale_write_requires_reload(self):
+        replacement = replace(self.original, scale_factor2=12.0)
+        changes = []
+        self.events.subscribe(
+            AppEvents.PAGE_METADATA_CHANGED, lambda **payload: changes.append(payload)
+        )
+
+        def write(database, uid, sf1, sf2):
+            self._write(database, uid, sf1, sf2)
+            self.model.set_pages({"42": replacement})
+            return True
+
+        self.writer.save_page_scale.side_effect = write
+        self.assertTrue(self.service.save_page_scale("test.mdb", "42", 1.0, 96.0))
+        self.assertEqual(replacement.scale_factor2, 12.0)
+        self.assertEqual(changes, [])
+        self.assertEqual(len(self.reloads), 1)
+        self.assertEqual(self.data.get_page("42").scale_factor2, 96.0)
+        self.assertIsNot(self.data.get_page("42"), replacement)
+
+    def test_bulk_scale_projects_only_saved_pages_and_reports_partial_failure(self):
+        def write(database, uid, sf1, sf2):
+            if uid == "43":
+                return False
+            return self._write(database, uid, sf1, sf2)
+
+        self.writer.save_page_scale.side_effect = write
+        changes = []
+        self.events.subscribe(
+            AppEvents.PAGE_METADATA_CHANGED, lambda **payload: changes.append(payload)
+        )
+        self.assertFalse(
+            self.service.save_page_scales("test.mdb", ["42", "", "42", "43"], 1.0, 96.0)
+        )
+        self.assertEqual(
+            [call.args for call in self.writer.save_page_scale.call_args_list],
+            [("test.mdb", "42", 1.0, 96.0), ("test.mdb", "43", 1.0, 96.0)],
+        )
+        self.assertEqual(self.original.scale_factor2, 96.0)
+        self.assertEqual(self.unrelated.scale_factor2, 24.0)
+        self.assertEqual(self.reloads, [])
+        self.assertEqual(
+            changes,
+            [
+                {
+                    "database_id": "test.mdb",
+                    "bid_uid": "7",
+                    "page_uids": ("42",),
+                    "changed_fields": ("scale",),
+                }
+            ],
+        )
+
+    def test_empty_bulk_scale_is_a_noop_without_persistence_or_events(self):
+        changes = []
+        self.events.subscribe(
+            AppEvents.PAGE_METADATA_CHANGED, lambda **payload: changes.append(payload)
+        )
+        self.assertFalse(self.service.save_page_scales("test.mdb", ["", ""], 1.0, 96.0))
+        self.writer.save_page_scale.assert_not_called()
+        self.assertEqual(self.reloads, [])
+        self.assertEqual(changes, [])
 
 
 class BidLockPermissionTests(unittest.TestCase):
@@ -857,12 +912,15 @@ class BidLockPermissionTests(unittest.TestCase):
             "Restart OST Visualizer and try again.",
         )
 
-    def test_revoked_database_capability_blocks_deferred_write_execution(self):
+    def test_read_only_database_is_an_expected_deferred_write_block(self):
+        capability = _permissions__DatabaseCapability(editable=False)
         service, *_unused = _permissions__write_service(
             _permissions__ProjectData(),
-            database_capability=_permissions__DatabaseCapability(editable=False),
+            database_capability=capability,
         )
         self.assertTrue(service.is_expected_deferred_write_blocked("sql-db"))
+        capability.editable = True
+        self.assertFalse(service.is_expected_deferred_write_blocked("sql-db"))
 
     def test_locked_bid_blocks_condition_edits_at_write_service(self):
         project_data = _permissions__ProjectData()
@@ -908,8 +966,31 @@ class BidLockPermissionTests(unittest.TestCase):
         project_data = _permissions__ProjectData()
         events = _permissions__EventBus()
         service, _, _, _ = _permissions__write_service(project_data, event_bus=events)
-        service._update_condition = _permissions__UseCase(
-            UpdateConditionResultDto(success=True)
+        original = Condition(uid="12", name="Before", z_value=0.0)
+        unrelated = Condition(uid="13", name="Unrelated")
+        project_data.conditions = {"12": original, "13": unrelated}
+        persisted = dict(project_data.conditions)
+
+        def update(database, bid_uid, condition_uid, dto):
+            self.assertEqual(
+                (database, bid_uid, condition_uid),
+                (project_data.bid_ref.file_path, "7", "12"),
+            )
+            self.assertEqual(events.published, [])
+            persisted[condition_uid] = replace(
+                persisted[condition_uid], **dto.get_changes()
+            )
+            return UpdateConditionResultDto(success=True)
+
+        service._update_condition = SimpleNamespace(execute=update)
+        service._condition_family_reader = Mock(
+            side_effect=lambda *_args: (
+                {uid: replace(condition) for uid, condition in persisted.items()},
+                {},
+            )
+        )
+        service._reload_database = Mock(
+            side_effect=AssertionError("metadata edit must use the family reader")
         )
         updates = UpdateConditionDto()
         updates.set("name", "Level 2 (Top: 12'-0\")")
@@ -921,6 +1002,15 @@ class BidLockPermissionTests(unittest.TestCase):
             updates,
         )
         self.assertTrue(result.success)
+        self.assertIsNot(project_data.conditions["12"], original)
+        self.assertEqual(project_data.conditions["12"].name, updates.get("name"))
+        self.assertEqual(project_data.conditions["12"].z_value, 144.0)
+        self.assertEqual(project_data.conditions["13"], unrelated)
+        self.assertEqual(original.name, "Before")
+        service._condition_family_reader.assert_called_once_with(
+            project_data.bid_ref.file_path, "7"
+        )
+        service._reload_database.assert_not_called()
         self.assertEqual(
             events.published,
             [
@@ -956,6 +1046,8 @@ class BidLockPermissionTests(unittest.TestCase):
             updates,
         )
         self.assertTrue(result.success)
+        self.assertEqual(len(events.published), 1)
+        self.assertEqual(events.published[0][0], AppEvents.CONDITIONS_CHANGED)
         self.assertEqual(
             events.published[0][1]["changed_fields"],
             ["is_top", "name", "z_value"],
@@ -978,6 +1070,8 @@ class BidLockPermissionTests(unittest.TestCase):
             updates,
         )
         self.assertTrue(result.success)
+        self.assertEqual(len(events.published), 1)
+        self.assertEqual(events.published[0][0], AppEvents.CONDITIONS_CHANGED)
         self.assertEqual(events.published[0][1]["changed_fields"], ["name"])
 
     def test_locked_bid_blocks_bid_internal_mutations_but_allows_status_change(self):
@@ -989,7 +1083,14 @@ class BidLockPermissionTests(unittest.TestCase):
             service.insert_takeoffs(
                 project_data.bid_ref.file_path,
                 project_data.bid_ref.bid_uid,
-                [],
+                [
+                    InsertTakeoffSpec(
+                        condition_uid="12",
+                        page_uid="34",
+                        area_uid=None,
+                        position=[1.0, 2.0],
+                    )
+                ],
             ),
         )
         self.assertFalse(
@@ -1013,7 +1114,10 @@ class BidLockPermissionTests(unittest.TestCase):
                 "2",
             )
         )
-        self.assertEqual(1, len(update_bid_job_status.calls))
+        self.assertEqual(
+            update_bid_job_status.calls,
+            [((project_data.bid_ref.file_path, "7", "2"), {})],
+        )
 
     def test_write_service_rejects_incompatible_condition_reassignment_atomically(self):
         project_data = _permissions__ProjectData()
@@ -1129,8 +1233,12 @@ class BidLockPermissionTests(unittest.TestCase):
                 project_data.bid_ref.file_path, project_data.bid_ref.bid_uid
             ),
         )
-        self.assertEqual(1, len(delete_bids.calls))
-        self.assertEqual(1, len(duplicate_bid.calls))
+        self.assertEqual(
+            delete_bids.calls, [((project_data.bid_ref.file_path, ["7"]), {})]
+        )
+        self.assertEqual(
+            duplicate_bid.calls, [((project_data.bid_ref.file_path, "7"), {})]
+        )
 
     def test_write_service_reports_failure_when_required_reload_fails(self):
         project_data = _permissions__ProjectData()
@@ -1213,7 +1321,7 @@ class BidLockPermissionTests(unittest.TestCase):
         result = service.create_condition_result(
             project_data.bid_ref.file_path,
             project_data.bid_ref.bid_uid,
-            SimpleNamespace(),
+            CreateConditionSpec(name="Created"),
         )
         self.assertFalse(result)
         self.assertTrue(result.write_success)
@@ -1278,10 +1386,10 @@ class BidLockPermissionTests(unittest.TestCase):
         project_data = _permissions__ProjectData()
         service, *_ = _permissions__write_service(project_data, reload_success=False)
         service._save_employees = _permissions__SequenceUseCase(
-            [{"new_0": "employee-new"}]
+            [{"new_0": "employee-new"}, {"new_0": "employee-copy"}]
         )
         changes = {
-            "new": [SimpleNamespace(uid="new_0")],
+            "new": [Employee(uid="new_0")],
             "updated": [],
             "deleted_uids": [],
         }
@@ -1293,6 +1401,8 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(
             service.save_employees(project_data.bid_ref.file_path, changes)
         )
+        self.assertEqual(len(service._save_employees.calls), 2)
+        self.assertEqual(service._save_employees.results, [])
 
     def test_employee_save_result_can_skip_database_refresh(self):
         project_data = _permissions__ProjectData()
@@ -1303,7 +1413,7 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         service._save_employees = _permissions__UseCase({"new_0": "employee-new"})
         changes = {
-            "new": [SimpleNamespace(uid="new_0")],
+            "new": [Employee(uid="new_0")],
             "updated": [],
             "deleted_uids": [],
         }
@@ -1353,7 +1463,9 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(result.value, {"new_condition_type": "type-new"})
         self.assertEqual(reload_calls, [])
 
-    def test_mdb_condition_type_save_refreshes_sidebar_without_database_event(self):
+    def test_mdb_condition_type_save_publishes_catalog_change_without_database_event(
+        self,
+    ):
         project_data = _permissions__ProjectData()
         events = _permissions__EventBus()
         service, *_ = _permissions__write_service(project_data, event_bus=events)
@@ -1393,10 +1505,10 @@ class BidLockPermissionTests(unittest.TestCase):
         service, *_ = _permissions__write_service(project_data)
         service._project_data = SimpleNamespace(
             get_bid_condition_folders=lambda: {
-                "folder-1": SimpleNamespace(parent_uid=None)
+                "folder-1": BidConditionFolder(uid="folder-1", name="Folder")
             },
             get_bid_conditions=lambda: {
-                "cond-1": SimpleNamespace(folder_uid="folder-1")
+                "cond-1": Condition(uid="cond-1", folder_uid="folder-1")
             },
         )
         delete_use_case = _permissions__UseCase(True)
@@ -1417,7 +1529,7 @@ class BidLockPermissionTests(unittest.TestCase):
         service, *_ = _permissions__write_service(project_data)
         service._project_data = SimpleNamespace(
             get_bid_condition_folders=lambda: {
-                "folder-1": SimpleNamespace(parent_uid=None)
+                "folder-1": BidConditionFolder(uid="folder-1", name="Folder")
             },
             get_bid_conditions=lambda: {},
             get_current_bid_ref=project_data.get_current_bid_ref,
@@ -1663,12 +1775,8 @@ class BidLockPermissionTests(unittest.TestCase):
 
 
 class TakeoffLifecycleRequestTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        placement_fixtures.TakeoffLifecyclePlacementTests.setUpClass()
-
     def test_nested_parent_paste_remaps_each_generation_on_both_backends(self):
-        payload = parity.MdbSqlBehaviorParityTests._mixed_paste_payload()
+        payload = MdbSqlBehaviorParityTests._mixed_paste_payload()
         payload = replace(
             payload,
             takeoff_source_uids=("grandchild", "hole", "parent"),
@@ -1684,13 +1792,11 @@ class TakeoffLifecycleRequestTests(unittest.TestCase):
             with self.subTest(sql=sql):
                 if sql:
                     service, provider = (
-                        parity.MdbSqlBehaviorParityTests._queued_project_service()
+                        MdbSqlBehaviorParityTests._queued_project_service()
                     )
                 else:
-                    service = (
-                        parity.MdbSqlBehaviorParityTests._local_composite_service()
-                    )
-                service._insert_takeoffs = parity._SequenceUseCase(
+                    service = MdbSqlBehaviorParityTests._local_composite_service()
+                service._insert_takeoffs = _SequenceUseCase(
                     ["p-new"], ["h-new"], ["g-new"]
                 )
                 if sql:
@@ -1750,10 +1856,6 @@ class TakeoffLifecycleRequestTests(unittest.TestCase):
 
 
 class MdbSqlBehaviorParityTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-
     @staticmethod
     def _local_composite_service():
         service = ProjectWriteService.__new__(ProjectWriteService)
@@ -1978,6 +2080,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
 
     def test_sql_plan_paste_locks_takeoff_area_dependency(self):
         service, provider = self._queued_project_service()
+        service._insert_takeoffs = _SequenceUseCase(["takeoff-new"])
         payload = PlanItemsPastePayload(
             source_bid_uid="7",
             destination_bid_uid="7",
@@ -1996,9 +2099,18 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         service.queue_plan_items_paste("database", payload, lambda _result: None)
         request, _execute, _callback = provider.requests[0]
         self.assertIn(ResourceRef("area", "area-1", 7), request.dependency_resources)
+        self.assertEqual(service._insert_takeoffs.calls, [])
+        result = _execute()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            service._insert_takeoffs.calls,
+            [("database", "7", list(payload.takeoff_specs))],
+        )
+        self.assertEqual(result.authoritative_result.affected_page_uids, ("page-1",))
 
     def test_sql_plan_paste_locks_existing_hot_link_named_view_dependency(self):
         service, provider = self._queued_project_service()
+        service._insert_annotations = _SequenceUseCase(["hotlink-new"])
         payload = PlanItemsPastePayload(
             source_bid_uid="7",
             destination_bid_uid="7",
@@ -2020,6 +2132,15 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             ResourceRef("annotation", annotation_resource_id("namedview", "55"), 7),
             request.dependency_resources,
         )
+        self.assertEqual(service._insert_annotations.calls, [])
+        result = _execute()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(len(service._insert_annotations.calls), 1)
+        self.assertEqual(
+            service._insert_annotations.calls[0][:3],
+            ("database", "7", list(payload.annotation_specs)),
+        )
+        self.assertEqual(result.authoritative_result.affected_page_uids, ("page-1",))
 
     def test_cross_bid_plan_paste_clears_external_hot_link_target(self):
         service, provider = self._queued_project_service()
@@ -2306,6 +2427,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
             {"new_condition_type": "type-new"}
         )
         service._save_cover_sheet = _SequenceUseCase(True)
+        service._save_page_name = _SequenceUseCase(True)
         service._save_job_statuses = _SequenceUseCase({"new_status": "status-new"})
         service._save_employees = _SequenceUseCase({"new_employee": "employee-new"})
         service._save_pay_classes = _SequenceUseCase({"new_pay_class": "pay-class-new"})
@@ -2334,9 +2456,14 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 requested_uids=list(folder_uids), blocked_uids=[]
             )
         )
+        service._mutation_calls = []
+        service._mutation_records = []
 
         def execute_mutation(database_id, resources, operation, **options):
-            value = operation(_Recorder())
+            service._mutation_calls.append((database_id, resources, options))
+            recorder = _Recorder()
+            value = operation(recorder)
+            service._mutation_records.extend(recorder.records)
             return DatabaseMutationResult(
                 operation_id=options["operation_id"],
                 outcome_status=MutationOutcomeStatus.COMMITTED,
@@ -2347,7 +2474,7 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         service._execute_database_mutation = execute_mutation
         return service, provider
 
-    def test_sql_page_and_layer_commands_are_deferred_to_collaboration_queue(self):
+    def test_project_commands_defer_exact_write_arguments_to_collaboration_queue(self):
         command_cases = (
             (
                 "delete_pages",
@@ -2612,15 +2739,136 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                 "_save_pay_classes",
             ),
         )
+        expected_arguments = {
+            ("delete_pages", "_delete_pages"): ("database", ["page-1"]),
+            ("insert_layer", "_insert_layer"): ("database", "7", "Layer", 2),
+            ("delete_layers", "_delete_layer"): ("database", "layer-1"),
+            ("swap_layers", "_swap_layer_sequence"): ("database", "layer-1", "layer-2"),
+            ("rename_layer", "_update_layer_name"): ("database", "layer-1", "Renamed"),
+            ("update_all_layers_show", "_update_all_layers_show"): (
+                "database",
+                "7",
+                False,
+                ["70", "71"],
+            ),
+            ("create_condition", "_insert_condition"): (
+                "database",
+                "7",
+                CreateConditionSpec(name="Condition"),
+            ),
+            ("delete_conditions", "_delete_conditions"): (
+                "database",
+                "7",
+                ["condition-1"],
+            ),
+            ("duplicate_conditions", "_duplicate_conditions"): (
+                "database",
+                "7",
+                ["condition-1"],
+            ),
+            ("update_conditions", "_update_condition"): (
+                "database",
+                "7",
+                "condition-1",
+                UpdateConditionDto({"name": "Renamed"}),
+            ),
+            ("renumber_conditions", "_renumber_conditions"): (
+                "database",
+                "7",
+                ["condition-1"],
+            ),
+            ("create_condition_folder", "_insert_condition_folder"): (
+                "database",
+                "7",
+                "Folder",
+                None,
+            ),
+            ("rename_condition_folder", "_rename_condition_folder"): (
+                "database",
+                "folder-1",
+                "Renamed",
+            ),
+            ("delete_condition_folders", "_delete_condition_folders"): (
+                "database",
+                ["folder-1"],
+            ),
+            ("create_project", "_create_project"): ("database", "Project"),
+            ("create_bid", "_create_bid"): (
+                "database",
+                "project-1",
+                {"job_name": "New Bid", "pages": []},
+            ),
+            ("rename_project", "_rename_project"): ("database", "project-1", "Renamed"),
+            ("move_bids", "_move_bids"): ("database", ["7"], "project-1", None),
+            ("duplicate_bids", "_duplicate_bid"): ("database", "7"),
+            ("delete_bids", "_delete_bids"): ("database", ["7"]),
+            ("delete_projects", "_delete_projects"): ("database", ["project-1"]),
+            ("update_bid_job_status", "_update_bid_job_status"): (
+                "database",
+                "7",
+                "status-1",
+            ),
+            ("save_condition_types", "_save_condition_types"): (
+                "database",
+                {
+                    "new": [{"uid": "new_condition_type", "name": "Concrete"}],
+                    "updated": [],
+                    "deleted_uids": [],
+                },
+            ),
+            ("save_cover_sheet", "_save_cover_sheet"): (
+                "database",
+                "7",
+                {"job_name": "Renamed", "pages": []},
+            ),
+            ("save_default_layers", "_insert_layer"): ("database", "Default", 0),
+            ("save_default_layers", "_delete_layer"): ("database", "default-1"),
+            ("save_default_layers", "_update_layer_show"): (
+                "database",
+                "default-1",
+                False,
+            ),
+            ("save_job_statuses", "_save_job_statuses"): (
+                "database",
+                {
+                    "new": [{"uid": "new_status", "name": "Open"}],
+                    "updated": [],
+                    "deleted_uids": [],
+                },
+            ),
+            ("save_employees", "_save_employees"): (
+                "database",
+                {
+                    "new": [Employee(uid="new_employee")],
+                    "updated": [],
+                    "deleted_uids": [],
+                },
+            ),
+            ("save_pay_classes", "_save_pay_classes"): (
+                "database",
+                {
+                    "new": [{"uid": "new_pay_class", "name": "Field"}],
+                    "updated": [],
+                    "deleted_uids": [],
+                },
+            ),
+        }
+        self.assertEqual(
+            set(expected_arguments),
+            {(kind, name) for kind, _submit, name in command_cases},
+        )
         for write_kind, submit, use_case_name in command_cases:
             with self.subTest(write_kind=write_kind):
                 service, provider = self._queued_project_service()
                 sequence = submit(service)
                 self.assertEqual(sequence, 41)
+                self.assertEqual(len(provider.requests), 1)
                 use_case = getattr(service, use_case_name)
                 self.assertEqual(use_case.calls, [])
+                self.assertEqual(service._mutation_calls, [])
                 request, execute, _callback = provider.requests[0]
                 self.assertIsInstance(request.payload, ProjectWritePayload)
+                self.assertEqual(request.database_id, "database")
                 self.assertEqual(request.payload.write_kind, write_kind)
                 if write_kind == "update_all_layers_show":
                     self.assertEqual(
@@ -2629,11 +2877,29 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
                     )
                 result = execute()
                 self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
-                self.assertEqual(len(use_case.calls), 1)
-                if write_kind == "update_all_layers_show":
+                self.assertEqual(
+                    use_case.calls, [expected_arguments[(write_kind, use_case_name)]]
+                )
+                self.assertEqual(len(service._mutation_calls), 1)
+                database, resources, options = service._mutation_calls[0]
+                self.assertEqual(database, "database")
+                self.assertEqual(
+                    set(resources),
+                    set(request.resources) | set(request.dependency_resources),
+                )
+                self.assertEqual(options["operation_id"], request.operation_id)
+                self.assertEqual(options["request_hash"], request.request_hash)
+                self.assertFalse(options["publish_conflict_event"])
+                self.assertIsNotNone(result.authoritative_result)
+                self.assertTrue(service._mutation_records)
+                if write_kind == "duplicate_bids":
                     self.assertEqual(
-                        use_case.calls,
-                        [("database", "7", False, ["70", "71"])],
+                        service._move_bids.calls,
+                        [("database", ["8"], "project-1", None)],
+                    )
+                    self.assertEqual(
+                        result.authoritative_result.created_uid_maps,
+                        (("bids", (("7", "8"),)),),
                     )
 
     def test_queued_bulk_layer_visibility_rejects_a_bid_switch(self):
@@ -2775,6 +3041,11 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         request, _execute, _callback = provider.requests[0]
         self.assertEqual(request.resources, (edited,))
         self.assertIs(request.edit_lease_handle, handle)
+        self.assertEqual(_execute().outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            service._update_condition.calls,
+            [("database", "7", "condition-1", UpdateConditionDto({"name": "Renamed"}))],
+        )
 
     def test_sql_master_data_update_transfers_collection_dialog_lease(self):
         service, provider = self._queued_project_service()
@@ -2802,6 +3073,20 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         self.assertEqual(request.resources, (edited,))
         self.assertEqual(request.owning_surface, "main-window-dialog")
         self.assertIs(request.edit_lease_handle, handle)
+        self.assertEqual(_execute().authoritative_result.updated_resources, (edited,))
+        self.assertEqual(
+            service._save_job_statuses.calls,
+            [
+                (
+                    "database",
+                    {
+                        "new": [],
+                        "updated": [{"uid": "status-1", "name": "Awarded"}],
+                        "deleted_uids": [],
+                    },
+                )
+            ],
+        )
 
     def test_sql_cover_sheet_save_transfers_aggregate_dialog_lease(self):
         service, provider = self._queued_project_service()
@@ -2826,6 +3111,10 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         self.assertEqual(request.resources, (cover_sheet,))
         self.assertEqual(request.owning_surface, "main-window-dialog")
         self.assertIs(request.edit_lease_handle, handle)
+        self.assertEqual(_execute().outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertEqual(
+            service._save_cover_sheet.calls, [("database", "7", {"notes": "Updated"})]
+        )
 
     def test_sql_new_bid_transfers_cover_sheet_lease_and_tracks_target_project(self):
         service, provider = self._queued_project_service()
@@ -2851,6 +3140,13 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         self.assertIn(ResourceRef("project", "project-1"), request.dependency_resources)
         self.assertEqual(request.owning_surface, "main-window-dialog")
         self.assertIs(request.edit_lease_handle, handle)
+        self.assertEqual(
+            _execute().authoritative_result.created_uid_maps, (("bids", (("0", "8"),)),)
+        )
+        self.assertEqual(
+            service._create_bid.calls,
+            [("database", "project-1", {"job_status_uid": "status-1", "pages": []})],
+        )
 
     def test_sql_page_rename_transfers_navigable_page_dialog_lease(self):
         service, provider = self._queued_project_service()
@@ -2876,6 +3172,12 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         self.assertEqual(request.resources, (second,))
         self.assertEqual(request.owning_surface, "main-window-dialog")
         self.assertIs(request.edit_lease_handle, handle)
+        self.assertEqual(
+            _execute().authoritative_result.affected_page_uids, ("page-2",)
+        )
+        self.assertEqual(
+            service._save_page_name.calls, [("database", "page-2", "Renamed")]
+        )
 
     def test_empty_mdb_master_data_changes_skip_write_and_hierarchy_reload(self):
         service = ProjectWriteService.__new__(ProjectWriteService)
@@ -2888,6 +3190,216 @@ class MdbSqlBehaviorParityTests(unittest.TestCase):
         empty = {"new": [], "updated": [], "deleted_uids": []}
         self.assertEqual(service.save_job_statuses("database.mdb", empty), {})
         self.assertEqual(service.save_pay_classes("database.mdb", empty), {})
+
+
+class QueuedProjectSnapshotTests(unittest.TestCase):
+    def _run_request(self, provider):
+        self.assertEqual(len(provider.requests), 1)
+        request, execute, _callback = provider.requests[0]
+        payload_hash = request.request_hash
+        result = execute()
+        self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+        self.assertTrue(result.commit_attempted)
+        self.assertEqual(request.request_hash, payload_hash)
+        return request, result.authoritative_result
+
+    def test_bid_creation_writes_captured_values_and_master_dependencies(self):
+        service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+        updates = {"job_name": "Captured", "estimator_uid": "employee-1"}
+        expected = deepcopy(updates)
+        service.queue_bid_create("database", "project-1", updates, lambda _r: None)
+        request = provider.requests[0][0]
+        self.assertEqual(service._create_bid.calls, [])
+        self.assertIn(
+            ResourceRef("employee", "employee-1"), request.dependency_resources
+        )
+        updates.update(job_name="Later", estimator_uid="employee-2")
+        _, result = self._run_request(provider)
+        self.assertEqual(
+            service._create_bid.calls, [("database", "project-1", expected)]
+        )
+        self.assertEqual(result.created_uid_maps, (("bids", (("0", "8"),)),))
+        self.assertEqual(json.loads(request.payload.values_json)["updates"], expected)
+
+    def test_cover_sheet_writes_captured_nested_pages_and_reports_the_same_scope(self):
+        service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+        updates = {
+            "job_name": "Captured",
+            "estimator_uid": "employee-1",
+            "pages": [{"uid": "42", "name": "Original page"}],
+            "deleted_page_uids": ["43"],
+        }
+        expected = deepcopy(updates)
+        service.queue_cover_sheet_save("database", "7", updates, lambda _r: None)
+        self.assertEqual(service._save_cover_sheet.calls, [])
+        updates["pages"][0].update(uid="99", name="Later page")
+        updates["pages"].append({"uid": "100", "name": "Unsubmitted"})
+        updates["deleted_page_uids"].append("101")
+        updates["estimator_uid"] = "employee-2"
+        request, result = self._run_request(provider)
+        self.assertEqual(service._save_cover_sheet.calls, [("database", "7", expected)])
+        self.assertEqual(result.affected_page_uids, ("43", "42"))
+        self.assertEqual(json.loads(request.payload.values_json), expected)
+        self.assertIn(
+            ResourceRef("employee", "employee-1"), request.dependency_resources
+        )
+        self.assertNotIn(
+            ResourceRef("employee", "employee-2"), request.dependency_resources
+        )
+
+    def test_condition_creation_snapshots_spec_and_foreign_keys(self):
+        service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+        spec = CreateConditionSpec(name="Captured", layer_uid="10", folder_uid="20")
+        expected = deepcopy(spec)
+        service.queue_condition_create("database", "7", spec, lambda _r: None)
+        self.assertEqual(service._insert_condition.calls, [])
+        spec.name, spec.layer_uid, spec.folder_uid = "Later", "11", "21"
+        request, result = self._run_request(provider)
+        self.assertEqual(service._insert_condition.calls, [("database", "7", expected)])
+        self.assertEqual(
+            json.loads(request.payload.values_json)["spec"], asdict(expected)
+        )
+        self.assertEqual(
+            set(request.dependency_resources),
+            {ResourceRef("layer", "10", 7), ResourceRef("condition_folder", "20", 7)},
+        )
+        self.assertEqual(result.affected_condition_uids, ("condition-new",))
+
+    def test_condition_updates_snapshot_values_and_target_list(self):
+        service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+        uids = ["12"]
+        changes = {"name": "Captured", "layer_uid": "10"}
+        expected = deepcopy(changes)
+        service.queue_conditions_update("database", "7", uids, changes, lambda _r: None)
+        self.assertEqual(service._update_condition.calls, [])
+        uids[:] = ["13"]
+        changes.update(name="Later", layer_uid="11")
+        request, result = self._run_request(provider)
+        self.assertEqual(len(service._update_condition.calls), 1)
+        database, bid, uid, dto = service._update_condition.calls[0]
+        self.assertEqual((database, bid, uid), ("database", "7", "12"))
+        self.assertEqual(dto.get_changes(), expected)
+        self.assertEqual(json.loads(request.payload.values_json)["changes"], expected)
+        self.assertEqual(request.dependency_resources, (ResourceRef("layer", "10", 7),))
+        self.assertEqual(result.updated_resources, (ResourceRef("condition", "12", 7),))
+
+    def test_default_layer_operations_execute_the_captured_intent(self):
+        for operation, values, expected_args, select_writer in (
+            (
+                "rename",
+                {"layer_uid": "10", "name": "Captured"},
+                ("database", "10", "Captured"),
+                lambda s: s._update_layer_name,
+            ),
+            (
+                "show",
+                {"layer_uid": "10", "show": False},
+                ("database", "10", False),
+                lambda s: s._update_layer_show,
+            ),
+            (
+                "show_all",
+                {"show": False},
+                ("database", False),
+                lambda s: s._update_all_layers_show,
+            ),
+            (
+                "reorder",
+                {"layer_uid": "10", "neighbor_uid": "11"},
+                ("database", "10", "11"),
+                lambda s: s._swap_layer_sequence,
+            ),
+        ):
+            with self.subTest(operation=operation):
+                service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+                expected_payload = {"operation": operation, **values}
+                writer = select_writer(service)
+                service.queue_default_layer_update(
+                    "database", operation, values, lambda _r: None
+                )
+                self.assertEqual(writer.calls, [])
+                values.update(
+                    layer_uid="99", neighbor_uid="100", name="Later", show=True
+                )
+                request, result = self._run_request(provider)
+                self.assertEqual(writer.calls, [expected_args])
+                self.assertEqual(
+                    json.loads(request.payload.values_json), expected_payload
+                )
+                self.assertEqual(result.affected_families, ("default_layers",))
+
+    def test_catalog_saves_snapshot_nested_dicts_and_mutable_dataclasses(self):
+        for family, create_item, mutate_item, select_queue, select_writer, mapping in (
+            (
+                "condition_types",
+                lambda uid: {"uid": uid, "name": "Captured"},
+                lambda item: item.update(uid="99", name="Later"),
+                lambda s: s.queue_condition_types_save,
+                lambda s: s._save_condition_types,
+                {"new_condition_type": "type-new"},
+            ),
+            (
+                "job_statuses",
+                lambda uid: {"uid": uid, "name": "Captured"},
+                lambda item: item.update(uid="99", name="Later"),
+                lambda s: s.queue_job_statuses_save,
+                lambda s: s._save_job_statuses,
+                {"new_status": "status-new"},
+            ),
+            (
+                "employees",
+                lambda uid: Employee(uid=uid, first_name="Captured"),
+                self._mutate_employee,
+                lambda s: s.queue_employees_save,
+                lambda s: s._save_employees,
+                {"new_employee": "employee-new"},
+            ),
+            (
+                "pay_classes",
+                lambda uid: {"uid": uid, "name": "Captured"},
+                lambda item: item.update(uid="99", name="Later"),
+                lambda s: s.queue_pay_classes_save,
+                lambda s: s._save_pay_classes,
+                {"new_pay_class": "pay-class-new"},
+            ),
+        ):
+            with self.subTest(family=family):
+                service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+                changes = {
+                    "new": [create_item(next(iter(mapping)))],
+                    "updated": [create_item("12")],
+                    "deleted_uids": ["13"],
+                }
+                expected = deepcopy(changes)
+                writer = select_writer(service)
+                select_queue(service)("database", changes, lambda _r: None)
+                self.assertEqual(writer.calls, [])
+                mutate_item(changes["updated"][0])
+                new_item = changes["new"][0]
+                if isinstance(new_item, Employee):
+                    new_item.first_name = "Later new employee"
+                else:
+                    new_item["name"] = "Later new item"
+                changes["new"].clear()
+                changes["deleted_uids"].append("14")
+                request, result = self._run_request(provider)
+                self.assertEqual(writer.calls, [("database", expected)])
+                self.assertEqual(
+                    result.created_uid_maps, ((family, tuple(mapping.items())),)
+                )
+                self.assertEqual(
+                    [r.resource_id for r in result.updated_resources], ["12"]
+                )
+                self.assertEqual(
+                    [r.resource_id for r in result.deleted_resources], ["13"]
+                )
+                self.assertEqual(
+                    json.loads(request.payload.values_json)["deleted_uids"], ["13"]
+                )
+
+    @staticmethod
+    def _mutate_employee(item):
+        item.uid, item.first_name = "99", "Later"
 
 
 class PlanPropertyHistoryIdentityTests(unittest.TestCase):
@@ -2910,8 +3422,8 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
             MutationOutcomeStatus.COMMIT_STATUS_UNKNOWN,
         ):
             with self.subTest(status=status):
-                service = parity.MdbSqlBehaviorParityTests._local_composite_service()
-                service._event_bus = FakeEventBus()
+                service = MdbSqlBehaviorParityTests._local_composite_service()
+                service._event_bus = _permissions__EventBus()
                 queued = []
                 service._queue_project_write = (
                     lambda *args, **_kwargs: queued.append(args) or 1
@@ -2919,7 +3431,7 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
                 completed = []
                 changes = BidAreaChangeset([], [], ["2"])
                 service.queue_bid_areas_save("bid.mdb", "7", changes, completed.append)
-                self.assertEqual(service._event_bus.events, [])
+                self.assertEqual(service._event_bus.published, [])
                 # A dialog's next draft cannot change the already queued deletion.
                 changes.deleted_uids.clear()
                 result = replace(self.committed(), outcome_status=status)
@@ -2930,7 +3442,7 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
                     MutationOutcomeStatus.COMMITTED_PROJECTION_FAILED,
                 ):
                     self.assertEqual(
-                        service._event_bus.events,
+                        service._event_bus.published,
                         [
                             (
                                 AppEvents.BID_AREAS_DELETED,
@@ -2943,11 +3455,11 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
                         ],
                     )
                 else:
-                    self.assertEqual(service._event_bus.events, [])
+                    self.assertEqual(service._event_bus.published, [])
 
     def test_queued_area_save_persists_the_same_snapshot_as_its_delete_event(self):
-        service, provider = parity.MdbSqlBehaviorParityTests._queued_project_service()
-        service._event_bus = FakeEventBus()
+        service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+        service._event_bus = _permissions__EventBus()
         submitted = BidAreaChangeset(
             [BidArea("draft", "7", "1", "New", 2, "guid")],
             [BidArea("1", "7", "", "Original", 1)],
@@ -2959,6 +3471,7 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
             or {"draft": "4"}
         )
         service.queue_bid_areas_save("database", "7", submitted, lambda _result: None)
+        self.assertEqual(persisted, [])
         submitted.deleted_uids[:] = ["3"]
         submitted.updated[0].name = "Later draft"
         submitted.new[0].parent_uid = "3"
@@ -2971,11 +3484,32 @@ class PlanPropertyHistoryIdentityTests(unittest.TestCase):
         self.assertEqual(
             persisted[0].new, [BidArea("draft", "7", "1", "New", 2, "guid")]
         )
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(service._event_bus.published, [])
+        request, _execute, completed = provider.requests[0]
+        completed(
+            QueuedMutationResult(
+                database_id="database",
+                runtime_generation=1,
+                operation_id=request.operation_id,
+                outcome_status=result.outcome_status,
+                authoritative_result=result.authoritative_result,
+                commit_attempted=True,
+            )
+        )
+        self.assertEqual(
+            service._event_bus.published,
+            [
+                (
+                    AppEvents.BID_AREAS_DELETED,
+                    {"database_id": "database", "bid_uid": "7", "area_uids": ("2",)},
+                )
+            ],
+        )
 
 
 class QueuedAnnotationSnapshotTests(unittest.TestCase):
     def test_each_family_queue_keeps_geometry_style_and_page_from_submission(self):
-        import tests.application.services.test_project_write_service as fixtures
         from ost_visualizer.application.dtos.collaboration_dtos import (
             PlanItemsPastePayload,
         )
@@ -2989,12 +3523,10 @@ class QueuedAnnotationSnapshotTests(unittest.TestCase):
         for (
             kind,
             position,
-        ) in _family_support_AnnotationFamilyGeometry.POSITIONS.items():
+        ) in ANNOTATION_POSITIONS.items():
             with self.subTest(kind=kind):
-                service, provider = (
-                    fixtures.MdbSqlBehaviorParityTests._queued_project_service()
-                )
-                service._insert_annotations = fixtures._SequenceUseCase(["new"])
+                service, provider = MdbSqlBehaviorParityTests._queued_project_service()
+                service._insert_annotations = _SequenceUseCase(["new"])
                 spec = InsertAnnotationSpec(
                     page_uid="p1",
                     annotation_type=kind,
@@ -3015,12 +3547,26 @@ class QueuedAnnotationSnapshotTests(unittest.TestCase):
                 spec.position[0] = 999.0
                 spec.properties["Text"] = "After"
                 spec.color = "#ffffff"
-                execute()
+                result = execute()
+                self.assertEqual(result.outcome_status, MutationOutcomeStatus.COMMITTED)
+                self.assertEqual(
+                    result.authoritative_result.affected_page_uids, ("p1",)
+                )
+                self.assertEqual(len(service._insert_annotations.calls), 1)
                 captured = service._insert_annotations.calls[0][2][0]
                 self.assertEqual(captured.page_uid, "p1")
                 self.assertEqual(captured.position, position)
                 self.assertEqual(captured.properties["Text"], "Before")
                 self.assertEqual(captured.color, "#123456")
+                self.assertEqual(captured.width, 2.0)
+                self.assertEqual(
+                    result.authoritative_result.created_uid_maps,
+                    (
+                        ("takeoffs", ()),
+                        ("annotations", ((annotation_resource_id(kind, "1"), "new"),)),
+                        ("conditions", ()),
+                    ),
+                )
                 self.assertEqual(
                     request.payload.annotation_specs[0].page_uid, request.page_uid
                 )

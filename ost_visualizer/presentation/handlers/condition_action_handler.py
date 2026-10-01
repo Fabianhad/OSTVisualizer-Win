@@ -17,6 +17,7 @@ from ...application.dtos.condition_takeoff_reassignment import (
     ConditionTakeoffReassignment,
 )
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
+from ...application.dtos.create_condition_result import CreatedConditionProjection
 from ...application.dtos.update_condition_dto import (
     UpdateConditionDto,
     UpdateConditionResultDto,
@@ -447,7 +448,28 @@ class ConditionActionHandler:
                 )
             )
 
-        def advance_create_owner_after_save() -> bool:
+        def advance_create_owner_after_save(
+            projection: Optional[CreatedConditionProjection] = None,
+        ) -> bool:
+            nonlocal bid_owner
+            if projection is not None:
+                if (
+                    projection.previous_bid is not bid_owner
+                    or not self._bid_owner_is_current(bid_ref, projection.bid)
+                    or self._project_data.get_bid_conditions().get(
+                        projection.condition.uid
+                    )
+                    is not projection.condition
+                    or (
+                        folder_uid
+                        and self._project_data.get_bid_condition_folders().get(
+                            folder_uid
+                        )
+                        is not projection.folder
+                    )
+                ):
+                    return False
+                bid_owner = projection.bid
             if not self._bid_owner_is_current(bid_ref, bid_owner):
                 return False
             if folder_owners is None or folder_values is None:
@@ -545,6 +567,8 @@ class ConditionActionHandler:
         )
         created_uid = [None]
         created_refresh_failed = [False]
+        created_owner_valid = [False]
+        created_condition_owner: list[Optional[Condition]] = [None]
 
         def build_spec(dto) -> CreateConditionSpec:
             changes = dto.get_changes()
@@ -593,15 +617,15 @@ class ConditionActionHandler:
                     bid_ref.file_path, bid_ref.bid_uid, spec
                 )
             if result.write_success and result.value:
-                if not advance_create_owner_after_save():
-                    return UpdateConditionResultDto(
-                        success=False,
-                        error=(
-                            "The active bid or authoritative Condition family changed."
-                        ),
-                    )
+                created_owner_valid[0] = advance_create_owner_after_save(
+                    result.projection
+                )
                 created_uid[0] = str(result.value)
                 created_refresh_failed[0] = result.refresh_failed
+                if created_owner_valid[0] and not result.refresh_failed:
+                    created_condition_owner[0] = (
+                        self._project_data.get_bid_conditions().get(created_uid[0])
+                    )
                 return UpdateConditionResultDto(success=True)
             return UpdateConditionResultDto(
                 success=False, error="Failed to create condition."
@@ -642,18 +666,12 @@ class ConditionActionHandler:
                         )
                     )
                     return
-                if not advance_create_owner_after_save():
-                    completed(
-                        UpdateConditionResultDto(
-                            success=False,
-                            error=(
-                                "The active bid or authoritative Condition family "
-                                "changed."
-                            ),
-                        )
-                    )
-                    return
+                created_owner_valid[0] = advance_create_owner_after_save()
                 created_uid[0] = str(new_uids[0])
+                if created_owner_valid[0]:
+                    created_condition_owner[0] = (
+                        self._project_data.get_bid_conditions().get(created_uid[0])
+                    )
                 completed(UpdateConditionResultDto(success=True))
 
             def failed(result: QueuedMutationResult) -> None:
@@ -732,7 +750,13 @@ class ConditionActionHandler:
                 "refreshed. Reopen the database to see the new condition.",
             )
             return
-        if created_uid[0]:
+        if (
+            created_uid[0]
+            and created_owner_valid[0]
+            and created_condition_owner[0] is not None
+            and self._project_data.get_bid_conditions().get(created_uid[0])
+            is created_condition_owner[0]
+        ):
             self._coordinator.highlight_sidebar({created_uid[0]})
 
     def on_duplicate_requested(
@@ -1790,7 +1814,6 @@ class ConditionActionHandler:
                     )
                 )
                 return False
-
             owners_reconciled = False
 
             def submit(active_lease, lease_completed) -> bool:
@@ -1894,6 +1917,7 @@ class ConditionActionHandler:
         dialog.condition_navigated.connect(_on_navigated)
         if lease_session is not None:
             lease_session.bind_dialog(dialog)
+            dialog.destroyed.connect(lease_session.close)
 
         def resolved(result: EditLeaseResult) -> None:
             try:

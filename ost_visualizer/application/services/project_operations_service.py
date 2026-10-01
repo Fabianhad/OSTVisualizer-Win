@@ -67,9 +67,11 @@ class ProjectOperationsService:
         )
         if not self._navigation_loader.uses_background_reads(bid_ref.file_path):
             try:
-                completion(bool(use_case.execute(bid_ref)), "")
+                success = bool(use_case.execute(bid_ref))
             except Exception as exc:
                 completion(False, str(exc) or exc.__class__.__name__)
+            else:
+                completion(success, "")
             return False
 
         def prepared(result) -> None:

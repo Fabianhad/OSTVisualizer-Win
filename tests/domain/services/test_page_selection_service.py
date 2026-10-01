@@ -1,61 +1,10 @@
 import unittest
-from pathlib import Path
-from ost_visualizer.domain.entities.annotation import (
-    ANNOTATION_TYPE_CLOUD,
-    ANNOTATION_TYPE_POLYGON,
-    ANNOTATION_TYPE_RECT,
-    ANNOTATION_TYPE_TEXT,
-    BidAnnotation,
-    hex_color_to_int,
-)
-from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.services.page_selection_service import PageSelectionService
-from ost_visualizer.presentation.utils.annotation_defaults import (
-    apply_config_owned_annotation_defaults,
-    build_placed_annotation_spec,
-    set_annotation_style_for_tool,
-    set_annotation_styles_by_tool,
-)
-from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class PageSelectionAnnotationIdentityTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        font_directory = Path(r"C:\Windows\Fonts")
-        for filename in ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"):
-            QtGui.QFontDatabase.addApplicationFont(str(font_directory / filename))
-
-    def setUp(self):
-        apply_config_owned_annotation_defaults(Config())
-
-    def tearDown(self):
-        for annotation_type in (
-            "dimension",
-            "text",
-            "highlight",
-            "arrow",
-            "line",
-            "rect",
-            "oval",
-            "polygon",
-            "cloud",
-            "ink",
-        ):
-            set_annotation_style_for_tool(
-                annotation_type,
-                color="#ff0000",
-                line_width=4.0,
-                font_name="Arial",
-                font_size=12,
-                font_bold=False,
-                font_italic=False,
-                font_underline=False,
-                text_align=0,
-            )
-        apply_config_owned_annotation_defaults(Config())
-
     def test_in_memory_annotation_add_replaces_existing_uid(self):
         service = PageSelectionService()
         service.set_annotations(
@@ -117,3 +66,22 @@ class PageSelectionAnnotationIdentityTests(unittest.TestCase):
             ],
             [("a1", "oval", "p2")],
         )
+
+    def test_page_replacement_prunes_selection_and_copies_caller_container(self):
+        service = PageSelectionService()
+        original = Page(uid="p1", name="Original")
+        service.set_pages({"p1": original, "p2": Page(uid="p2", name="Other")})
+        selected = service.select_pages(["p2", "p1", "p2", ""])
+        self.assertEqual(selected, ["p2", "p1"])
+        selected.clear()
+        self.assertEqual(service.get_selected_pages(), ["p2", "p1"])
+        replacement = Page(uid="p1", name="Replacement")
+        pages = {"p1": replacement}
+        service.set_pages(pages)
+        pages.clear()
+        self.assertEqual(service.get_selected_pages(), ["p1"])
+        self.assertIs(service.get_page("p1"), replacement)
+        self.assertIsNone(service.get_page("p2"))
+        service.clear()
+        self.assertEqual(service.get_selected_pages(), [])
+        self.assertIsNone(service.get_page("p1"))

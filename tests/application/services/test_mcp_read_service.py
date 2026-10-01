@@ -1,4 +1,7 @@
 import unittest
+from dataclasses import asdict, replace
+from copy import deepcopy
+from unittest.mock import Mock
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     SUMMARY_GROUP_AREA,
     SUMMARY_GROUP_PAGE,
@@ -34,10 +37,10 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH
 from ost_visualizer.domain.services.uom_service import (
     CALC_AREA,
     CALC_COUNT,
+    UOM_EACH,
     UOM_SQUARE_INCHES,
 )
 
@@ -45,6 +48,7 @@ from ost_visualizer.domain.services.uom_service import (
 class FakeProjectRepository:
     def __init__(self):
         self.file_path = r"C:\jobs\private\demo.mdb"
+        self.calls = []
         self.hierarchy = HierarchyData(
             loaded_files=[
                 HierarchyFileEntry(
@@ -242,14 +246,35 @@ class FakeProjectRepository:
         self.bid_data_by_uid = {"bid-1": self.bid_data}
 
     def load_file(self, file_path):
+        self.calls.append(("load_file", file_path))
+        if file_path != self.file_path:
+            raise AssertionError(f"Unexpected database path: {file_path}")
         return FileLoadResult(success=True, hierarchy=self.hierarchy)
 
     def load_bid(self, bid_uid, file_path=None):
+        self.calls.append(("load_bid", bid_uid, file_path))
+        if file_path != self.file_path:
+            raise AssertionError(f"Unexpected Bid database path: {file_path}")
         return self.bid_data_by_uid.get(bid_uid, BidLoadResult())
 
 
 class FakePdfMetadataProvider:
+    def __init__(self):
+        self.calls = []
+
+    def _record(self, operation, file_path, page_index):
+        expected_indexes = {
+            r"C:\plans\A101.pdf": 0,
+            r"C:\plans\A102.pdf": 1,
+            r"C:\plans\A103.pdf": 2,
+            r"C:\plans\A101-overlay.pdf": 0,
+        }
+        if expected_indexes[file_path] != page_index:
+            raise AssertionError(f"Unexpected PDF page index: {file_path}/{page_index}")
+        self.calls.append((operation, file_path, page_index))
+
     def get_page_info(self, file_path, page_index):
+        self._record("info", file_path, page_index)
         if file_path.endswith("A101-overlay.pdf"):
             return PdfPageInfoDto(
                 status="ok",
@@ -277,6 +302,7 @@ class FakePdfMetadataProvider:
         return PdfPageInfoDto(status="not_pdf")
 
     def get_text_runs(self, file_path, page_index):
+        self._record("text", file_path, page_index)
         if file_path.endswith("A103.pdf"):
             return []
         if file_path.endswith("A101-overlay.pdf"):
@@ -307,6 +333,7 @@ class FakePdfMetadataProvider:
         ]
 
     def get_vector_segments(self, file_path, page_index):
+        self._record("vectors", file_path, page_index)
         if file_path.endswith("A103.pdf"):
             return []
         if file_path.endswith("A101-overlay.pdf"):
@@ -321,6 +348,7 @@ class FakePdfMetadataProvider:
 class McpReadServiceTests(unittest.TestCase):
     def setUp(self):
         self.repo = FakeProjectRepository()
+        self.pdf = FakePdfMetadataProvider()
         self.service = McpReadService(
             self.repo,
             [
@@ -330,7 +358,7 @@ class McpReadServiceTests(unittest.TestCase):
                     display_name="Demo",
                 )
             ],
-            pdf_metadata_provider=FakePdfMetadataProvider(),
+            pdf_metadata_provider=self.pdf,
         )
 
     def test_lists_projects_and_bids(self):
@@ -400,14 +428,61 @@ class McpReadServiceTests(unittest.TestCase):
     def test_database_and_page_outputs_redact_local_paths(self):
         databases = self.service.list_databases()
         self.assertEqual(databases[0].basename, "demo.mdb")
-        self.assertFalse("file_path" in databases[0].__dict__)
+        self.assertFalse("file_path" in asdict(databases[0]))
         pages = self.service.list_pages("db-1", "bid-1")
         self.assertEqual(pages[0].image_basename, "A101.pdf")
         self.assertEqual(pages[0].overlay_basename, "A101-overlay.pdf")
         self.assertEqual(pages[0].image_path_status, "configured")
         self.assertEqual(pages[0].overlay_path_status, "configured")
-        self.assertFalse("image_path" in pages[0].__dict__)
-        self.assertFalse("overlay_image_path" in pages[0].__dict__)
+        self.assertFalse("image_path" in asdict(pages[0]))
+        self.assertFalse("overlay_image_path" in asdict(pages[0]))
+
+    def test_bid_comparison_preserves_old_new_direction_and_detail_request(self):
+        project = self.repo.hierarchy.loaded_files[0].bid_projects["project-1"]
+        project.bids.append(HierarchyBidInfo(uid="bid-2", name="New Bid"))
+        new_data = deepcopy(self.repo.bid_data)
+        new_data.bid_conditions["cond-1"].name = "New Count"
+        extra = replace(new_data.bid_takeoffs[0], uid="new-takeoff")
+        new_data.bid_takeoffs.append(extra)
+        new_data.pages["page-1"].takeoffs.append(extra)
+        self.repo.bid_data_by_uid["bid-2"] = new_data
+        result = self.service.compare_bids_by_ref_no(
+            "db-1", "bid-1", "bid-2", include_details=True, limit=1
+        )
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(
+            (result.data.old_bid.uid, result.data.new_bid.uid), ("bid-1", "bid-2")
+        )
+        self.assertEqual(
+            asdict(result.data.counts),
+            {
+                "unchanged": 2,
+                "changed": 1,
+                "added": 0,
+                "removed": 0,
+            },
+        )
+        self.assertEqual(len(result.data.groups), 1)
+        self.assertEqual(
+            asdict(result.data.groups[0].qty1),
+            {
+                "uom_label": "EA",
+                "old": 2.0,
+                "new": 3.0,
+            },
+        )
+        self.assertEqual(result.data.groups[0].takeoffs, {"old": 2, "new": 3})
+        self.assertEqual(len(result.data.details), 1)
+        detail = result.data.details[0]
+        self.assertEqual(
+            (detail.ref_no, detail.old_condition_name, detail.new_condition_name),
+            (1, "Visible Count", "New Count"),
+        )
+        self.assertTrue(detail.metadata_changed)
+        self.assertTrue(detail.quantity_changed)
+        self.assertTrue(result.meta.details_included)
+        self.assertEqual((result.meta.limit, result.meta.detail_total_count), (1, 1))
+        self.assertEqual(self.pdf.calls, [])
 
     def test_page_metadata_includes_safe_pdf_summary_without_paths(self):
         page = self.service.get_page_metadata("db-1", "bid-1", "page-1")
@@ -424,8 +499,8 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(page.overlay_transform_summary.offset_x, 1.5)
         self.assertEqual(page.overlay_transform_summary.offset_y, 2.5)
         self.assertEqual(page.overlay_transform_summary.rotation, 0.75)
-        self.assertFalse("image_path" in page.__dict__)
-        self.assertFalse("overlay_image_path" in page.__dict__)
+        self.assertFalse("image_path" in asdict(page))
+        self.assertFalse("overlay_image_path" in asdict(page))
 
     def test_pdf_text_summary_is_bounded_and_redacted_by_default(self):
         summary = self.service.get_page_pdf_text_summary(
@@ -441,7 +516,7 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertIsNone(summary.runs[0].text)
         self.assertTrue(summary.runs[0].snippet.startswith("Private title block"))
 
-    def test_pdf_text_summary_can_include_strictly_limited_text_and_overlay_source(
+    def test_pdf_text_summary_selects_overlay_and_includes_requested_text(
         self,
     ):
         summary = self.service.get_page_pdf_text_summary(
@@ -514,13 +589,13 @@ class McpReadServiceTests(unittest.TestCase):
             len(by_type["text"].text_snippet),
             by_type["text"].text_character_count,
         )
-        self.assertFalse("text" in by_type["text"].__dict__)
-        self.assertFalse("position" in by_type["text"].__dict__)
-        self.assertFalse("properties" in by_type["text"].__dict__)
+        self.assertFalse("text" in asdict(by_type["text"]))
+        self.assertFalse("position" in asdict(by_type["text"]))
+        self.assertFalse("properties" in asdict(by_type["text"]))
         self.assertEqual(by_type["dimension"].length, 5.0)
         self.assertEqual(by_type["dimension"].linked_takeoff_count, 1)
-        self.assertFalse("image_path" in summary.__dict__)
-        self.assertFalse("overlay_image_path" in summary.__dict__)
+        self.assertFalse("image_path" in asdict(summary))
+        self.assertFalse("overlay_image_path" in asdict(summary))
 
     def test_page_overlay_summary_redacts_paths_and_reports_show_mode(self):
         summary = self.service.get_page_overlay_summary("db-1", "bid-1", "page-1")
@@ -532,8 +607,8 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertTrue(summary.show_original)
         self.assertTrue(summary.show_overlay)
         self.assertEqual(summary.overlay_transform_summary.rotation, 0.75)
-        self.assertFalse("image_path" in summary.__dict__)
-        self.assertFalse("overlay_image_path" in summary.__dict__)
+        self.assertFalse("image_path" in asdict(summary))
+        self.assertFalse("overlay_image_path" in asdict(summary))
 
     def test_search_page_pdf_text_is_bounded_and_snippet_only(self):
         summary = self.service.search_page_pdf_text(
@@ -549,7 +624,7 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertFalse(summary.meta.has_more)
         self.assertEqual(summary.matches[0].snippet, "Door schedule")
         self.assertEqual(summary.matches[0].page_name, "A101")
-        self.assertFalse("text" in summary.matches[0].__dict__)
+        self.assertNotIn("text", asdict(summary.matches[0]))
 
     def test_search_page_pdf_text_rejects_unknown_source(self):
         with self.assertRaises(McpReadError):
@@ -636,6 +711,8 @@ class McpReadServiceTests(unittest.TestCase):
         matches = self.service.search_conditions("db-1", "bid-1", "count", limit=1)
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].uid, "cond-1")
+        self.assertEqual(matches.meta.total_count, 2)
+        self.assertTrue(matches.meta.truncated)
 
     def test_search_pages_layers_named_views_and_hotlinks(self):
         pages = self.service.search_pages("db-1", "bid-1", "S-102")
@@ -881,6 +958,7 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(limited.status, "truncated")
         self.assertEqual(limited.meta.limit, 2)
         self.assertEqual(limited.meta.returned_count, 2)
+        self.assertEqual(len(self._summary_nodes(limited.nodes)), 2)
         self.assertGreater(limited.meta.total_count, 2)
         self.assertTrue(limited.meta.has_more)
 
@@ -938,6 +1016,271 @@ class McpReadServiceTests(unittest.TestCase):
         with self.assertRaises(McpReadError):
             self.service.list_takeoffs("db-1", "bid-1", condition_uid="missing")
 
+    def test_failed_database_read_stops_before_bid_read_and_preserves_error(self):
+        self.repo.load_file = Mock(
+            return_value=FileLoadResult(
+                success=False, error_message="Database could not be read"
+            )
+        )
+        self.repo.load_bid = Mock(wraps=self.repo.load_bid)
+        with self.assertRaisesRegex(McpReadError, "Database could not be read"):
+            self.service.list_pages("db-1", "bid-1")
+        self.repo.load_file.assert_called_once_with(self.repo.file_path)
+        self.repo.load_bid.assert_not_called()
+        self.assertEqual(self.pdf.calls, [])
+
+    def test_unknown_database_never_reaches_repository_and_registry_replacement_takes_effect(
+        self,
+    ):
+        self.service.set_databases([])
+        with self.assertRaisesRegex(McpReadError, "Unknown database_id"):
+            self.service.list_pages("db-1", "bid-1")
+        self.assertEqual(self.repo.calls, [])
+        self.assertEqual(self.service.list_databases(), [])
+        self.service.set_databases(
+            [McpDatabaseRef("db-1", self.repo.file_path, "New name")]
+        )
+        self.assertEqual(self.service.list_databases()[0].display_name, "New name")
+        self.assertEqual(len(self.service.list_pages("db-1", "bid-1")), 3)
+        self.assertEqual(
+            self.repo.calls,
+            [
+                ("load_file", self.repo.file_path),
+                ("load_bid", "bid-1", self.repo.file_path),
+            ],
+        )
+
+    def test_existing_empty_bid_is_distinct_from_unknown_bid(self):
+        self.repo.bid_data_by_uid["bid-1"] = BidLoadResult()
+        pages = self.service.list_pages("db-1", "bid-1")
+        self.assertEqual(pages, [])
+        self.assertEqual(pages.status, "empty")
+        self.assertIsNone(self.service.get_current_page("db-1", "bid-1"))
+        with self.assertRaisesRegex(McpReadError, "Unknown bid_uid: missing"):
+            self.service.list_pages("db-1", "missing")
+        with self.assertRaisesRegex(McpReadError, "Unknown project_uid: missing"):
+            self.service.list_bids("db-1", project_uid="missing")
+
+    def test_current_page_falls_back_to_first_ordered_page_without_pdf_reads(self):
+        self.repo.bid_data.selected_page_uid = "deleted-page"
+        self.repo.bid_data.pages = dict(
+            reversed(list(self.repo.bid_data.pages.items()))
+        )
+        page = self.service.get_current_page("db-1", "bid-1")
+        self.assertEqual(page.uid, "page-1")
+        self.assertEqual(self.pdf.calls, [])
+        self.assertEqual(self.repo.bid_data.selected_page_uid, "deleted-page")
+
+    def test_condition_page_and_layer_lists_sort_before_truncation(self):
+        data = self.repo.bid_data
+        data.pages = dict(reversed(list(data.pages.items())))
+        data.bid_conditions = dict(reversed(list(data.bid_conditions.items())))
+        data.bid_layers.reverse()
+        self.assertEqual(
+            [v.uid for v in self.service.list_pages("db-1", "bid-1", limit=1)],
+            ["page-1"],
+        )
+        self.assertEqual(
+            [v.uid for v in self.service.list_conditions("db-1", "bid-1", limit=1)],
+            ["cond-1"],
+        )
+        self.assertEqual(
+            [v.uid for v in self.service.list_layers("db-1", "bid-1", limit=1)],
+            ["layer-1"],
+        )
+        self.assertEqual(self.pdf.calls, [])
+
+    def test_takeoff_geometry_dtos_do_not_alias_or_mutate_repository_objects(self):
+        before = deepcopy(self.repo.bid_data)
+        rows = self.service.list_takeoffs("db-1", "bid-1", include_geometry=True)
+        self.assertEqual(rows[0].position, [1.0, 2.0])
+        self.assertEqual(self.repo.bid_data, before)
+        rows[0].position.append(99)
+        rows[0].condition_name = "Changed result"
+        self.assertEqual(self.repo.bid_data, before)
+        again = self.service.list_takeoffs("db-1", "bid-1", include_geometry=True)
+        self.assertEqual(again[0].position, [1.0, 2.0])
+        redacted = self.service.list_takeoffs("db-1", "bid-1")
+        self.assertTrue(all(row.position is None for row in redacted))
+
+    def test_geometry_limit_caps_actual_output_not_only_metadata(self):
+        original = self.repo.bid_data.bid_takeoffs[0]
+        self.repo.bid_data.bid_takeoffs = [
+            replace(original, uid=f"t-{i}") for i in range(260)
+        ]
+        rows = self.service.list_takeoffs(
+            "db-1", "bid-1", include_geometry=True, limit=99999
+        )
+        self.assertEqual(len(rows), 250)
+        self.assertEqual(
+            (rows.meta.limit, rows.meta.returned_count, rows.meta.total_count),
+            (250, 250, 260),
+        )
+        self.assertTrue(rows.meta.has_more)
+        self.assertEqual((rows[0].uid, rows[-1].uid), ("t-0", "t-249"))
+        all_rows = self.service.list_takeoffs("db-1", "bid-1", limit=99999)
+        self.assertEqual(len(all_rows), 260)
+        self.assertFalse(all_rows.meta.truncated)
+        self.assertTrue(all(row.position is None for row in all_rows))
+
+    def test_pdf_limits_bound_run_count_and_embedded_text_length(self):
+        text = "a" * 650
+        runs = [
+            PdfTextRunDto(text=text, left=i, top=2, right=i + 1, bottom=3)
+            for i in range(55)
+        ]
+        self.pdf.get_text_runs = Mock(return_value=runs)
+        summary = self.service.get_page_pdf_text_summary(
+            "db-1", "bid-1", "page-2", include_text=True, limit=99999
+        )
+        self.pdf.get_text_runs.assert_called_once_with(r"C:\plans\A102.pdf", 1)
+        self.assertEqual(
+            (summary.meta.limit, len(summary.runs), summary.text_run_count),
+            (50, 50, 55),
+        )
+        self.assertEqual(summary.character_count, 650 * 55)
+        self.assertEqual(summary.returned_character_count, 650 * 50)
+        self.assertTrue(summary.meta.has_more)
+        self.assertTrue(all(run.text == "a" * 500 for run in summary.runs))
+        self.assertTrue(all(run.snippet == "a" * 77 + "..." for run in summary.runs))
+        self.assertEqual([run.text for run in runs], [text] * 55)
+
+    def test_pdf_vector_cap_keeps_total_counts_for_entire_source(self):
+        segments = [PdfVectorSegmentDto(i, 0, i + 1, 0) for i in range(105)]
+        self.pdf.get_vector_segments = Mock(return_value=segments)
+        summary = self.service.get_page_pdf_vectors_summary(
+            "db-1", "bid-1", "page-2", limit=99999
+        )
+        self.pdf.get_vector_segments.assert_called_once_with(r"C:\plans\A102.pdf", 1)
+        self.assertEqual((len(summary.segments), summary.meta.limit), (100, 100))
+        self.assertEqual(
+            (summary.snap_line_count, summary.snap_point_count), (105, 106)
+        )
+        self.assertTrue(summary.meta.truncated)
+        self.assertTrue(all(segment.length == 1 for segment in summary.segments))
+
+    def test_pdf_auto_source_falls_back_to_overlay_but_explicit_main_does_not(self):
+        page = self.repo.bid_data.pages["page-1"]
+        page.image_path = "scan.tif"
+        page.page_index = 7
+        summary = self.service.get_page_pdf_text_summary("db-1", "bid-1", "page-1")
+        self.assertEqual((summary.status, summary.source), ("ok", "overlay"))
+        self.assertEqual(self.pdf.calls, [("text", r"C:\plans\A101-overlay.pdf", 0)])
+        self.pdf.calls.clear()
+        explicit = self.service.get_page_pdf_text_summary(
+            "db-1", "bid-1", "page-1", source="main"
+        )
+        self.assertEqual(explicit.status, "not_pdf")
+        self.assertEqual(explicit.runs, [])
+        self.assertEqual(self.pdf.calls, [])
+
+    def test_blank_and_raster_pages_report_status_without_calling_pdf_provider(self):
+        page = self.repo.bid_data.pages["page-1"]
+        page.overlay_image_path = None
+        for image_path, expected in ((None, "not_configured"), ("scan.tif", "not_pdf")):
+            with self.subTest(image_path=image_path):
+                page.image_path = image_path
+                text = self.service.get_page_pdf_text_summary("db-1", "bid-1", "page-1")
+                vectors = self.service.get_page_pdf_vectors_summary(
+                    "db-1", "bid-1", "page-1"
+                )
+                metadata = self.service.get_page_metadata("db-1", "bid-1", "page-1")
+                self.assertEqual(
+                    (text.status, vectors.status, metadata.pdf_metadata_status),
+                    (expected,) * 3,
+                )
+                self.assertEqual(text.runs, [])
+                self.assertEqual(vectors.segments, [])
+        self.assertEqual(self.pdf.calls, [])
+
+    def test_unavailable_pdf_metadata_preserves_model_dimensions_and_status(self):
+        page = self.repo.bid_data.pages["page-1"]
+        page.width_pts, page.height_pts = 480.0, 720.0
+        without_provider = McpReadService(
+            self.repo, [McpDatabaseRef("db-1", self.repo.file_path, "Demo")]
+        )
+        result = without_provider.get_page_metadata("db-1", "bid-1", "page-1")
+        self.assertEqual(result.pdf_metadata_status, "unavailable")
+        self.assertEqual((result.page_width, result.page_height), (480.0, 720.0))
+        self.pdf.get_page_info = Mock(return_value=PdfPageInfoDto(status="error"))
+        result = self.service.get_page_metadata("db-1", "bid-1", "page-1")
+        self.assertEqual(result.pdf_metadata_status, "error")
+        self.assertEqual((result.page_width, result.page_height), (480.0, 720.0))
+        self.pdf.get_page_info.assert_called_once_with(r"C:\plans\A101.pdf", 0)
+
+    def test_pdf_search_matches_case_insensitively_and_centers_bounded_snippet(self):
+        text = "before " * 100 + "Door Schedule" + " after" * 100
+        self.pdf.get_text_runs = Mock(
+            return_value=[PdfTextRunDto(text=text, left=1, top=2, right=3, bottom=4)]
+        )
+        summary = self.service.search_page_pdf_text(
+            "db-1", "bid-1", "page-2", "  DOOR   schedule  "
+        )
+        self.assertEqual(summary.query, "DOOR schedule")
+        self.assertEqual(summary.match_count, 1)
+        match = summary.matches[0]
+        self.assertIn("Door Schedule", match.snippet)
+        self.assertLessEqual(len(match.snippet), 126)
+        self.assertTrue(match.snippet.startswith("..."))
+        self.assertTrue(match.snippet.endswith("..."))
+        self.assertEqual(
+            (match.left, match.top, match.right, match.bottom), (1, 2, 3, 4)
+        )
+        self.assertEqual(match.character_count, len(text))
+        self.assertNotIn("text", asdict(match))
+
+    def test_blank_search_and_empty_selection_do_not_read_database_or_pdf(self):
+        for search in (
+            self.service.search_pages,
+            self.service.search_conditions,
+            self.service.search_takeoffs,
+        ):
+            self.assertEqual(search("db-1", "bid-1", "  "), [])
+        selected_pages = self.service.get_selected_pages_summary("db-1", "bid-1", [])
+        selected_takeoffs = self.service.get_selected_takeoffs_summary(
+            "db-1", "bid-1", []
+        )
+        self.assertEqual(
+            (selected_pages.status, selected_takeoffs.status), ("no_selection",) * 2
+        )
+        self.assertEqual(self.repo.calls, [])
+        self.assertEqual(self.pdf.calls, [])
+        text = self.service.search_page_pdf_text("db-1", "bid-1", "page-1", "  ")
+        self.assertEqual(text.status, "empty")
+        self.assertEqual(text.matches, [])
+        self.assertEqual(self.pdf.calls, [])
+
+    def test_missing_selected_ids_report_stale_selection_not_successful_empty_selection(
+        self,
+    ):
+        pages = self.service.get_selected_pages_summary(
+            "db-1", "bid-1", ["missing", "missing"]
+        )
+        takeoffs = self.service.get_selected_takeoffs_summary(
+            "db-1", "bid-1", ["missing", "missing"]
+        )
+        self.assertEqual((pages.status, takeoffs.status), ("stale_selection",) * 2)
+        self.assertEqual(pages.missing_page_uids, ["missing"])
+        self.assertEqual(takeoffs.missing_takeoff_uids, ["missing"])
+        self.assertEqual(pages.pages, [])
+        self.assertEqual(takeoffs.takeoffs, [])
+        self.assertEqual((pages.meta.total_count, takeoffs.meta.total_count), (1, 1))
+
+    def test_scope_gap_limit_is_shared_across_categories(self):
+        self.repo.bid_data.bid_takeoffs.append(
+            Takeoff(uid="lost", condition_uid="missing", page_uid="missing")
+        )
+        summary = self.service.review_scope_gaps("db-1", "bid-1", limit=3)
+        self.assertEqual(summary.meta.total_count, 4)
+        self.assertEqual(summary.meta.returned_count, 3)
+        self.assertTrue(summary.meta.truncated)
+        self.assertEqual([p.uid for p in summary.pages_without_takeoffs], ["page-3"])
+        self.assertEqual(
+            [c.uid for c in summary.conditions_without_takeoffs], ["cond-3"]
+        )
+        self.assertEqual([t.uid for t in summary.takeoffs_missing_pages], ["lost"])
+        self.assertEqual(summary.takeoffs_missing_conditions, [])
+
     def _summary_nodes(self, nodes):
         result = []
         for node in nodes:
@@ -948,13 +1291,20 @@ class McpReadServiceTests(unittest.TestCase):
 
 class TakeoffLifecycleQuantityTests(unittest.TestCase):
     def test_mcp_quantity_count_includes_attachment_and_excludes_area_backout(self):
-        from ost_visualizer.application.services.mcp_read_service import McpReadService
-
-        service = McpReadService.__new__(McpReadService)
-        quantities = {uid: (1, 0, 0) for uid in self.conditions}
-        results = service._quantity_dtos(quantities, self.conditions, self.takeoffs)
+        repo = FakeProjectRepository()
+        repo.bid_data.bid_conditions = self.conditions
+        repo.bid_data.bid_takeoffs = self.takeoffs
+        repo.bid_data.pages = {
+            "page": Page(uid="page", name="Page", takeoffs=self.takeoffs)
+        }
+        service = McpReadService(repo, [McpDatabaseRef("db-1", repo.file_path, "Demo")])
+        results = service.summarize_quantities("db-1", "bid-1")
         counts = {row.condition_uid: row.takeoff_count for row in results}
         self.assertEqual(counts, {"area": 1, "backout": 0, "attachment": 1})
+        self.assertEqual(
+            {row.condition_uid: row.quantity1 for row in results},
+            {"area": 96.0, "backout": 0.0, "attachment": 1.0},
+        )
 
     def setUp(self):
         self.conditions = {

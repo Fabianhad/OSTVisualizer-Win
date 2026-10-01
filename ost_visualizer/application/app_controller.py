@@ -175,8 +175,9 @@ class AppController:
         self._subscriptions.append((event_name, callback))
 
     def cleanup(self) -> None:
-        if self._cleaned_up:
+        if self._cleaned_up and not self._subscriptions:
             return
+        already_cleaned_up = self._cleaned_up
         self._cleaned_up = True
         subscriptions = tuple(self._subscriptions)
         self._subscriptions.clear()
@@ -185,7 +186,12 @@ class AppController:
                 if self.event_bus is not None:
                     self.event_bus.unsubscribe(event_name, callback)
             except Exception:
+                self._subscriptions.append((event_name, callback))
                 self.logger.exception("Event unsubscription failed during cleanup")
+        if already_cleaned_up:
+            if not self._subscriptions:
+                self.event_bus = None
+            return
         orchestrators = self.orchestrators
         if orchestrators is not None:
             for name, cleanup in (
@@ -211,7 +217,8 @@ class AppController:
         self._file_state_model = None
         self._database_descriptor_registry = None
         self.orchestrators = None
-        self.event_bus = None
+        if not self._subscriptions:
+            self.event_bus = None
         self.container = None
         if container is not None:
             try:

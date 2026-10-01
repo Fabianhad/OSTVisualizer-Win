@@ -45,8 +45,60 @@ class JsonMachineIdentityRepositoryTests(unittest.TestCase):
         ):
             self.repository.load()
 
+    def test_concurrent_creation_after_missing_read_loads_the_pinned_identity(self):
+        load_json = self.repository._load_json
+        competing_repository = JsonMachineIdentityRepository(self.path)
+        persisted = []
+
+        def read_while_another_process_initializes():
+            try:
+                return load_json()
+            except FileNotFoundError:
+                # Real first read observed no file. The other startup now commits
+                # both files before this reader can inspect the initialized marker.
+                competing_repository.create_if_absent(self.identity)
+                persisted.append(self.path.read_bytes())
+                raise
+
+        with patch.object(
+            self.repository,
+            "_load_json",
+            side_effect=read_while_another_process_initializes,
+        ) as reads:
+            self.assertEqual(self.repository.load(), self.identity)
+        self.assertEqual(reads.call_count, 2)
+        self.assertEqual(persisted, [self.path.read_bytes()])
+        self.assertEqual(competing_repository.load(), self.identity)
+
     def test_record_disappearing_after_competing_create_is_failure(self):
         with patch.object(self.repository, "_save_json_if_absent", return_value=False):
             with self.assertRaisesRegex(OSError, "disappeared during initialization"):
                 self.repository.create_if_absent(self.identity)
         self.assertFalse(self.path.exists())
+
+    def test_marked_record_reread_preserves_failure_without_reinitializing(self):
+        self.repository.create_if_absent(self.identity)
+        before = self.path.read_bytes()
+        for error in (
+            FileNotFoundError("still absent"),
+            ValueError("invalid identity"),
+            PermissionError("read denied"),
+        ):
+            with self.subTest(error=type(error).__name__), patch.object(
+                self.repository, "_load_json", side_effect=[FileNotFoundError(), error]
+            ) as reads:
+                expected_type = (
+                    OSError if isinstance(error, FileNotFoundError) else type(error)
+                )
+                with self.assertRaises(expected_type) as raised:
+                    self.repository.load()
+                if isinstance(error, FileNotFoundError):
+                    self.assertIn(
+                        "pinned machine identity record is missing",
+                        str(raised.exception),
+                    )
+                    self.assertIs(raised.exception.__cause__, error)
+                else:
+                    self.assertIs(raised.exception, error)
+                self.assertEqual(reads.call_count, 2)
+                self.assertEqual(self.path.read_bytes(), before)

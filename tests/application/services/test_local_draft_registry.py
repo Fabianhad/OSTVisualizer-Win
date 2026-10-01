@@ -1,53 +1,15 @@
 import unittest
+from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
-    AuthoritativeMutationResult,
-    ChangeOperation,
-    CollaborationMutationType,
-    CollaborationPollingPolicy,
-    CollaborationShutdownState,
-    CollaborationStatus,
     ConcurrencyToken,
-    DatabaseChange,
-    DatabaseChangeBatch,
-    DatabaseChangePollResult,
-    DatabaseMutationRequest,
-    DatabaseMutationResult,
-    DatabaseSession,
-    DurableOperationResult,
-    EditLeaseHandle,
-    EditLeaseLoss,
-    EditLeaseResult,
-    HydratedDatabaseChangeBatch,
-    MutationExecutionResult,
-    MutationOutcomeStatus,
-    PendingMutationState,
-    PendingSqlOperationRecord,
-    PresenceMode,
-    QueuedMutationRequest,
-    QueuedMutationResult,
-    ReconciliationFailureKind,
-    ReconciliationResult,
     ResourceLock,
     ResourceRef,
-    SynchronizationConflict,
-    SynchronizationConflictKind,
-    SynchronizationState,
-    queued_takeoff_preview_uid,
-    session_identities_equal,
 )
 from ost_visualizer.application.dtos.local_draft_dtos import (
     LocalDraftConflict,
     LocalDraftState,
 )
 from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
-from tests.helpers.sql.collaboration import (
-    _change,
-)
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    ChangeOperation,
-    ResourceRef,
-)
-from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftState
 from tests.helpers.sql.collaboration import _change
 
 
@@ -74,6 +36,17 @@ class LocalDraftRegistryCollaborationTests(unittest.TestCase):
                 owning_surface="condition-dialog",
                 affected_resources=(condition,),
             )
+        self.assertIs(drafts.get(draft.draft_id), draft)
+        drafts.finish(draft.draft_id)
+        replacement = drafts.begin(
+            draft_type="condition-properties",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="condition-dialog",
+            affected_resources=(condition,),
+        )
+        self.assertIs(drafts.get(replacement.draft_id), replacement)
 
     def test_local_draft_overlap_ignores_optional_bid_context(self):
         drafts = LocalDraftRegistry()
@@ -113,8 +86,14 @@ class LocalDraftRegistryCollaborationTests(unittest.TestCase):
             "database", (_change("database", changed, 2),)
         )
         self.assertEqual(
-            tuple(conflict.draft_id for conflict in conflicts), (draft.draft_id,)
+            conflicts,
+            (
+                LocalDraftConflict(
+                    draft.draft_id, changed, "takeoff-mutation", "plan-view"
+                ),
+            ),
         )
+        self.assertEqual(drafts.get(draft.draft_id).state, LocalDraftState.CONFLICTED)
 
     def test_local_draft_version_state_ignores_optional_bid_context(self):
         drafts = LocalDraftRegistry()
@@ -155,9 +134,14 @@ class LocalDraftRegistryCollaborationTests(unittest.TestCase):
         )
         drafts.activate(draft.draft_id, locks, runtime_generation=7)
         active = drafts.get(draft.draft_id)
-        self.assertEqual(active.state, LocalDraftState.ACTIVE)
-        self.assertEqual(active.leases, locks)
-        self.assertEqual(active.runtime_generation, 7)
+        self.assertEqual(
+            active,
+            replace(
+                draft, state=LocalDraftState.ACTIVE, leases=locks, runtime_generation=7
+            ),
+        )
+        self.assertEqual(draft.state, LocalDraftState.PENDING)
+        self.assertEqual(draft.leases, ())
         drafts.finish(draft.draft_id)
         self.assertIsNone(drafts.get(draft.draft_id))
 
@@ -178,7 +162,46 @@ class BidCollectionDraftConflictTests(unittest.TestCase):
             dependency_resources=(resource,) if dependency else (),
         )
         drafts.activate(draft.draft_id, (), runtime_generation=1)
-        return draft
+        return drafts.get(draft.draft_id)
+
+    def test_collection_changes_conflict_with_entities_and_dependencies(self):
+        for family, entity in (
+            ("conditions_collection", "condition"),
+            ("conditions_collection", "condition_folder"),
+            ("areas_collection", "area"),
+            ("pages_collection", "page"),
+            ("layers_collection", "layer"),
+            ("takeoffs_collection", "takeoff"),
+        ):
+            for dependency in (False, True):
+                with self.subTest(family=family, entity=entity, dependency=dependency):
+                    registry = LocalDraftRegistry()
+                    draft = self.begin(
+                        registry, ResourceRef(entity, "42", 8), dependency=dependency
+                    )
+                    incoming = ResourceRef(family, "8", 8)
+                    conflicts = registry.conflicts_for_changes(
+                        "database",
+                        (
+                            _change("database", incoming),
+                            _change("database", incoming, 2),
+                        ),
+                    )
+                    self.assertEqual(
+                        conflicts,
+                        (
+                            LocalDraftConflict(
+                                draft.draft_id,
+                                incoming,
+                                "conditions_editor",
+                                "condition-sidebar",
+                            ),
+                        ),
+                    )
+                    self.assertEqual(
+                        registry.get(draft.draft_id),
+                        replace(draft, state=LocalDraftState.CONFLICTED),
+                    )
 
     def test_collection_isolation_and_exact_match_controls(self):
         resource = ResourceRef("condition", "42", 8)
@@ -226,7 +249,7 @@ class EntityCollectionDraftConflictTests(unittest.TestCase):
             dependency_resources=(collection,),
         )
         registry.activate(draft.draft_id, (), runtime_generation=1)
-        return draft
+        return registry.get(draft.draft_id)
 
     def test_isolation_and_exact_collection_control(self):
         scope = ResourceRef("areas_collection", "8", 8)
@@ -254,4 +277,113 @@ class EntityCollectionDraftConflictTests(unittest.TestCase):
                 )
             ],
             [draft.draft_id],
+        )
+
+    def test_member_changes_conflict_once_with_collection_dependency(self):
+        for family, entity in (
+            ("areas_collection", "area"),
+            ("conditions_collection", "condition"),
+            ("conditions_collection", "condition_folder"),
+            ("pages_collection", "page"),
+            ("layers_collection", "layer"),
+            ("takeoffs_collection", "takeoff"),
+        ):
+            with self.subTest(family=family, entity=entity):
+                registry = LocalDraftRegistry()
+                draft = self.begin(registry, ResourceRef(family, "8", 8))
+                first = ResourceRef(entity, "42", 8)
+                changes = (
+                    _change("database", first),
+                    _change("database", ResourceRef(entity, "43", 8), 2),
+                )
+                conflicts = registry.conflicts_for_changes("database", changes)
+                self.assertEqual(
+                    conflicts,
+                    (
+                        LocalDraftConflict(
+                            draft.draft_id,
+                            first,
+                            "cover_sheet_editor",
+                            "cover-sheet-dialog",
+                        ),
+                    ),
+                )
+                self.assertEqual(
+                    registry.get(draft.draft_id),
+                    replace(draft, state=LocalDraftState.CONFLICTED),
+                )
+
+
+class LocalDraftLifecycleTests(unittest.TestCase):
+    def test_begin_snapshots_inputs_and_finish_releases_only_its_database_owner(self):
+        registry = LocalDraftRegistry()
+        first = ResourceRef("condition", "41", 8)
+        second = ResourceRef("condition", "42", 8)
+        token = ConcurrencyToken(b"\x01" * 8)
+        resources = [second, first, first]
+        versions = [(first, token)]
+        options = dict(
+            draft_type="editor",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="sidebar",
+            affected_resources=resources,
+            base_tokens=versions,
+        )
+        with self.assertRaisesRegex(ValueError, "at least one resource"):
+            registry.begin(**dict(options, affected_resources=()))
+        draft = registry.begin(**options)
+        other = registry.begin(**dict(options, database_id="other"))
+        resources.clear()
+        versions.clear()
+        self.assertEqual(draft.affected_resources, (first, second))
+        self.assertEqual(draft.base_tokens, ((first, token),))
+        self.assertEqual(draft.operation_id, "editor")
+        registry.finish(draft.draft_id)
+        registry.finish(draft.draft_id)
+        self.assertIsNone(registry.get(draft.draft_id))
+        self.assertIs(registry.get(other.draft_id), other)
+        self.assertIsNone(registry.base_token("database", first))
+        self.assertEqual(registry.base_token("other", first), token)
+        for action in (
+            lambda: registry.activate(draft.draft_id, (), runtime_generation=1),
+            lambda: registry.set_base_tokens(draft.draft_id, ()),
+        ):
+            with self.assertRaisesRegex(ValueError, "no longer active"):
+                action()
+        self.assertIs(registry.get(other.draft_id), other)
+
+    def test_base_token_replacement_is_detached_and_local_save_does_not_advance_dependencies(
+        self,
+    ):
+        registry = LocalDraftRegistry()
+        condition = ResourceRef("condition", "42", 8)
+        takeoff = ResourceRef("takeoff", "1", 8)
+        initial = ConcurrencyToken(b"\x01" * 8)
+        current = ConcurrencyToken(b"\x02" * 8)
+        draft = registry.begin(
+            draft_type="geometry",
+            database_id="database",
+            bid_uid=8,
+            page_uid=3,
+            owning_surface="plan",
+            affected_resources=(takeoff,),
+            dependency_resources=(condition,),
+        )
+        versions = [(takeoff, initial), (condition, initial)]
+        registry.set_base_tokens(draft.draft_id, versions)
+        versions.clear()
+        self.assertEqual(
+            registry.get(draft.draft_id).base_tokens,
+            ((condition, initial), (takeoff, initial)),
+        )
+        registry.apply_local_versions(
+            "database", {condition: current, takeoff: current}
+        )
+        self.assertEqual(registry.base_token("database", condition), initial)
+        self.assertEqual(registry.base_token("database", takeoff), current)
+        self.assertEqual(
+            registry.get(draft.draft_id).base_tokens,
+            ((condition, initial), (takeoff, current)),
         )

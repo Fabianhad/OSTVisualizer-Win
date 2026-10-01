@@ -37,10 +37,23 @@
 
 ### Fixed
 
+- SQL session cleanup rejects every queued write and releases all queued edit
+  drafts even if a UI callback cannot be dispatched, preventing other pending
+  work from being stranded after disconnection. Undelivered write completions
+  retain their recovery records and are never blindly replayed.
+- Queued SQL Bid, Cover Sheet, Condition, default-Layer, and catalog saves retain
+  their submitted values even if the caller later changes its draft. Persisted
+  values now stay aligned with the request's resource locks and refresh scope.
+- Concurrent application startups no longer intermittently report a missing
+  machine identity when another instance has just initialized it. Missing or
+  corrupt previously pinned identities still fail safely without regeneration.
 - Edit Condition Properties now keeps its authoritative Condition target and
   sidebar selection aligned after saving with Next or Previous, including MDB
-  family reloads and queued SQL projection. Creating a Condition inside a folder
-  likewise retains the owning folder across its own authoritative reconstruction.
+  family reloads and queued SQL projection. Condition creation likewise retains
+  its Bid and folder ownership across its own authoritative reconstruction,
+  without reporting a committed insert as a retryable failure or selecting into
+  a later replacement Bid or Condition. Destroyed editors no longer reacquire
+  SQL edit leases or change sidebar selection after a pending save completes.
 - Opening Cover Sheet or other parented dialogs no longer leaves the I-beam
   cursor stuck over Projects, buttons, and other unrelated controls on Windows.
 - Legacy Takeoff writes reject unsupported nondefault fields instead of silently
@@ -608,10 +621,11 @@
   import/export progress dialogs do not resume into released UI/service state
   when their parent closes or their page/selection target changes. Dialog-owned
   asynchronous saves, queued view/toolbar callbacks, and realtime notifications
-  also discard stale Qt ownership. Cleanup attempts every owned UI stage,
+  also discard stale Qt ownership. Cleanup attempts every owned UI/application stage,
   workspace-state binding, subscription, and license worker even when an earlier
   teardown step fails, retains
-  transiently failed subscriptions and worker waits for retry, and cannot finish
+  transiently failed subscriptions (including AppController bindings) and worker waits
+  for retry, and cannot finish
   before an accepted worker starts; EventBus delivery also skips subscriptions
   removed or replaced during the same publication, including recursive delivery,
   and late navigation cancellation preserves the worker stop request.

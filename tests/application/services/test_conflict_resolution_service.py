@@ -1,47 +1,10 @@
 import unittest
-from ost_visualizer.application.dtos.collaboration_dtos import (
-    AuthoritativeMutationResult,
-    ChangeOperation,
-    CollaborationMutationType,
-    CollaborationPollingPolicy,
-    CollaborationShutdownState,
-    CollaborationStatus,
-    ConcurrencyToken,
-    DatabaseChange,
-    DatabaseChangeBatch,
-    DatabaseChangePollResult,
-    DatabaseMutationRequest,
-    DatabaseMutationResult,
-    DatabaseSession,
-    DurableOperationResult,
-    EditLeaseHandle,
-    EditLeaseLoss,
-    EditLeaseResult,
-    HydratedDatabaseChangeBatch,
-    MutationExecutionResult,
-    MutationOutcomeStatus,
-    PendingMutationState,
-    PendingSqlOperationRecord,
-    PresenceMode,
-    QueuedMutationRequest,
-    QueuedMutationResult,
-    ReconciliationFailureKind,
-    ReconciliationResult,
-    ResourceLock,
-    ResourceRef,
-    SynchronizationConflict,
-    SynchronizationConflictKind,
-    SynchronizationState,
-    queued_takeoff_preview_uid,
-    session_identities_equal,
-)
+from ost_visualizer.application.dtos.collaboration_dtos import ResourceRef
 from ost_visualizer.application.dtos.conflict_resolution_dtos import (
     ConflictResolutionAction,
+    ConflictResolutionPlan,
 )
-from ost_visualizer.application.dtos.local_draft_dtos import (
-    LocalDraftConflict,
-    LocalDraftState,
-)
+from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftConflict
 from ost_visualizer.application.services.conflict_resolution_service import (
     ConflictResolutionService,
 )
@@ -49,19 +12,24 @@ from ost_visualizer.application.services.conflict_resolution_service import (
 
 class ConflictResolutionServiceCollaborationTests(unittest.TestCase):
     def test_first_release_conflict_plan_never_auto_merges_geometry(self):
-        plan = ConflictResolutionService().plan(
-            LocalDraftConflict(
-                draft_id="draft",
-                changed_resource=ResourceRef("takeoff", "42", 8),
-                draft_type="vertex_drag",
-                owning_surface="plan",
-            )
-        )
-        self.assertEqual(
-            plan.actions,
-            (
-                ConflictResolutionAction.RELOAD,
-                ConflictResolutionAction.DISCARD_DRAFT,
-                ConflictResolutionAction.CANCEL_READ_ONLY,
-            ),
-        )
+        service = ConflictResolutionService()
+        for draft_id in ("first-draft", "second-draft"):
+            with self.subTest(draft_id=draft_id):
+                conflict = LocalDraftConflict(
+                    draft_id=draft_id,
+                    changed_resource=ResourceRef("takeoff", "42", 8),
+                    draft_type="vertex_drag",
+                    owning_surface="plan",
+                )
+                plan = service.plan(conflict)
+                self.assertEqual(
+                    plan,
+                    ConflictResolutionPlan(
+                        draft_id,
+                        (
+                            ConflictResolutionAction.RELOAD,
+                            ConflictResolutionAction.DISCARD_DRAFT,
+                            ConflictResolutionAction.CANCEL_READ_ONLY,
+                        ),
+                    ),
+                )

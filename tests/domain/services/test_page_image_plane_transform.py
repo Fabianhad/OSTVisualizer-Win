@@ -1,18 +1,11 @@
 import unittest
+from itertools import permutations
 from ost_visualizer.application.dtos.mesh_geometry_dto import (
     MeshGeometry,
-    MeshSceneIdentity,
-)
-from ost_visualizer.domain.services.page_image_plane_transform import (
-    resolve_page_floor_elevations,
 )
 from ost_visualizer.domain.services.page_image_plane_transform import (
     PAGE_PLANE_FLOOR_OFFSET,
     resolve_page_floor_elevations,
-)
-from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
-from ost_visualizer.domain.services.page_image_plane_transform import (
-    PAGE_PLANE_FLOOR_OFFSET,
     native_page_plane_transform,
     threejs_page_plane_transform,
 )
@@ -52,22 +45,32 @@ class PageFloorElevationTests(unittest.TestCase):
 
 class ThreejsExportLayerTests(unittest.TestCase):
     def test_page_floor_elevation_reducer_is_order_independent(self):
-        page_a = MeshData(
-            vertices=[(0.0, 0.0, 12.0), (1.0, 1.0, 10.0)],
-            faces=[(0, 1, 1)],
+        groups = (
+            ("page-a", (12.0, 10.0)),
+            ("page-b", (25.0, 20.0)),
+            ("page-a", (4.0, -2.0)),
         )
-        page_b = MeshData(
-            vertices=[(0.0, 0.0, 25.0), (1.0, 1.0, 20.0)],
-            faces=[(0, 1, 1)],
-        )
+        for order in permutations(groups):
+            with self.subTest(order=order):
+                self.assertEqual(
+                    resolve_page_floor_elevations(
+                        (uid, iter(values)) for uid, values in order
+                    ),
+                    {"page-a": -2.0, "page-b": 20.0},
+                )
+
+    def test_empty_missing_identity_and_nonfinite_vertices_do_not_create_floors(self):
+        self.assertEqual(resolve_page_floor_elevations([]), {})
         self.assertEqual(
             resolve_page_floor_elevations(
                 [
-                    ("page-b", (vertex[2] for vertex in page_b.vertices)),
-                    ("page-a", (vertex[2] for vertex in page_a.vertices)),
+                    ("", [1.0]),
+                    ("empty", []),
+                    ("nonfinite", [float("nan"), float("inf")]),
+                    ("valid", [float("inf"), 3.0, float("nan"), -1.0]),
                 ]
             ),
-            {"page-a": 10.0, "page-b": 20.0},
+            {"valid": -1.0},
         )
 
 
@@ -75,6 +78,9 @@ class NativePageImagePlaneTests(unittest.TestCase):
     def test_native_and_threejs_plane_transforms_share_floor_offset(self):
         native = native_page_plane_transform(20.0, 10.0, 3.0)
         threejs = threejs_page_plane_transform(20.0, 10.0, 3.0)
+        self.assertEqual(PAGE_PLANE_FLOOR_OFFSET, 0.01)
+        self.assertEqual((native.plane_width, native.plane_height), (20.0, 10.0))
+        self.assertEqual((threejs.plane_width, threejs.plane_height), (20.0, 10.0))
         self.assertEqual(native.plane_x, -10.0)
         self.assertEqual(native.plane_y, 5.0)
         self.assertAlmostEqual(native.plane_z, 3.0 - PAGE_PLANE_FLOOR_OFFSET)
@@ -85,3 +91,11 @@ class NativePageImagePlaneTests(unittest.TestCase):
         self.assertAlmostEqual(threejs.plane_y, 3.0 - PAGE_PLANE_FLOOR_OFFSET)
         self.assertTrue(threejs.flip_u)
         self.assertTrue(threejs.flip_v)
+
+    def test_nonpositive_page_dimensions_do_not_create_planes(self):
+        for transform in (native_page_plane_transform, threejs_page_plane_transform):
+            for width, height in ((0, 10), (20, 0), (-20, 10), (20, -10)):
+                with self.subTest(
+                    transform=transform.__name__, width=width, height=height
+                ):
+                    self.assertIsNone(transform(width, height, 3.0))

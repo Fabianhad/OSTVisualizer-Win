@@ -2,32 +2,14 @@ import unittest
 from dataclasses import fields
 from ost_visualizer.application.dtos.annotation_caption_dto import (
     ANNOTATION_CAPTION_SPECS,
-    AnnotationCaptionSettingsDto,
     ResolvedAnnotationCaptionDto,
-)
-from ost_visualizer.application.services.annotation_caption_resolver import (
-    AnnotationCaptionResolver,
 )
 from ost_visualizer.domain.entities.annotation_caption import (
     ANNOTATION_CAPTION_ORDER,
-    DEFAULT_ANNOTATION_CAPTION_IDS,
-    AnnotationCaptionId,
-)
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
-from tests.application.services.caption_support import (
-    _RecordingUomService as _caption_support__RecordingUomService,
-    _area_fixture as _caption_support__area_fixture,
 )
 
 
-class PdfAnnotationCaptionResolverTests(unittest.TestCase):
-    def setUp(self):
-        self.uom_service = _caption_support__RecordingUomService()
-        self.resolver = AnnotationCaptionResolver(self.uom_service)
-        self.condition, self.takeoff = _caption_support__area_fixture()
-
+class AnnotationCaptionDtoTests(unittest.TestCase):
     def test_every_polygon_caption_has_one_exact_bluebeam_ui_title(self):
         self.assertEqual(
             frozenset(ANNOTATION_CAPTION_SPECS),
@@ -49,6 +31,23 @@ class PdfAnnotationCaptionResolverTests(unittest.TestCase):
                 "Height",
                 "Slope",
             ),
+        )
+        self.assertEqual(
+            {
+                key.value: (spec.measurement_type, spec.prefix)
+                for key, spec in ANNOTATION_CAPTION_SPECS.items()
+            },
+            {
+                "label": (128, ""),
+                "length": (2, "L"),
+                "area": (1, "A"),
+                "volume": (4, "V"),
+                "depth": (8, "D"),
+                "wall_area": (16, "WA"),
+                "width": (32, "W"),
+                "height": (64, "H"),
+                "slope": (2048, "Slope"),
+            },
         )
 
     def test_resolved_caption_dto_has_no_geometry_or_filesystem_fields(self):

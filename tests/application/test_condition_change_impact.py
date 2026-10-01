@@ -24,6 +24,10 @@ class ConditionChangesRequireMeshRefreshTests(unittest.TestCase):
         self.assertFalse(condition_changes_require_mesh_refresh([], ["create"]))
         self.assertTrue(condition_changes_require_mesh_refresh([], ["update"]))
         self.assertTrue(condition_changes_require_mesh_refresh([]))
+        self.assertTrue(
+            condition_changes_require_mesh_refresh([], ["create", "update"])
+        )
+        self.assertTrue(condition_changes_require_mesh_refresh([], ["unknown"]))
 
 
 class ConditionChangesRequirePlanRefreshTests(unittest.TestCase):
@@ -43,3 +47,7 @@ class ConditionChangesRequirePlanRefreshTests(unittest.TestCase):
                 )
         self.assertFalse(condition_changes_require_plan_refresh([], ["reorder"]))
         self.assertTrue(condition_changes_require_plan_refresh([]))
+        self.assertTrue(
+            condition_changes_require_plan_refresh([], ["reorder", "update"])
+        )
+        self.assertTrue(condition_changes_require_plan_refresh([], ["unknown"]))

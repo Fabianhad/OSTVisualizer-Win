@@ -40,4 +40,14 @@ class PublishSynchronizationConflictTests(unittest.TestCase):
                 "database", ResourceRef("database", "database"), "changed"
             ),
         )
-        self.assertEqual(bus.publish.call_args.kwargs["bid_uid"], "")
+        bus.publish.assert_called_once_with(
+            AppEvents.SYNCHRONIZATION_CONFLICT,
+            database_id="database",
+            resource_type="database",
+            resource_id="database",
+            bid_uid="",
+            message="changed",
+            blocks_database=False,
+        )
+        # The publisher's output must construct its declared event contract.
+        AppEvents.SYNCHRONIZATION_CONFLICT(**bus.publish.call_args.kwargs)

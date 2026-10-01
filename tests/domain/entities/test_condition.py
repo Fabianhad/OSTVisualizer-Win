@@ -1,17 +1,6 @@
-import os
 import unittest
-from dataclasses import fields, replace
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from dataclasses import fields
 from ost_visualizer.domain.entities.condition import Condition
-from PySide6 import QtCore, QtGui, QtWidgets
-
-
-def _app():
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        app = QtWidgets.QApplication([])
-    return app
 
 
 class ConditionConditionBehaviorTests(unittest.TestCase):
@@ -28,16 +17,3 @@ class ConditionConditionBehaviorTests(unittest.TestCase):
             }
             & condition_fields
         )
-
-    @classmethod
-    def setUpClass(cls):
-        cls.app = _app()
-        cls._quit_on_last_window_closed = cls.app.quitOnLastWindowClosed()
-        cls.app.setQuitOnLastWindowClosed(False)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.app.setQuitOnLastWindowClosed(cls._quit_on_last_window_closed)
-
-    def tearDown(self):
-        self.app.processEvents()

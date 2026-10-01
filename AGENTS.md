@@ -93,12 +93,20 @@ Threading and events:
 - Worker threads must marshal back through existing Qt bridges before UI updates or EventBus publication.
 - Do not publish EventBus events from worker threads.
 - Subscribe in constructors/init paths and unsubscribe in `cleanup()`.
+- SQL session teardown rejects every queued edit and releases its draft even
+  if one completion cannot be dispatched. Report dispatch failure after draining
+  the batch; a failed UI notification must not retain other edits' ownership.
+  Queued mutation cancellation likewise attempts every completion before
+  reporting dispatch failure. Retain undelivered operations' recovery metadata;
+  resolving their durable outcome must never blindly replay the write.
 - Tentative application shutdown pauses shutdown-owned startup/UI continuations
   and prepares deferred persistence without destroying it. An aborted close
   resumes persistence and replays each valid continuation once in causal order;
   only terminal close discards callbacks and releases persistence dependencies.
   Cleanup owners retain failed EventBus unsubscriptions so a later cleanup can
-  retry them instead of reporting a stale subscription as released. An
+  retry them instead of reporting a stale subscription as released. AppController
+  retains failed event bindings after releasing its application graph; retrying
+  those bindings does not repeat orchestrator or cleanup-hook teardown. An
   in-flight EventBus publication skips subscriptions removed before their turn,
   including remove-and-readd cycles. Modal cleanup must tolerate Qt destroying
   a child with its closing parent before the nested event loop returns. Dialog-
@@ -407,6 +415,12 @@ Threading and events:
   keeps the matching accepted scene visible until its generation-guarded
   replacement succeeds. Database-wide refresh remains the fallback only when
   the affected resource is not known.
+  MDB Condition creation retains its structural reload boundary. Its typed result
+  captures the previous Bid and exact projected Bid/Condition/folder owners before
+  publishing events. The one-shot editor may advance to that own reconstruction,
+  but must reject later same-UID replacements for selection projection. A committed
+  creation closes its draft even if its UI owner changed; never present that as a
+  failed insert that can be retried and duplicated.
   Classified local Condition updates/reorders and folder-only edits read the
   Condition/folder family through the shared reader, preserving Pages, Takeoffs,
   and Bid identity. Validate the captured Bid owner and retained Takeoff Condition
@@ -527,6 +541,10 @@ Persistence:
   never participates. HWID v1 is `v1:` plus the complete uppercase SHA-256 digest,
   calculated from `OST_VISUALIZER_HWID|v1|<source>|<normalized_uuid>`, and
   license caches must carry the matching explicit HWID version.
+  Concurrent first-run readers may observe the identity file missing before a
+  competing startup creates it and its initialized marker. If the marker is then
+  present, reread the record once before reporting a lost pin; a still-missing or
+  invalid record remains an explicit failure, never permission to regenerate it.
 - License activation requests require one versioned `activation_identity`
   object containing the Windows SAM-compatible account name, NetBIOS computer
   name, and the computer's domain/workgroup join type and name. Collect it only
@@ -773,6 +791,9 @@ Database backends:
   modal save explicitly transfers that lease to the mutation and reacquires the
   same ownership before the dialog becomes interactive again. A late modal lease
   result is rejected when its original database or bid context has changed.
+  Condition editor native destruction closes its lease session immediately,
+  before the modal loop unwinds; committed work still finishes, but cannot
+  reacquire an editor lease or change sidebar selection for the destroyed owner.
 - Delayed SQL hierarchy and Condition mutation completions may alter selection,
   placement, or inline-edit state only while their exact captured database and
   bid/project owner is still current. Pending-operation identities include that
@@ -791,7 +812,10 @@ Database backends:
   plan, annotation, hierarchy, settings, and master-data mutations use the
   coordinator's bounded, per-database FIFO mutation queue. Modal editors submit
   asynchronously, prevent duplicate submission, and do not treat queue
-  acceptance as persistence success. Each request has a
+  acceptance as persistence success. Queued project and catalog writes snapshot
+  caller-owned changes, nested rows, and mutable dataclasses before deriving
+  payload hashes, dependencies, and projection scope. Worker execution must use
+  that same detached snapshot, never the caller's later draft. Each request has a
   UUID operation ID and canonical request hash; `ChangeTransactions` stores the
   operation type and recoverable authoritative result. Never retry DML after
   commit begins: query the operation marker under its operation application lock

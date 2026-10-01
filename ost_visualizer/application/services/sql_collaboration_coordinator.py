@@ -1727,21 +1727,28 @@ class SqlCollaborationCoordinator:
     def _reject_pending_mutations(
         self, runtime: _DatabaseRuntime, message: str
     ) -> None:
+        dispatch_failure: Exception | None = None
         while True:
             try:
                 request = runtime.mutation_requests.get_nowait()
             except queue.Empty:
+                if dispatch_failure is not None:
+                    raise dispatch_failure
                 return
-            self._dispatch_mutation_result(
-                request.callback,
-                QueuedMutationResult(
-                    database_id=request.database_id,
-                    runtime_generation=request.runtime_generation,
-                    operation_id=request.operation_id,
-                    outcome_status=MutationOutcomeStatus.CANCELLED_BEFORE_START,
-                    message=message,
-                ),
-            )
+            try:
+                self._dispatch_mutation_result(
+                    request.callback,
+                    QueuedMutationResult(
+                        database_id=request.database_id,
+                        runtime_generation=request.runtime_generation,
+                        operation_id=request.operation_id,
+                        outcome_status=MutationOutcomeStatus.CANCELLED_BEFORE_START,
+                        message=message,
+                    ),
+                )
+            except Exception as exc:
+                if dispatch_failure is None:
+                    dispatch_failure = exc
 
     def _dispatch_mutation_result(
         self,
@@ -2126,19 +2133,26 @@ class SqlCollaborationCoordinator:
             raise cleanup_error
 
     def _reject_pending_edits(self, runtime: _DatabaseRuntime, message: str) -> None:
+        dispatch_failure: Exception | None = None
         while True:
             try:
                 request, callback = runtime.edit_requests.get_nowait()
             except queue.Empty:
+                if dispatch_failure is not None:
+                    raise dispatch_failure
                 return
             self._local_drafts.finish(request.draft_id)
-            self._dispatch_lease_result(
-                callback,
-                EditLeaseResult(
-                    False,
-                    message,
-                ),
-            )
+            try:
+                self._dispatch_lease_result(
+                    callback,
+                    EditLeaseResult(
+                        False,
+                        message,
+                    ),
+                )
+            except Exception as exc:
+                if dispatch_failure is None:
+                    dispatch_failure = exc
 
     def _process_release_requests(self, runtime: _DatabaseRuntime) -> None:
         while not runtime.stop_event.is_set():

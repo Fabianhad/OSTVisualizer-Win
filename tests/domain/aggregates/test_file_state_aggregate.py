@@ -2,14 +2,9 @@ import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.aggregates.file_state_aggregate import FileStateAggregate
 from ost_visualizer.domain.entities.file_state import FileEntry, FileState
-from PySide6 import QtCore, QtWidgets
 
 
 class FileStateOwnershipTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-
     def test_failed_file_state_save_preserves_authoritative_in_memory_entries(self):
         original = FileEntry("C:/projects/active.mdb", is_checked=True)
 
@@ -37,15 +32,19 @@ class FileStateOwnershipTests(unittest.TestCase):
         self.assertTrue(aggregate.file_entries[0].is_checked)
 
     def test_file_state_update_does_not_retain_caller_owned_entries(self):
+        persisted = []
         repository = SimpleNamespace(
             load=lambda: FileState(),
-            save=lambda _state: None,
+            save=lambda state: persisted.append(FileState.from_dict(state.to_dict())),
         )
         aggregate = FileStateAggregate(repository)
         caller_entry = FileEntry("C:/projects/active.mdb", is_checked=True)
         aggregate.update_entries([caller_entry])
         caller_entry.is_checked = False
         self.assertTrue(aggregate.file_entries[0].is_checked)
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[0].file_entries, aggregate.file_entries)
+        self.assertEqual(aggregate.file_entries[0].file_path, "C:/projects/active.mdb")
 
     def test_file_state_reload_failure_preserves_last_known_entries(self):
         original = FileEntry("C:/projects/active.mdb", is_checked=True)

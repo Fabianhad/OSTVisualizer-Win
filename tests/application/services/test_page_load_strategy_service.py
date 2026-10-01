@@ -1,178 +1,32 @@
-from ost_visualizer.presentation.visualization.pdf.services.page_render_prefetch_coordinator import (
-    PageRenderPrefetchCoordinator,
-)
+from dataclasses import replace
+import unittest
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.application.services.page_load_strategy_service import (
+    LoadStrategy,
     PageLoadStrategyService,
 )
 from ost_visualizer.application.render_quality import (
     INTERACTIVE_PDF_RENDER_SCALE,
     RASTER_NATIVE_RENDER_SCALE,
 )
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
-import unittest
-import os
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from ost_visualizer.application.services.page_load_strategy_service import (
-    LoadStrategy,
-    PageLoadStrategyService,
-)
 from ost_visualizer.presentation.utils.image_show_mode import (
     SHOW_BOTH,
     SHOW_ORIGINAL,
     SHOW_OVERLAY,
 )
-from PySide6.QtWidgets import (
-    QApplication,
-    QColorDialog,
-    QGraphicsItem,
-    QGraphicsPathItem,
-    QGraphicsPixmapItem,
-    QGraphicsPolygonItem,
-    QGraphicsRectItem,
-    QGraphicsTextItem,
-    QStyleOptionGraphicsItem,
-)
-from tests.presentation.components.plan_view.overlay_support import (
-    FakePageSizeProvider,
-)
 
 
 class FakePageSizeProvider:
     def __init__(self, sizes=None):
-        self.sizes = sizes or {}
+        self.sizes = dict(sizes or {})
         self.calls = []
 
-    def get_page_size(self, file_path, page_index):
+    def get_page_size(self, file_path, page_index=0):
         self.calls.append((file_path, page_index))
-        return self.sizes.get(file_path, (612.0, 792.0))
-
-
-class FakeRenderingService:
-    def __init__(self):
-        self.calls = []
-        self.cancelled = []
-        self.callbacks = {}
-        self._counter = 0
-
-    def _record(self, request_type, render_options):
-        self._counter += 1
-        request_id = f"{request_type}-{self._counter}"
-        self.calls.append((request_type, request_id, render_options))
-        self.callbacks[request_id] = render_options["callback"]
-        return request_id
-
-    def render_page_async(
-        self,
-        file_path,
-        page_index,
-        scale,
-        rotation,
-        callback,
-        priority=0,
-        invert=False,
-        bitonal=False,
-        tint_rgb=None,
-        apply_invert_effect=True,
-        apply_bitonal_effect=True,
-    ):
-        render_options = {
-            "file_path": file_path,
-            "page_index": page_index,
-            "scale": scale,
-            "rotation": rotation,
-            "callback": callback,
-            "priority": priority,
-            "invert": invert,
-            "bitonal": bitonal,
-            "tint_rgb": tint_rgb,
-            "apply_invert_effect": apply_invert_effect,
-            "apply_bitonal_effect": apply_bitonal_effect,
-        }
-        return self._record("page", render_options)
-
-    def render_overlay_async(
-        self,
-        page,
-        show_mode,
-        rotation,
-        render_scale,
-        callback,
-        priority=0,
-        apply_invert_effect=True,
-        apply_bitonal_effect=True,
-    ):
-        render_options = {
-            "page": page,
-            "show_mode": show_mode,
-            "rotation": rotation,
-            "callback": callback,
-            "priority": priority,
-            "render_scale": render_scale,
-            "apply_invert_effect": apply_invert_effect,
-            "apply_bitonal_effect": apply_bitonal_effect,
-        }
-        return self._record("overlay", render_options)
-
-    def render_composite_async(
-        self,
-        page,
-        bid_ref,
-        render_scale,
-        rotation,
-        callback,
-        priority=0,
-    ):
-        render_options = {
-            "page": page,
-            "bid_ref": bid_ref,
-            "render_scale": render_scale,
-            "rotation": rotation,
-            "callback": callback,
-            "priority": priority,
-        }
-        return self._record("composite", render_options)
-
-    def cancel_request(self, request_id):
-        self.cancelled.append(request_id)
-
-    def complete(self, request_id, success=True):
-        callback = self.callbacks[request_id]
-        callback(RenderResult(request_id, success, object(), None))
-
-
-class FakeCache:
-    def __init__(self, can_accept=True, can_accept_render=True, sizes=None):
-        self.can_accept = can_accept
-        self.can_accept_render = can_accept_render
-        self.sizes = sizes or {}
-        self.checks = 0
-        self.render_checks = []
-
-    def can_accept_prefetch(self):
-        self.checks += 1
-        return self.can_accept
-
-    def can_accept_prefetch_render(self, width_pts, height_pts, scale):
-        self.render_checks.append((width_pts, height_pts, scale))
-        return self.can_accept_prefetch() and self.can_accept_render
-
-    def get_page_size(self, file_path, page_index):
-        return self.sizes.get((file_path, page_index), (612.0, 792.0))
+        return self.sizes[(file_path, page_index)]
 
 
 class PageLoadStrategyTests(unittest.TestCase):
-    def _coordinator(self, rendering_service=None, cache=None, size_provider=None):
-        rendering_service = rendering_service or FakeRenderingService()
-        cache = cache or FakeCache()
-        size_provider = size_provider or FakePageSizeProvider()
-        return PageRenderPrefetchCoordinator(
-            rendering_service,
-            PageLoadStrategyService(size_provider),
-            cache,
-        )
-
     def _page(self, uid, **overrides):
         values = {
             "uid": uid,
@@ -186,7 +40,7 @@ class PageLoadStrategyTests(unittest.TestCase):
     def test_pdf_load_strategy_uses_native_geometry_when_stored_dimensions_differ(
         self,
     ):
-        size_provider = FakePageSizeProvider({"affected.pdf": (2592.0, 1728.0)})
+        size_provider = FakePageSizeProvider({("affected.pdf", 0): (2592.0, 1728.0)})
         strategy = PageLoadStrategyService(size_provider).determine_load_strategy(
             self._page(
                 "p1",
@@ -197,6 +51,9 @@ class PageLoadStrategyTests(unittest.TestCase):
         )
         self.assertEqual(strategy.pdf_width_pts, 2592.0)
         self.assertEqual(strategy.pdf_height_pts, 1728.0)
+        self.assertTrue(strategy.load_main)
+        self.assertTrue(strategy.needs_async_loading)
+        self.assertTrue(strategy.show_canvas)
         self.assertEqual(
             strategy.placeholder_width,
             2592.0 * INTERACTIVE_PDF_RENDER_SCALE,
@@ -207,7 +64,9 @@ class PageLoadStrategyTests(unittest.TestCase):
         )
 
     def test_load_strategy_uses_canonical_pdf_and_raster_baselines(self):
-        size_provider = FakePageSizeProvider({"page.tif": (612.0, 792.0)})
+        size_provider = FakePageSizeProvider(
+            {("page.tif", 0): (612.0, 792.0), ("page.pdf", 0): (612.0, 792.0)}
+        )
         pdf_strategy = PageLoadStrategyService(size_provider).determine_load_strategy(
             self._page("pdf", image_path="page.pdf")
         )
@@ -241,7 +100,7 @@ class PageLoadStrategyTests(unittest.TestCase):
         )
 
     def test_pdf_load_strategy_reads_page_size_when_stored_dimensions_missing(self):
-        size_provider = FakePageSizeProvider({"slow.pdf": (3024.0, 2160.0)})
+        size_provider = FakePageSizeProvider({("slow.pdf", 0): (3024.0, 2160.0)})
         strategy = PageLoadStrategyService(size_provider).determine_load_strategy(
             self._page(
                 "p1",
@@ -252,11 +111,13 @@ class PageLoadStrategyTests(unittest.TestCase):
         )
         self.assertEqual(strategy.pdf_width_pts, 3024.0)
         self.assertEqual(strategy.pdf_height_pts, 2160.0)
+        self.assertFalse(strategy.show_canvas)
+        self.assertTrue(strategy.needs_async_loading)
         self.assertEqual(size_provider.calls, [("slow.pdf", 0)])
 
     def test_overlay_only_raster_without_main_image_still_loads(self):
         strategy = PageLoadStrategyService(
-            FakePageSizeProvider({"overlay.tif": (1224.0, 1584.0)})
+            FakePageSizeProvider({("overlay.tif", 0): (1224.0, 1584.0)})
         ).determine_load_strategy(
             self._page(
                 "p1",
@@ -269,10 +130,14 @@ class PageLoadStrategyTests(unittest.TestCase):
         self.assertTrue(strategy.load_overlay)
         self.assertFalse(strategy.load_main)
         self.assertFalse(strategy.load_composite)
+        self.assertEqual(strategy.view_scale, 2.0)
+        self.assertEqual(
+            (strategy.placeholder_width, strategy.placeholder_height), (1224, 1584)
+        )
 
     def test_overlay_only_mode_without_overlay_does_not_load_hidden_main(self):
         strategy = PageLoadStrategyService(
-            FakePageSizeProvider()
+            FakePageSizeProvider({("main.pdf", 0): (612, 792)})
         ).determine_load_strategy(
             self._page(
                 "p1",
@@ -286,18 +151,9 @@ class PageLoadStrategyTests(unittest.TestCase):
         self.assertFalse(strategy.load_main)
         self.assertFalse(strategy.load_composite)
 
-
-class CompositePageStrategyTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        if QApplication.instance() is None:
-            cls.app = QApplication([])
-        else:
-            cls.app = QApplication.instance()
-
     def test_show_both_strategy_uses_composite_layer(self):
         strategy = PageLoadStrategyService(
-            FakePageSizeProvider()
+            FakePageSizeProvider({("base.pdf", 0): (612, 792)})
         ).determine_load_strategy(
             Page(
                 uid="p1",
@@ -310,5 +166,165 @@ class CompositePageStrategyTests(unittest.TestCase):
             )
         )
         self.assertTrue(strategy.load_composite)
+        self.assertTrue(strategy.needs_async_loading)
         self.assertFalse(strategy.load_main)
         self.assertFalse(strategy.load_overlay)
+
+    def test_pdf_placeholder_rotation_preserves_canonical_source_geometry(self):
+        provider = FakePageSizeProvider({("rotated.PDF", 2): (900, 600)})
+        service = PageLoadStrategyService(provider)
+        for rotation, expected in (
+            (0, (900, 600)),
+            (90, (600, 900)),
+            (180, (900, 600)),
+            (270, (600, 900)),
+        ):
+            with self.subTest(rotation=rotation):
+                page = self._page(
+                    "p1", image_path="rotated.PDF", page_index=2, rotation=rotation
+                )
+                original = replace(page)
+                strategy = service.determine_load_strategy(page)
+                self.assertEqual(
+                    (strategy.pdf_width_pts, strategy.pdf_height_pts), (900, 600)
+                )
+                self.assertEqual(
+                    (strategy.placeholder_width, strategy.placeholder_height),
+                    tuple(value * INTERACTIVE_PDF_RENDER_SCALE for value in expected),
+                )
+                self.assertEqual(page, original)
+        self.assertEqual(provider.calls, [("rotated.PDF", 2)] * 4)
+
+    def test_incomplete_pdf_metadata_uses_complete_stored_or_default_geometry(self):
+        for actual in ((0, 0), (900, 0), (0, 600), (-1, 600)):
+            for stored, expected in (
+                ((800, 500), (800, 500)),
+                ((0, 0), (612, 792)),
+                ((800, 0), (800, 792)),
+            ):
+                with self.subTest(actual=actual, stored=stored):
+                    provider = FakePageSizeProvider({("missing.pdf", 0): actual})
+                    strategy = PageLoadStrategyService(
+                        provider
+                    ).determine_load_strategy(
+                        self._page(
+                            "p1",
+                            image_path="missing.pdf",
+                            width_pts=stored[0],
+                            height_pts=stored[1],
+                        )
+                    )
+                    self.assertEqual(
+                        (strategy.pdf_width_pts, strategy.pdf_height_pts), expected
+                    )
+                    self.assertEqual(
+                        (strategy.placeholder_width, strategy.placeholder_height),
+                        tuple(
+                            value * INTERACTIVE_PDF_RENDER_SCALE for value in expected
+                        ),
+                    )
+
+    def test_raster_placeholder_uses_both_native_pixel_dimensions(self):
+        provider = FakePageSizeProvider({("scan.tif", 4): (2400, 1700)})
+        strategy = PageLoadStrategyService(provider).determine_load_strategy(
+            self._page(
+                "p1", image_path="scan.tif", page_index=4, width_pts=600, height_pts=400
+            )
+        )
+        self.assertEqual(
+            strategy,
+            LoadStrategy(
+                True,
+                4,
+                True,
+                600,
+                400,
+                2400 * RASTER_NATIVE_RENDER_SCALE,
+                1700 * RASTER_NATIVE_RENDER_SCALE,
+                RASTER_NATIVE_RENDER_SCALE,
+                load_main=True,
+            ),
+        )
+        self.assertTrue(provider.calls)
+        self.assertEqual(set(provider.calls), {("scan.tif", 4)})
+
+    def test_missing_raster_metadata_uses_logical_fallback(self):
+        provider = FakePageSizeProvider({("scan.tif", 0): (0, 0)})
+        strategy = PageLoadStrategyService(provider).determine_load_strategy(
+            self._page("p1", image_path="scan.tif", width_pts=800, height_pts=500)
+        )
+        self.assertEqual(strategy.view_scale, RASTER_NATIVE_RENDER_SCALE)
+        self.assertEqual(
+            (strategy.placeholder_width, strategy.placeholder_height),
+            (800 * RASTER_NATIVE_RENDER_SCALE, 500 * RASTER_NATIVE_RENDER_SCALE),
+        )
+        self.assertTrue(strategy.needs_async_loading)
+
+    def test_hidden_layer_disables_loading_without_discarding_source_geometry(self):
+        provider = FakePageSizeProvider({("base.pdf", 0): (900, 600)})
+        service = PageLoadStrategyService(provider)
+        page = self._page(
+            "p1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=SHOW_BOTH,
+        )
+        visible = service.determine_load_strategy(page)
+        hidden = service.determine_load_strategy(replace(page, layer_visible=False))
+        self.assertTrue(visible.needs_async_loading)
+        self.assertEqual(hidden, replace(visible, needs_async_loading=False))
+
+    def test_empty_page_has_canvas_without_metadata_reads_or_async_loading(self):
+        provider = FakePageSizeProvider()
+        strategy = PageLoadStrategyService(provider).determine_load_strategy(
+            self._page("p1", width_pts=0, height_pts=0)
+        )
+        scale = INTERACTIVE_PDF_RENDER_SCALE
+        self.assertEqual(
+            strategy,
+            LoadStrategy(
+                False,
+                scale,
+                True,
+                612,
+                792,
+                612 * scale,
+                792 * scale,
+                RASTER_NATIVE_RENDER_SCALE,
+            ),
+        )
+        self.assertEqual(provider.calls, [])
+
+    def test_pending_data_retains_page_owner_and_captures_display_values(self):
+        provider = FakePageSizeProvider()
+        service = PageLoadStrategyService(provider)
+        for mode, overlay, expected_overlay in (
+            (SHOW_ORIGINAL, "overlay.pdf", False),
+            (SHOW_OVERLAY, "overlay.pdf", True),
+            (SHOW_BOTH, "overlay.pdf", True),
+            (SHOW_BOTH, None, False),
+        ):
+            with self.subTest(mode=mode, overlay=overlay):
+                page = self._page(
+                    "p1", rotation=270, overlay_image_path=overlay, image_show_mode=mode
+                )
+                strategy = LoadStrategy(False, 3.5, True, 1, 2, 3, 4, 1)
+                pending = service.create_pending_page_data(page, strategy, 900, 600)
+                self.assertEqual(
+                    pending,
+                    {
+                        "page": page,
+                        "rotation": 270,
+                        "show_mode": mode,
+                        "show_overlay": expected_overlay,
+                        "pdf_width_pts": 900,
+                        "pdf_height_pts": 600,
+                        "view_scale": 3.5,
+                    },
+                )
+                self.assertIs(pending["page"], page)
+                page.rotation = 90
+                strategy.view_scale = 8
+                self.assertEqual(pending["rotation"], 270)
+                self.assertEqual(pending["view_scale"], 3.5)
+        self.assertEqual(provider.calls, [])

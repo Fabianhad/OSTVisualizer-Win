@@ -4,9 +4,6 @@ from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.services.uom_service import (
     CALC_LINEAR_LENGTH,
     UOM_INCHES,
-    calculate_condition_quantities,
-)
-from ost_visualizer.domain.services.uom_service import (
     UOM_SQUARE_FEET,
     calculate_condition_quantities,
 )
@@ -61,7 +58,11 @@ class AreaSlopeBehaviorTests(unittest.TestCase):
                 702.397,
             ],
         )
-        self.assertAlmostEqual(q1, 792.2152777777782, places=10)
+        # Independent decomposition after subtracting the fractional origin:
+        # 458 x 195 rectangle, minus the 2 x 195 / 2 right-edge triangle,
+        # plus the 158 x 158 lower-left rectangle. Convert square inches to feet.
+        expected_square_feet = (458 * 195 - 2 * 195 / 2 + 158 * 158) / 144
+        self.assertAlmostEqual(q1, expected_square_feet, places=10)
 
     def test_area_quantity_uses_absolute_slope_magnitude(self):
         q1, _q2, _q3 = calculate_condition_quantities(

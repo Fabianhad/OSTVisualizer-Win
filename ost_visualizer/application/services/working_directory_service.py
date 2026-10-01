@@ -51,7 +51,9 @@ class WorkingDirectoryService:
     def discover_databases(self) -> List[Path]:
         if not self._working_dir.exists():
             return []
-        return sorted(self._working_dir.glob("*.mdb"))
+        return sorted(
+            path for path in self._working_dir.glob("*.mdb") if path.is_file()
+        )
 
     def merge_discovered_into_file_state(
         self, existing_entries: List[FileEntry]

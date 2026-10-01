@@ -42,7 +42,7 @@ class LicenseActivationIdentityDto:
         if not isinstance(self.join_type, WindowsJoinType):
             raise ValueError("Invalid Windows join type")
         if self.join_type == WindowsJoinType.UNJOINED:
-            if self.join_name:
+            if not isinstance(self.join_name, str) or self.join_name != "":
                 raise ValueError("An unjoined computer cannot have a join name")
         else:
             _validate_required_value(

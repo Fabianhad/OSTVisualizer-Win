@@ -2,9 +2,6 @@ import unittest
 from ost_visualizer.domain.entities.file_extensions import (
     CSV_EXTENSION,
     OSP_IMAGE_EXTENSIONS,
-    PDF_EXTENSION,
-    TIF_EXTENSION,
-    TIFF_EXTENSION,
     is_csv_suffix,
     is_pdf_suffix,
 )
@@ -25,7 +22,7 @@ class FileExtensionsTest(unittest.TestCase):
     def test_osp_image_extensions_are_shared_domain_set(self):
         self.assertEqual(
             OSP_IMAGE_EXTENSIONS,
-            frozenset({PDF_EXTENSION, TIF_EXTENSION, TIFF_EXTENSION}),
+            frozenset({".pdf", ".tif", ".tiff"}),
         )
 
 

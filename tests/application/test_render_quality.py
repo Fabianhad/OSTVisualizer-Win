@@ -46,7 +46,9 @@ class RenderQualityContractTests(unittest.TestCase):
 
     def test_frame_origin_alignment_uses_rendered_pixel_boundaries(self):
         self.assertEqual(align_rendered_frame_origin(0.26, 2.0), 0.5)
+        self.assertEqual(align_rendered_frame_origin(-0.26, 2.0), -0.5)
         self.assertEqual(align_rendered_frame_origin(4.25, 0.0), 4.25)
+        self.assertEqual(align_rendered_frame_origin(-4.25, -2.0), -4.25)
         self.assertEqual(quantize_render_frame_coordinate(4.1236), 4.124)
 
 

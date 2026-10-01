@@ -4,9 +4,17 @@ from types import SimpleNamespace
 from ost_visualizer.application.builders.service_builder import ServiceBuilder
 from ost_visualizer.application.events.app_events import (
     AppEvents,
-    NativeSceneUpdatedEvent,
 )
 from ost_visualizer.application.service_container import ServiceContainer
+from ost_visualizer.application.dtos.condition_summary_dtos import (
+    ConditionSummaryGrouping,
+)
+from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.uom_service import CALC_COUNT
 
 
 class FakeEventBus:
@@ -79,7 +87,11 @@ class ServiceBuilderContractsTests(unittest.TestCase):
         self,
     ):
         container = ServiceContainer()
-        container.register_instance("project_read_service", SimpleNamespace())
+        read_calls = []
+        reader = SimpleNamespace(
+            get_bid_areas=lambda path, bid: read_calls.append((path, bid)) or [],
+        )
+        container.register_instance("project_read_service", reader)
         container.register_instance("project_write_service", SimpleNamespace())
         container.register_instance(
             "reload_database_use_case",
@@ -88,6 +100,24 @@ class ServiceBuilderContractsTests(unittest.TestCase):
                 execute_after_write=lambda _database_id: None,
             ),
         )
+        bid_ref = BidRef("summary.mdb", "7")
+        condition = Condition(
+            uid="condition",
+            name="Fixtures",
+            condition_type=Condition.TYPE_COUNT,
+            calc_type1=CALC_COUNT,
+        )
+        bid = Bid("7", "Bid")
+        project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: bid_ref,
+            get_bid=lambda _ref: bid,
+            get_bid_conditions=lambda: {condition.uid: condition},
+            get_bid_condition_folders=lambda: {},
+            get_all_takeoffs=lambda: [
+                Takeoff("takeoff", condition.uid, page_uid="page", position=[1, 2])
+            ],
+            get_all_pages=lambda: [Page("page", "Sheet")],
+        )
         ServiceBuilder(
             container=container,
             logger=logging.getLogger("test"),
@@ -95,14 +125,23 @@ class ServiceBuilderContractsTests(unittest.TestCase):
             scene_notifier=object(),
         ).build(
             config_model=SimpleNamespace(),
-            project_data_service=SimpleNamespace(),
+            project_data_service=project_data,
             project_operations_service=SimpleNamespace(),
             event_bus=FakeEventBus(),
             connection_manager=None,
             license_api_client=object(),
         )
         service = container.get("summary_csv_export_service")
-        self.assertIsNotNone(service)
+        self.assertIs(container.get("summary_csv_export_service"), service)
+        summary = service.build_current_summary(ConditionSummaryGrouping())
+        self.assertEqual(read_calls, [("summary.mdb", "7")])
+        self.assertEqual(
+            [
+                (node.condition_uid, node.values.name, node.values.quantity1)
+                for node in summary.children
+            ],
+            [("condition", "Fixtures", 1.0)],
+        )
 
     def test_ost_status_blocks_falsey_connection_manager(self):
         class _FalseyConnectionManager:
@@ -173,8 +212,12 @@ class ServiceBuilderContractsTests(unittest.TestCase):
             license_api_client=object(),
         )
         monitor.callback(True)
-        self.assertEqual(connection_manager.write_blocks, [True])
+        monitor.callback(False)
+        self.assertEqual(connection_manager.write_blocks, [True, False])
         self.assertEqual(
             event_bus.publications,
-            [(AppEvents.OST_STATUS_CHANGED, {"active": True})],
+            [
+                (AppEvents.OST_STATUS_CHANGED, {"active": True}),
+                (AppEvents.OST_STATUS_CHANGED, {"active": False}),
+            ],
         )
